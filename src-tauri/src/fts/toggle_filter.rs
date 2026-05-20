@@ -217,6 +217,12 @@ pub async fn search_with_toggles(
 /// - All toggles off → straight FTS5 partitioned scan, snippets kept.
 ///
 /// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
+///
+/// PEND-70 — `cancel` is an optional cancellation token threaded into
+/// the FTS path. The regex-mode branch does not currently honour the
+/// token (the regex pre-filter is bounded by `REGEX_PRE_FILTER_CAP`
+/// and runs in process; bursty-typing saturation on that branch is
+/// not a measured pain point).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_with_toggles_partitioned(
     pool: &SqlitePool,
@@ -230,6 +236,7 @@ pub(crate) async fn search_with_toggles_partitioned(
     exclude_page_globs: &[String],
     toggles: SearchToggles,
     metadata: &MetadataPredicates,
+    cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<super::search::FtsPartitionedScan, AppError> {
     if toggles.is_regex {
         // Regex-mode bypasses FTS entirely — empty query short-circuits
@@ -316,6 +323,7 @@ pub(crate) async fn search_with_toggles_partitioned(
         exclude_page_globs,
         metadata,
         with_snippet,
+        cancel,
     )
     .await?;
 

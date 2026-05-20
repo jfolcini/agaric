@@ -4200,6 +4200,7 @@ async fn partitioned_happy_path_pages_and_blocks_within_caps() {
         2,
         3,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4240,6 +4241,7 @@ async fn partitioned_pages_partition_is_page_typed_only_with_mixed_types() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4269,6 +4271,7 @@ async fn partitioned_blocks_partition_is_unrestricted() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4309,6 +4312,7 @@ async fn partitioned_caps_honour_each_partition_limit() {
         1,
         1,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4331,6 +4335,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         2,
         3,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4351,6 +4356,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         20,
         20,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4376,6 +4382,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await
         .unwrap();
@@ -4408,6 +4415,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
             space_id: Some(FTS_SPACE_A_ID.to_string()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -4440,6 +4448,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4455,6 +4464,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
             block_type_filter: Some("page".to_string()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -4527,6 +4537,7 @@ async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
             space_id: Some(FTS_SPACE_A_ID.to_string()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -4569,6 +4580,7 @@ async fn partitioned_regex_mode_routes_through_partitioned_dispatch() {
             is_regex: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -4607,6 +4619,7 @@ async fn partitioned_zero_limits_yield_empty_partitions_and_no_has_more() {
         0,
         0,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4671,6 +4684,7 @@ async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
         50,
         50,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4775,6 +4789,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         8,
         40,
         crate::commands::queries::SearchFilter::default(),
+        None,
     );
     let fut1 = crate::commands::queries::search_blocks_partitioned_inner(
         &pool1,
@@ -4782,6 +4797,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         8,
         40,
         crate::commands::queries::SearchFilter::default(),
+        None,
     );
     let fut2 = crate::commands::queries::search_blocks_partitioned_inner(
         &pool2,
@@ -4789,6 +4805,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         8,
         40,
         crate::commands::queries::SearchFilter::default(),
+        None,
     );
     let fut3 = crate::commands::queries::search_blocks_partitioned_inner(
         &pool3,
@@ -4796,6 +4813,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         8,
         40,
         crate::commands::queries::SearchFilter::default(),
+        None,
     );
     let fut4 = crate::commands::queries::search_blocks_partitioned_inner(
         &pool4,
@@ -4803,6 +4821,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         8,
         40,
         crate::commands::queries::SearchFilter::default(),
+        None,
     );
 
     // Box the inner future to keep clippy's `large_futures` lint quiet —
@@ -4885,6 +4904,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await;
         t.elapsed()
@@ -4897,6 +4917,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await;
         t.elapsed()
@@ -4909,6 +4930,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await;
         t.elapsed()
@@ -4921,6 +4943,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await;
         t.elapsed()
@@ -4933,6 +4956,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             10,
             10,
             crate::commands::queries::SearchFilter::default(),
+            None,
         )
         .await;
         t.elapsed()
@@ -4978,6 +5002,7 @@ async fn partitioned_long_query_returns_empty_via_short_circuit() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .expect("long sub-trigram-only query must short-circuit, not error");
@@ -5064,6 +5089,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         10,
         10,
         filter,
+        None,
     )
     .await
     .expect("12-field-populated SearchFilter must compose into valid SQL");
@@ -5094,6 +5120,7 @@ async fn partitioned_empty_space_returns_empty_partitions() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .expect("empty-space partitioned search must succeed");
@@ -5147,6 +5174,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await;
 
@@ -5157,6 +5185,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         10,
         10,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .expect("giant-space partitioned search must succeed");
@@ -5247,6 +5276,7 @@ async fn partitioned_case_sensitive_with_or_preserves_case() {
             case_sensitive: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .expect("case_sensitive + OR query must execute cleanly");
@@ -5336,6 +5366,7 @@ async fn partitioned_whole_word_with_and_combines_terms() {
             whole_word: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .expect("whole_word + AND query must execute cleanly");
@@ -5413,6 +5444,7 @@ async fn partitioned_regex_alternation_matches_both() {
             is_regex: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .expect("regex alternation query must execute cleanly");
@@ -5456,6 +5488,7 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
             is_regex: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .expect_err("invalid regex pattern must surface AppError::Validation");
@@ -5519,6 +5552,7 @@ async fn partitioned_scan_returns_pages_when_blocks_outrank_them() {
         5,  // page_limit
         20, // block_limit
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -5593,6 +5627,7 @@ async fn partitioned_regex_page_filter_returns_pages_when_content_dominates() {
             is_regex: true,
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -5640,5 +5675,423 @@ fn partitioned_snippet_skipped_when_post_filter_clears_it() {
     assert!(
         without.contains("NULL as snippet"),
         "snippet=false must synthesise NULL so the row deserialises with Option<String>=None: {without}"
+    );
+}
+
+// ======================================================================
+// PEND-70 — cancellation + slow-query logging tests
+// ======================================================================
+
+/// Seed a 100+ row "heavy" FTS fixture so the bench-sized scan takes
+/// long enough that a racing cancel signal has a reasonable chance to
+/// win the `tokio::select!` arm. The exact row count exceeds
+/// `MAX_SEARCH_RESULTS` (100) — under load this saturates the
+/// configured fetch ceiling and forces the SQL builder to walk the
+/// trigram index for a measurable number of rows.
+async fn seed_heavy_partitioned_fixture(pool: &SqlitePool, n_blocks: u32) {
+    let root = pt_block_id(0);
+    insert_block(
+        pool,
+        &root,
+        "page",
+        "partitioned cancel root",
+        None,
+        Some(0),
+    )
+    .await;
+    for i in 1..=n_blocks {
+        let id = pt_block_id(i);
+        insert_block(
+            pool,
+            &id,
+            "content",
+            &format!("partitioned cancellation row {i}"),
+            Some(&root),
+            Some(i64::from(i)),
+        )
+        .await;
+    }
+    rebuild_fts_index(pool).await.unwrap();
+}
+
+/// Thread-safe buffered writer usable as a `tracing_subscriber::fmt`
+/// writer so we can capture emitted log lines in-process. Mirrors the
+/// shape used in `db.rs::tests`.
+#[derive(Clone, Default)]
+struct LogBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogBuf {
+    type Writer = LogBuf;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl LogBuf {
+    fn contents(&self) -> String {
+        let bytes = self.0.lock().unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_drops_in_flight_query() {
+    // Acceptance: dropping the client promise → in-flight Rust future
+    // returns `AppError::Cancelled` within one row-batch boundary
+    // (≤ 50 ms typical, ≤ 200 ms worst case per PEND-70).
+    let (pool, _dir) = test_pool().await;
+    seed_heavy_partitioned_fixture(&pool, 150).await;
+
+    let guard = crate::cancellation::CancellationGuard::new();
+    let token = guard.token();
+
+    // Fire the cancel signal *before* the inner call so the
+    // `tokio::select!` immediately resolves the cancel arm. This
+    // tests the load-bearing invariant: a fired token makes the
+    // inner call observe `AppError::Cancelled` instead of returning
+    // rows. The race-with-live-cancel path is covered by the spawn
+    // assertion below.
+    guard.cancel();
+
+    let start = std::time::Instant::now();
+    let result = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        50,
+        50,
+        crate::commands::queries::SearchFilter::default(),
+        Some(token),
+    )
+    .await;
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(result, Err(crate::error::AppError::Cancelled)),
+        "pre-cancelled token must surface AppError::Cancelled, got {result:?}"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(200),
+        "cancellation must propagate within 200ms worst-case, elapsed {elapsed:?}"
+    );
+
+    // Second leg: kick off an inner call without pre-cancellation,
+    // fire the guard mid-flight, and observe `AppError::Cancelled`
+    // within the 200ms budget. This is the "client dropped the
+    // promise" path the IPC wrapper exercises in production.
+    let guard2 = crate::cancellation::CancellationGuard::new();
+    let token2 = guard2.token();
+    let pool_clone = pool.clone();
+    let handle = tokio::spawn(async move {
+        let t0 = std::time::Instant::now();
+        let res = crate::commands::queries::search_blocks_partitioned_inner(
+            &pool_clone,
+            "partitioned".to_string(),
+            50,
+            50,
+            crate::commands::queries::SearchFilter::default(),
+            Some(token2),
+        )
+        .await;
+        (res, t0.elapsed())
+    });
+    // Yield briefly so the spawned task makes it into the SQL
+    // fetch_all (or at least registers on the runtime).
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    drop(guard2); // fire cancel via Drop, mirroring IPC wrapper behaviour.
+
+    let (res, dt) = tokio::time::timeout(std::time::Duration::from_millis(500), handle)
+        .await
+        .expect("cancellation must complete within 500ms")
+        .expect("spawned task must finish cleanly");
+    // Two valid outcomes:
+    //   1. Cancelled — the cancel signal won the race (expected path).
+    //   2. Ok — the SQL completed before the cancel arrived. This is
+    //      legitimate on a hot in-memory DB; the partitioned scan can
+    //      finish in single-digit ms. We do NOT consider it a failure
+    //      — the contract is "cancellation does no harm", not "every
+    //      drop produces Cancelled".
+    match res {
+        Err(crate::error::AppError::Cancelled) => {
+            assert!(
+                dt < std::time::Duration::from_millis(200),
+                "mid-flight cancel must surface within 200ms, dt = {dt:?}"
+            );
+        }
+        Ok(_) => {
+            // SQL won the race; no regression. Document via a permissive log line.
+            eprintln!("note: mid-flight cancel raced and SQL completed first (dt = {dt:?})");
+        }
+        Err(e) => panic!("unexpected error from cancelled search: {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn slow_acquire_logs_warning() {
+    // Acceptance: bursty typing saturates the read pool → at least
+    // one slow-acquire warn fires. We exercise the saturation
+    // mechanically: a holder task takes the single pool slot and
+    // sleeps past the 50 ms `SLOW_SEARCH_ACQUIRE_WARN_MS` threshold,
+    // forcing the next `search_pool_acquire_logged` caller to wait.
+    //
+    // ## Why we hold the connection inside the subscriber scope
+    //
+    // `tracing::subscriber::set_default` installs a *thread-local*
+    // subscriber. `tokio::spawn`'d tasks run on different worker
+    // threads, so the subscriber isn't visible inside the holder
+    // closure. Holding the pool slot via a local `acquire().await`
+    // on the current task keeps the slow-acquire warn (emitted by
+    // `search_pool_acquire_logged` inside `fts_fetch_rows`) within
+    // the same task that installed the subscriber.
+    use tracing_subscriber::layer::SubscriberExt;
+
+    // Single-slot pool guarantees the search task waits behind the
+    // holder. `init_pool` would give 5 connections — too many to
+    // reliably saturate from a single test.
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("slow_acquire_search.db");
+    let opts = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&db_path)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .create_if_missing(true)
+        .pragma("foreign_keys", "ON")
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    // Seed BEFORE we install the subscriber so the seed-side
+    // queries (which run their own warn-eligible code paths) don't
+    // pollute the captured log buffer.
+    seed_heavy_partitioned_fixture(&pool, 50).await;
+
+    let writer = LogBuf::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::EnvFilter::new("warn"))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(writer.clone())
+                .with_ansi(false)
+                .with_target(true),
+        );
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Take the single slot on the *current* task so the subscriber
+    // installed above is visible when the search task crosses the
+    // slow-acquire threshold.
+    let holder_conn = pool.acquire().await.unwrap();
+
+    // Saturating call: race a search future against a `sleep` that
+    // releases the holder past the slow-acquire threshold. The
+    // search future's `search_pool_acquire_logged` waits the full
+    // duration before getting its slot — that wait crosses the
+    // `SLOW_SEARCH_ACQUIRE_WARN_MS` (50 ms) threshold and emits the
+    // warn log.
+    let pool_for_search = pool.clone();
+    let search_future = async move {
+        crate::commands::queries::search_blocks_partitioned_inner(
+            &pool_for_search,
+            "partitioned".to_string(),
+            10,
+            10,
+            crate::commands::queries::SearchFilter::default(),
+            None,
+        )
+        .await
+    };
+    let release_future = async {
+        // Sleep past the slow-acquire threshold, then drop the
+        // holder so the search proceeds.
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        drop(holder_conn);
+    };
+    let (search_res, ()) = tokio::join!(search_future, release_future);
+    let _ = search_res.expect("search must complete once the holder releases");
+
+    let contents = writer.contents();
+    assert!(
+        contents.contains("slow read-pool acquire"),
+        "saturating the read pool must emit a slow-acquire warn, got: {contents:?}"
+    );
+    assert!(
+        contents.contains("fts_fetch_rows"),
+        "slow-acquire warn must carry the fts_fetch_rows label, got: {contents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancellation_does_not_lose_in_flight_results() {
+    // Acceptance: firing two searches with the same query → at least
+    // one completes successfully (no double-cancel race destroys
+    // both). Mirrors the palette's keystroke pattern where the
+    // *last* IPC is the one the frontend keeps.
+    let (pool, _dir) = test_pool().await;
+    seed_heavy_partitioned_fixture(&pool, 30).await;
+
+    let guard_a = crate::cancellation::CancellationGuard::new();
+    let token_a = guard_a.token();
+    let pool_a = pool.clone();
+    let handle_a = tokio::spawn(async move {
+        crate::commands::queries::search_blocks_partitioned_inner(
+            &pool_a,
+            "partitioned".to_string(),
+            10,
+            10,
+            crate::commands::queries::SearchFilter::default(),
+            Some(token_a),
+        )
+        .await
+    });
+
+    let guard_b = crate::cancellation::CancellationGuard::new();
+    let token_b = guard_b.token();
+    let pool_b = pool.clone();
+    let handle_b = tokio::spawn(async move {
+        crate::commands::queries::search_blocks_partitioned_inner(
+            &pool_b,
+            "partitioned".to_string(),
+            10,
+            10,
+            crate::commands::queries::SearchFilter::default(),
+            Some(token_b),
+        )
+        .await
+    });
+
+    // Cancel the first one only (mimicking the palette discarding
+    // the stale IPC when a new keystroke arrives). The second must
+    // complete OK.
+    drop(guard_a);
+
+    let res_a = tokio::time::timeout(std::time::Duration::from_secs(2), handle_a)
+        .await
+        .expect("first search must finish within 2s")
+        .expect("first search task must join cleanly");
+    let res_b = tokio::time::timeout(std::time::Duration::from_secs(2), handle_b)
+        .await
+        .expect("second search must finish within 2s")
+        .expect("second search task must join cleanly");
+
+    // At least one must complete with rows. The cancelled one may
+    // return either Cancelled (cancel won) or Ok (SQL finished
+    // first); the un-cancelled one must return Ok.
+    assert!(
+        res_b.is_ok(),
+        "un-cancelled second search must complete: {res_b:?}"
+    );
+    let resp_b = res_b.unwrap();
+    assert!(
+        !resp_b.blocks.items.is_empty(),
+        "un-cancelled search must return at least one row"
+    );
+    // Keep `guard_b` alive across the await so its Drop fires AFTER
+    // the inner call completes — exercising the "guard outlives the
+    // call" production path.
+    drop(guard_b);
+
+    // The first call: either Cancelled or Ok is acceptable.
+    match res_a {
+        Ok(_) | Err(crate::error::AppError::Cancelled) => {}
+        Err(e) => panic!("first search must be Ok or Cancelled, got: {e:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rapid_fire_burst_pattern_does_not_starve_pool() {
+    // Integration-style: mimic the palette's 5-keystroke rapid-fire
+    // burst (80ms debounce per CommandPalette.tsx → 5 keystrokes in
+    // ~400ms). Each keystroke fires a fresh `search_blocks_partitioned`
+    // IPC; the previous one is cancelled. The last one must complete
+    // successfully.
+    let (pool, _dir) = test_pool().await;
+    seed_heavy_partitioned_fixture(&pool, 40).await;
+
+    let mut prev_guard: Option<crate::cancellation::CancellationGuard> = None;
+    let mut handles: Vec<(
+        tokio::task::JoinHandle<
+            Result<crate::commands::queries::PartitionedSearchResponse, crate::error::AppError>,
+        >,
+        usize,
+    )> = Vec::new();
+
+    // 5 keystrokes, each 80ms apart.
+    for keystroke in 0..5 {
+        // Drop the previous guard — this fires its cancel signal,
+        // exactly mirroring the palette's "abandon the stale
+        // generationRef" pattern.
+        if let Some(g) = prev_guard.take() {
+            drop(g);
+        }
+        let guard = crate::cancellation::CancellationGuard::new();
+        let token = guard.token();
+        let pool_clone = pool.clone();
+        let handle = tokio::spawn(async move {
+            crate::commands::queries::search_blocks_partitioned_inner(
+                &pool_clone,
+                "partitioned".to_string(),
+                10,
+                10,
+                crate::commands::queries::SearchFilter::default(),
+                Some(token),
+            )
+            .await
+        });
+        handles.push((handle, keystroke));
+        prev_guard = Some(guard);
+        // 80ms debounce window from CommandPalette.tsx.
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    }
+
+    // The last guard is still alive — its query must complete.
+    let last_idx = handles.len() - 1;
+    let (last_handle, _) = handles.pop().expect("we spawned 5 handles");
+    let last_res = tokio::time::timeout(std::time::Duration::from_secs(3), last_handle)
+        .await
+        .expect("last search must finish within 3s")
+        .expect("last search task must join cleanly");
+    assert!(
+        last_res.is_ok(),
+        "the last (un-cancelled) keystroke's IPC must complete: {last_res:?}"
+    );
+    let last_resp = last_res.unwrap();
+    assert!(
+        !last_resp.blocks.items.is_empty(),
+        "last keystroke's response must carry rows"
+    );
+
+    // Drain the previous handles. Each is allowed to be either
+    // Ok (the SQL completed before the cancel arrived) or Cancelled
+    // (cancel won the race). Any other error indicates a regression
+    // in the cancellation plumbing.
+    let mut completed = 0_usize;
+    let mut cancelled = 0_usize;
+    for (handle, idx) in handles {
+        let res = tokio::time::timeout(std::time::Duration::from_secs(3), handle)
+            .await
+            .unwrap_or_else(|_| panic!("keystroke {idx} timed out"))
+            .unwrap_or_else(|e| panic!("keystroke {idx} task panicked: {e:?}"));
+        match res {
+            Ok(_) => completed += 1,
+            Err(crate::error::AppError::Cancelled) => cancelled += 1,
+            Err(e) => panic!("keystroke {idx} surfaced unexpected error: {e:?}"),
+        }
+    }
+    assert_eq!(
+        completed + cancelled,
+        last_idx, // we popped one; the remaining is last_idx
+        "every cancelled keystroke must end with either Ok or Cancelled (no other errors), \
+         completed={completed} cancelled={cancelled}"
     );
 }

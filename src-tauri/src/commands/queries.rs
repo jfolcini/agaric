@@ -896,13 +896,30 @@ pub struct PartitionedSearchResponse {
 /// Resolves PEND-69 Open Q2 — fail-fast. The two parallel scans run
 /// under `tokio::try_join!`; if either errors, the other is dropped
 /// and the error propagates without a partial response.
-#[instrument(skip(pool, filter), err)]
+///
+/// ## Cancellation
+///
+/// PEND-70 — `cancel` is an optional cancellation token threaded into
+/// the FTS path. The Tauri command wrapper stores a
+/// [`crate::cancellation::CancellationGuard`] in the
+/// [`crate::cancellation::CancellationRegistry`] extension state and
+/// spawns this inner via `tokio::spawn`, so the guard outlives the
+/// wrapper future. When the wrapper future drops (or `cancel_search`
+/// fires it externally), the guard's `Drop` signals the spawned task,
+/// which surfaces [`AppError::Cancelled`] at the next row-batch
+/// boundary (≤ 50 ms typical, ≤ 200 ms worst case).
+//
+// `err(level = "info")` keeps `AppError::Cancelled` (the expected
+// case under burst-typing) out of ERROR-level logs. Real failures
+// still surface via the wrapper's `sanitize_internal_error` warn.
+#[instrument(skip(pool, filter, cancel), err(level = "info"))]
 pub async fn search_blocks_partitioned_inner(
     pool: &SqlitePool,
     query: String,
     page_limit: u32,
     block_limit: u32,
     filter: SearchFilter,
+    cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
     // Mirror `search_blocks_inner`'s empty-query short-circuit so callers
     // observe the same wire shape on empty input.
@@ -946,6 +963,7 @@ pub async fn search_blocks_partitioned_inner(
         &exclude_globs,
         toggles,
         &metadata,
+        cancel,
     )
     .await?;
 
@@ -987,20 +1005,69 @@ fn empty_partition() -> PageResponse<SearchBlockRow> {
 /// for [`SearchFilter`] compat.
 ///
 /// See [`search_blocks_partitioned_inner`] for the partition + `has_more`
-/// contract.
+/// contract, and the cancellation contract (PEND-70).
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks_partitioned(
     pool: State<'_, ReadPool>,
+    registry: State<'_, crate::cancellation::CancellationRegistry>,
     query: String,
     page_limit: u32,
     block_limit: u32,
     filter: SearchFilter,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    search_blocks_partitioned_inner(&pool.0, query, page_limit, block_limit, filter)
-        .await
-        .map_err(sanitize_internal_error)
+    // PEND-70 P1-A — extension-state guard architecture.
+    //
+    // The guard lives in the [`CancellationRegistry`] keyed by a
+    // server-generated `request_id`. The actual search work runs in a
+    // `tokio::spawn`ed task so its lifetime is independent of this
+    // wrapper future. When the wrapper future is dropped (window
+    // close, panic unwind, future `cancel_search` IPC), the
+    // [`CancelOnDrop`] guard fires `registry.cancel(request_id)`,
+    // which signals the spawned task via its token and the task
+    // bails with [`AppError::Cancelled`] at the next row-batch
+    // boundary.
+    let registry: crate::cancellation::CancellationRegistry = (*registry).clone();
+    let request_id = ulid::Ulid::new().to_string();
+    let guard = std::sync::Arc::new(crate::cancellation::CancellationGuard::new());
+    let token = guard.token();
+    registry.insert(request_id.clone(), std::sync::Arc::clone(&guard));
+    let _defer = crate::cancellation::CancelOnDrop::new(registry, request_id);
+
+    let pool_clone = pool.0.clone();
+    // Spawn the inner search so its lifetime is independent of the
+    // wrapper future. Awaiting the JoinHandle: if the wrapper future
+    // is dropped, the handle is dropped (spawned task continues
+    // running independently); `_defer`'s Drop then fires the cancel
+    // signal and the spawned task observes it on its next
+    // `tokio::select!` boundary.
+    let join: tokio::task::JoinHandle<Result<PartitionedSearchResponse, AppError>> =
+        tokio::spawn(async move {
+            search_blocks_partitioned_inner(
+                &pool_clone,
+                query,
+                page_limit,
+                block_limit,
+                filter,
+                Some(token),
+            )
+            .await
+        });
+
+    let result = match join.await {
+        Ok(inner) => inner,
+        Err(join_err) if join_err.is_cancelled() => Err(AppError::Cancelled),
+        // Task panicked. Route through `AppError::Channel` so
+        // `sanitize_internal_error` collapses it to InvalidOperation
+        // on the wire while the real cause is logged via the warn
+        // path. (No `Internal` variant in this codebase; see
+        // `error.rs`.)
+        Err(join_err) => Err(AppError::Channel(format!(
+            "search task join failed: {join_err}"
+        ))),
+    };
+    result.map_err(sanitize_internal_error)
 }
 
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].

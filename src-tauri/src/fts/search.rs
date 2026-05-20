@@ -4,12 +4,38 @@
 //! the `sanitize_fts_query` helper for safe query construction.
 
 use sqlx::SqlitePool;
+use std::time::{Duration, Instant};
 
+use crate::cancellation::CancellationToken;
 use crate::commands::SearchBlockRow;
+use crate::db::search_pool_acquire_logged;
 use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::metadata_filter::MetadataPredicates;
+
+// ---------------------------------------------------------------------------
+// PEND-70 — per-FTS-query timing thresholds
+// ---------------------------------------------------------------------------
+
+/// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
+/// an `info!` breadcrumb. 200 ms is well above the typical FTS5
+/// trigram scan on a 10k-block fixture (sub-50 ms on a warm cache, see
+/// `benches/fts_bench.rs`) but well below the 1 s `warn!` budget — it
+/// surfaces "the cache is cold and the query is doing real work"
+/// without spamming on every keystroke.
+pub(crate) const FTS_QUERY_INFO_MS: u128 = 200;
+
+/// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
+/// a `warn!`. **Measured starting point**: 1 s mirrors the PEND-70
+/// design's recommended ceiling. If CI runners observe legitimate
+/// cold-cache scans crossing this floor on the 10k-block bench
+/// fixture, raise the constant to the observed worst-case + 3×
+/// headroom and document the bump here. As of 2026-05 the FTS bench
+/// (`benches/fts_bench.rs::bench_search_fts` at `count=10_000`)
+/// completes well under 100 ms on a warm cache; the 1 s budget gives
+/// 10× headroom for cold-cache CI runs.
+pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 
 // ---------------------------------------------------------------------------
 // FTS5 search
@@ -303,7 +329,13 @@ pub async fn search_fts(
         block_type_filter,
         metadata,
         true, // `search_fts` always emits snippets — its caller has no
-              // post-filter that would clobber them.
+        // post-filter that would clobber them.
+        // PEND-70 — the non-partitioned `search_fts` path is the
+        // cursor-paginated `search_blocks` IPC; it is not subject to
+        // the palette's keystroke-burst pattern (the panel paginates
+        // explicitly via Load More). No cancellation token is wired
+        // here today.
+        None,
     )
     .await?;
 
@@ -368,6 +400,13 @@ pub async fn search_fts(
 ///   will overwrite `row.snippet = None` anyway (regex / non-regex
 ///   toggle post-filter paths). Saves a per-row tokenizer walk; the
 ///   FTS5 `snippet()` cost compounds on cold cache.
+///
+/// PEND-70 — `cancel` is an optional cancellation token. When `Some`,
+/// the SQL `fetch_all` is raced against the cancel signal via
+/// `tokio::select!`; if the signal fires, the SQL future is dropped
+/// cleanly and the call returns [`AppError::Cancelled`]. Passing
+/// `None` (or [`CancellationToken::never_cancelled`]) preserves the
+/// pre-PEND-70 behaviour.
 #[allow(clippy::too_many_arguments)]
 async fn fts_fetch_rows(
     pool: &SqlitePool,
@@ -384,7 +423,17 @@ async fn fts_fetch_rows(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
     with_snippet: bool,
+    cancel: Option<CancellationToken>,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
+    // PEND-70 — early-cancel before we even touch the read pool.
+    // The next-keystroke palette pattern fires fresh IPCs faster than
+    // SQLite can deliver a connection, so checking here catches the
+    // burst before we waste a pool slot.
+    if let Some(ref token) = cancel {
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+    }
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
@@ -598,7 +647,58 @@ async fn fts_fetch_rows(
         db_query = v.bind(db_query);
     }
 
-    db_query.fetch_all(pool).await.map_err(|e| {
+    // PEND-70 — acquire a read-pool connection via the slow-acquire
+    // logger so saturation under bursty typing surfaces in the log.
+    let mut conn = search_pool_acquire_logged(pool, "fts_fetch_rows")
+        .await
+        .map_err(AppError::Database)?;
+
+    // PEND-70 — measure the per-query wall time so pathological scans
+    // surface in the log. The timer starts after the pool acquire
+    // because the acquire wait is already logged by
+    // `search_pool_acquire_logged`.
+    let query_start = Instant::now();
+
+    // PEND-70 — race the SQL fetch against the cancellation signal so
+    // the in-flight Rust future drops cleanly when the client
+    // unsubscribed. Dropping the `fetch_all` future cancels the
+    // underlying SQLite statement at the next yield point — typical
+    // cancellation latency is one row-batch boundary (≤ 50 ms),
+    // worst-case is the SQLite step granularity (≤ 200 ms).
+    let fetch_future = db_query.fetch_all(&mut *conn);
+    let result = match cancel {
+        Some(mut token) => {
+            tokio::select! {
+                biased;
+                // Check cancel first each poll so a fast-fire from the
+                // palette's next keystroke wins the race against an
+                // already-ready SQL result.
+                () = token.cancelled() => {
+                    return Err(AppError::Cancelled);
+                }
+                res = fetch_future => res,
+            }
+        }
+        None => fetch_future.await,
+    };
+
+    let elapsed = query_start.elapsed();
+    if elapsed >= Duration::from_millis(u64::try_from(FTS_QUERY_WARN_MS).unwrap_or(u64::MAX)) {
+        tracing::warn!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            fetch_limit,
+            "slow FTS query"
+        );
+    } else if elapsed >= Duration::from_millis(u64::try_from(FTS_QUERY_INFO_MS).unwrap_or(u64::MAX))
+    {
+        tracing::info!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            fetch_limit,
+            "FTS query crossed info threshold"
+        );
+    }
+
+    result.map_err(|e| {
         // Map any SQLite error from the MATCH query to a validation error.
         // With query sanitization this should be rare, but acts as defense-in-depth.
         let msg = e.to_string();
@@ -692,6 +792,14 @@ pub(crate) struct FtsPartitionedScan {
 ///
 /// Empty / whitespace queries short-circuit to two empty partitions,
 /// mirroring [`search_fts`].
+///
+/// PEND-70 — `cancel` is an optional cancellation token threaded
+/// through both partition scans into [`fts_fetch_rows`]. The Tauri
+/// command wrapper (`search_blocks_partitioned`) stores a
+/// [`CancellationGuard`] in the [`crate::cancellation::CancellationRegistry`]
+/// and spawns the inner search via `tokio::spawn`; when the wrapper
+/// future drops, the guard fires and both scans bail on their next
+/// `tokio::select!` boundary.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_fts_partitioned(
     pool: &SqlitePool,
@@ -705,6 +813,7 @@ pub(crate) async fn search_fts_partitioned(
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
     with_snippet: bool,
+    cancel: Option<CancellationToken>,
 ) -> Result<FtsPartitionedScan, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -752,6 +861,10 @@ pub(crate) async fn search_fts_partitioned(
         Some("page"), // PEND-69 F1: page-only pre-filter at SQL
         metadata,
         with_snippet,
+        // PEND-70 — clone the cancel token so both partition scans
+        // observe the same signal. `CancellationToken: Clone` is a
+        // cheap watch::Receiver refcount bump.
+        cancel.clone(),
     );
     let blocks_future = fts_fetch_rows(
         pool,
@@ -768,6 +881,7 @@ pub(crate) async fn search_fts_partitioned(
         None, // unrestricted
         metadata,
         with_snippet,
+        cancel,
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 

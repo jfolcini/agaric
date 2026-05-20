@@ -133,6 +133,16 @@ pub enum AppError {
     #[error("Non-reversible operation: {op_type} cannot be undone")]
     NonReversible { op_type: String },
 
+    /// PEND-70 — in-flight Tauri command was cancelled because the
+    /// client dropped the response promise (e.g. the palette fired a
+    /// fresh search before the previous one completed). The frontend
+    /// already discriminates stale results via `generationRef`; this
+    /// variant lets it cleanly distinguish "user gave up / stale"
+    /// from "the query failed". Never logged as a warning — cancel
+    /// is the expected case, not an error.
+    #[error("Cancelled: request was aborted by the client")]
+    Cancelled,
+
     /// Google Calendar API HTTP-layer error (FEAT-5c).  See
     /// [`GcalErrorKind`] for the full taxonomy.  The `#[from]` impl
     /// lets `api.rs` bubble `Err(GcalErrorKind::…)` through `?`.
@@ -161,6 +171,7 @@ impl Serialize for AppError {
             AppError::Snapshot(_) => "snapshot",
             AppError::Validation(_) => "validation",
             AppError::NonReversible { .. } => "non_reversible",
+            AppError::Cancelled => "cancelled",
             AppError::Gcal(_) => "gcal",
         };
 
