@@ -1410,8 +1410,10 @@ export type PageResponse<T> = {
  *
  *  These are the server-derived sort modes the IPC exposes. The
  *  frontend may layer two additional sorts that don't go over the wire:
+ *
  *    - `recent` — per-device visit history (sourced from `getRecentPages()`).
  *    - `created` — ULID DESC (just `Default` reversed in JS).
+ *
  *  Both reuse the `Default` SQL ordering and re-sort the loaded page
  *  client-side.
  */

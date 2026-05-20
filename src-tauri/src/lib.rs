@@ -10,6 +10,7 @@ pub mod deeplink;
 pub mod device;
 pub mod draft;
 pub mod error;
+pub mod filters;
 pub mod fts;
 pub mod gcal_push;
 pub mod hash;

@@ -73,20 +73,22 @@ function serializeSort(value: SortOption): string {
 }
 
 /**
- * The IPC's `PageSort` enum (Rust side). Only the 4 server-derived
- * sorts round-trip; the 3 frontend-only sorts (`recent`, `created`,
- * `alphabetical`) all map to `'default'` on the wire because they're
- * re-sorted in JS over the server result set.
+ * The IPC's `PageSort` enum subset. Only the 3 server-derived sorts
+ * round-trip with non-default wire values; the 4 frontend-only sorts
+ * (`alphabetical`, `recent`, `created`, `default`) all map to
+ * `'default'` on the wire.
  *
- * `null` is the explicit "use the backend default" signal for the
- * wrapper, distinct from any string value.
+ * Round 2 maintainability HIGH — `alphabetical` USED to ride the wire
+ * on the (incorrect) claim that SQL ORDER BY matched the JS comparator.
+ * They diverge on non-ASCII titles: SQLite `COLLATE NOCASE` folds only
+ * ASCII A-Z (byte-wise compare of `lower()`-folded bytes), while V8's
+ * `localeCompare` puts `Ä` next to `A`. The two collations disagree on
+ * every non-ASCII title (German, Spanish, Nordic, emoji-prefixed), so
+ * cursor pagination boundaries would drift from display order. Paying
+ * one JS sort over the bounded page-of-50 is cheaper than letting two
+ * collations disagree on row order.
  */
-export type PageSortWire =
-  | 'alphabetical'
-  | 'recently-modified'
-  | 'most-linked'
-  | 'most-content'
-  | 'default'
+export type PageSortWire = 'recently-modified' | 'most-linked' | 'most-content' | 'default'
 
 export function pageSortWireFor(sort: SortOption): PageSortWire {
   switch (sort) {
@@ -94,11 +96,7 @@ export function pageSortWireFor(sort: SortOption): PageSortWire {
     case 'recent':
     case 'created':
     case 'default':
-      // `alphabetical` becomes a wire value because the SQL ORDER BY
-      // exactly matches the JS comparator — no double-sort cost. The
-      // other two frontend-only sorts pass through as `'default'` so
-      // the server returns ULID order and JS re-sorts.
-      return sort === 'alphabetical' ? 'alphabetical' : 'default'
+      return 'default'
     case 'recently-modified':
       return 'recently-modified'
     case 'most-linked':
