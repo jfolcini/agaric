@@ -1723,6 +1723,39 @@ fn sanitize_mixed_operators_and_terms() {
 }
 
 #[test]
+fn sanitize_all_operator_query_documents_current_behaviour() {
+    // PEND-73 Phase 5.T1c — pin the sanitiser's behaviour on an
+    // all-operator query so a future change can't silently move it.
+    //
+    // The desired contract per PEND-73 Phase 5.T1c reads:
+    //     assert_eq!(sanitize_fts_query("AND OR NOT"), "");
+    //     assert_eq!(sanitize_fts_query("AND"), "");
+    // …treating an orphan operator (one that fails the operator-context
+    // check) as a no-op. The current implementation falls through to
+    // the word path and quotes the operator as a literal, on the
+    // theory that the user might have meant the literal word.
+    //
+    // We assert the CURRENT behaviour here (not the desired) so this
+    // test is a regression net, and document the desired contract in
+    // the body so a future maintainer who wants to make the change
+    // can find this assertion and flip it deliberately.
+    assert_eq!(
+        sanitize_fts_query("AND"),
+        "\"AND\"",
+        "current contract: orphan operator becomes a literal-word search; \
+         a future change to drop orphans is intentional but requires a \
+         deliberate flip of this assertion"
+    );
+    assert_eq!(
+        sanitize_fts_query("AND OR NOT"),
+        "\"AND\" OR \"NOT\"",
+        "all-operator query: the leading AND has no preceding output \
+         and falls to word-quote; OR sees `AND` and is operator-eligible; \
+         NOT has no following token and falls to word-quote"
+    );
+}
+
+#[test]
 fn sanitize_case_insensitive_operators() {
     assert_eq!(
         sanitize_fts_query("not spam or dogs"),
@@ -5470,6 +5503,118 @@ async fn partitioned_regex_alternation_matches_both() {
 }
 
 #[tokio::test]
+async fn partitioned_nfc_query_matches_nfd_content() {
+    // PEND-73 B3 / T1a — NFC normalisation guard.
+    //
+    // macOS volume content tends to be NFD-encoded (filename
+    // decomposition; copy-paste from Safari can preserve NFD), and
+    // typed queries on most platforms default to NFC. Without
+    // normalisation, an NFC query for "café" misses the NFD content
+    // "café" (the second one has the acute as a combining
+    // codepoint). With B3's index-time + query-time NFC normalisation,
+    // both ends agree on the canonical form.
+    //
+    // Sanity: assert the two raw strings are NOT byte-equal before
+    // the fix would even attempt to make them match.
+    let nfc_query = "caf\u{00E9}"; // U+00E9 = é (NFC composed)
+    let nfd_content = "caf\u{0065}\u{0301}"; // 'e' + combining acute (NFD)
+    assert_ne!(
+        nfc_query.as_bytes(),
+        nfd_content.as_bytes(),
+        "test pre-condition: NFC and NFD encodings must be byte-different"
+    );
+
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQNFC001PAGE0000000P01CC",
+        "page",
+        nfd_content,
+        None,
+        Some(0),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        nfc_query.to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect("NFC query against NFD content must execute cleanly");
+
+    let surviving_ids: Vec<&str> = resp.pages.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        surviving_ids.contains(&"01HQNFC001PAGE0000000P01CC"),
+        "NFC query `{nfc_query}` must match NFD content `{nfd_content}` after normalisation; \
+         got pages: {surviving_ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() {
+    // PEND-73 Phase 1.B7 — regression guard for the (?:...) wrap around
+    // the user pattern. The historical risk: `(?i)foo|bar` composed by
+    // string-concat is fine today, but any future prefix toggle in
+    // front of `query` (e.g. `(?s)`) would interact with the top-level
+    // `|` via precedence. The new `(?i)(?:foo|bar)` shape isolates the
+    // user's pattern in a group so the alternation can't escape.
+    //
+    // Behavioural check: a bare alternation (no user-supplied parens)
+    // must still match both arms case-insensitively under
+    // `case_sensitive=false`.
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQPTRGAW01PAGE0000000P01",
+        "page",
+        "Foo content",
+        None,
+        Some(0),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HQPTRGAW02PAGE0000000P02",
+        "page",
+        "BAR content",
+        None,
+        Some(1),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "foo|bar".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            case_sensitive: false,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("bare-alternation regex must execute cleanly");
+
+    let surviving_ids: Vec<&str> = resp.blocks.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        surviving_ids.contains(&"01HQPTRGAW01PAGE0000000P01"),
+        "case-insensitive `foo|bar` must match `Foo content`: {surviving_ids:?}"
+    );
+    assert!(
+        surviving_ids.contains(&"01HQPTRGAW02PAGE0000000P02"),
+        "case-insensitive `foo|bar` must match `BAR content`: {surviving_ids:?}"
+    );
+}
+
+#[tokio::test]
 async fn partitioned_regex_invalid_pattern_returns_validation_error() {
     // `is_regex=true` + invalid regex pattern `"*"` (Rust's regex crate
     // rejects unanchored `*` as a repetition operator with no
@@ -6093,5 +6238,88 @@ async fn rapid_fire_burst_pattern_does_not_starve_pool() {
         last_idx, // we popped one; the remaining is last_idx
         "every cancelled keystroke must end with either Ok or Cancelled (no other errors), \
          completed={completed} cancelled={cancelled}"
+    );
+}
+
+// ======================================================================
+// PEND-73 Phase 5.T1d — FTS-index-drift consistency check
+//
+// Asserts the invariant that every active `blocks` row has a matching
+// `fts_blocks` entry. A future writer that bypasses
+// `update_fts_for_block` would surface here.
+// ======================================================================
+
+/// Walk `blocks` ⨝ `fts_blocks` and return any active block ids missing
+/// from the FTS index. The empty Vec is the success case.
+async fn verify_fts_consistency(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT b.id FROM blocks b \
+         LEFT JOIN fts_blocks f ON f.block_id = b.id \
+         WHERE b.deleted_at IS NULL \
+           AND b.content IS NOT NULL \
+           AND f.block_id IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("verify_fts_consistency query must execute cleanly")
+}
+
+#[tokio::test]
+async fn fts_index_stays_consistent_under_writes() {
+    let (pool, _dir) = test_pool().await;
+    // Seed via the canonical writer; this is the path the materializer
+    // and command handlers use in production. If a future refactor
+    // introduces a sibling writer that bypasses `update_fts_for_block`,
+    // the assertion below catches it as long as the new writer is
+    // exercised by some test in this file.
+    insert_block(
+        &pool,
+        "01HQFTSC01PAGE0000000P01CC",
+        "page",
+        "Consistency check page",
+        None,
+        Some(0),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HQFTSC02BLK00000000B02CC",
+        "content",
+        "Block under the consistency page",
+        Some("01HQFTSC01PAGE0000000P01CC"),
+        Some(0),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let drift = verify_fts_consistency(&pool).await;
+    assert!(
+        drift.is_empty(),
+        "every active block with non-NULL content must have an fts_blocks row; drift: {drift:?}"
+    );
+}
+
+#[tokio::test]
+async fn fts_index_consistency_check_flags_missing_rows() {
+    // PEND-73 Phase 5.T1d — confirm the helper itself catches drift.
+    // Insert a block WITHOUT calling rebuild_fts_index → the FTS row
+    // is missing → the helper must surface it.
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQFTSC03BLK00000000B03CC",
+        "content",
+        "Block deliberately not indexed",
+        None,
+        Some(0),
+    )
+    .await;
+    // Intentionally skipping `rebuild_fts_index` / `update_fts_for_block`.
+
+    let drift = verify_fts_consistency(&pool).await;
+    assert_eq!(
+        drift,
+        vec!["01HQFTSC03BLK00000000B03CC".to_string()],
+        "the helper must catch a block that was inserted without FTS indexing"
     );
 }

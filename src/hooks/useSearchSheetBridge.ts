@@ -27,7 +27,7 @@
  * walk; the selector form gates on `state.query` and dedupes.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { useInPageFindStore } from '../stores/useInPageFindStore'
 import { type SearchSheetMode, useSearchSheetStore } from '../stores/useSearchSheetStore'
@@ -86,6 +86,18 @@ function bridgeForMode(mode: SearchSheetMode): BridgeStore {
  * Returns nothing — pure side effects.
  */
 export function useSearchSheetBridge(open: boolean, mode: SearchSheetMode): void {
+  // PEND-73 Phase 4.R2 — track the most recent value the bridge wrote
+  // INTO the segment store. The subscription listener below mirrors
+  // segment → sheet on every observed change; without this ref, our
+  // own bridge.setQuery(seed) call below would echo back through the
+  // subscription, hit the `q !== sheet.query` guard at the time the
+  // sheet's query was still the pre-write value, and re-write the
+  // sheet store with the same query. The current store shape no-ops
+  // an identical write so it doesn't ping-pong today, but a future
+  // store (e.g. the find-in-page matcher writing intermediate
+  // post-anchor-normalised queries) could trip a real loop. The ref
+  // makes the guard structural rather than incidental.
+  const lastWroteRef = useRef<string | null>(null)
   useEffect(() => {
     if (!open) return
     const bridge = bridgeForMode(mode)
@@ -95,17 +107,29 @@ export function useSearchSheetBridge(open: boolean, mode: SearchSheetMode): void
     // Only seed from the bridge when WE opened the store. Overwriting
     // a pre-existing session's query would be a destructive
     // side-effect that originated from a totally different surface.
-    if (openedByUs && seed.length > 0) bridge.setQuery(seed)
+    if (openedByUs && seed.length > 0) {
+      lastWroteRef.current = seed
+      bridge.setQuery(seed)
+    }
     // Mirror the segment's query → the sheet store as the user types.
     // Selector-form subscribe so the listener only fires on query
-    // changes (not every matcher chunk).
+    // changes (not every matcher chunk). The `lastWroteRef` check
+    // suppresses the echo of our own seed write so we don't ping-pong
+    // through a future writer that observes intermediate states.
     const unsub = bridge.subscribeQuery((q) => {
+      if (q === lastWroteRef.current) {
+        // The next bridge update may be from a real user keystroke;
+        // clear the ref so we stop suppressing.
+        lastWroteRef.current = null
+        return
+      }
       if (q !== useSearchSheetStore.getState().query) {
         useSearchSheetStore.setState({ query: q })
       }
     })
     return () => {
       unsub()
+      lastWroteRef.current = null
       if (openedByUs) bridge.close()
     }
   }, [open, mode])

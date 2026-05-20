@@ -22,6 +22,14 @@ use crate::error::AppError;
 /// preview count matches what the backend actually queries.
 pub const EXPANSION_CAP: usize = 64;
 
+/// Maximum length (in bytes) of a single trimmed sub-entry. Defends
+/// against the frontend (or a hand-rolled IPC caller) shipping a
+/// many-megabyte pattern that SQLite would then bind verbatim. The
+/// cap is intentionally generous — real glob entries are short — and
+/// is enforced AFTER the comma split + trim so individual sub-entries
+/// inside a comma-separated list are each measured.
+pub const MAX_GLOB_LEN: usize = 1024;
+
 /// Parse a list of raw glob entries into the final SQL pattern list.
 ///
 /// Each entry is:
@@ -42,6 +50,12 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 continue;
+            }
+            if trimmed.len() > MAX_GLOB_LEN {
+                return Err(AppError::Validation(format!(
+                    "InvalidGlob: pattern length {} exceeds cap {MAX_GLOB_LEN}",
+                    trimmed.len()
+                )));
             }
             validate(trimmed)?;
             let mut expanded = expand_braces(trimmed)?;
@@ -295,6 +309,23 @@ mod tests {
     fn whitespace_only_entries_dropped() {
         let out = prepare_globs(&["  ,  ".to_string()]).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn over_length_pattern_rejected() {
+        let big = "a".repeat(MAX_GLOB_LEN + 1);
+        let err = prepare_globs(&[big]).unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("pattern length"), "got {msg}");
+        assert!(msg.contains(&MAX_GLOB_LEN.to_string()), "got {msg}");
+    }
+
+    #[test]
+    fn at_length_pattern_accepted() {
+        // Boundary: exactly MAX_GLOB_LEN bytes is fine.
+        let at = "a".repeat(MAX_GLOB_LEN);
+        let out = prepare_globs(&[at]).unwrap();
+        assert_eq!(out.len(), 1);
     }
 
     #[test]

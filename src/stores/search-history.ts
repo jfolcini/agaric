@@ -71,6 +71,12 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
       name: 'agaric:search-history',
       version: 1,
       partialize: (state) => ({ bySpace: state.bySpace }),
+      // PEND-73 Phase 4.R1 — no-op migrate placeholder. Locks the
+      // contract: a future `version: 2` bump MUST replace this with
+      // a real migration. Without the placeholder, zustand's persist
+      // middleware silently wipes the persisted state on a version
+      // mismatch and the user loses their MRU history.
+      migrate: (persisted, _version) => persisted as Pick<SearchHistoryState, 'bySpace'>,
     },
   ),
 )

@@ -39,8 +39,9 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useShallow } from 'zustand/react/shallow'
 import { type PaletteAction, PaletteActionMenu } from '@/components/palette/PaletteActionMenu'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import {
@@ -54,7 +55,10 @@ import {
 } from '@/components/ui/command'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useFailedOnce } from '@/hooks/useFailedOnce'
+import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { isCancellation } from '@/lib/app-error'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
@@ -171,8 +175,22 @@ function routePrefixToMode(query: string): { next: PaletteMode; q: string } | nu
  * it falls back to `document.execCommand('insertText')` — the same
  * approach used by SlashCommand insertion in `slash-commands.ts` and
  * preserved here so undo/redo stacks stay intact.
+ *
+ * PEND-73 Phase 3.U8 — when the palette opened, the store snapshotted
+ * the live selection range BEFORE focus moved into the palette input.
+ * For contenteditable surfaces, restoring that range before
+ * `execCommand('insertText')` plants the `[[Page Title]]` at the
+ * user's original caret position even if the surrounding focus
+ * transition collapsed the selection. For native `<input>` /
+ * `<textarea>`, the snapshot is not the right primitive (those
+ * elements expose `selectionStart` / `selectionEnd` directly), so
+ * the snapshot is intentionally ignored on that branch.
  */
-function insertPageLinkInto(target: HTMLElement | null, pageTitle: string): boolean {
+function insertPageLinkInto(
+  target: HTMLElement | null,
+  pageTitle: string,
+  snapshotRange: Range | null,
+): boolean {
   if (target == null || !document.body.contains(target)) return false
   const text = `[[${pageTitle}]]`
   target.focus()
@@ -190,6 +208,31 @@ function insertPageLinkInto(target: HTMLElement | null, pageTitle: string): bool
   }
 
   if (target.isContentEditable) {
+    // PEND-73 Phase 3.U8 — restore the snapshotted caret position
+    // before delegating to execCommand. The snapshot is only valid
+    // if its container is still in the live DOM (the user may have
+    // edited the document while the palette was open).
+    if (snapshotRange != null) {
+      try {
+        const container = snapshotRange.startContainer
+        if (
+          container.nodeType === Node.TEXT_NODE
+            ? container.parentElement != null && document.body.contains(container.parentElement)
+            : container instanceof Element && document.body.contains(container)
+        ) {
+          const sel = document.getSelection()
+          sel?.removeAllRanges()
+          sel?.addRange(snapshotRange)
+        }
+      } catch (err) {
+        // Restoring the range can throw if the DOM has shifted under
+        // us (e.g. a block was deleted while the palette was open).
+        // Fall through to the unguarded execCommand path; worst case
+        // is the insertion lands at the editor's current caret,
+        // matching pre-U8 behaviour.
+        logger.warn('CommandPalette', 'snapshot range restoration failed', { pageTitle }, err)
+      }
+    }
     try {
       document.execCommand('insertText', false, text)
       return true
@@ -323,13 +366,38 @@ export function PaletteBody({
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const openInNewTab = useTabsStore((s) => s.openInNewTab)
 
-  const query = useCommandPaletteStore((s) => s.query)
-  const setQueryStore = useCommandPaletteStore((s) => s.setQuery)
-  const mode = useCommandPaletteStore((s) => s.mode)
-  const setMode = useCommandPaletteStore((s) => s.setMode)
-  const enterModeWithQuery = useCommandPaletteStore((s) => s.enterModeWithQuery)
-  const setPendingViewQuery = useCommandPaletteStore((s) => s.setPendingViewQuery)
-  const previousFocusedElement = useCommandPaletteStore((s) => s.previousFocusedElement)
+  // PEND-73 Phase 4.M6 — collapse the 8 individual store selectors into
+  // one `useShallow` selector. Matches the SearchSheet.tsx:44 pattern.
+  // Each individual selector subscribed the component to ANY store
+  // change and re-ran the equality check 8 times per commit; the
+  // shallow-compared object lets zustand bail out at the top of the
+  // selector when none of the watched fields changed.
+  //
+  // PEND-73 Phase 3.U8 — `previousSelectionRange` snapshotted at palette
+  // open time; restored before `execCommand('insertText')` on
+  // contenteditable targets so `[[page]]` insertion lands at the user's
+  // original caret.
+  const {
+    query,
+    setQuery: setQueryStore,
+    mode,
+    setMode,
+    enterModeWithQuery,
+    setPendingViewQuery,
+    previousFocusedElement,
+    previousSelectionRange,
+  } = useCommandPaletteStore(
+    useShallow((s) => ({
+      query: s.query,
+      setQuery: s.setQuery,
+      mode: s.mode,
+      setMode: s.setMode,
+      enterModeWithQuery: s.enterModeWithQuery,
+      setPendingViewQuery: s.setPendingViewQuery,
+      previousFocusedElement: s.previousFocusedElement,
+      previousSelectionRange: s.previousSelectionRange,
+    })),
+  )
 
   // ── Mode router (one-way, prefix-as-entry-shortcut) ─────────────
   // PEND-61 CR — typing `>` at the start of an empty/whitespace
@@ -357,9 +425,11 @@ export function PaletteBody({
     if (route != null) enterModeWithQuery(route.next, route.q)
   }, [query, mode, enterModeWithQuery])
 
-  // Auto-focus on mount. cmdk's `<CommandInput>` is a controlled
-  // primitive but doesn't auto-focus by default in our shell.
-  useEffect(() => {
+  // PEND-73 Phase 3.U4 — autofocus before paint via useLayoutEffect.
+  // useEffect runs after paint, leaving a one-frame flash on slow
+  // mounts where the user sees the unfocused input and then watches
+  // the caret jump in. Matches the InPageFind.tsx:155 pattern.
+  useLayoutEffect(() => {
     inputRef.current?.focus()
   }, [])
 
@@ -415,11 +485,13 @@ export function PaletteBody({
     setDebouncedQuery(trimmed.length === 0 || isCommandsModeInput(trimmed) ? '' : trimmed)
   }, [query])
 
-  // Stale-response generation counter — mirrors `usePaginatedQuery` /
-  // PEND-51's same guard. Re-bumped on every keystroke; an in-flight
-  // response from an earlier keystroke is dropped if its generation
-  // doesn't match.
-  const generationRef = useRef(0)
+  // PEND-73 Phase 4.M3 — race-discard via the shared `useGenerationGuard`
+  // hook. Re-bumped on every keystroke; an in-flight response from an
+  // earlier keystroke is dropped if its id doesn't match.
+  const searchGen = useGenerationGuard()
+  // PEND-73 Phase 3.U1 — surface real IPC failures (non-cancellation)
+  // once per session via a toast. Logger still captures every failure.
+  const surfaceFailureOnce = useFailedOnce()
   const [pages, setPages] = useState<SearchBlockRow[]>([])
   const [blocks, setBlocks] = useState<SearchBlockRow[]>([])
   // PEND-61 CR — `loading` gates the escalation footer + the
@@ -454,8 +526,7 @@ export function PaletteBody({
       setBlocks([])
       return
     }
-    generationRef.current += 1
-    const gen = generationRef.current
+    const gen = searchGen.next()
     setLoading(true)
 
     const spaceId = currentSpaceId ?? ''
@@ -472,24 +543,42 @@ export function PaletteBody({
 
     fetchPromise
       .then(({ pages: p, blocks: b }) => {
-        if (gen !== generationRef.current) return
+        if (!searchGen.isCurrent(gen)) return
         setPages(p.items)
         setBlocks(b.items)
         setLoading(false)
       })
       .catch((err) => {
-        if (gen !== generationRef.current) return
+        if (!searchGen.isCurrent(gen)) return
+        // PEND-73 Phase 2 — swallow PEND-70 backend cancellations
+        // silently. They fire on every superseded keystroke when a fast
+        // typist races the read pool, and the stale-generation guard
+        // above already discards the (non-existent) result. Toasting on
+        // every cancelled IPC would spam the user with what is the
+        // expected case, not an error.
+        if (isCancellation(err)) return
         logger.warn(
           'CommandPalette',
           'search query failed',
           { query: effectiveQuery, linkMode },
           err,
         )
+        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        surfaceFailureOnce('palette:search', () => notify.error(t('search.failed')))
         setPages([])
         setBlocks([])
         setLoading(false)
       })
-  }, [effectiveQuery, linkMode, mode, spaceIsReady, currentSpaceId])
+  }, [
+    effectiveQuery,
+    linkMode,
+    mode,
+    spaceIsReady,
+    currentSpaceId,
+    searchGen,
+    surfaceFailureOnce,
+    t,
+  ])
 
   // Merge → group → blended FTS+fuzzy ranking → cap.
   const groups = useMemo(
@@ -505,7 +594,7 @@ export function PaletteBody({
 
   function handleNavigateToPage(pageId: string, pageTitle: string, newTab: boolean): void {
     if (linkMode) {
-      const ok = insertPageLinkInto(previousFocusedElement, pageTitle)
+      const ok = insertPageLinkInto(previousFocusedElement, pageTitle, previousSelectionRange)
       if (ok) {
         onClose()
         return
@@ -1509,7 +1598,10 @@ function TagsModeBody({
   const [tags, setTags] = useState<SearchBlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const generationRef = useRef(0)
+  // PEND-73 Phase 4.M3 — shared race-discard hook.
+  const tagsGen = useGenerationGuard()
+  // PEND-73 Phase 3.U1 — once-per-session failure surface.
+  const surfaceTagsFailureOnce = useFailedOnce()
   const debounced = useDebouncedCallback((value: string) => {
     setDebouncedQuery(value)
   }, PALETTE_DEBOUNCE_MS)
@@ -1521,8 +1613,7 @@ function TagsModeBody({
 
   useEffect(() => {
     if (!spaceIsReady) return
-    generationRef.current += 1
-    const gen = generationRef.current
+    const gen = tagsGen.next()
     setLoading(true)
     searchBlocks({
       query: debouncedQuery,
@@ -1531,17 +1622,21 @@ function TagsModeBody({
       spaceId: currentSpaceId ?? '',
     })
       .then((resp) => {
-        if (gen !== generationRef.current) return
+        if (!tagsGen.isCurrent(gen)) return
         setTags(resp.items)
         setLoading(false)
       })
       .catch((err) => {
-        if (gen !== generationRef.current) return
+        if (!tagsGen.isCurrent(gen)) return
+        // PEND-73 Phase 2 — see sibling catch site rationale.
+        if (isCancellation(err)) return
         logger.warn('CommandPalette', 'tags search failed', { query: debouncedQuery }, err)
+        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        surfaceTagsFailureOnce('palette:tags', () => notify.error(t('search.failed')))
         setTags([])
         setLoading(false)
       })
-  }, [debouncedQuery, currentSpaceId, spaceIsReady])
+  }, [debouncedQuery, currentSpaceId, spaceIsReady, tagsGen, surfaceTagsFailureOnce, t])
 
   if (!loading && tags.length === 0) {
     return (

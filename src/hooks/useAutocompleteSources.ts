@@ -12,8 +12,13 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 
+import { useTranslation } from 'react-i18next'
 import type { AutocompleteItem } from '@/components/search/AutocompletePopover'
+import { useFailedOnce } from '@/hooks/useFailedOnce'
+import { useGenerationGuard } from '@/hooks/useGenerationGuard'
+import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
 import { getPathHistory } from '@/lib/path-history'
 import {
   ensurePropertyKeysInvalidationListener,
@@ -76,11 +81,15 @@ export function useAutocompleteSources(
   const getPropKeysSnapshot = useCallback(() => getCachedPropertyKeys(spaceKey), [spaceKey])
   const propKeys = useSyncExternalStore(subscribeToPropertyKeysCache, getPropKeysSnapshot)
 
-  // Request-id discard pattern: each new tag request bumps the id, and
-  // stale resolutions check it before writing state. The id also bumps
-  // when we leave the `tag` anchor entirely so an in-flight resolution
-  // can't strand stale items for a later return-to-tag.
-  const tagRequestIdRef = useRef(0)
+  // PEND-73 Phase 4.M3 — shared race-discard hook. The guard bumps on
+  // every tag-anchor activation AND on every keystroke while active;
+  // stale resolutions check it before writing state. Leaving the
+  // `tag` anchor entirely also bumps the guard so an in-flight
+  // resolution can't strand stale items for a later return-to-tag.
+  const tagGen = useGenerationGuard()
+  // PEND-73 Phase 3.U1 — once-per-session failure surface.
+  const surfaceFailureOnce = useFailedOnce()
+  const { t } = useTranslation()
   const tagDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const active = anchor?.active ?? null
@@ -96,9 +105,9 @@ export function useAutocompleteSources(
   // ── Tag IPC (debounced, stale-while-loading) ──────────────────────
   useEffect(() => {
     if (active !== 'tag') {
-      // Bump the request id so any in-flight tag promise that resolves
+      // Bump the guard so any in-flight tag promise that resolves
       // later can't strand stale items for a future return-to-tag.
-      tagRequestIdRef.current++
+      tagGen.next()
       if (tagDebounceTimerRef.current) {
         clearTimeout(tagDebounceTimerRef.current)
         tagDebounceTimerRef.current = null
@@ -108,19 +117,23 @@ export function useAutocompleteSources(
     }
 
     if (tagDebounceTimerRef.current) clearTimeout(tagDebounceTimerRef.current)
-    const requestId = ++tagRequestIdRef.current
+    const requestId = tagGen.next()
     setTagLoading(true)
     tagDebounceTimerRef.current = setTimeout(() => {
       tagDebounceTimerRef.current = null
       listTagsByPrefix({ prefix: query, limit: paginationLimit(TAG_LIMIT) })
         .then((rows) => {
-          if (tagRequestIdRef.current !== requestId) return
+          if (!tagGen.isCurrent(requestId)) return
           setTagItems(rows.map((row) => ({ value: row.name })))
           setTagLoading(false)
         })
         .catch((err: unknown) => {
-          if (tagRequestIdRef.current !== requestId) return
+          if (!tagGen.isCurrent(requestId)) return
+          // PEND-73 Phase 2 — see CommandPalette.tsx for the cancellation rationale.
+          if (isCancellation(err)) return
           logger.warn('useAutocompleteSources', 'listTagsByPrefix failed', { prefix: query }, err)
+          // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+          surfaceFailureOnce('autocomplete:tags', () => notify.error(t('search.failed')))
           setTagLoading(false)
         })
     }, TAG_DEBOUNCE_MS)
@@ -131,7 +144,7 @@ export function useAutocompleteSources(
         tagDebounceTimerRef.current = null
       }
     }
-  }, [active, query])
+  }, [active, query, tagGen, surfaceFailureOnce, t])
 
   if (anchor == null) {
     return { items: [], loading: false }

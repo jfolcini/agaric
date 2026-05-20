@@ -22,13 +22,14 @@
  * `./SearchPanel/`:
  *  - `SearchHeader.tsx` owns the input form + activity indicators.
  *  - `SearchFilters.tsx` owns the filter chip bar + popovers.
- *  - `SearchResultList.tsx` owns the listbox of result rows.
  *  - `SearchStatusRegion.tsx` owns the aria-live status announcer.
+ *  - The result listbox now lives in `./search/SearchResultGroups.tsx`
+ *    (PEND-73 Phase 4.M4 removed the stub `SearchResultList.tsx`).
  */
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
@@ -43,7 +44,6 @@ import {
   parse,
   removeFilterAt,
   serialize,
-  tokenKey,
 } from '@/lib/search-query'
 import {
   type AutocompleteAnchor,
@@ -87,6 +87,18 @@ import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRo
 
 /** localStorage key for the PEND-54 one-time migration toast. */
 const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
+
+/**
+ * PEND-73 Phase 3.U10 — session-scoped sentinel for the PEND-54 toast.
+ * Lives outside React state so a SearchPanel remount within the same
+ * page session re-reads the existing `true` without re-toasting. The
+ * localStorage write below remains the cross-session persistence
+ * mechanism; this module-level flag is purely the in-memory guard
+ * against the "localStorage write fails, get fails next mount" loop
+ * that historically re-fired the toast on every remount in private-
+ * mode browsers.
+ */
+let filterSyntaxToastShownThisSession = false
 
 /** PEND-55 — localStorage key for the toggle state (component-local but
  * persisted across reloads so power users don't re-click on every
@@ -321,13 +333,27 @@ export function SearchPanel(): React.ReactElement {
 
   // PEND-54 — one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
+  //
+  // PEND-73 Phase 3.U10 — guard against re-firing in browsers where
+  // localStorage is unavailable (private mode, embedded webviews with
+  // storage disabled). The earlier shape silently caught the write
+  // failure but ALSO failed the read, so the toast re-fired on every
+  // mount. The in-memory sentinel below is checked first; the
+  // localStorage write is best-effort and only matters for cross-
+  // session persistence.
   useEffect(() => {
+    if (filterSyntaxToastShownThisSession) return
+    filterSyntaxToastShownThisSession = true
     try {
       if (localStorage.getItem(FILTER_SYNTAX_INTRO_TOAST_FLAG)) return
       notify(t('search.filterSyntaxIntro'))
       localStorage.setItem(FILTER_SYNTAX_INTRO_TOAST_FLAG, '1')
     } catch {
-      // localStorage may be unavailable in tests / private mode.
+      // localStorage unavailable; the session-scoped flag above is
+      // what actually gates re-fires within this session, and the
+      // toast was shown once on the first mount where this branch
+      // ran — that's the best we can do without storage.
+      notify(t('search.filterSyntaxIntro'))
     }
   }, [t])
 
@@ -422,6 +448,22 @@ export function SearchPanel(): React.ReactElement {
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
+            // PEND-73 Phase 4.P2 — stabilise Map identity so the
+            // `groupResultsByPage` memo doesn't invalidate on every
+            // batchResolve fetch. Walk the resolved array; only
+            // allocate a new Map if at least one (id → title) pair
+            // changed vs. what we already had. Common case (results
+            // refetch with the same parent ids) returns `prev` and
+            // the downstream useMemo skips its expensive group/rank.
+            let changed = false
+            for (const r of resolved) {
+              const nextTitle = r.title ?? 'Untitled'
+              if (prev.get(r.id) !== nextTitle) {
+                changed = true
+                break
+              }
+            }
+            if (!changed) return prev
             const next = new Map(prev)
             for (const r of resolved) {
               next.set(r.id, r.title ?? 'Untitled')
@@ -476,10 +518,13 @@ export function SearchPanel(): React.ReactElement {
     debounced.schedule(value)
   }
 
-  // Auto-focus search input on mount
+  // Auto-focus search input on mount.
+  // PEND-73 Phase 3.U4 — useLayoutEffect to focus before paint, matching
+  // CommandPalette + InPageFind. Avoids the one-frame unfocused flash on
+  // slow mounts (e.g. cold tab activation on low-end devices).
   const searchInputRef = useRef<HTMLInputElement>(null)
   useRegisterPrimaryFocus(searchInputRef)
-  useEffect(() => {
+  useLayoutEffect(() => {
     searchInputRef.current?.focus()
   }, [])
 
@@ -488,6 +533,11 @@ export function SearchPanel(): React.ReactElement {
   const pushHistory = useSearchHistoryStore((s) => s.push)
   const clearHistory = useSearchHistoryStore((s) => s.clear)
   const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
+  // PEND-73 Phase 3.U2 — stable id for the history listbox so the
+  // owning input can wire `aria-controls` and `aria-activedescendant`.
+  // React.useId() returns a per-instance stable string; safe across
+  // SSR + multiple mounts.
+  const historyListboxId = useId()
 
   // PEND-60 Phase 1 — caret-anchored autocomplete.
   // The active anchor is suppressed in regex mode so structured-filter
@@ -510,13 +560,21 @@ export function SearchPanel(): React.ReactElement {
   // once the popover has reported its live cmdk-generated ids (axe
   // requires `aria-controls` whenever expanded=true on a combobox, and
   // those ids land one effect-tick after `autocompleteOpen` toggles).
+  //
+  // PEND-73 Phase 3.U2 — when the autocomplete is NOT open and the
+  // history dropdown IS (input empty + focused + entries exist), wire
+  // the combobox attrs to the history listbox so screen readers can
+  // announce the active row as the user arrows through history.
+  // Autocomplete + history are mutually exclusive by visibility gate
+  // (history wants empty query; autocomplete wants caret content).
   const expanded = autocompleteOpen && autocompleteAriaIds != null
+  const historyVisible = inputFocused && query.length === 0 && historyEntries.length > 0
   const inputComboboxAttrs = useMemo(
     () => ({
       role: 'combobox' as const,
       'aria-autocomplete': 'list' as const,
       'aria-haspopup': 'listbox' as const,
-      'aria-expanded': expanded,
+      'aria-expanded': expanded || historyVisible,
       ...(expanded && autocompleteAriaIds != null
         ? {
             'aria-controls': autocompleteAriaIds.listboxId,
@@ -524,9 +582,18 @@ export function SearchPanel(): React.ReactElement {
               ? { 'aria-activedescendant': autocompleteAriaIds.activeDescendantId }
               : {}),
           }
-        : {}),
+        : historyVisible
+          ? {
+              'aria-controls': historyListboxId,
+              ...(cycling.activeIndex >= 0
+                ? {
+                    'aria-activedescendant': `${historyListboxId}-opt-${cycling.activeIndex}`,
+                  }
+                : {}),
+            }
+          : {}),
     }),
-    [expanded, autocompleteAriaIds],
+    [expanded, autocompleteAriaIds, historyVisible, historyListboxId, cycling.activeIndex],
   )
   // Dismissal is cleared on every keystroke — typing again re-opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a body-read dep — re-arm on every new keystroke.
@@ -821,8 +888,6 @@ export function SearchPanel(): React.ReactElement {
     const token: FilterToken = { kind: 'pathExclude', value: glob, span: [0, 0] }
     patchQuery((a) => addFilter(a, token))
   }
-  // Stable key — used by callers that want the same chip-key strategy.
-  void tokenKey
 
   // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
   // we never fire a `searchBlocks` call with an unresolved `spaceId`.
@@ -848,12 +913,10 @@ export function SearchPanel(): React.ReactElement {
         t={t}
         onInputKeyDown={handleInputKeyDown}
         onInputFocus={() => setInputFocused(true)}
-        onInputBlur={() => {
-          // Defer blur so a click on a history row registers before the
-          // dropdown unmounts. 150ms matches Radix-popover's standard
-          // outside-click grace window.
-          window.setTimeout(() => setInputFocused(false), 150)
-        }}
+        // PEND-73 Phase 3.U5 — synchronous blur. The history dropdown's
+        // rows preventDefault on mousedown, which keeps the input
+        // focused through the click; no defer needed.
+        onInputBlur={() => setInputFocused(false)}
         invalid={!!regexError}
         inlineError={regexError}
         comboboxAttrs={inputComboboxAttrs}
@@ -864,6 +927,8 @@ export function SearchPanel(): React.ReactElement {
             visible={inputFocused && query.length === 0 && historyEntries.length > 0}
             onPick={handlePickHistory}
             onClear={handleClearHistory}
+            listboxId={historyListboxId}
+            activeIndex={cycling.activeIndex}
           />
         }
       />

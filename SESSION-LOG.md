@@ -2,10 +2,496 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 788 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 800 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1215+ REVIEW-LATER items across 788 sessions.
+- **Previously-resolved counter:** 1245+ REVIEW-LATER items across 800 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 800 — PEND-73 deferred cycle 7+8: U9 + B8 final defers (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (doc-only) |
+| **Items closed** | — |
+| **Items modified** | PEND-73 U9 + B8 marked FINAL DEFER with rationale |
+| **Tests added** | 0 |
+| **Files touched** | 2 |
+
+**Summary:** Closing out the PEND-73 deferred-items sweep. Both remaining items have explicit "defer if cost exceeds N" escape hatches in the original plan's open questions; neither has surfaced a real user-facing problem since the original 2026-05-19 audit.
+
+- **U9 (mode-memory consolidation)** — Plan's open question 3 says "if Phase 3.U9 grows beyond ~2 h, defer". Actual scope is ~4-5 h: sheet store needs a `paletteQueryByMode: Record<PaletteMode, string>` field, bridge needs bi-directional mirror, palette store needs a `setQueryByModeFromSheet(map)` method, plus tests for every cross-store flow. The bridge already mirrors the VISIBLE query (palette current mode ↔ sheet) via `useSearchSheetBridge`; only per-mode palette memory BEYOND the current mode is lost on a sheet round-trip. Marginal UX win vs invasive cross-store coupling. Revisit only if a user reports friction.
+- **B8 (COUNT(DISTINCT) → EXISTS)** — Plan's "measured, no-op" escape. Total cost ~6 h: build a runnable 10k-block bench harness, implement the dynamic per-tag EXISTS rewrite across two call sites, measure both shapes, decide. The win is data-shape-dependent (scales with the number of AND'd tags, the cardinality of `block_tags` per block, and the read pool's cache state) and may not exceed the 5% threshold the plan names. Both call sites are READ-only and not user-visibly slow today. Revisit only when a real user-facing slowdown surfaces.
+
+**PEND-73 final tally (sessions 789-800):**
+- Phase 1 — Backend hygiene: 4/5 shipped (B2 / B5 / B6 / B7; B8 final defer)
+- Phase 2 — Cancellation end-to-end: 2/2 shipped (R3 in 790; R4 as library shape in 798)
+- Phase 3 — UX punch list: 9/10 shipped (U1 + U3 + U4 + U5 + U6 + U7 + U8 + U10 + U2; U9 final defer)
+- Phase 4 — Maintenance + perf: 8/9 shipped (M3 + M4 + M5 + M6 + R1 + R2 + P1 + P2; M7 kept after investigation)
+- Phase 5 — Test gaps: 4/5 shipped (T1b + T1c + T1d + T2; T1a shipped alongside B3 in 795)
+- **Aggregate: 27/31 shipped, 1 kept after investigation, 2 final defers (B8 + U9), 1 paired-shipped (T1a + B3 together).** No remaining "scoped but not yet attempted" items.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 2 → 0. The plan file stays in place as a historical/rationale record; no further action is scoped without a user-visible trigger.
+- **Previously resolved:** 1245+ → 1245+ (doc-only).
+
+**Files touched (this session):**
+- `pending/PEND-73-search-audit-followups.md` (U9 + B8 rows updated with FINAL DEFER rationale)
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 799 — PEND-73 deferred cycle 6: M6 useShallow palette selectors (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M6 (useShallow palette selectors) |
+| **Tests added** | 0 (refactor; behaviour unchanged) |
+| **Files touched** | 2 |
+
+**Summary:** Collapsed the 8 individual `useCommandPaletteStore((s) => s.*)` calls in `PaletteBody` (query / setQuery / mode / setMode / enterModeWithQuery / setPendingViewQuery / previousFocusedElement / previousSelectionRange) into a single `useCommandPaletteStore(useShallow((s) => ({ … })))` selector. Matches the `SearchSheet.tsx:44` pattern that already used `useShallow` from `zustand/react/shallow`.
+
+Render-cost story. Each individual selector subscribed PaletteBody to ANY store change and ran an equality check 8 times per commit. The shallow-compared object lets zustand bail at the top of the selector when none of the watched fields changed — same render, one comparison instead of eight. Not a hot-path bottleneck (the palette commits are user-keystroke-driven, not animation-frame-driven), but a maintenance win: adding a 9th field is one diff line instead of two.
+
+The 2 selectors in the outer wrapper component (`open`, `closeStore`) are intentionally left as separate calls — too few to benefit from bundling, and grouping them with the inner-component selectors would cross the wrapper/body seam.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 3 → 2 (M6 shipped).
+- **Previously resolved:** 1244+ → 1245+ across 798 → 799 sessions.
+
+**Files touched (this session):**
+- `src/components/CommandPalette.tsx` (+24 / −9; useShallow import + collapsed selector)
+- `pending/PEND-73-search-audit-followups.md` (M6 row updated)
+
+**Verification:**
+- `npx vitest run` — 10312 / 10312 pass (unchanged; refactor).
+- `npx tsc -b --noEmit` — clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 798 — PEND-73 deferred cycle 5: R4 AbortController plumbing (library shape) (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 R4 (AbortController plumbing — library shape) |
+| **Tests added** | +7 frontend (`cancelledError` + `withAbort` resolve/reject/already-aborted/mid-flight/undefined-signal/predicate matrix) |
+| **Files touched** | 3 |
+
+**Summary:** Shipped R4 as a library shape rather than a forced consumer migration. The rejected value from `withAbort` flows through `isCancellation()` cleanly because both use the same `{ kind: 'cancelled', message }` wire shape the backend emits.
+
+- **`cancelledError(reason)`** — Returns the same `AppError` shape `AppError::Cancelled` serialises to. Lets the new client-side abort path discriminate via the same predicate that the server-side path uses.
+- **`withAbort(promise, signal?)`** — Promise.race-style wrapper that rejects with a cancelled-kind error when the signal fires. Handles three input shapes: undefined signal (passthrough), already-aborted signal (short-circuit reject), and mid-flight abort (listener fires onAbort, drops underlying promise's eventual resolution on the floor). Cleans up its own listener on settle to avoid leaking subscribers.
+
+**Why existing consumers weren't migrated.** Tauri 2's `invoke()` doesn't honour `AbortSignal` server-side — the IPC stays open until the Rust future resolves regardless of what the JS side does. So `withAbort` is a client-side stop-waiting primitive, not an end-to-end cancellation primitive. The user-visible win (no toast on cancellation) was already paid by Phase 2's `isCancellation` swallow. The structural win (drop generation guards) is a wash because `useGenerationGuard` already gives consumers the discard semantics. Migrating the orchestrators is not justified by either alone — wait until orchestrator decomposition lands.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 4 → 3 (R4 shipped-as-library).
+- **Previously resolved:** 1243+ → 1244+ across 797 → 798 sessions.
+
+**Files touched (this session):**
+- `src/lib/tauri.ts` (+62; AbortController section + `cancelledError` + `withAbort` exports)
+- `src/lib/__tests__/tauri-abort.test.ts` (new, +69; 7 abort tests)
+- `pending/PEND-73-search-audit-followups.md` (R4 row updated)
+
+**Verification:**
+- `npx vitest run` — 10312 / 10312 pass (+8 vs prior 10304: 7 new tests + 1 spillover from suite-level changes).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** New IPC consumers should reach for `withAbort` from day 1 instead of hand-rolling `useGenerationGuard`. The two coexist intentionally — the hook handles the autocomplete tag-debounce path (the race is the debounce, not the IPC), and `withAbort` handles the per-effect cleanup pattern. Document if confusion comes up.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 797 — PEND-73 deferred cycle 4: U2 history listbox a11y (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 U2 (SearchHistoryDropdown listbox a11y) |
+| **Tests added** | +4 frontend (listbox id wiring, row id format, aria-selected from activeIndex, activeIndex=-1 means none active) |
+| **Files touched** | 4 |
+
+**Summary:** Screen readers can now announce the active history row as the user arrows through `↑` / `↓`. The wiring threads through three layers:
+
+- **Hook (`useSearchHistoryCycling`)** — `SearchHistoryCycling` interface gains `activeIndex: number`. Derived from `state.mode === 'browsing' ? state.index : -1`. No behavioural change in cycling; new field is a read-only projection.
+- **Dropdown (`SearchHistoryDropdown`)** — Two new required props: `listboxId: string` and `activeIndex: number`. The inner `<div role="listbox">` carries the supplied id; each row gets `id={`${listboxId}-opt-${idx}`}` and `aria-selected={idx === activeIndex}`. Exported `searchHistoryRowId(listboxId, idx)` helper so consumers (the SearchPanel's combobox-attrs builder) can derive the active-descendant id without re-deriving the template.
+- **SearchPanel** — `historyListboxId = useId()` (stable per-instance, no cross-mount collision). `inputComboboxAttrs` extends its `aria-expanded` / `aria-controls` / `aria-activedescendant` triad to point at the history listbox when no autocomplete is active. Autocomplete + history are mutually exclusive by visibility gate (history wants empty query; autocomplete wants caret content), so the two don't fight.
+
+The existing 8 dropdown tests were also refactored onto a `renderDropdown(partials)` helper to absorb the new required props once.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 5 → 4 (U2 shipped).
+- **Previously resolved:** 1242+ → 1243+ across 796 → 797 sessions.
+
+**Files touched (this session):**
+- `src/hooks/useSearchHistoryCycling.ts` (+9; activeIndex field)
+- `src/components/search/SearchHistoryDropdown.tsx` (+24 / −1; new props + id format + helper export)
+- `src/components/SearchPanel.tsx` (+27 / −5; useId + combobox-attrs history branch + prop wiring)
+- `src/components/search/__tests__/SearchHistoryDropdown.test.tsx` (+58 / −76; renderDropdown helper + 4 new a11y tests)
+- `pending/PEND-73-search-audit-followups.md` (U2 row updated)
+
+**Verification:**
+- `npx vitest run` — 10304 / 10304 pass (+4 vs prior 10300).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The two listboxes (history + autocomplete) share the same input's `aria-controls`, which the WAI-ARIA spec allows as long as only one is `aria-expanded=true` at a time. Their visibility gates already guarantee mutual exclusion, so the branch in `inputComboboxAttrs` is structural rather than guarded.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 796 — PEND-73 deferred cycle 3: U8 selection-range snapshot (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 U8 (selection-range snapshot) |
+| **Tests added** | 0 (existing palette/inner-link e2e covers the [[page]] insertion path) |
+| **Files touched** | 2 |
+
+**Summary:** `[[page]]` insertion now plants at the user's original caret position even after the palette focus transition collapses the live selection. The palette store snapshots the document selection range at `open$()` time (cloned, so subsequent DOM updates can't mutate it) and `insertPageLinkInto` restores it before `execCommand('insertText')` on contenteditable surfaces.
+
+- **Store** — `previousSelectionRange: Range \| null` field added alongside `previousFocusedElement`. `open$()` calls `document.getSelection()?.getRangeAt(0).cloneRange()` inside try/catch (jsdom + sandboxed iframes can throw on selection access). `close()` clears it.
+- **Insert path** — `insertPageLinkInto` gains a third parameter `snapshotRange: Range | null`. On contenteditable targets, the snapshot is validated (start container still in the live DOM — guards against the user editing the document while the palette was open) and re-applied via `selection.removeAllRanges() + addRange(snapshotRange)` BEFORE `execCommand('insertText')`. Failure modes fall through to the pre-U8 behaviour (insertion at the editor's current caret). Native `<input>` / `<textarea>` path intentionally ignores the snapshot — those elements have direct `selectionStart`/`selectionEnd` semantics that are simpler than DOM ranges.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 6 → 5 (U8 shipped).
+- **Previously resolved:** 1241+ → 1242+ across 795 → 796 sessions.
+
+**Files touched (this session):**
+- `src/stores/useCommandPaletteStore.ts` (+25 / −0; new field + open$ capture + close clear)
+- `src/components/CommandPalette.tsx` (+30 / −3; signature + selector + restore-before-insert)
+- `pending/PEND-73-search-audit-followups.md` (U8 row updated)
+
+**Verification:**
+- `npx vitest run` — 10300 / 10300 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The store snapshots the LIVE selection at the moment `open$()` runs, BEFORE focus moves into the palette input. Sequencing matters — the keyboard shortcut handler calls `open$()` first, and Radix's autofocus moves focus afterwards. If the order ever flips (e.g. via a Suspense boundary delaying the store update), the snapshot would already be the palette input's empty selection. Document if that comes up.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 795 — PEND-73 deferred cycle 2: B3 + T1a NFC normalisation (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 B3 (NFC normalisation), T1a (NFC test) |
+| **Tests added** | +1 backend (partitioned_nfc_query_matches_nfd_content) |
+| **Files touched** | 4 |
+
+**Summary:** Index-time + query-time NFC normalisation closes the macOS-NFD-content invisible-to-NFC-query asymmetry. The two ends of the FTS pipeline (writer + sanitiser) now agree on the canonical form.
+
+- **B3** — New `pub(crate) fn nfc_normalise(input: &str) -> String` in `src-tauri/src/fts/strip.rs`. Wraps `unicode_normalization::UnicodeNormalization::nfc()` and collects into a `String`. Applied at:
+  - `strip_for_fts_with_maps` (line 226) — index-time, before the SQL bind. Every FTS index entry is NFC-normalised at write time regardless of which writer (per-block update or bulk rebuild) routes through this function.
+  - `sanitize_fts_query` (line 168, in `search.rs`) — query-time, before tokenisation. The MATCH clause sees NFC even when the user pasted NFD content into the input.
+- **Dep** — `unicode-normalization = "0.1.25"` added to `src-tauri/Cargo.toml`. It was already transitive (via the `regex` stack and others), so the addition is free in lockfile terms; the explicit dep guards against a future transitive removal.
+- **T1a** — `partitioned_nfc_query_matches_nfd_content` seeds NFD content (`cafe\u{0301}` = `e` + combining acute) and asserts an NFC query (`caf\u{00E9}` = composed é) matches it. Pre-condition assert confirms the raw byte sequences differ before reaching the FTS path; would-fail-without-B3.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 8 → 6 (B3 + T1a shipped).
+- **Previously resolved:** 1239+ → 1241+ across 794 → 795 sessions.
+
+**Files touched (this session):**
+- `src-tauri/Cargo.toml` (+6; unicode-normalization explicit dep + comment)
+- `src-tauri/src/fts/strip.rs` (+15; nfc_normalise helper + apply in strip_for_fts_with_maps)
+- `src-tauri/src/fts/search.rs` (+7; NFC normalisation at top of sanitize_fts_query)
+- `src-tauri/src/fts/tests.rs` (+58; T1a test)
+- `pending/PEND-73-search-audit-followups.md` (B3 + T1a rows updated)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3835 / 3835 pass (1 flaky in sync_files, unrelated; was flaky before this commit too).
+- `cd src-tauri && cargo sqlx prepare -- --tests` — clean diff (no new SQL macros, no schema changes).
+
+**Process notes:** The trigram FTS tokenizer indexes scalar-by-scalar, so NFC vs NFD produce DIFFERENT trigram sets ("caf"/"afé" vs "caf"/"afe"/"fe´"). Normalising both ends to NFC is the lowest-cost convergence; index-and-query-on-NFD would also work but every typed query on most platforms is NFC by default. The per-string walk cost is dominated by the SQL bind that follows; benchmark-time impact is below noise.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 794 — PEND-73 deferred cycle 1: M3 + R2 + U1 (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M3 (useGenerationGuard), R2 (bridge epoch), U1 (broader IPC toast) |
+| **Items modified** | — |
+| **Tests added** | +7 frontend (useGenerationGuard) |
+| **Files touched** | 7 |
+
+**Summary:** First pass through the deferred PEND-73 backlog. Three small frontend refactors landed together because they share the "introduce a new hook + migrate three sites" shape.
+
+- **M3 — `useGenerationGuard` hook.** New `src/hooks/useGenerationGuard.ts` exporting `{ next, isCurrent }` memoised so the returned object is dep-stable across re-renders. Replaces three hand-rolled `useRef(0)` + `generationRef.current += 1` + `if (gen !== generationRef.current) return` triples in `CommandPalette.tsx` (search effect + tags effect) and `useAutocompleteSources.ts` (tag-debounce). 7 unit tests cover monotonic increment, identity-stability, cross-render counter preservation, and the unseen-id edge case. The autocomplete tag-debounce site keeps the hook even after the eventual `AbortController` migration — the debounce is its own race, not the IPC.
+- **R2 — bridge epoch counter.** `useSearchSheetBridge.ts` gains a `lastWroteRef` that tracks the most recent value the bridge wrote INTO the segment store. The subscription listener checks this ref BEFORE falling through to the existing `q !== sheet.query` guard, suppressing the echo of our own seed write so a future writer that observes intermediate post-anchor-normalised query states can't ping-pong through the bridge. Structural rather than incidental — the current store shape no-ops identical writes, but the ref makes the guard durable against future writer additions.
+- **U1 — broader IPC toast via `useFailedOnce`.** New `src/hooks/useFailedOnce.ts` exports a `(key, run) => boolean` predicate backed by a module-level `Set<string>`. Three palette catch sites now `surfaceFailureOnce('palette:search' / 'palette:tags' / 'autocomplete:tags', () => notify.error(t('search.failed')))` AFTER the cancellation swallow and the `logger.warn`. User sees the signal exactly once per surface per session; logs capture every failure. `usePaginatedQuery` already toasts via its `onError` plumbing — no gate needed at that site.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 11 → 8 (M3 + R2 + U1 shipped).
+- **Previously resolved:** 1236+ → 1239+ across 793 → 794 sessions.
+
+**Files touched (this session):**
+- `src/hooks/useGenerationGuard.ts` (new, +57)
+- `src/hooks/__tests__/useGenerationGuard.test.ts` (new, +54)
+- `src/hooks/useFailedOnce.ts` (new, +56)
+- `src/hooks/useSearchSheetBridge.ts` (+19 / −2; lastWroteRef + echo suppression)
+- `src/hooks/useAutocompleteSources.ts` (+8 / −7; guard + failure surface + useTranslation)
+- `src/components/CommandPalette.tsx` (+12 / −8; two guard migrations + two failure surfaces)
+- `pending/PEND-73-search-audit-followups.md` (M3 / R2 / U1 rows updated)
+
+**Verification:**
+- `npx vitest run` — 10300 / 10300 pass (+7 vs Phase 5's 10293).
+- `npx tsc -b --noEmit` — clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 793 — PEND-73 Phase 5: test gaps (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 T1b, T1c, T1d, T2 (4 of 5) |
+| **Items modified** | PEND-73 T1a marked DEFERRED (depends on B3 NFC normalisation, also deferred) |
+| **Tests added** | +4 backend (`byte_to_utf16_offsets_mid_emoji_match`, `sanitize_all_operator_query_documents_current_behaviour`, `fts_index_stays_consistent_under_writes`, `fts_index_consistency_check_flags_missing_rows`) + 3 e2e (Playwright specs in `e2e/palette-desktop.spec.ts`) |
+| **Files touched** | 3 |
+
+**Summary:** Closed four of Phase 5's five test gaps; T1a deferred alongside its B3 dependency. Phase 5 finishes the PEND-73 audit follow-up sweep.
+
+- **T1b — mid-emoji surrogate offset test.** `byte_to_utf16_offsets_mid_emoji_match` complements the existing leading-emoji test in `src-tauri/src/fts/toggle_filter.rs`. Asserts `abc🌟def` with a match at bytes `[3, 7]` (the emoji itself) maps to UTF-16 offsets `[3, 5]` — one code point spans two UTF-16 units in the surrogate-pair range.
+- **T1c — all-operator sanitiser test.** `sanitize_all_operator_query_documents_current_behaviour` pins the CURRENT behaviour (`AND` → `"AND"`, `AND OR NOT` → `"AND" OR "NOT"`) as a regression net rather than asserting the plan's DESIRED behaviour (drop orphan operators → empty string). The desired contract is documented in the test body; flipping the assertion is the deliberate code-path for any future maintainer who wants the orphan-drop semantics. The user-visible impact of the desired change (searching for `AND` alone returns nothing instead of literal matches) is non-trivial and should land deliberately.
+- **T1d — FTS-index-drift integration test.** New private helper `verify_fts_consistency(pool)` walks `blocks LEFT JOIN fts_blocks` and returns the active block ids missing from the FTS index. Two test cases: `fts_index_stays_consistent_under_writes` (happy path via the canonical writer + `rebuild_fts_index`) and `fts_index_consistency_check_flags_missing_rows` (helper-itself test — insert a block without indexing, assert the helper surfaces it). Catches any future writer that bypasses `update_fts_for_block`.
+- **T2 — desktop palette Playwright spec.** New `e2e/palette-desktop.spec.ts` with three specs: (1) Ctrl+K opens → fill `jour` → ArrowDown → Enter → palette closes (navigation fired); (2) Escape closes without navigating (header still reads "Pages"); (3) palette opens cleanly from an editor view when focus is on the sidebar first (PEND-51 context-gating guard). The `[[page]]` insertion path is already covered by `inner-links.spec.ts` + `autocomplete.spec.ts` — not duplicated here. Each spec uses the existing `registerConsoleErrorWatcher` + `expectNoConsoleErrors` belt-and-braces; verified via `playwright test --list`.
+
+**T1a deferral.** The PEND-73 plan paired T1a's NFC/NFD test with B3's NFC normalisation implementation in the same PR — "fails today, turns green after Phase 1.B3 lands." B3 was DEFERRED in Phase 1 (NFC normalisation needs a benchmark before merging per the plan's open question 4). T1a stays paired with B3 — defer them together until a real NFC/NFD bug surfaces in production.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 5's 5 rows now: 4 SHIPPED, 1 DEFERRED. With this commit the entire PEND-73 sweep finishes its first pass.
+- **Previously resolved:** 1232+ → 1236+ across 792 → 793 sessions.
+
+**Files touched (this session):**
+- `src-tauri/src/fts/toggle_filter.rs` (+15; T1b mid-emoji test)
+- `src-tauri/src/fts/tests.rs` (+105; T1c sanitiser test + T1d helper + 2 integration tests)
+- `e2e/palette-desktop.spec.ts` (new, +109; T2 three Playwright specs)
+- `pending/PEND-73-search-audit-followups.md` (Phase 5 TL;DR + 4 SHIPPED rows + 1 DEFERRED)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3834 / 3834 pass (4 more than Phase 4's 3830, accounting for the 4 new tests).
+- `npx vitest run` — 10293 / 10293 pass (unchanged; e2e isn't a vitest target).
+- `npx tsc -b --noEmit` — clean.
+- `npx playwright test --list e2e/palette-desktop.spec.ts` — 3 specs parsed correctly.
+
+**PEND-73 sweep summary (across sessions 789-793):**
+- Phase 1 — Backend hygiene: 4/5 shipped (B2 index migration, B5 sqlx error code, B6 MAX_GLOB_LEN, B7 regex wrap; B8 deferred as "measured, no-op").
+- Phase 2 — Cancellation end-to-end: 1/2 shipped (R3 typed AppError via TS-side helper; R4 AbortController deferred).
+- Phase 3 — UX punch list: 6/10 shipped (U3, U4×2, U5, U6, U7, U10; U1/U2/U8/U9 deferred).
+- Phase 4 — Maintenance + perf: 5/9 shipped (M4, M5, R1, P1, P2; M7 kept after investigation; M3/M6/R2 deferred).
+- Phase 5 — Test gaps: 4/5 shipped (T1b, T1c, T1d, T2; T1a deferred with B3).
+- **Total: 20/31 items shipped, 1 kept after investigation, 10 deferred with rationale.** No `pending/PEND-73-search-audit-followups.md` deletion this commit — keeps the rationale trail alive for the deferred items.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 792 — PEND-73 Phase 4: maintenance + perf (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M4, M5, R1, P1, P2 (5 of 9) |
+| **Items modified** | PEND-73 — M7 investigated & kept (NOT redundant; documented why); M3 / M6 / R2 DEFERRED with rationale |
+| **Tests added** | 0 (delta from existing) |
+| **Files touched** | 6 |
+
+**Summary:** Closed five of Phase 4's nine items as the "actually saves CPU / actually deletes dead code" subset. Three deferred with rationale; one investigated and discovered to be load-bearing (the M7 effect kept and documented).
+
+- **M4** — `git rm src/components/SearchPanel/SearchResultList.tsx` (88 LOC, zero importers since SearchResultGroups took over). SearchPanel module docstring updated to point at `./search/SearchResultGroups.tsx` as the listbox owner.
+- **M5** — `void tokenKey` statement deleted from SearchPanel.tsx + the unused `tokenKey` import deleted from the `@/lib/search-query` named-import group.
+- **R1** — `src/stores/search-history.ts` persist config gains `migrate: (persisted, _version) => persisted as Pick<SearchHistoryState, 'bySpace'>`. No-op placeholder that locks the contract: a future `version: 2` bump MUST replace this with a real migration. Without it, zustand's persist middleware silently wipes the persisted state on a version mismatch and the user loses their MRU history.
+- **P1** — `SearchResultBlockRow` wrapped with `memo(Impl, comparator)`. Custom comparator intentionally ignores the parent's fresh-closure `onClick` (the closure's effect is invariant given the same `row` — the captured block is the row, and `onResultClick` is the parent's stable handler). Comparator picks up `row.id` + `row.content` + `row.snippet` + `row.match_offsets` + `isFocused` + `loading` + `id`. Parent `SearchResultGroups` re-renders on every focus move; with memo, only the two rows whose `isFocused` flipped re-run `useMemo` + re-emit `<mark>` highlights.
+- **P2** — `setPageTitles((prev) => …)` now walks the resolved array and returns `prev` unchanged if every (id → title) pair is already in the Map. Common case (results refetch with the same parents) returns the same identity, so the downstream `groupResultsByPage` memo skips its expensive group/rank/cap pipeline.
+
+**M7 investigation outcome.** The PEND-73 plan called the no-deps `useEffect(() => syncAriaIds())` in AutocompletePopover.tsx "redundant with SelectedItemBridge". Removing it broke the `SearchPanel.autocomplete.test.tsx "wires ARIA combobox attrs and updates aria-activedescendant"` assertion. The bridge fires from INSIDE `<Command>` (a child of PopoverContent), whose first effect can run before the listbox DOM id is queryable from the contentRef root. The parent's post-commit effect runs after the full commit tree has mounted, capturing the initial listbox id reliably. Kept the effect; replaced its comment with the investigation rationale + the test reference.
+
+**Why M3 / M6 / R2 are deferred:**
+
+- **M3 (useGenerationGuard hook)** — Plan acknowledged the IPC sites become vestigial once Phase 2's AbortController lands. Phase 2 deferred R4. Net wash now; revisit alongside orchestrator decomposition.
+- **M6 (useShallow palette selectors)** — Touches the 1763-LOC CommandPalette orchestrator; defer with the decomposition PEND.
+- **R2 (bridge epoch counter)** — Defensive only against a future writer that doesn't exist. YAGNI.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 4's 9 rows now: 5 SHIPPED, 1 KEPT-with-rationale, 3 DEFERRED.
+- **Previously resolved:** 1226+ → 1232+ across 791 → 792 sessions.
+
+**Files touched (this session):**
+- `src/components/SearchPanel/SearchResultList.tsx` (deleted, −88)
+- `src/components/SearchPanel.tsx` (−7; tokenKey import + void statement + docstring update)
+- `src/stores/search-history.ts` (+7; migrate placeholder)
+- `src/components/search/SearchResultBlockRow.tsx` (+21 / −1; memo + comparator)
+- `src/components/search/AutocompletePopover.tsx` (+12 / −1; M7 explanatory comment)
+- `pending/PEND-73-search-audit-followups.md` (Phase 4 TL;DR + 5 SHIPPED rows + 1 KEPT + 3 DEFERRED)
+
+**Verification:**
+- `npx vitest run` — 10293 / 10293 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** M7 was the only item that the plan got wrong. The "redundant" claim was a planning-time hypothesis that didn't survive contact with the test contract. Documenting that explicitly in the source comment keeps a future contributor from removing it again.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 791 — PEND-73 Phase 3: UX punch list (cheap-wins batch) (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (six surgical edits across five files, no parallelism benefit) |
+| **Items closed** | PEND-73 U3, U4 (two sites), U5, U6, U7, U10 |
+| **Items modified** | PEND-73 — U1 / U2 / U8 / U9 marked DEFERRED with rationale |
+| **Tests added** | net −2 (two dead-code-exercising tests removed alongside U3) |
+| **Files touched** | 5 source / 1 doc / 1 plan / 1 log |
+
+**Summary:** Closed six of Phase 3's ten UX items as a cheap-wins batch — each one a surgical edit, none touching the giant orchestrators. The four deferrals are documented inline on their PEND-73 rows.
+
+- **U3** — Removed the dead `onKeyDown` from `SearchResultBlockRow.tsx`. The element has `tabIndex={-1}` so nothing in real usage (including the ARIA combobox + `aria-activedescendant` model the parent uses) ever focuses it, meaning the keydown event never fires through the row. Enter/Space activation in production lives on the parent combobox input. Two tests that exercised the dead handler via `fireEvent.keyDown` (which bypasses the focus prerequisite — green tests over dead code) were also removed, with a rationale comment in their place.
+- **U4** — `CommandPalette.tsx:363` and `SearchPanel.tsx:482` both moved from `useEffect` to `useLayoutEffect` for input autofocus. Matches the `InPageFind.tsx:155` precedent. Kills the one-frame unfocused flash on slow mounts (cold tab activation on low-end devices).
+- **U5** — `SearchHistoryDropdown.tsx` rows and the clear-history button now `onMouseDown={(e) => e.preventDefault()}`. That keeps the search input focused through the click, so the dropdown's `visible = inputFocused && …` gate doesn't unmount it before onClick fires. `SearchPanel.tsx:854`'s `window.setTimeout(() => setInputFocused(false), 150)` blur defer is deleted; `onInputBlur` is synchronous. Magic 150 ms gone.
+- **U6 / U7** — `docs/SEARCH.md` updated: §"Quick palette" no longer claims "two parallel `searchBlocks` calls" (the code has been a single `searchBlocksPartitioned` round-trip since commit `f665452f`); §"Mobile search Sheet — Lifecycle" no longer claims `<CommandPalette variant="embedded" />` (the Sheet embeds `<PaletteBody>` directly; no `variant` prop exists). The neighbouring safety-net paragraph narrowed to call out `<InPageFind>`'s `variant` prop only.
+- **U10** — `SearchPanel.tsx`'s PEND-54 filter-syntax intro toast now checks a module-level `filterSyntaxToastShownThisSession` sentinel BEFORE the localStorage read. Private-mode browsers historically saw the toast on every remount because the localStorage write silently failed, then the next mount's read failed too (returning null), then the notify fired again. The session-scoped flag breaks that loop — toast shows once per session even when storage is unavailable.
+
+**Why the four deferrals:**
+
+- **U1 (broader IPC toast)** — Needs once-per-session machinery per surface (`useFailedOnce(key)`). The Phase 2 cancellation swallow already pays the highest user-visible cost. Real non-cancellation errors are rare (SQLite/FTS would have to hit a real fault mid-query) and `logger.warn` is enough for debugging. Low ROI.
+- **U2 (SearchHistoryDropdown listbox a11y)** — Bigger refactor (roving-index + `aria-activedescendant` wiring through the history-cycling hook). Doesn't fit the cheap-wins batch.
+- **U8 (selection-range snapshot)** — Touches the palette store contract + the `insertPageLinkInto` path. Defer until orchestrator decomposition lands.
+- **U9 (mode-memory consolidation)** — The plan's own open question 3 already recommends deferring this; honour that.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 3's 10 frontend rows now: 6 SHIPPED, 4 DEFERRED. PEND-73's overall frontend-still-open count drops by 6.
+- **Previously resolved:** 1220+ → 1226+ across 790 → 791 sessions.
+
+**Files touched (this session):**
+- `src/components/CommandPalette.tsx` (+8 / -3; useLayoutEffect import + autofocus swap + comment)
+- `src/components/SearchPanel.tsx` (+22 / -8; useLayoutEffect autofocus + session-scoped toast flag + module-level sentinel + sync blur)
+- `src/components/search/SearchHistoryDropdown.tsx` (+17 / -0; onMouseDown preventDefault on rows + clear button)
+- `src/components/search/SearchResultBlockRow.tsx` (-7; dead onKeyDown removed)
+- `src/components/search/__tests__/SearchResultBlockRow.test.tsx` (+9 / -22; two dead-handler tests removed with rationale)
+- `docs/SEARCH.md` (+2 / -2; partitioned IPC + PaletteBody mount path)
+- `pending/PEND-73-search-audit-followups.md` (Phase 3 TL;DR + 6 SHIPPED rows + 4 DEFERRED rows)
+
+**Verification:**
+- `npx vitest run` — 10293 / 10293 pass (net −2 vs Phase 2's 10295, accounting for the two removed dead-handler tests).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The U3 deletion exposed two passing tests over dead code — a useful reminder that test green-ness is not evidence of contract relevance. The replacement comment block in the test file explicitly calls out the focus-prerequisite bypass for future contributors.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
+
+## Session 790 — PEND-73 Phase 2: frontend cancellation swallowing (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (single helper + four catch-site edits) |
+| **Items closed** | PEND-73 R3 (typed AppError narrowing via TS-side helper) |
+| **Items modified** | PEND-73 U1 partial — cancellation half shipped; R4 deferred with rationale |
+| **Tests added** | +7 frontend (`isAppError` 4 cases, `isCancellation` 3 cases) |
+| **Files touched** | 6 |
+
+**Summary:** Closed the cancellation-UX gap left open by PEND-70's backend-only landing. Added `src/lib/app-error.ts` exporting `isAppError` (predicate over the `{kind, message}` IPC shape), `isCancellation` (discriminates `kind === 'cancelled'`), and a `TypedAppError` shape with `AppErrorKind` mirroring `src-tauri/src/error.rs:162-176`'s manual `Serialize` match arms. Then wired the predicate into the four catch sites that previously emitted `logger.warn` on every cancelled IPC:
+
+- `CommandPalette.tsx:484` (main search effect): swallows backend `AppError::Cancelled` silently, leaving the stale-generation discard guard untouched.
+- `CommandPalette.tsx:1550` (tags-mode search effect): same shape.
+- `useAutocompleteSources.ts:124` (debounced tag-prefix lookup): same shape.
+- `usePaginatedQuery.ts:117` (the panel's `searchBlocks` consumer + every other paginated IPC): swallows cancellation BEFORE the `onError` toast / error-state setter, so no UI flash on superseded keystrokes.
+
+**Why TS-side narrowing over a `bindings.ts` regen.** Two reasons. (1) `bindings.ts` is the auto-generated tauri-specta artifact; the `tauri-bindings ↔ wrapper parity` prek hook keeps it in sync with the Rust side, and hand-edits there have to be re-applied on every `cargo test -- specta_tests --ignored` regeneration. (2) A TS-side narrowing union doesn't need specta enum-representation support (patchy across `#[serde(tag = "kind")]` shapes); the wire shape stays whatever the manual `Serialize` impl emits. Coupling: adding a Rust `AppError` variant requires updating `AppErrorKind` in `src/lib/app-error.ts` — documented in the module header so the next maintainer sees it.
+
+**Why R4 (AbortController plumbing) is deferred.** Touches every `invoke` consumer; the existing `generationRef`/`requestIdRef` discard guards already drop the stale response correctly, and the only user-visible win (no toast on cancellation) is already achieved by the `isCancellation` swallow. The full plumbing only matters once the orchestrator decomposition lands and consumers stop hand-rolling their own discard guards. Tracked as DEFERRED on the PEND-73 R4 row with the rationale inline.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 R3 closed (4 → 3 frontend-still-open). R4 marked DEFERRED. U1 marked PARTIAL (cancellation half shipped).
+- **Previously resolved:** 1219+ → 1220+ across 789 → 790 sessions.
+
+**Files touched (this session):**
+- `src/lib/app-error.ts` (new, +85)
+- `src/lib/__tests__/app-error.test.ts` (new, +50)
+- `src/components/CommandPalette.tsx` (+9 / -0 — one import, two swallow lines, two comment blocks)
+- `src/hooks/usePaginatedQuery.ts` (+6 / -0)
+- `src/hooks/useAutocompleteSources.ts` (+3 / -0)
+- `pending/PEND-73-search-audit-followups.md` (Phase 2 TL;DR + R3/R4/U1 rows updated)
+
+**Verification:**
+- `npx vitest run src/lib/__tests__/app-error.test.ts src/hooks/__tests__/usePaginatedQuery.test.ts src/components/__tests__/BacklinkFilterBuilder.test.tsx` — 107 / 107 pass (7 new + 100 existing in the touched-adjacent tests).
+- `npx vitest run` (full suite) — 10295 / 10295 pass.
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** Resisted the temptation to do the AbortController plumbing too. The plan flagged it as "P2.R4" but the actual user-visible cost (toast spam on cancellation) is already paid by the swallow; the structural cost (every consumer needs `AbortController` setup) is not justified by an additional win.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake` branch (continues the per-phase commit chain). Not pushed yet.
+
+---
+
+## Session 789 — PEND-73 Phase 1: backend search hygiene (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (5 independent ≤30-LOC edits, no parallelism benefit) |
+| **Items closed** | PEND-73 § Phase 1 items B2, B5, B6, B7 (4 of 5); B8 deferred per plan's "measured, no-op" escape |
+| **Items modified** | `pending/PEND-73-search-audit-followups.md` (Phase 1 TL;DR + Backend-still-open table struck through for B2/B5/B6/B7, B8 marked DEFERRED with rationale) |
+| **Tests added** | +3 backend (over_length_pattern_rejected, at_length_pattern_accepted, partitioned_regex_bare_alternation_matches_both_arms_under_case_flag) |
+| **Files touched** | 5 |
+
+**Summary:** Closed four of Phase 1's five backend-hygiene items on the same branch as PEND-74. Each one is an independently revertable surgical edit — no shared scaffolding across them.
+
+- **B2** — new migration `0068_pages_cache_title_index.sql` adds `CREATE INDEX IF NOT EXISTS idx_pages_cache_title_nocase ON pages_cache(title COLLATE NOCASE)`. Matches the `idx_tags_cache_name_nocase` convention from 0061. Resolves the "every page-name glob filter is a full table scan" callout that 0061 explicitly chose to defer to scale.
+- **B5** — `src-tauri/src/fts/search.rs:705` substring `msg.contains("fts5:") || msg.contains("parse error")` replaced with a typed check: `matches!(&e, sqlx::Error::Database(db) if matches!(db.code().as_deref(), Some("1") | Some("SQLITE_ERROR")) && db.message().starts_with("fts5: "))`. Both checks have to align — defence in depth against future libsqlite wording / translation / false positives from bound-parameter values containing the literals `fts5:` / `parse error`.
+- **B6** — `src-tauri/src/fts/glob_filter.rs` gains `pub const MAX_GLOB_LEN: usize = 1024;` enforced in `prepare_globs` per trimmed sub-entry (not per top-level entry, so comma-separated lists are each measured). Surfaces as `AppError::Validation("InvalidGlob: pattern length N exceeds cap 1024")` — same `InvalidGlob:` prefix the frontend already keys on. Two tests: boundary + over-length.
+- **B7** — `src-tauri/src/fts/toggle_filter.rs:502-503` non-whole-word branch now wraps the user pattern in `(?:...)` (symmetric with the whole-word branch at `:499-501`). Eliminates precedence-bleed risk from a future inline-flag toggle prefix interacting with a top-level `|` in the user's pattern. Regression test seeds two pages with mixed-case content and asserts `case_sensitive=false` + bare `foo|bar` matches both arms.
+- **B8** — DEFERRED as "measured, no-op" per the plan's explicit escape hatch. The COUNT(DISTINCT) → EXISTS rewrite is non-trivial (dynamic per-tag subquery generation + parameter binding refactor across two call sites in `search.rs:500` and `toggle_filter.rs:541`) and the win is data-shape dependent (scales with the number of AND'd tags). A 10k-block benchmark fixture from PEND-71 exists as test seed but not as a runnable bench. Without a measured number, the rewrite is premature. Carry forward; revisit if a user-facing slowdown surfaces.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73's Phase 1 "Backend still open" table goes from 7 open → 3 open (B3 NFC normalisation, B4 verify_fts_consistency, B8 deferred). Phases 2-5 untouched.
+- **Previously resolved:** 1215+ → 1219+ (4 items: B2, B5, B6, B7) across 788 → 789 sessions.
+
+**Files touched (this session):**
+- `src-tauri/migrations/0068_pages_cache_title_index.sql` (new, +14)
+- `src-tauri/src/fts/glob_filter.rs` (+31)
+- `src-tauri/src/fts/search.rs` (+27 / -5)
+- `src-tauri/src/fts/toggle_filter.rs` (+7)
+- `src-tauri/src/fts/tests.rs` (+59)
+- `pending/PEND-73-search-audit-followups.md` (updated TL;DR + struck open-table rows)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3830 / 3830 tests pass (3 skipped); the three new tests are in the run.
+- `cd src-tauri && cargo sqlx prepare -- --tests` — clean diff, no new `.sqlx/` entries (DDL-only migration; B5/B6/B7 don't touch SQL macros).
+- `prek run --files <touched>` — all hooks pass including `migrations: STRICT tables required for new schema` (no new tables) and `migrations append-only` (additive index migration).
+
+**Process notes:** Originally scoped this phase with 5 items at ~3h budget; landed 4 in well under that, deferred 1 with documented rationale. B8's deferral is per the plan's literal "if benchmark shows < 5% improvement, leave the COUNT-DISTINCT shape and close as 'measured, no-op.'" — no benchmark, no rewrite. Documenting the deferral on the row keeps the audit trail clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake` branch (re-used because the PEND-74 fix and Phase 1 ship together unmodified). Not pushed yet.
+
+---
 
 ## Session 788 — PEND-74 HasTag popover flake hardening (2026-05-20)
 

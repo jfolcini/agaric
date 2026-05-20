@@ -17,7 +17,7 @@
  */
 
 import type React from 'react'
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
@@ -71,7 +71,7 @@ function renderOffsetHighlights(content: string, offsets: ReadonlyArray<MatchOff
   return out
 }
 
-export function SearchResultBlockRow({
+function SearchResultBlockRowImpl({
   row,
   isFocused,
   onClick,
@@ -96,6 +96,7 @@ export function SearchResultBlockRow({
   }
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
@@ -104,13 +105,6 @@ export function SearchResultBlockRow({
       aria-disabled={loading ? true : undefined}
       tabIndex={-1}
       onClick={handleClick}
-      onKeyDown={(e) => {
-        if (loading) return
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onClick()
-        }
-      }}
       className={cn(
         'list-none flex items-center gap-2 rounded-md px-3 py-1.5 text-sm cursor-pointer',
         'hover:bg-accent/30 active:bg-accent/40 transition-colors',
@@ -135,3 +129,32 @@ export function SearchResultBlockRow({
     </li>
   )
 }
+
+/**
+ * PEND-73 Phase 4.P1 — memoised. The parent `SearchResultGroups`
+ * re-renders on every focus move (it owns `focusedRowId`); without
+ * memoisation, every visible row re-runs `useMemo` + reflows its
+ * `<mark>` highlights even though only the two rows whose `isFocused`
+ * flipped actually need to re-render.
+ *
+ * Custom comparator intentionally ignores `onClick` — the parent
+ * passes `() => onResultClick(block)`, a fresh closure each render
+ * that would defeat the default shallow check, but the closure's
+ * EFFECT is invariant given the same `row` (the captured `block` is
+ * the row, and `onResultClick` is the parent's stable handler). The
+ * comparator returns `true` (skip re-render) when every other prop
+ * is unchanged; the stale `onClick` is still wired up correctly
+ * because the user can only fire it after the row commits, and on
+ * commit it gets the latest closure.
+ */
+export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) => {
+  return (
+    prev.row.id === next.row.id &&
+    prev.row.content === next.row.content &&
+    prev.row.snippet === next.row.snippet &&
+    prev.row.match_offsets === next.row.match_offsets &&
+    prev.isFocused === next.isFocused &&
+    prev.loading === next.loading &&
+    prev.id === next.id
+  )
+})

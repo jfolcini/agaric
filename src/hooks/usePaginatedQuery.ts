@@ -10,6 +10,7 @@
  */
 
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
+import { isCancellation } from '@/lib/app-error'
 import { notify } from '@/lib/notify'
 
 /** Minimum response shape for cursor-based pagination. */
@@ -110,6 +111,11 @@ export function usePaginatedQuery<T>(
         setError(null)
       } catch (err) {
         if (requestIdRef.current !== rid) return
+        // PEND-73 Phase 2 — swallow PEND-70 cancellations silently.
+        // A superseded keystroke or filter change is the expected case
+        // and should not flash a toast / set error state. The stale-id
+        // guard above already discards the (non-existent) result.
+        if (isCancellation(err)) return
         const msg =
           optionsRef.current?.onError ?? (err instanceof Error ? err.message : 'Request failed')
         setError(msg)

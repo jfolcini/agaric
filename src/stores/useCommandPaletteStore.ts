@@ -93,6 +93,18 @@ interface CommandPaletteState {
    * autocomplete mode degrades to plain page navigation in that case.
    */
   previousFocusedElement: HTMLElement | null
+  /**
+   * PEND-73 Phase 3.U8 — snapshot of the document selection at the
+   * moment the palette opened, captured BEFORE focus moved into the
+   * palette input. Cloned via `Range.cloneRange()` so subsequent
+   * DOM updates / selection changes don't mutate it. `null` when
+   * there was no live selection at open time (e.g. cold-launch
+   * keyboard shortcut, focused element wasn't a text node) — in
+   * that case `insertPageLinkInto` falls back to reading the input
+   * element's `selectionStart` directly, matching the pre-U8
+   * behaviour.
+   */
+  previousSelectionRange: Range | null
 
   /** Open the palette in search mode. Captures the current focused element. */
   open$: () => void
@@ -126,6 +138,7 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set, get) => 
   queryByMode: emptyQueryByMode(),
   pendingViewQuery: null,
   previousFocusedElement: null,
+  previousSelectionRange: null,
 
   open$: () => {
     // Capture the previously focused element so `[[page]]` autocomplete
@@ -134,12 +147,32 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set, get) => 
     // `null` or the `<body>` when nothing is focused.
     const active = document.activeElement
     const focused = active instanceof HTMLElement && active !== document.body ? active : null
+    // PEND-73 Phase 3.U8 — also snapshot the live selection range so
+    // `[[page]]` insertion can plant text at the user's caret position
+    // even after the palette stole focus (which collapses the
+    // selection in some browsers). Cloned so a downstream
+    // `selectionchange` doesn't mutate the snapshot. Guarded against
+    // jsdom and other DOM-light environments where `document.getSelection`
+    // can be absent.
+    let snapshotRange: Range | null = null
+    try {
+      const sel = typeof document.getSelection === 'function' ? document.getSelection() : null
+      if (sel && sel.rangeCount > 0) {
+        snapshotRange = sel.getRangeAt(0).cloneRange()
+      }
+    } catch {
+      // Defensive: a sandboxed iframe or detached document can throw
+      // on getSelection access. Fall back to null and the insert path
+      // re-reads selectionStart at insert time.
+      snapshotRange = null
+    }
     set({
       open: true,
       mode: 'search',
       query: '',
       queryByMode: emptyQueryByMode(),
       previousFocusedElement: focused,
+      previousSelectionRange: snapshotRange,
     })
   },
 
@@ -150,6 +183,7 @@ export const useCommandPaletteStore = create<CommandPaletteState>((set, get) => 
       query: '',
       queryByMode: emptyQueryByMode(),
       previousFocusedElement: null,
+      previousSelectionRange: null,
     })
   },
 

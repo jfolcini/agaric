@@ -500,7 +500,14 @@ async fn regex_mode_query(
         pattern.push_str(query);
         pattern.push_str(")(?-u:\\b)");
     } else {
+        // PEND-73 Phase 1.B7 — wrap the user pattern in a non-capturing
+        // group so a leading inline flag in the user's input (e.g.
+        // `(?i)foo|bar`) cannot rebind the case flag we just emitted
+        // and bleed precedence across the top-level `|`. Symmetric with
+        // the whole-word branch above.
+        pattern.push_str("(?:");
         pattern.push_str(query);
+        pattern.push(')');
     }
     let re = build_regex(&pattern)?;
 
@@ -853,6 +860,22 @@ mod unit_tests {
         let text = "🌟Hello";
         let offsets = byte_to_utf16_offsets(text, &[(4, 9)]);
         assert_eq!(offsets, vec![MatchOffset { start: 2, end: 7 }]);
+    }
+
+    #[test]
+    fn byte_to_utf16_offsets_mid_emoji_match() {
+        // PEND-73 Phase 5.T1b — the existing test above covers a leading
+        // emoji + trailing ASCII; this one matches the emoji itself
+        // when it sits between ASCII runs. `🌟` = 4 bytes UTF-8 / 2
+        // UTF-16 code units. `abc` = bytes 0-3 / units 0-3; `🌟` =
+        // bytes 3-7 / units 3-5; `def` = bytes 7-10 / units 5-8.
+        let text = "abc🌟def";
+        let offsets = byte_to_utf16_offsets(text, &[(3, 7)]);
+        assert_eq!(
+            offsets,
+            vec![MatchOffset { start: 3, end: 5 }],
+            "the emoji match spans one code point but two UTF-16 units"
+        );
     }
 
     #[test]

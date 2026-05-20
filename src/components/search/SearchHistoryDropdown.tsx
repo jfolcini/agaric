@@ -30,6 +30,24 @@ export interface SearchHistoryDropdownProps {
   onPick: (query: string) => void
   /** Wipe the per-space MRU list. */
   onClear: () => void
+  /**
+   * PEND-73 Phase 3.U2 — id attached to the inner `role="listbox"` so
+   * the owning input can wire `aria-controls` to it. Stable per
+   * dropdown instance; supplied by the parent so two dropdowns on the
+   * same page (e.g. desktop palette vs mobile sheet) don't collide.
+   */
+  listboxId: string
+  /**
+   * Index of the currently-active history row driven by the parent's
+   * `useSearchHistoryCycling.activeIndex`. `-1` means none active
+   * (typing). Renders `aria-selected={idx === activeIndex}` per row.
+   */
+  activeIndex: number
+}
+
+/** Stable per-row id. Pure function of the listbox id + row index. */
+export function searchHistoryRowId(listboxId: string, index: number): string {
+  return `${listboxId}-opt-${index}`
 }
 
 export function SearchHistoryDropdown({
@@ -37,6 +55,8 @@ export function SearchHistoryDropdown({
   visible,
   onPick,
   onClear,
+  listboxId,
+  activeIndex,
 }: SearchHistoryDropdownProps): React.ReactElement | null {
   const { t } = useTranslation()
   if (!visible) return null
@@ -60,6 +80,7 @@ export function SearchHistoryDropdown({
       ) : (
         <div
           role="listbox"
+          id={listboxId}
           aria-label={listboxLabel}
           data-testid="search-history-list"
           className="m-0 list-none p-0"
@@ -69,11 +90,23 @@ export function SearchHistoryDropdown({
               // The query string is the natural key. Duplicates can't
               // occur in this list (the store dedupes on insert).
               key={entry}
+              id={searchHistoryRowId(listboxId, idx)}
               role="option"
-              aria-selected={false}
+              aria-selected={idx === activeIndex}
               tabIndex={-1}
               data-testid={`search-history-entry-${idx}`}
               onClick={() => onPick(entry)}
+              // PEND-73 Phase 3.U5 — preventDefault on mousedown keeps
+              // the search input focused through the click. Without
+              // this, the input blurs first (mousedown fires before
+              // click), the dropdown unmounts via its visibility gate,
+              // and the click then lands on nothing. The historical
+              // SearchPanel mitigation deferred the blur via
+              // `setTimeout(() => setInputFocused(false), 150)` — that
+              // line is being deleted in the same commit.
+              onMouseDown={(e) => {
+                e.preventDefault()
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
@@ -98,6 +131,12 @@ export function SearchHistoryDropdown({
             type="button"
             data-testid="search-history-clear"
             onClick={onClear}
+            // PEND-73 Phase 3.U5 — sibling rationale: keep input
+            // focused through the click so the dropdown's visibility
+            // gate doesn't unmount it before onClick fires.
+            onMouseDown={(e) => {
+              e.preventDefault()
+            }}
             className={cn(
               'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground',
               'hover:bg-accent/30 transition-colors',
