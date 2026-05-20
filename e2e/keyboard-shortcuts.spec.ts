@@ -214,7 +214,6 @@ test.describe('Block organization', () => {
 
     // Capture original block order via data-block-id
     const blocks = page.locator('[data-testid="sortable-block"]')
-    const _originalFirstId = await blocks.nth(0).getAttribute('data-block-id')
     const originalSecondId = (await blocks.nth(1).getAttribute('data-block-id')) ?? ''
 
     // Focus the second block and move it up
@@ -241,7 +240,6 @@ test.describe('Block organization', () => {
     await openPage(page, 'Getting Started')
 
     // Get text of the first two blocks in static view
-    const _firstBlockText = await page.locator('[data-testid="block-static"]').nth(0).innerText()
     const secondBlockText = await page.locator('[data-testid="block-static"]').nth(1).innerText()
 
     // Focus the first block

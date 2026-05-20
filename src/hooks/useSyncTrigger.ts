@@ -49,14 +49,16 @@ export function computeNextSyncDelay(current: number, hadFailure: boolean): numb
  * The timeout's `setTimeout` is cleared in `.finally()` so a winning `p` does
  * not leak a pending timer for the remainder of `ms`.
  */
-export function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promise<T> {
+export async function runWithTimeout<T>(p: Promise<T>, ms: number, err: Error): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   const timeout = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(() => reject(err), ms)
   })
-  return Promise.race<T>([p, timeout]).finally(() => {
+  try {
+    return await Promise.race<T>([p, timeout])
+  } finally {
     if (timeoutId !== null) clearTimeout(timeoutId)
-  })
+  }
 }
 
 /**

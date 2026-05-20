@@ -11,6 +11,19 @@ use std::sync::Arc;
 /// normal cold-start acquires but surfaces anything pathological.
 pub const SLOW_ACQUIRE_WARN_MS: u128 = 100;
 
+/// PEND-70 — threshold (ms) above which [`search_pool_acquire_logged`]
+/// emits a `warn` log on the **read** pool. Lower than
+/// [`SLOW_ACQUIRE_WARN_MS`] (100 ms) because the read pool's
+/// `max_connections(4)` ceiling is smaller and saturation surfaces
+/// faster — under bursty typing the palette can queue 4-5 sequential
+/// IPCs, and we want to see the first contender to cross 50 ms in the
+/// log so operators can correlate slowness with the burst pattern.
+/// 50 ms is also the upper bound of the cancellation acceptance
+/// criterion (≤ 50 ms typical), so the two budgets compose: if a
+/// search waits > 50 ms for a pool slot, we either log it as slow OR
+/// we cancel it.
+pub const SLOW_SEARCH_ACQUIRE_WARN_MS: u128 = 50;
+
 /// Maximum number of SQL bind parameters per statement for chunked
 /// multi-row INSERTs.
 ///
@@ -46,6 +59,33 @@ pub async fn acquire_logged(
             elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             label,
             "slow pool acquire"
+        );
+    }
+    Ok(conn)
+}
+
+/// PEND-70 — read-pool sibling of [`acquire_logged`] with a tighter
+/// 50 ms threshold (see [`SLOW_SEARCH_ACQUIRE_WARN_MS`]). The search
+/// surface (`search_blocks` / `search_blocks_partitioned`) competes
+/// with the page browser and backlinks queries for the read pool's
+/// 4 connections; slow acquires here are the operational signal
+/// that bursty typing has saturated the pool.
+///
+/// `label` mirrors [`acquire_logged`] — a stable, human-readable tag
+/// like `"search_partitioned"` so per-surface slow reads can be
+/// filtered.
+pub async fn search_pool_acquire_logged(
+    pool: &SqlitePool,
+    label: &'static str,
+) -> Result<PoolConnection<Sqlite>, sqlx::Error> {
+    let start = std::time::Instant::now();
+    let conn = pool.acquire().await?;
+    let elapsed = start.elapsed();
+    if elapsed.as_millis() > SLOW_SEARCH_ACQUIRE_WARN_MS {
+        tracing::warn!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            label,
+            "slow read-pool acquire"
         );
     }
     Ok(conn)

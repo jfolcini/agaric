@@ -4,12 +4,38 @@
 //! the `sanitize_fts_query` helper for safe query construction.
 
 use sqlx::SqlitePool;
+use std::time::{Duration, Instant};
 
+use crate::cancellation::CancellationToken;
 use crate::commands::SearchBlockRow;
+use crate::db::search_pool_acquire_logged;
 use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::metadata_filter::MetadataPredicates;
+
+// ---------------------------------------------------------------------------
+// PEND-70 — per-FTS-query timing thresholds
+// ---------------------------------------------------------------------------
+
+/// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
+/// an `info!` breadcrumb. 200 ms is well above the typical FTS5
+/// trigram scan on a 10k-block fixture (sub-50 ms on a warm cache, see
+/// `benches/fts_bench.rs`) but well below the 1 s `warn!` budget — it
+/// surfaces "the cache is cold and the query is doing real work"
+/// without spamming on every keystroke.
+pub(crate) const FTS_QUERY_INFO_MS: u128 = 200;
+
+/// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
+/// a `warn!`. **Measured starting point**: 1 s mirrors the PEND-70
+/// design's recommended ceiling. If CI runners observe legitimate
+/// cold-cache scans crossing this floor on the 10k-block bench
+/// fixture, raise the constant to the observed worst-case + 3×
+/// headroom and document the bump here. As of 2026-05 the FTS bench
+/// (`benches/fts_bench.rs::bench_search_fts` at `count=10_000`)
+/// completes well under 100 ms on a warm cache; the 1 s budget gives
+/// 10× headroom for cold-cache CI runs.
+pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 
 // ---------------------------------------------------------------------------
 // FTS5 search
@@ -302,6 +328,14 @@ pub async fn search_fts(
         exclude_page_globs,
         block_type_filter,
         metadata,
+        true, // `search_fts` always emits snippets — its caller has no
+        // post-filter that would clobber them.
+        // PEND-70 — the non-partitioned `search_fts` path is the
+        // cursor-paginated `search_blocks` IPC; it is not subject to
+        // the palette's keystroke-burst pattern (the panel paginates
+        // explicitly via Load More). No cancellation token is wired
+        // here today.
+        None,
     )
     .await?;
 
@@ -360,6 +394,19 @@ pub async fn search_fts(
 ///   [`search_fts`] today; the partitioned caller passes
 ///   `block_type_filter = None` to fetch the unrestricted candidate
 ///   set and partitions in Rust.
+/// - `with_snippet` — PEND-69 F5. `false` omits the FTS5
+///   `snippet(...)` call from the SELECT (projects `NULL` instead) so
+///   we don't re-tokenize once per row when the downstream pipeline
+///   will overwrite `row.snippet = None` anyway (regex / non-regex
+///   toggle post-filter paths). Saves a per-row tokenizer walk; the
+///   FTS5 `snippet()` cost compounds on cold cache.
+///
+/// PEND-70 — `cancel` is an optional cancellation token. When `Some`,
+/// the SQL `fetch_all` is raced against the cancel signal via
+/// `tokio::select!`; if the signal fires, the SQL future is dropped
+/// cleanly and the call returns [`AppError::Cancelled`]. Passing
+/// `None` (or [`CancellationToken::never_cancelled`]) preserves the
+/// pre-PEND-70 behaviour.
 #[allow(clippy::too_many_arguments)]
 async fn fts_fetch_rows(
     pool: &SqlitePool,
@@ -375,7 +422,18 @@ async fn fts_fetch_rows(
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
+    with_snippet: bool,
+    cancel: Option<CancellationToken>,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
+    // PEND-70 — early-cancel before we even touch the read pool.
+    // The next-keystroke palette pattern fires fresh IPCs faster than
+    // SQLite can deliver a connection, so checking here catches the
+    // burst before we waste a pool slot.
+    if let Some(ref token) = cancel {
+        if token.is_cancelled() {
+            return Err(AppError::Cancelled);
+        }
+    }
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
     // Additional parameters are appended after ?5 for parent_id, tag_ids,
@@ -387,12 +445,22 @@ async fn fts_fetch_rows(
     // documented in PEND-50's "Edge cases" as tunable. The leading /
     // trailing `…` flag truncation. The result is rendered as React
     // nodes by the frontend; NEVER `dangerouslySetInnerHTML`.
-    let mut sql = String::from(
+    //
+    // PEND-69 F5 — when the downstream pipeline will clear
+    // `row.snippet` (toggle post-filter paths), project `NULL` instead
+    // of calling `snippet()` so we don't pay the per-row tokenizer
+    // walk just to throw the result away.
+    let snippet_select = if with_snippet {
+        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+    } else {
+        "NULL as snippet"
+    };
+    let mut sql = format!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
-                snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet,
+                {snippet_select},
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
@@ -579,7 +647,58 @@ async fn fts_fetch_rows(
         db_query = v.bind(db_query);
     }
 
-    db_query.fetch_all(pool).await.map_err(|e| {
+    // PEND-70 — acquire a read-pool connection via the slow-acquire
+    // logger so saturation under bursty typing surfaces in the log.
+    let mut conn = search_pool_acquire_logged(pool, "fts_fetch_rows")
+        .await
+        .map_err(AppError::Database)?;
+
+    // PEND-70 — measure the per-query wall time so pathological scans
+    // surface in the log. The timer starts after the pool acquire
+    // because the acquire wait is already logged by
+    // `search_pool_acquire_logged`.
+    let query_start = Instant::now();
+
+    // PEND-70 — race the SQL fetch against the cancellation signal so
+    // the in-flight Rust future drops cleanly when the client
+    // unsubscribed. Dropping the `fetch_all` future cancels the
+    // underlying SQLite statement at the next yield point — typical
+    // cancellation latency is one row-batch boundary (≤ 50 ms),
+    // worst-case is the SQLite step granularity (≤ 200 ms).
+    let fetch_future = db_query.fetch_all(&mut *conn);
+    let result = match cancel {
+        Some(mut token) => {
+            tokio::select! {
+                biased;
+                // Check cancel first each poll so a fast-fire from the
+                // palette's next keystroke wins the race against an
+                // already-ready SQL result.
+                () = token.cancelled() => {
+                    return Err(AppError::Cancelled);
+                }
+                res = fetch_future => res,
+            }
+        }
+        None => fetch_future.await,
+    };
+
+    let elapsed = query_start.elapsed();
+    if elapsed >= Duration::from_millis(u64::try_from(FTS_QUERY_WARN_MS).unwrap_or(u64::MAX)) {
+        tracing::warn!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            fetch_limit,
+            "slow FTS query"
+        );
+    } else if elapsed >= Duration::from_millis(u64::try_from(FTS_QUERY_INFO_MS).unwrap_or(u64::MAX))
+    {
+        tracing::info!(
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            fetch_limit,
+            "FTS query crossed info threshold"
+        );
+    }
+
+    result.map_err(|e| {
         // Map any SQLite error from the MATCH query to a validation error.
         // With query sanitization this should be rare, but acts as defense-in-depth.
         let msg = e.to_string();
@@ -624,40 +743,63 @@ fn fts_row_to_block_row(r: FtsSearchRow) -> SearchBlockRow {
 // PEND-61 Phase 1 — partitioned FTS scan
 // ---------------------------------------------------------------------------
 
-/// Outcome of [`search_fts_partitioned`] — the unrestricted rank-ordered
-/// candidate set plus a flag indicating whether the combined fetch was
-/// capped by [`MAX_SEARCH_RESULTS`].
+/// Outcome of [`search_fts_partitioned`] — two pre-partitioned candidate
+/// sets (page-only + unrestricted), each with its own `has_more` flag
+/// derived from a `limit + 1` probe.
 ///
-/// The caller (the `search_blocks_partitioned` IPC) then partitions in
-/// Rust: pages = rows with `block_type == "page"` capped at `page_limit`,
-/// blocks = ALL rows capped at `block_limit`. The `ceiling_hit` flag
-/// participates in the per-partition `has_more` semantics — when the
-/// combined fetch saturates the ceiling, either partition can legitimately
-/// report `has_more = true` regardless of its own intra-partition cap.
+/// PEND-69 F1 — the previous one-scan-then-partition shape could drop
+/// the pages partition entirely when 49 content blocks ranked above
+/// the only page hit. The two-scan shape guarantees the pages
+/// partition reflects matching pages regardless of content rank.
+///
+/// The same row may appear in both partitions (a page-typed row is in
+/// `pages` AND in `blocks`); the palette merges by `page_id`.
 pub(crate) struct FtsPartitionedScan {
-    /// Rank-ordered candidate set (no `block_type` filter applied at the
-    /// SQL layer). The length is bounded by
-    /// `min(page_limit + block_limit + 1, MAX_SEARCH_RESULTS)`.
-    pub rows: Vec<SearchBlockRow>,
-    /// `true` iff the combined fetch returned exactly
-    /// [`MAX_SEARCH_RESULTS`] rows — the SQL ceiling, not the caller's
-    /// `page_limit + block_limit + 1` ask. Distinct from
-    /// `rows.len() > page_limit + block_limit` because the ceiling can
-    /// be hit even when one partition is empty.
-    pub ceiling_hit: bool,
+    /// Page-only partition (`block_type = 'page'`) in rank order,
+    /// capped at the caller's `page_limit`.
+    pub pages: Vec<SearchBlockRow>,
+    /// Unrestricted partition (any `block_type`) in rank order, capped
+    /// at the caller's `block_limit`.
+    pub blocks: Vec<SearchBlockRow>,
+    /// `true` iff the pages scan returned `page_limit + 1` rows — the
+    /// probe approach (resolves PEND-69 Open Q3). Lets the caller
+    /// signal accurate per-partition pagination instead of inferring
+    /// from the global ceiling.
+    pub pages_has_more: bool,
+    /// `true` iff the blocks scan returned `block_limit + 1` rows.
+    /// Same probe semantics as `pages_has_more`.
+    pub blocks_has_more: bool,
 }
 
-/// PEND-61 Phase 1 — one-pass FTS scan for the palette's two-partition
-/// view. Reuses the same SQL builder as [`search_fts`] but bypasses the
-/// `block_type_filter` (the partitioning is done in Rust by the caller)
-/// and returns no cursor (the palette doesn't paginate).
+/// PEND-61 Phase 1 / PEND-69 F1 — two parallel FTS scans for the
+/// palette's two-partition view. Each scan reuses the same SQL builder
+/// as [`search_fts`]; the pages scan adds `block_type = 'page'` to the
+/// WHERE clause and uses `with_snippet = with_snippet_pages`, the
+/// blocks scan adds no `block_type` filter.
+///
+/// Both scans use a `limit + 1` probe so the caller can signal accurate
+/// per-partition `has_more` (resolves PEND-69 Open Q3).
 ///
 /// All other filters — `parent_id`, `tag_ids`, `space_id`, page-name
-/// globs, metadata predicates — are honoured the same way as
-/// [`search_fts`].
+/// globs, metadata predicates — are honoured identically on both
+/// scans.
 ///
-/// Empty / whitespace queries short-circuit to an empty result with
-/// `ceiling_hit = false`, mirroring [`search_fts`].
+/// Concurrency: both scans run via [`tokio::try_join!`] on the shared
+/// read pool. With `max_connections(4)` we afford two reads per IPC.
+/// Fail-fast semantics (PEND-69 Open Q2) — if either scan errors, the
+/// other is dropped and the error propagates without a partial
+/// response.
+///
+/// Empty / whitespace queries short-circuit to two empty partitions,
+/// mirroring [`search_fts`].
+///
+/// PEND-70 — `cancel` is an optional cancellation token threaded
+/// through both partition scans into [`fts_fetch_rows`]. The Tauri
+/// command wrapper (`search_blocks_partitioned`) stores a
+/// [`CancellationGuard`] in the [`crate::cancellation::CancellationRegistry`]
+/// and spawns the inner search via `tokio::spawn`; when the wrapper
+/// future drops, the guard fires and both scans bail on their next
+/// `tokio::select!` boundary.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_fts_partitioned(
     pool: &SqlitePool,
@@ -670,12 +812,16 @@ pub(crate) async fn search_fts_partitioned(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
+    with_snippet: bool,
+    cancel: Option<CancellationToken>,
 ) -> Result<FtsPartitionedScan, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
         return Ok(FtsPartitionedScan {
-            rows: Vec::new(),
-            ceiling_hit: false,
+            pages: Vec::new(),
+            blocks: Vec::new(),
+            pages_has_more: false,
+            blocks_has_more: false,
         });
     }
 
@@ -685,42 +831,130 @@ pub(crate) async fn search_fts_partitioned(
     // tokens) — same short-circuit as `search_fts`.
     if sanitized.is_empty() {
         return Ok(FtsPartitionedScan {
-            rows: Vec::new(),
-            ceiling_hit: false,
+            pages: Vec::new(),
+            blocks: Vec::new(),
+            pages_has_more: false,
+            blocks_has_more: false,
         });
     }
 
-    // Combined fetch = page_limit + block_limit + 1 so the caller can
-    // detect per-partition overflow without a second query. Cap at
-    // MAX_SEARCH_RESULTS as the SQL ceiling. `u64` math protects against
-    // pathological `u32::MAX + u32::MAX` overflow before the i64 cast.
-    let combined: u64 = u64::from(page_limit) + u64::from(block_limit) + 1;
-    let max_results_u64 = u64::try_from(MAX_SEARCH_RESULTS).unwrap_or(u64::MAX);
-    let capped = combined.min(max_results_u64);
-    // `capped` ≤ MAX_SEARCH_RESULTS (100), which fits an i64.
-    let fetch_limit = i64::try_from(capped).unwrap_or(MAX_SEARCH_RESULTS);
+    // PEND-69 F1 — each scan independently caps at `MAX_SEARCH_RESULTS`
+    // and asks for `limit + 1` to probe for overflow. `u64` math
+    // protects against pathological `u32::MAX + 1` before the i64 cast.
+    let pages_fetch_limit = limit_plus_one_capped(page_limit);
+    let blocks_fetch_limit = limit_plus_one_capped(block_limit);
 
-    let rows = fts_fetch_rows(
+    // Run both scans concurrently. `try_join!` fails fast on the first
+    // error — no partial response.
+    let pages_future = fts_fetch_rows(
         pool,
         &sanitized,
         None, // no cursor — palette doesn't paginate
         0.0,
         "",
-        fetch_limit,
+        pages_fetch_limit,
         parent_id,
         tag_ids,
         space_id,
         include_page_globs,
         exclude_page_globs,
-        None, // PEND-61: block_type filter is applied in Rust, not SQL
+        Some("page"), // PEND-69 F1: page-only pre-filter at SQL
         metadata,
-    )
-    .await?;
+        with_snippet,
+        // PEND-70 — clone the cancel token so both partition scans
+        // observe the same signal. `CancellationToken: Clone` is a
+        // cheap watch::Receiver refcount bump.
+        cancel.clone(),
+    );
+    let blocks_future = fts_fetch_rows(
+        pool,
+        &sanitized,
+        None,
+        0.0,
+        "",
+        blocks_fetch_limit,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        None, // unrestricted
+        metadata,
+        with_snippet,
+        cancel,
+    );
+    let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 
-    let ceiling_hit = i64::try_from(rows.len()).unwrap_or(i64::MAX) >= MAX_SEARCH_RESULTS;
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    // `limit == 0` is a degenerate ask — the caller doesn't want any
+    // rows from this partition, so there's nothing to "have more" of.
+    // Without this guard the `limit + 1 = 1` probe would set
+    // `has_more = true` against an empty result slice (existing
+    // `partitioned_zero_limits_yield_empty_partitions_and_no_has_more`
+    // contract).
+    let pages_has_more = page_limit_usize > 0 && pages_rows.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && blocks_rows.len() > block_limit_usize;
+
+    let pages: Vec<SearchBlockRow> = pages_rows
+        .into_iter()
+        .take(page_limit_usize)
+        .map(fts_row_to_block_row)
+        .collect();
+    let blocks: Vec<SearchBlockRow> = blocks_rows
+        .into_iter()
+        .take(block_limit_usize)
+        .map(fts_row_to_block_row)
+        .collect();
 
     Ok(FtsPartitionedScan {
-        rows: rows.into_iter().map(fts_row_to_block_row).collect(),
-        ceiling_hit,
+        pages,
+        blocks,
+        pages_has_more,
+        blocks_has_more,
     })
+}
+
+/// Compute the `limit + 1` probe SQL `LIMIT` value, capped at
+/// [`MAX_SEARCH_RESULTS`]. Shared helper for the per-partition scan
+/// limits in [`search_fts_partitioned`].
+fn limit_plus_one_capped(limit: u32) -> i64 {
+    let raw: u64 = u64::from(limit).saturating_add(1);
+    let max_results_u64 = u64::try_from(MAX_SEARCH_RESULTS).unwrap_or(u64::MAX);
+    let capped = raw.min(max_results_u64);
+    i64::try_from(capped).unwrap_or(MAX_SEARCH_RESULTS)
+}
+
+// ---------------------------------------------------------------------------
+// PEND-69 — test-only SQL builder accessor
+// ---------------------------------------------------------------------------
+
+/// Test-only: expose the FTS5 SELECT prefix the runtime would emit for
+/// a given `with_snippet` choice. Used to assert that `snippet(` is
+/// absent when the downstream pipeline will clear `row.snippet`.
+///
+/// Returns just the first `format!` shape — the dynamic per-filter
+/// `AND` clauses are appended after this prefix and don't change the
+/// `snippet(` presence question.
+#[cfg(test)]
+pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
+    let snippet_select = if with_snippet {
+        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+    } else {
+        "NULL as snippet"
+    };
+    format!(
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id,
+                {snippet_select},
+                fts.rank as search_rank
+         FROM fts_blocks fts
+         JOIN blocks b ON b.id = fts.block_id
+         WHERE fts_blocks MATCH ?1
+           AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR fts.rank > ?3
+                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
+    )
 }

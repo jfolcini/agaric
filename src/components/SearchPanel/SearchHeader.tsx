@@ -22,7 +22,7 @@ export interface SearchHeaderProps {
   inputRef: React.RefObject<HTMLInputElement | null>
   query: string
   onInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void
-  onSubmit: (e: React.FormEvent) => void
+  onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
   searchLoading: boolean
   typing: boolean
   t: TFunction

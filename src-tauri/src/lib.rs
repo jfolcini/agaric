@@ -2,6 +2,7 @@ pub mod backlink;
 pub mod block_descendants;
 pub mod block_positions;
 pub mod cache;
+pub mod cancellation;
 pub mod commands;
 pub mod dag;
 pub mod db;
@@ -1007,6 +1008,9 @@ pub fn run() {
             // Store all in Tauri managed state
             app.manage(WritePool(pools.write));
             app.manage(ReadPool(pools.read));
+            // PEND-70 P1-A — extension-state guard registry for
+            // in-flight search IPCs. See `cancellation.rs`.
+            app.manage(cancellation::CancellationRegistry::new());
             app.manage(DeviceId::new(device_id));
             app.manage(PersistedCert::new(sync_cert));
             app.manage(materializer);

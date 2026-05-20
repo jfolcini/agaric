@@ -128,7 +128,7 @@ export const commands = {
 	 *  for [`SearchFilter`] compat.
 	 *
 	 *  See [`search_blocks_partitioned_inner`] for the partition + `has_more`
-	 *  contract.
+	 *  contract, and the cancellation contract (PEND-70).
 	 */
 	searchBlocksPartitioned: (query: string, pageLimit: number, blockLimit: number, filter: SearchFilter) => typedError<PartitionedSearchResponse, AppError>(__TAURI_INVOKE("search_blocks_partitioned", { query, pageLimit, blockLimit, filter })),
 	/**  Tauri command: query blocks by boolean tag expression. Delegates to [`query_by_tags_inner`]. */

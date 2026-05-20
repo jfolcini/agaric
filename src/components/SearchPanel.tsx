@@ -614,7 +614,7 @@ export function SearchPanel(): React.ReactElement {
     setAutocompleteSelected(null)
   }, [])
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
     debounced.cancel()
     setTyping(false)

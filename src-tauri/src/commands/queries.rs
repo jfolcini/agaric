@@ -858,12 +858,13 @@ pub struct PartitionedSearchResponse {
     pub blocks: PageResponse<SearchBlockRow>,
 }
 
-/// PEND-61 Phase 1 — partitioned search inner.
+/// PEND-61 Phase 1 / PEND-69 F1 — partitioned search inner.
 ///
-/// One FTS5 scan, two partitions:
+/// Two parallel FTS5 scans, two partitions:
 ///
 /// 1. **`pages`** — rows where `block_type == "page"`, capped at
-///    `page_limit`.
+///    `page_limit`. SQL pushes the `block_type = 'page'` predicate
+///    so a content-heavy DB can't crowd pages out of the result set.
 /// 2. **`blocks`** — ALL rows in rank order (no `block_type` filter),
 ///    capped at `block_limit`.
 ///
@@ -880,26 +881,45 @@ pub struct PartitionedSearchResponse {
 ///
 /// ## `has_more` semantics
 ///
-/// - `pages.has_more = true` iff the `pages` partition filled to
-///   `page_limit` AND either (a) more page-typed rows existed in the
-///   fetched set, or (b) the combined fetch hit
-///   [`fts::search::MAX_SEARCH_RESULTS`].
-/// - `blocks.has_more = true` iff the `blocks` partition filled to
-///   `block_limit` AND either (a) at least one additional row existed
-///   in the fetched set, or (b) the combined fetch hit
-///   [`fts::search::MAX_SEARCH_RESULTS`].
+/// PEND-69 F1 — `has_more` is derived from a `limit + 1` probe on
+/// each scan independently. Either partition is `true` iff its scan
+/// returned more rows than its cap (resolves Open Q3 — probe approach).
+///
 /// - `next_cursor = None` for both (palette doesn't paginate).
 /// - `total_count = None` for both.
 ///
 /// Empty / whitespace queries short-circuit to two empty partitions —
 /// mirrors the [`search_blocks_inner`] short-circuit.
-#[instrument(skip(pool, filter), err)]
+///
+/// ## Failure semantics
+///
+/// Resolves PEND-69 Open Q2 — fail-fast. The two parallel scans run
+/// under `tokio::try_join!`; if either errors, the other is dropped
+/// and the error propagates without a partial response.
+///
+/// ## Cancellation
+///
+/// PEND-70 — `cancel` is an optional cancellation token threaded into
+/// the FTS path. The Tauri command wrapper stores a
+/// [`crate::cancellation::CancellationGuard`] in the
+/// [`crate::cancellation::CancellationRegistry`] extension state and
+/// spawns this inner via `tokio::spawn`, so the guard outlives the
+/// wrapper future. When the wrapper future drops (or `cancel_search`
+/// fires it externally), the guard's `Drop` signals the spawned task,
+/// which surfaces [`AppError::Cancelled`] at the next row-batch
+/// boundary (≤ 50 ms typical, ≤ 200 ms worst case).
+//
+// `err(level = "info")` keeps `AppError::Cancelled` (the expected
+// case under burst-typing) out of ERROR-level logs. Real failures
+// still surface via the wrapper's `sanitize_internal_error` warn.
+#[instrument(skip(pool, filter, cancel), err(level = "info"))]
 pub async fn search_blocks_partitioned_inner(
     pool: &SqlitePool,
     query: String,
     page_limit: u32,
     block_limit: u32,
     filter: SearchFilter,
+    cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
     // Mirror `search_blocks_inner`'s empty-query short-circuit so callers
     // observe the same wire shape on empty input.
@@ -927,8 +947,10 @@ pub async fn search_blocks_partitioned_inner(
     };
     let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
 
-    // One FTS scan. `filter.block_type_filter` is intentionally dropped
-    // here — the partitioning is the entire point of this IPC.
+    // PEND-69 F1 — `search_with_toggles_partitioned` runs the two
+    // scans in parallel under `tokio::try_join!` and returns each
+    // partition's `has_more` from a `limit + 1` probe. No further
+    // partitioning needed in this caller.
     let scan = fts::search_with_toggles_partitioned(
         pool,
         &query,
@@ -941,48 +963,21 @@ pub async fn search_blocks_partitioned_inner(
         &exclude_globs,
         toggles,
         &metadata,
+        cancel,
     )
     .await?;
 
-    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
-    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
-
-    // Partition in Rust. Pre-scan the count of page-typed rows so we can
-    // compute `pages.has_more` without re-scanning the (capped) set.
-    let total_pages_in_scan = scan.rows.iter().filter(|r| r.block_type == "page").count();
-    let total_rows_in_scan = scan.rows.len();
-
-    let pages_items: Vec<SearchBlockRow> = scan
-        .rows
-        .iter()
-        .filter(|r| r.block_type == "page")
-        .take(page_limit_usize)
-        .cloned()
-        .collect();
-    // `blocks` is unrestricted — every row, capped at `block_limit`.
-    let blocks_items: Vec<SearchBlockRow> = scan.rows.into_iter().take(block_limit_usize).collect();
-
-    let pages_filled = pages_items.len() == page_limit_usize && page_limit_usize > 0;
-    let pages_overflow = total_pages_in_scan > pages_items.len();
-    // Pages partition: more to show iff we filled AND (more pages
-    // exist beyond the cap, OR the SQL ceiling clipped the scan).
-    let pages_has_more = pages_filled && (pages_overflow || scan.ceiling_hit);
-
-    let blocks_filled = blocks_items.len() == block_limit_usize && block_limit_usize > 0;
-    let blocks_overflow = total_rows_in_scan > blocks_items.len();
-    let blocks_has_more = blocks_filled && (blocks_overflow || scan.ceiling_hit);
-
     Ok(PartitionedSearchResponse {
         pages: PageResponse {
-            items: pages_items,
+            items: scan.pages,
             next_cursor: None,
-            has_more: pages_has_more,
+            has_more: scan.pages_has_more,
             total_count: None,
         },
         blocks: PageResponse {
-            items: blocks_items,
+            items: scan.blocks,
             next_cursor: None,
-            has_more: blocks_has_more,
+            has_more: scan.blocks_has_more,
             total_count: None,
         },
     })
@@ -1010,20 +1005,69 @@ fn empty_partition() -> PageResponse<SearchBlockRow> {
 /// for [`SearchFilter`] compat.
 ///
 /// See [`search_blocks_partitioned_inner`] for the partition + `has_more`
-/// contract.
+/// contract, and the cancellation contract (PEND-70).
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn search_blocks_partitioned(
     pool: State<'_, ReadPool>,
+    registry: State<'_, crate::cancellation::CancellationRegistry>,
     query: String,
     page_limit: u32,
     block_limit: u32,
     filter: SearchFilter,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    search_blocks_partitioned_inner(&pool.0, query, page_limit, block_limit, filter)
-        .await
-        .map_err(sanitize_internal_error)
+    // PEND-70 P1-A — extension-state guard architecture.
+    //
+    // The guard lives in the [`CancellationRegistry`] keyed by a
+    // server-generated `request_id`. The actual search work runs in a
+    // `tokio::spawn`ed task so its lifetime is independent of this
+    // wrapper future. When the wrapper future is dropped (window
+    // close, panic unwind, future `cancel_search` IPC), the
+    // [`CancelOnDrop`] guard fires `registry.cancel(request_id)`,
+    // which signals the spawned task via its token and the task
+    // bails with [`AppError::Cancelled`] at the next row-batch
+    // boundary.
+    let registry: crate::cancellation::CancellationRegistry = (*registry).clone();
+    let request_id = ulid::Ulid::new().to_string();
+    let guard = std::sync::Arc::new(crate::cancellation::CancellationGuard::new());
+    let token = guard.token();
+    registry.insert(request_id.clone(), std::sync::Arc::clone(&guard));
+    let _defer = crate::cancellation::CancelOnDrop::new(registry, request_id);
+
+    let pool_clone = pool.0.clone();
+    // Spawn the inner search so its lifetime is independent of the
+    // wrapper future. Awaiting the JoinHandle: if the wrapper future
+    // is dropped, the handle is dropped (spawned task continues
+    // running independently); `_defer`'s Drop then fires the cancel
+    // signal and the spawned task observes it on its next
+    // `tokio::select!` boundary.
+    let join: tokio::task::JoinHandle<Result<PartitionedSearchResponse, AppError>> =
+        tokio::spawn(async move {
+            search_blocks_partitioned_inner(
+                &pool_clone,
+                query,
+                page_limit,
+                block_limit,
+                filter,
+                Some(token),
+            )
+            .await
+        });
+
+    let result = match join.await {
+        Ok(inner) => inner,
+        Err(join_err) if join_err.is_cancelled() => Err(AppError::Cancelled),
+        // Task panicked. Route through `AppError::Channel` so
+        // `sanitize_internal_error` collapses it to InvalidOperation
+        // on the wire while the real cause is logged via the warn
+        // path. (No `Internal` variant in this codebase; see
+        // `error.rs`.)
+        Err(join_err) => Err(AppError::Channel(format!(
+            "search task join failed: {join_err}"
+        ))),
+    };
+    result.map_err(sanitize_internal_error)
 }
 
 /// Tauri command: query blocks by property key/value. Delegates to [`query_by_property_inner`].

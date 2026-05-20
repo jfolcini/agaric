@@ -145,7 +145,7 @@ function AddFilterForm({
   const [boolValue, setBoolValue] = useState<'true' | 'false'>('true')
 
   const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
+    (e: React.SubmitEvent<HTMLFormElement>) => {
       e.preventDefault()
       if (!dimension) return
       let filter: GraphFilter
