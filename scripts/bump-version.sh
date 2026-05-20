@@ -103,6 +103,29 @@ if [ "$DO_COMMIT" -eq 1 ] && [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# Assert HEAD is on main before any mutating git op. The release flow's
+# entire contract is "land the bump on main, tag main, push main + tag";
+# every downstream consumer (PR #42-style stale-PR collision, release
+# workflow's main-only gate, the `git push --no-verify origin main`
+# line below) assumes that. We saw 0.1.37 land on `fix-pend-74-hastag-flake`
+# in one session because HEAD silently moved to that branch between the
+# user's `git checkout main` and this script's invocation — root cause
+# unproven (most likely the Claude Code harness's worktree management
+# leaking a branch switch onto the primary working tree), but a one-line
+# branch-name assertion at script entry forecloses the entire failure
+# class regardless of how HEAD got moved. Belt and braces: even if the
+# upstream automation gets fixed, this guard is cheap insurance against
+# a future regression.
+if [ "$DO_COMMIT" -eq 1 ]; then
+  CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+  if [ "$CURRENT_BRANCH" != "main" ]; then
+    echo "ERROR: HEAD is on '$CURRENT_BRANCH', not 'main' — refusing to --commit a release bump." >&2
+    echo "       Release commits MUST land on main so the tag and the PR (if any) point at the same SHA." >&2
+    echo "       Switch with 'git checkout main' and re-run." >&2
+    exit 1
+  fi
+fi
+
 # ── Read current version ────────────────────────────────────────────────────
 
 CURRENT_VERSION="$(jq -r .version package.json)"
@@ -203,6 +226,19 @@ if [ "$DO_COMMIT" -eq 0 ]; then
   exit 0
 fi
 
+# Re-assert HEAD is on main immediately before the staging+commit pair.
+# Defensive against anything that could have moved HEAD between the
+# entry-point guard above and here (manifest edits, biome format, cargo
+# update, post-tool-use hooks the maintainer's editor / harness may run
+# between subprocess invocations). The check is one fork + one process
+# substitution — vanishingly cheap relative to the work it guards.
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  echo "ERROR: HEAD moved off 'main' to '$CURRENT_BRANCH' during the bump — refusing to commit." >&2
+  echo "       The release tag must land on main; abort and investigate before retrying." >&2
+  exit 1
+fi
+
 git add \
   package.json \
   package-lock.json \
@@ -240,6 +276,20 @@ fi
 if git rev-parse --verify --quiet "refs/tags/$NEW_VERSION" >/dev/null; then
   echo "ERROR: tag '$NEW_VERSION' already exists locally. Delete it first if intentional:" >&2
   echo "  git tag -d $NEW_VERSION && git push --delete origin $NEW_VERSION" >&2
+  exit 1
+fi
+
+# Re-assert HEAD is still on main before tagging. The 0.1.37 incident
+# was a tag landing on the wrong branch; this is the load-bearing
+# moment for that contract. If anything has moved HEAD off main between
+# the commit (above) and the tag (below), we'd be tagging the wrong
+# SHA — fail loudly instead.
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  echo "ERROR: HEAD moved off 'main' to '$CURRENT_BRANCH' after the bump commit — refusing to tag." >&2
+  echo "       The bump commit may have landed on '$CURRENT_BRANCH' instead of main; investigate:" >&2
+  echo "         git log --oneline -1 main" >&2
+  echo "         git log --oneline -1 '$CURRENT_BRANCH'" >&2
   exit 1
 fi
 
