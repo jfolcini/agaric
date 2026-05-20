@@ -74,6 +74,17 @@ export function SearchHistoryDropdown({
               tabIndex={-1}
               data-testid={`search-history-entry-${idx}`}
               onClick={() => onPick(entry)}
+              // PEND-73 Phase 3.U5 — preventDefault on mousedown keeps
+              // the search input focused through the click. Without
+              // this, the input blurs first (mousedown fires before
+              // click), the dropdown unmounts via its visibility gate,
+              // and the click then lands on nothing. The historical
+              // SearchPanel mitigation deferred the blur via
+              // `setTimeout(() => setInputFocused(false), 150)` — that
+              // line is being deleted in the same commit.
+              onMouseDown={(e) => {
+                e.preventDefault()
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
@@ -98,6 +109,12 @@ export function SearchHistoryDropdown({
             type="button"
             data-testid="search-history-clear"
             onClick={onClear}
+            // PEND-73 Phase 3.U5 — sibling rationale: keep input
+            // focused through the click so the dropdown's visibility
+            // gate doesn't unmount it before onClick fires.
+            onMouseDown={(e) => {
+              e.preventDefault()
+            }}
             className={cn(
               'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground',
               'hover:bg-accent/30 transition-colors',

@@ -28,7 +28,7 @@
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
@@ -87,6 +87,18 @@ import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRo
 
 /** localStorage key for the PEND-54 one-time migration toast. */
 const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
+
+/**
+ * PEND-73 Phase 3.U10 — session-scoped sentinel for the PEND-54 toast.
+ * Lives outside React state so a SearchPanel remount within the same
+ * page session re-reads the existing `true` without re-toasting. The
+ * localStorage write below remains the cross-session persistence
+ * mechanism; this module-level flag is purely the in-memory guard
+ * against the "localStorage write fails, get fails next mount" loop
+ * that historically re-fired the toast on every remount in private-
+ * mode browsers.
+ */
+let filterSyntaxToastShownThisSession = false
 
 /** PEND-55 — localStorage key for the toggle state (component-local but
  * persisted across reloads so power users don't re-click on every
@@ -321,13 +333,27 @@ export function SearchPanel(): React.ReactElement {
 
   // PEND-54 — one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
+  //
+  // PEND-73 Phase 3.U10 — guard against re-firing in browsers where
+  // localStorage is unavailable (private mode, embedded webviews with
+  // storage disabled). The earlier shape silently caught the write
+  // failure but ALSO failed the read, so the toast re-fired on every
+  // mount. The in-memory sentinel below is checked first; the
+  // localStorage write is best-effort and only matters for cross-
+  // session persistence.
   useEffect(() => {
+    if (filterSyntaxToastShownThisSession) return
+    filterSyntaxToastShownThisSession = true
     try {
       if (localStorage.getItem(FILTER_SYNTAX_INTRO_TOAST_FLAG)) return
       notify(t('search.filterSyntaxIntro'))
       localStorage.setItem(FILTER_SYNTAX_INTRO_TOAST_FLAG, '1')
     } catch {
-      // localStorage may be unavailable in tests / private mode.
+      // localStorage unavailable; the session-scoped flag above is
+      // what actually gates re-fires within this session, and the
+      // toast was shown once on the first mount where this branch
+      // ran — that's the best we can do without storage.
+      notify(t('search.filterSyntaxIntro'))
     }
   }, [t])
 
@@ -476,10 +502,13 @@ export function SearchPanel(): React.ReactElement {
     debounced.schedule(value)
   }
 
-  // Auto-focus search input on mount
+  // Auto-focus search input on mount.
+  // PEND-73 Phase 3.U4 — useLayoutEffect to focus before paint, matching
+  // CommandPalette + InPageFind. Avoids the one-frame unfocused flash on
+  // slow mounts (e.g. cold tab activation on low-end devices).
   const searchInputRef = useRef<HTMLInputElement>(null)
   useRegisterPrimaryFocus(searchInputRef)
-  useEffect(() => {
+  useLayoutEffect(() => {
     searchInputRef.current?.focus()
   }, [])
 
@@ -848,12 +877,10 @@ export function SearchPanel(): React.ReactElement {
         t={t}
         onInputKeyDown={handleInputKeyDown}
         onInputFocus={() => setInputFocused(true)}
-        onInputBlur={() => {
-          // Defer blur so a click on a history row registers before the
-          // dropdown unmounts. 150ms matches Radix-popover's standard
-          // outside-click grace window.
-          window.setTimeout(() => setInputFocused(false), 150)
-        }}
+        // PEND-73 Phase 3.U5 — synchronous blur. The history dropdown's
+        // rows preventDefault on mousedown, which keeps the input
+        // focused through the click; no defer needed.
+        onInputBlur={() => setInputFocused(false)}
         invalid={!!regexError}
         inlineError={regexError}
         comboboxAttrs={inputComboboxAttrs}

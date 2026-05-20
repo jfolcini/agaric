@@ -96,6 +96,7 @@ export function SearchResultBlockRow({
   }
 
   return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
@@ -104,13 +105,6 @@ export function SearchResultBlockRow({
       aria-disabled={loading ? true : undefined}
       tabIndex={-1}
       onClick={handleClick}
-      onKeyDown={(e) => {
-        if (loading) return
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onClick()
-        }
-      }}
       className={cn(
         'list-none flex items-center gap-2 rounded-md px-3 py-1.5 text-sm cursor-pointer',
         'hover:bg-accent/30 active:bg-accent/40 transition-colors',

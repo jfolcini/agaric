@@ -2,10 +2,59 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 790 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 791 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1220+ REVIEW-LATER items across 790 sessions.
+- **Previously-resolved counter:** 1226+ REVIEW-LATER items across 791 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 791 — PEND-73 Phase 3: UX punch list (cheap-wins batch) (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (six surgical edits across five files, no parallelism benefit) |
+| **Items closed** | PEND-73 U3, U4 (two sites), U5, U6, U7, U10 |
+| **Items modified** | PEND-73 — U1 / U2 / U8 / U9 marked DEFERRED with rationale |
+| **Tests added** | net −2 (two dead-code-exercising tests removed alongside U3) |
+| **Files touched** | 5 source / 1 doc / 1 plan / 1 log |
+
+**Summary:** Closed six of Phase 3's ten UX items as a cheap-wins batch — each one a surgical edit, none touching the giant orchestrators. The four deferrals are documented inline on their PEND-73 rows.
+
+- **U3** — Removed the dead `onKeyDown` from `SearchResultBlockRow.tsx`. The element has `tabIndex={-1}` so nothing in real usage (including the ARIA combobox + `aria-activedescendant` model the parent uses) ever focuses it, meaning the keydown event never fires through the row. Enter/Space activation in production lives on the parent combobox input. Two tests that exercised the dead handler via `fireEvent.keyDown` (which bypasses the focus prerequisite — green tests over dead code) were also removed, with a rationale comment in their place.
+- **U4** — `CommandPalette.tsx:363` and `SearchPanel.tsx:482` both moved from `useEffect` to `useLayoutEffect` for input autofocus. Matches the `InPageFind.tsx:155` precedent. Kills the one-frame unfocused flash on slow mounts (cold tab activation on low-end devices).
+- **U5** — `SearchHistoryDropdown.tsx` rows and the clear-history button now `onMouseDown={(e) => e.preventDefault()}`. That keeps the search input focused through the click, so the dropdown's `visible = inputFocused && …` gate doesn't unmount it before onClick fires. `SearchPanel.tsx:854`'s `window.setTimeout(() => setInputFocused(false), 150)` blur defer is deleted; `onInputBlur` is synchronous. Magic 150 ms gone.
+- **U6 / U7** — `docs/SEARCH.md` updated: §"Quick palette" no longer claims "two parallel `searchBlocks` calls" (the code has been a single `searchBlocksPartitioned` round-trip since commit `f665452f`); §"Mobile search Sheet — Lifecycle" no longer claims `<CommandPalette variant="embedded" />` (the Sheet embeds `<PaletteBody>` directly; no `variant` prop exists). The neighbouring safety-net paragraph narrowed to call out `<InPageFind>`'s `variant` prop only.
+- **U10** — `SearchPanel.tsx`'s PEND-54 filter-syntax intro toast now checks a module-level `filterSyntaxToastShownThisSession` sentinel BEFORE the localStorage read. Private-mode browsers historically saw the toast on every remount because the localStorage write silently failed, then the next mount's read failed too (returning null), then the notify fired again. The session-scoped flag breaks that loop — toast shows once per session even when storage is unavailable.
+
+**Why the four deferrals:**
+
+- **U1 (broader IPC toast)** — Needs once-per-session machinery per surface (`useFailedOnce(key)`). The Phase 2 cancellation swallow already pays the highest user-visible cost. Real non-cancellation errors are rare (SQLite/FTS would have to hit a real fault mid-query) and `logger.warn` is enough for debugging. Low ROI.
+- **U2 (SearchHistoryDropdown listbox a11y)** — Bigger refactor (roving-index + `aria-activedescendant` wiring through the history-cycling hook). Doesn't fit the cheap-wins batch.
+- **U8 (selection-range snapshot)** — Touches the palette store contract + the `insertPageLinkInto` path. Defer until orchestrator decomposition lands.
+- **U9 (mode-memory consolidation)** — The plan's own open question 3 already recommends deferring this; honour that.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 3's 10 frontend rows now: 6 SHIPPED, 4 DEFERRED. PEND-73's overall frontend-still-open count drops by 6.
+- **Previously resolved:** 1220+ → 1226+ across 790 → 791 sessions.
+
+**Files touched (this session):**
+- `src/components/CommandPalette.tsx` (+8 / -3; useLayoutEffect import + autofocus swap + comment)
+- `src/components/SearchPanel.tsx` (+22 / -8; useLayoutEffect autofocus + session-scoped toast flag + module-level sentinel + sync blur)
+- `src/components/search/SearchHistoryDropdown.tsx` (+17 / -0; onMouseDown preventDefault on rows + clear button)
+- `src/components/search/SearchResultBlockRow.tsx` (-7; dead onKeyDown removed)
+- `src/components/search/__tests__/SearchResultBlockRow.test.tsx` (+9 / -22; two dead-handler tests removed with rationale)
+- `docs/SEARCH.md` (+2 / -2; partitioned IPC + PaletteBody mount path)
+- `pending/PEND-73-search-audit-followups.md` (Phase 3 TL;DR + 6 SHIPPED rows + 4 DEFERRED rows)
+
+**Verification:**
+- `npx vitest run` — 10293 / 10293 pass (net −2 vs Phase 2's 10295, accounting for the two removed dead-handler tests).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The U3 deletion exposed two passing tests over dead code — a useful reminder that test green-ness is not evidence of contract relevance. The replacement comment block in the test file explicitly calls out the focus-prerequisite bypass for future contributors.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 790 — PEND-73 Phase 2: frontend cancellation swallowing (2026-05-20)
 

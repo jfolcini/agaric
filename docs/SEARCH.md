@@ -18,10 +18,7 @@ For an in-app reference, click the `?` button in the search toolbar — it opens
 Behaviour:
 
 - **Empty input** surfaces your recent pages (the same list `SearchPanel` shows). Selecting one navigates to it.
-- **Typed query** fires two parallel `searchBlocks` calls in one keystroke window:
-  1. A page-only query (`blockTypeFilter = 'page'`, cap 8) that anchors the result groups by page name.
-  2. An unrestricted blocks query (cap 40) that supplies content matches.
-  The frontend merges them by `page_id`, caps each group at 2 block matches, and caps the total to 8 page groups. Surplus matches inside a group surface as a "+N more in this page" pill; surplus pages do not render — the escalation footer is the user's path to more.
+- **Typed query** fires one `searchBlocksPartitioned` call per keystroke window. The backend runs two parallel scans server-side (PEND-69 F1) — a page-only partition (`page_limit + 1` probe, default 8) and an unrestricted partition (`block_limit + 1` probe, default 40) — and returns both in a single IPC round-trip with `pages.has_more` / `blocks.has_more` flags that signal per-partition exhaustion independently. The frontend merges by `page_id`, caps each group at 2 block matches, and caps the total to 8 page groups. Surplus matches inside a group surface as a "+N more in this page" pill; surplus pages do not render — the escalation footer is the user's path to more.
 - **Ranking** uses the FTS5 candidate set, then post-FTS reorders by a 4-band rule (exact title → prefix title → contains-in-title → content-only) blended with a hand-rolled Jaro-Winkler similarity on the page title (`0.7 * band + 0.3 * JW`). The JW boost forgives typos like `alfa` → `Alpha` without filtering anything out — fuzzy is additive.
 - **Click behaviour.** Plain click navigates the active tab; `Cmd/Ctrl+click` (or middle-click) opens the target in a new tab.
 - **Keyboard.** `↑` / `↓` walk the flattened result list (page header → its block hits → next page header). `Enter` activates; `Cmd/Ctrl+Enter` activates in a new tab. `Esc` closes.
@@ -308,7 +305,7 @@ Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-p
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 
 - **In this page** — embeds the PEND-52 find-in-page toolbar (`<InPageFind variant="embedded" />`). Same matcher, same highlight pipeline; only the chrome differs from the desktop overlay.
-- **Across all pages** — embeds the PEND-61 palette search mode (`<CommandPalette variant="embedded" />`). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
+- **Across all pages** — embeds the PEND-61 palette search via the inner `<PaletteBody>` component (the same body that mounts inside the overlay `<CommandPalette>` shell, exported from `src/components/CommandPalette.tsx`; no `variant` prop). Same cmdk surface, same partitioned IPC, same escalation footer. Tapping the footer fires `setPendingViewQuery(query)` → `onClose()` → `setView('search')`; the Sheet tears down, the find-in-files view picks up the query.
 
 The default segment is context-aware: `defaultModeForView()` returns `'in-page'` for the Journal and page-editor views (the user is reading a page), `'all-pages'` everywhere else.
 
@@ -323,7 +320,7 @@ The Sheet owns a `useSearchSheetStore` (`open`, `mode`, `query`). A single `useE
 Two safety nets:
 
 - The `if (!open) return` guard prevents the mount-time effect from clobbering a pre-existing desktop session (Ctrl+F or Cmd+K opened *before* the Sheet was first activated).
-- Both the in-page-find toolbar and the palette body have `variant` props (`'overlay'` vs `'embedded'`). The overlay variants return `null` when the Sheet is open in their respective modes, so matcher / IPC effects never run twice for the same surface.
+- The in-page-find toolbar has a `variant` prop (`'overlay'` vs `'embedded'`); the palette uses the inner `<PaletteBody>` directly in the Sheet (no `variant` prop). The overlay `<InPageFind>` and the desktop `<CommandPalette>` shell each return `null` (or close) when the Sheet is open in their respective modes, so matcher / IPC effects never run twice for the same surface.
 
 ### Known limitations
 

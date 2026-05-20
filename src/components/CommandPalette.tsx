@@ -39,7 +39,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type PaletteAction, PaletteActionMenu } from '@/components/palette/PaletteActionMenu'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
@@ -358,9 +358,11 @@ export function PaletteBody({
     if (route != null) enterModeWithQuery(route.next, route.q)
   }, [query, mode, enterModeWithQuery])
 
-  // Auto-focus on mount. cmdk's `<CommandInput>` is a controlled
-  // primitive but doesn't auto-focus by default in our shell.
-  useEffect(() => {
+  // PEND-73 Phase 3.U4 — autofocus before paint via useLayoutEffect.
+  // useEffect runs after paint, leaving a one-frame flash on slow
+  // mounts where the user sees the unfocused input and then watches
+  // the caret jump in. Matches the InPageFind.tsx:155 pattern.
+  useLayoutEffect(() => {
     inputRef.current?.focus()
   }, [])
 

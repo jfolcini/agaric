@@ -87,27 +87,15 @@ describe('SearchResultBlockRow', () => {
     expect(onClick).toHaveBeenCalledOnce()
   })
 
-  it('invokes onClick when Enter is pressed on the row', () => {
-    const onClick = vi.fn()
-    render(
-      <ul>
-        <SearchResultBlockRow row={makeRow()} isFocused={false} onClick={onClick} />
-      </ul>,
-    )
-    fireEvent.keyDown(screen.getByRole('option'), { key: 'Enter' })
-    expect(onClick).toHaveBeenCalledOnce()
-  })
-
-  it('invokes onClick when Space is pressed on the row', () => {
-    const onClick = vi.fn()
-    render(
-      <ul>
-        <SearchResultBlockRow row={makeRow()} isFocused={false} onClick={onClick} />
-      </ul>,
-    )
-    fireEvent.keyDown(screen.getByRole('option'), { key: ' ' })
-    expect(onClick).toHaveBeenCalledOnce()
-  })
+  // PEND-73 Phase 3.U3 — the Enter/Space row-level keyDown handler was
+  // dead code: the row has `tabIndex={-1}` so nothing in real usage
+  // (including ARIA combobox patterns with aria-activedescendant) ever
+  // focuses it, meaning the keydown event never fires through the row.
+  // Enter/Space activation in production lives on the parent combobox
+  // input, which dispatches to the active descendant by id. These two
+  // tests exercised the removed handler via `fireEvent.keyDown` which
+  // bypasses the focus prerequisite — green tests over dead code. The
+  // click path below is the row's actual public contract.
 
   it('does not invoke onClick when `loading` is true', () => {
     const onClick = vi.fn()
