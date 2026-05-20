@@ -150,9 +150,21 @@ fi
 
 # ── Regenerate lock files ───────────────────────────────────────────────────
 
-# package-lock.json mirrors package.json; --ignore-scripts skips Tauri
-# binary downloads (we just want the lock graph updated).
-npm install --package-lock-only --ignore-scripts >/dev/null 2>&1
+# package-lock.json mirrors package.json. The flag set below is the
+# defensive shape for a CI / release context: the npm binary itself is
+# pinned by the `packageManager` field in `package.json` (Corepack
+# resolves + integrity-checks it); `--package-lock-only` regenerates
+# the lockfile without writing node_modules; `--ignore-scripts` skips
+# postinstall scripts (Tauri binary downloads); `--no-audit` /
+# `--no-fund` suppress non-error output so the redirect captures only
+# real failures. Stderr is NOT silenced so genuine resolution errors
+# surface in CI logs.
+npm install \
+  --package-lock-only \
+  --ignore-scripts \
+  --no-audit \
+  --no-fund \
+  >/dev/null
 
 # Cargo.lock — `cargo update` with the package + precise version is the
 # minimal-diff way to bump just the agaric workspace member.
