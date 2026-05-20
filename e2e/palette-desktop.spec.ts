@@ -93,7 +93,11 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
     // surface is gated; navigating to a page first puts focus in the
     // editor, but clicking the sidebar header re-takes focus, and
     // Ctrl+K then opens cleanly. This guards the gating logic.
-    await openPage(page, 'Welcome')
+    //
+    // Page name source: matches the canonical seed used by other specs
+    // (`features-coverage.spec.ts`, `editor-lifecycle.spec.ts`) so the
+    // assertion doesn't depend on a fixture we don't own.
+    await openPage(page, 'Getting Started')
     await page.getByRole('button', { name: 'Pages', exact: true }).click()
 
     await page.keyboard.down('Control')

@@ -209,6 +209,20 @@ export function AutocompletePopover({
                   key={item.value}
                   value={item.value}
                   onSelect={() => onSelect(item.value)}
+                  // PEND-73 Phase 3.U5 follow-up — keep the search input
+                  // focused through the click. Without this, the input's
+                  // synchronous `onInputBlur` flips `inputFocused` → false
+                  // on mousedown, which closes `autocompleteOpen` (gated
+                  // on `inputFocused`), which unmounts this CommandItem
+                  // BEFORE the click reaches cmdk's `onSelect`. The
+                  // historical SearchPanel mitigation deferred the blur
+                  // via `setTimeout(150)`; that defer was removed for the
+                  // history dropdown (which has its own onMouseDown
+                  // preventDefault on each row) but autocomplete items
+                  // also need the same guard.
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                  }}
                   data-testid={`autocomplete-item-${item.value}`}
                 >
                   {item.label ?? item.value}
