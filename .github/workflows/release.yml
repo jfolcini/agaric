@@ -280,11 +280,24 @@ jobs:
             echo "Draft release for tag $TAG already exists; reusing."
           else
             echo "Creating draft release for tag $TAG..."
+            # `--generate-notes` asks GitHub to auto-generate the
+            # "What's Changed" changelog from PR titles merged since
+            # the previous tag. Before this, the step set
+            # `--notes "Release notes will be finalized by the
+            # workflow."` as literal text, but no later step actually
+            # finalised it — every release (0.1.37, 0.1.38) shipped
+            # with that placeholder + the appended SLSA recipe and
+            # nothing else, so consumers saw no changelog. The
+            # `finalize-release-notes` job at the bottom of this
+            # workflow appends the SLSA recipe to whatever body lands
+            # here, so swapping the placeholder for `--generate-notes`
+            # produces a `<auto-changelog> --- <SLSA recipe>` body
+            # without any other workflow changes.
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --title "Agaric $TAG" \
-              --notes "Release notes will be finalized by the workflow." \
+              --generate-notes \
               || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
 
@@ -1008,11 +1021,24 @@ jobs:
             echo "Draft release for tag $TAG already exists; reusing."
           else
             echo "Creating draft release for tag $TAG..."
+            # `--generate-notes` asks GitHub to auto-generate the
+            # "What's Changed" changelog from PR titles merged since
+            # the previous tag. Before this, the step set
+            # `--notes "Release notes will be finalized by the
+            # workflow."` as literal text, but no later step actually
+            # finalised it — every release (0.1.37, 0.1.38) shipped
+            # with that placeholder + the appended SLSA recipe and
+            # nothing else, so consumers saw no changelog. The
+            # `finalize-release-notes` job at the bottom of this
+            # workflow appends the SLSA recipe to whatever body lands
+            # here, so swapping the placeholder for `--generate-notes`
+            # produces a `<auto-changelog> --- <SLSA recipe>` body
+            # without any other workflow changes.
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --title "Agaric $TAG" \
-              --notes "Release notes will be finalized by the workflow." \
+              --generate-notes \
               || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
 
