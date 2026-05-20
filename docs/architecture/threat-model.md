@@ -189,6 +189,79 @@ The lists in [`SECURITY.md`](../../SECURITY.md#out-of-scope) are canonical; this
 
 A proposed change that shifts any of these items into scope (a server build, a multi-user feature, a public deployment, an external-maintainer access model) must update this document and `SECURITY.md` before the change lands. The trust-anchor and mitigation lists upstream of this file all assume the local-first, single-user framing; widening that framing without revisiting them would silently un-mitigate items the documents currently claim mitigated.
 
+## Assurance case
+
+Reframes the STRIDE rows above as **top-level security claims + the arguments and evidence that justify them**. Satisfies the OpenSSF Best Practices Silver-tier [`assurance_case`](https://www.bestpractices.dev/en/criteria/2#2.assurance_case) criterion. Each claim cites the STRIDE row(s) that mitigate it and the CI evidence that verifies the mitigation in production.
+
+The shape is intentionally narrative, not GSN-formal: the threat model above is the load-bearing artefact, and a separate GSN-style document would just drift against it (see PEND-49 §5a recommendation). Anyone updating a claim here should update the cited STRIDE row in the same commit.
+
+### Claim 1 — User data stays on the user's device
+
+**Argument.** Agaric is a local-first application. There is no server-side store, no cloud copy, no telemetry endpoint. The single off-device data flow is the user's own Google Calendar push (opt-in, per-event, via OAuth that the user themselves authorised).
+
+**Evidence.**
+
+- [§Trust boundaries](#trust-boundaries) lists three boundaries that touch off-device surfaces (B3 LAN sync, B4 updater, B5 GCal); all three are either opt-in (B5), self-paired (B3), or read-only (B4).
+- B5 STRIDE row: scopes the OAuth token to the events written by Agaric; revoke at any time via Google account settings.
+- [`SECURITY.md`](../../SECURITY.md#out-of-scope) restates "no server-side store, no telemetry" as the contract; this row treats violations as security findings.
+
+### Claim 2 — The Tauri IPC boundary is capability-gated
+
+**Argument.** Every call from the JS frontend into the Rust backend traverses `tauri::Builder::invoke_handler!`. Capabilities for those handlers live in `src-tauri/capabilities/default.json` and are reviewed in CI. Frontend code cannot escalate to OS-level APIs (filesystem, network, shell) outside the allowlist.
+
+**Evidence.**
+
+- B1 STRIDE row: enumerates Spoofing/Tampering/Repudiation/Info-disclosure/DoS/Elevation per-row mitigations for the IPC surface.
+- `src-tauri/capabilities/default.json` is the canonical capability allowlist.
+- `lint`-stage CI job runs `cargo clippy -- -D warnings` against the IPC handler module (`src-tauri/src/commands/`); any new handler that bypasses the typed `tauri::command!` macro fails the build.
+- The `tauri command sanitize` prek hook (`prek.toml` line 386, `scripts/check-tauri-command-sanitize.mjs`) blocks new IPC handlers that don't run through the `AppError`/sanitiser path.
+
+### Claim 3 — Release artifacts are signed and attested
+
+**Argument.** Every published bundle, SBOM, and APK is signed with the Tauri updater key and attested with [SLSA build provenance](https://slsa.dev/) via GitHub's `actions/attest-build-provenance` → Sigstore transparency log. End users (and downstream packagers) can verify origin and integrity offline.
+
+**Evidence.**
+
+- B4 STRIDE row: covers updater signing, updater pull-vs-push trust, leaked-key rotation.
+- `.github/workflows/release.yml` job `Attest build provenance` runs `actions/attest-build-provenance` for AppImage, .deb, .rpm, .dmg, .msi, .apk, SBOM, and OpenVEX outputs.
+- Release notes (every release since 0.1.38) include the per-asset `gh attestation verify` recipe; consumers can replay it without trusting the workflow.
+- Tauri updater public key pinned in `src-tauri/tauri.conf.json`; private key lives in `secrets.TAURI_SIGNING_PRIVATE_KEY` with documented rotation in [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation).
+
+### Claim 4 — Vulnerabilities can reach the maintainer privately
+
+**Argument.** [`SECURITY.md`](../../SECURITY.md) names the maintainer's GitHub Security Advisories private-disclosure path and a fallback email. Both are stable for the lifetime of the repository. The 90-day public-disclosure clock matches the OSSF norm and is published, not invented per-report.
+
+**Evidence.**
+
+- [`SECURITY.md`](../../SECURITY.md#disclosure-policy) — the private-disclosure path, fallback email, response timeline.
+- The disclosure path is wired to the project's GitHub Security Advisories tab; reports there reach the maintainer's notification settings.
+- The OpenSSF Best Practices form's [`vulnerability_report_process`](https://www.bestpractices.dev/en/criteria/0#0.vulnerability_report_process) criterion is Met (verified 2026-05-17) and points at the same document.
+
+### Claim 5 — The supply chain is reviewed in three concentric rings
+
+**Argument.** Dependencies are reviewed at three escalating ringfences: hard-block via `cargo-deny`, warn via `cargo audit`, and time-boxed waiver via the `deny.toml` `[advisories].ignore` list. Each waiver carries a written rationale; the waiver list is itself reviewed.
+
+**Evidence.**
+
+- [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
+- `cargo-deny` runs on every PR (`validate / cargo-tests` job); `cargo audit` runs in the same job as warn-only.
+- `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale and an upstream tracking link.
+- `pending/REVIEW-LATER.md` `OSSF-3` documents the score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`); auto-recovers when upstream finishes the gtk4 migration.
+
+### Claim 6 — Authentication state is held in OS-native secure storage
+
+**Argument.** The Google Calendar OAuth refresh token (and any future credential) is stored in the OS keychain via `tauri-plugin-keychain` rather than in the SQLite database or filesystem. A user who restores `~/.local/share/com.agaric.app/` to another machine without also moving the keychain entry gets a fresh re-auth prompt.
+
+**Evidence.**
+
+- B5 STRIDE row: token theft via local-storage scrape mitigated by keychain isolation.
+- `src-tauri/src/commands/gcal.rs` reads/writes the refresh token exclusively through the keychain abstraction; no SQLite columns hold it.
+- The per-space variant (FEAT-3p9, tracked in `REVIEW-LATER.md`) extends the same pattern — per-space keychain key, never SQLite.
+
+### How this is maintained
+
+When any STRIDE row above is updated (new mitigation, accepted-risk → mitigated transition, threat moved to "out of scope" or back), the corresponding claim's evidence line gets updated in the same commit. The OpenSSF Best Practices form's [`assurance_case`](https://www.bestpractices.dev/en/criteria/2#2.assurance_case) field points at this section directly so the live link to evidence stays the contract.
+
 ## Open questions
 
 Living artefact — this section is allowed to be empty, and any entry here is an item the threat model has not yet committed to. As of the current revision:
