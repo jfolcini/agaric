@@ -623,24 +623,26 @@ describe('CommandPalette — escalation footer', () => {
 })
 
 describe('CommandPalette — [[page]] autocomplete', () => {
-  it('fires a page-only searchBlocks call in link mode (NOT the partitioned IPC)', async () => {
-    // PEND-61 CR — the partitioned IPC's combined fetch cap can drown
-    // the pages partition when content rows outrank pages. Link mode
-    // therefore uses a dedicated `searchBlocks({blockTypeFilter:
-    // 'page'})` call for the page-only guarantee.
+  it('fires a single partitioned IPC with blockLimit=0 in link mode (PEND-69 two-scan guarantees page coverage)', async () => {
+    // PEND-69 F1 — the partitioned IPC now runs two parallel SQL
+    // scans (page-only + unrestricted) each with its own `limit + 1`
+    // probe, so the pages partition is guaranteed to surface matching
+    // pages regardless of content-row rank. Link mode no longer needs
+    // a dedicated `searchBlocks({blockTypeFilter: 'page'})` round-trip
+    // — it asks for zero blocks and reads the pages partition.
     render(<CommandPalette />)
     openPalette()
     const input = screen.getByTestId('command-palette-input')
     fireEvent.change(input, { target: { value: '[[a' } })
     expect(screen.getByTestId('palette-link-mode-badge')).toBeInTheDocument()
     await waitFor(() => {
-      const calls = mockedSearchBlocks.mock.calls
+      const calls = mockedSearchBlocksPartitioned.mock.calls
       expect(calls.length).toBeGreaterThan(0)
       for (const call of calls) {
-        expect(call[0].blockTypeFilter).toBe('page')
+        expect(call[0].blockLimit).toBe(0)
       }
-      // Partitioned IPC must NOT have fired in link mode.
-      expect(mockedSearchBlocksPartitioned).not.toHaveBeenCalled()
+      // The legacy page-only searchBlocks workaround must NOT fire.
+      expect(mockedSearchBlocks).not.toHaveBeenCalled()
     })
   })
 
@@ -682,13 +684,22 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     document.body.appendChild(host)
     host.focus()
 
-    // PEND-61 CR — linkMode uses the dedicated page-only
-    // searchBlocks IPC; mock that one (not the partitioned variant).
-    mockedSearchBlocks.mockResolvedValue({
-      items: [makePageRow('PAGE_A', 'Alpha')],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    // PEND-69 F1 — linkMode now uses the partitioned IPC with
+    // blockLimit=0; mock that one (the legacy page-only searchBlocks
+    // workaround was removed).
+    mockedSearchBlocksPartitioned.mockResolvedValue({
+      pages: {
+        items: [makePageRow('PAGE_A', 'Alpha')],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
+      blocks: {
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
     })
 
     // Capture focus before opening — the store snapshots
@@ -1214,18 +1225,23 @@ describe('CommandPalette — PEND-72 external query sync', () => {
 
 describe('CommandPalette — PEND-61 CR regressions', () => {
   it('linkMode page-only guarantee — page surfaces even when many content rows outrank it', async () => {
-    // PEND-61 CR (tech-must-1): the partitioned IPC's combined fetch
-    // cap could drown the pages partition. linkMode now uses a
-    // dedicated `searchBlocks({blockTypeFilter:'page'})` to preserve
-    // the page-only guarantee. Verify the page-typed row reaches the
-    // DOM even if we don't seed any content rows (the real-world
-    // failure case wouldn't reach us anyway since we no longer ask
-    // for content rows).
-    mockedSearchBlocks.mockResolvedValue({
-      items: [makePageRow('PAGE_LINK', 'Linkable')],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    // PEND-69 F1 — the partitioned IPC's two-scan shape guarantees
+    // per-partition page coverage. linkMode now uses the same IPC
+    // with `blockLimit: 0`; the pages partition is filled by the
+    // dedicated page-only SQL scan, independent of content-row rank.
+    mockedSearchBlocksPartitioned.mockResolvedValue({
+      pages: {
+        items: [makePageRow('PAGE_LINK', 'Linkable')],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
+      blocks: {
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
     })
     render(<CommandPalette />)
     openPalette()
@@ -1234,9 +1250,10 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
     await waitFor(() => {
       expect(screen.getByTestId('palette-page-header-PAGE_LINK')).toBeInTheDocument()
     })
-    // The dedicated page-only call carries the right filter.
-    const call = mockedSearchBlocks.mock.calls.at(-1)?.[0]
-    expect(call?.blockTypeFilter).toBe('page')
+    // linkMode asks for zero blocks so the IPC short-circuits the
+    // unrestricted scan.
+    const call = mockedSearchBlocksPartitioned.mock.calls.at(-1)?.[0]
+    expect(call?.blockLimit).toBe(0)
   })
 
   it('cold-open [[page]] Enter falls through to plain navigation when no editor focus was captured', async () => {
@@ -1245,11 +1262,20 @@ describe('CommandPalette — PEND-61 CR regressions', () => {
     // `navigateToPage` so the user gets something.
     const navigateToPage = vi.fn()
     useTabsStore.setState({ navigateToPage })
-    mockedSearchBlocks.mockResolvedValue({
-      items: [makePageRow('PAGE_X', 'Xenial')],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    // PEND-69 F1 — linkMode now uses the partitioned IPC (blockLimit=0).
+    mockedSearchBlocksPartitioned.mockResolvedValue({
+      pages: {
+        items: [makePageRow('PAGE_X', 'Xenial')],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
+      blocks: {
+        items: [],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      },
     })
     render(<CommandPalette />)
     // openPalette() opens with `document.activeElement === <body>`, so

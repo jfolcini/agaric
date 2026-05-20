@@ -436,17 +436,16 @@ export function PaletteBody({
   const effectiveQuery = linkMode ? linkQuery : debouncedQuery
 
   // ── IPC ──────────────────────────────────────────────────────────
-  // Non-linkMode: one `searchBlocksPartitioned` round-trip returns
-  // both partitions ({ pages, blocks }) from a single FTS scan
-  // (PEND-61 Phase 1, replaces PEND-51's two parallel calls).
+  // One `searchBlocksPartitioned` round-trip returns both partitions
+  // ({ pages, blocks }) from a single FTS scan (PEND-61 Phase 1).
   //
-  // linkMode: PEND-61 CR — the partitioned IPC's combined fetch cap
-  // (`page_limit + block_limit + 1`) can drown the page partition
-  // when many higher-ranked content rows out-score the only matching
-  // page. `[[page]]` autocomplete needs a page-only guarantee, so we
-  // fire a dedicated `searchBlocks({ blockTypeFilter: 'page' })` for
-  // that path — matches the PEND-51 design and restores the
-  // "page-only, always" invariant.
+  // PEND-69 F1 — the partitioned IPC now runs two parallel scans
+  // server-side (page-only + unrestricted), each with its own
+  // `limit + 1` probe. The pages partition is guaranteed to surface
+  // matching pages regardless of how many content rows out-rank them,
+  // so `[[page]]` autocomplete no longer needs a dedicated
+  // `searchBlocks({ blockTypeFilter: 'page' })` round-trip. linkMode
+  // simply asks for zero blocks and reads the pages partition.
   useEffect(() => {
     if (mode !== 'search') return
     if (!spaceIsReady) return
@@ -461,25 +460,15 @@ export function PaletteBody({
 
     const spaceId = currentSpaceId ?? ''
 
-    const fetchPromise = linkMode
-      ? searchBlocks({
-          query: effectiveQuery,
-          blockTypeFilter: 'page',
-          limit: paginationLimit(PAGE_QUERY_LIMIT),
-          spaceId,
-        }).then((resp) => ({
-          pages: { items: resp.items },
-          blocks: { items: [] as SearchBlockRow[] },
-        }))
-      : searchBlocksPartitioned({
-          query: effectiveQuery,
-          pageLimit: PAGE_QUERY_LIMIT,
-          blockLimit: BLOCK_QUERY_LIMIT,
-          spaceId,
-        }).then((resp) => ({
-          pages: { items: resp.pages.items },
-          blocks: { items: resp.blocks.items },
-        }))
+    const fetchPromise = searchBlocksPartitioned({
+      query: effectiveQuery,
+      pageLimit: PAGE_QUERY_LIMIT,
+      blockLimit: linkMode ? 0 : BLOCK_QUERY_LIMIT,
+      spaceId,
+    }).then((resp) => ({
+      pages: { items: resp.pages.items },
+      blocks: { items: resp.blocks.items },
+    }))
 
     fetchPromise
       .then(({ pages: p, blocks: b }) => {
