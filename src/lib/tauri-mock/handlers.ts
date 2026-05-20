@@ -235,22 +235,25 @@ export const HANDLERS: Record<string, Handler> = {
     const limit = Math.min(Number((a['limit'] as number | null) ?? 50), 100)
 
     // Build the metadata-rich row for every page in the space.
+    // Review Round 1: shape mirrors the camelCase wire format from
+    // `PageWithMetadataRow` with the typed `flags` substructure
+    // replacing the prior `has_property_flags` bitmask.
     interface MetaRow {
       id: string
-      block_type: string
+      blockType: string
       content: string | null
-      parent_id: string | null
+      parentId: string | null
       position: number | null
-      deleted_at: string | null
-      todo_state: string | null
+      deletedAt: string | null
+      todoState: string | null
       priority: string | null
-      due_date: string | null
-      scheduled_date: string | null
-      page_id: string | null
-      last_modified_at: string | null
-      inbound_link_count: number
-      child_block_count: number
-      has_property_flags: number
+      dueDate: string | null
+      scheduledDate: string | null
+      pageId: string | null
+      lastModifiedAt: string | null
+      inboundLinkCount: number
+      childBlockCount: number
+      flags: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
     }
     const rows: MetaRow[] = []
     for (const b of blocks.values()) {
@@ -274,28 +277,26 @@ export const HANDLERS: Record<string, Handler> = {
       const hasTodo = descendants.some((d) => d['todo_state'] != null)
       const hasScheduled = descendants.some((d) => d['scheduled_date'] != null)
       const hasDue = descendants.some((d) => d['due_date'] != null)
-      const flags =
-        (hasTags ? 1 : 0) | (hasTodo ? 2 : 0) | (hasScheduled ? 4 : 0) | (hasDue ? 8 : 0)
 
       // Mock doesn't model op_log; treat creation time as id-derived.
-      const lastModifiedAt = (b['id'] as string).slice(0, 10) // mocked
+      const lastModifiedAt = (b['id'] as string).slice(0, 10)
 
       rows.push({
         id: b['id'] as string,
-        block_type: 'page',
+        blockType: 'page',
         content: (b['content'] as string | null) ?? null,
-        parent_id: (b['parent_id'] as string | null) ?? null,
+        parentId: (b['parent_id'] as string | null) ?? null,
         position: (b['position'] as number | null) ?? null,
-        deleted_at: null,
-        todo_state: (b['todo_state'] as string | null) ?? null,
+        deletedAt: null,
+        todoState: (b['todo_state'] as string | null) ?? null,
         priority: (b['priority'] as string | null) ?? null,
-        due_date: (b['due_date'] as string | null) ?? null,
-        scheduled_date: (b['scheduled_date'] as string | null) ?? null,
-        page_id: (b['page_id'] as string | null) ?? null,
-        last_modified_at: lastModifiedAt,
-        inbound_link_count: inboundLinks,
-        child_block_count: childCount,
-        has_property_flags: flags,
+        dueDate: (b['due_date'] as string | null) ?? null,
+        scheduledDate: (b['scheduled_date'] as string | null) ?? null,
+        pageId: (b['page_id'] as string | null) ?? null,
+        lastModifiedAt,
+        inboundLinkCount: inboundLinks,
+        childBlockCount: childCount,
+        flags: { hasTags, hasTodo, hasScheduled, hasDue },
       })
     }
 
@@ -307,15 +308,15 @@ export const HANDLERS: Record<string, Handler> = {
           primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
           break
         case 'recently-modified':
-          primary = (y.last_modified_at ?? '').localeCompare(x.last_modified_at ?? '')
+          primary = (y.lastModifiedAt ?? '').localeCompare(x.lastModifiedAt ?? '')
           break
         case 'most-linked':
-          primary = y.inbound_link_count - x.inbound_link_count
+          primary = y.inboundLinkCount - x.inboundLinkCount
           break
-        case 'biggest':
-          primary = y.child_block_count - x.child_block_count
+        case 'most-content':
+          primary = y.childBlockCount - x.childBlockCount
           break
-        case 'ulid':
+        case 'default':
         default:
           primary = x.id.localeCompare(y.id)
           break
@@ -344,19 +345,38 @@ export const HANDLERS: Record<string, Handler> = {
     if (hasMore && last) {
       // Build a cursor whose shape matches the backend's per-sort
       // encoding so a round-trip survives the mock.
-      const cursorObj: Record<string, unknown> = { id: last.id, version: 1 }
+      // Stamp the sort-mode discriminator into the `position` slot so
+      // the mock matches the backend's `sort_discriminator` mapping
+      // (1=alphabetical, 2=recently-modified, 3=most-linked,
+      // 4=most-content, 5=default). Frontend tests that round-trip
+      // cursors hit the same validation path as production.
+      const disc =
+        sort === 'alphabetical'
+          ? 1
+          : sort === 'recently-modified'
+            ? 2
+            : sort === 'most-linked'
+              ? 3
+              : sort === 'most-content'
+                ? 4
+                : 5
+      const cursorObj: Record<string, unknown> = {
+        id: last.id,
+        version: 1,
+        position: disc,
+      }
       switch (sort) {
         case 'alphabetical':
           cursorObj['deleted_at'] = last.content
           break
         case 'recently-modified':
-          cursorObj['deleted_at'] = last.last_modified_at
+          cursorObj['deleted_at'] = last.lastModifiedAt
           break
         case 'most-linked':
-          cursorObj['seq'] = last.inbound_link_count
+          cursorObj['seq'] = last.inboundLinkCount
           break
-        case 'biggest':
-          cursorObj['seq'] = last.child_block_count
+        case 'most-content':
+          cursorObj['seq'] = last.childBlockCount
           break
       }
       nextCursor = btoa(JSON.stringify(cursorObj))

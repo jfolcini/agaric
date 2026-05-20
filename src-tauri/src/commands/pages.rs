@@ -1489,19 +1489,31 @@ pub async fn load_page_subtree(
 
 /// Sort mode for [`list_pages_with_metadata_inner`].
 ///
-/// These are the SQL-server-derived sort modes. The frontend's
-/// `recent` (per-device visit history) and `created` (ULID DESC) modes
-/// reuse the `Ulid` SQL ordering and re-sort the loaded page client-
-/// side; neither comes over the wire.
+/// These are the server-derived sort modes the IPC exposes. The
+/// frontend may layer two additional sorts that don't go over the wire:
+///
+///   - `recent` — per-device visit history (sourced from `getRecentPages()`).
+///   - `created` — ULID DESC (just `Default` reversed in JS).
+///
+/// Both reuse the `Default` SQL ordering and re-sort the loaded page
+/// client-side.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Type, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PageSort {
+    /// Title ascending, case-insensitive. Default for "browse my pages".
     #[default]
     Alphabetical,
+    /// Last-modified timestamp (max op_log.created_at) DESC.
     RecentlyModified,
+    /// Inbound-link count DESC (page + descendant link targets).
     MostLinked,
-    Biggest,
-    Ulid,
+    /// Descendant-block count DESC.
+    MostContent,
+    /// Default backend ordering — block id ASC. Useful for debugging
+    /// and as the wire shape for the frontend-only `recent` / `created`
+    /// sorts that re-sort client-side.
+    #[serde(rename = "default")]
+    Default,
 }
 
 /// Filter / sort bundle for [`list_pages_with_metadata`].
@@ -1513,12 +1525,30 @@ pub struct ListPagesWithMetadataFilter {
     pub space_id: String,
 }
 
+/// Boolean facts about a page's contents (Review Round 1: replaces a
+/// `has_property_flags: i64` bitmask). Each field maps 1:1 to an
+/// `EXISTS` subquery in the metadata SELECT. Adding a new flag is
+/// purely additive — new `bool` column, no consumer surprises.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PagePropertyFlags {
+    /// Page itself carries a `block_tags` row.
+    pub has_tags: bool,
+    /// At least one descendant has a non-NULL `todo_state`.
+    pub has_todo: bool,
+    /// At least one descendant has a non-NULL `scheduled_date`.
+    pub has_scheduled: bool,
+    /// At least one descendant has a non-NULL `due_date`.
+    pub has_due: bool,
+}
+
 /// Row returned by [`list_pages_with_metadata_inner`].
 ///
 /// Carries every `BlockRow` column verbatim so the frontend can read
 /// `id`, `content`, etc. via the same accessors. Four extra metadata
 /// columns drive the new sort modes + density badges.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
+#[serde(rename_all = "camelCase")]
 pub struct PageWithMetadataRow {
     pub id: String,
     pub block_type: String,
@@ -1543,8 +1573,40 @@ pub struct PageWithMetadataRow {
     /// COUNT of non-deleted descendants (blocks where `page_id = id`,
     /// excluding the page itself). Always emitted.
     pub child_block_count: i64,
-    /// Bitmask. See the module-level comment for the bit allocation.
-    pub has_property_flags: i64,
+    /// Typed flag struct (Review Round 1: replaces the prior
+    /// `has_property_flags: i64` bitmask — see [`PagePropertyFlags`]).
+    #[sqlx(flatten)]
+    pub flags: PagePropertyFlags,
+}
+
+/// Build the `position` slot's encoded sort-mode tag. Used by
+/// [`encode_pages_metadata_cursor`] / [`validate_pages_metadata_cursor`]
+/// to refuse a cursor whose sort-mode discriminator doesn't match the
+/// request — the user-visible alternative is a silent "scrolled past
+/// end" with no recovery, which Review Round 1 flagged across three
+/// independent reviewers as a BLOCKER. Per-sort i64 stamped into the
+/// already-unused `Cursor.position` slot.
+fn sort_discriminator(sort: PageSort) -> i64 {
+    match sort {
+        PageSort::Alphabetical => 1,
+        PageSort::RecentlyModified => 2,
+        PageSort::MostLinked => 3,
+        PageSort::MostContent => 4,
+        PageSort::Default => 5,
+    }
+}
+
+/// Reject a cursor whose `position` slot doesn't match the requested
+/// sort. Returns `AppError::Validation` with the `RequiresRefresh:`
+/// prefix the frontend uses to render a "Sort changed — refresh to
+/// continue" toast (PEND-56 acceptance criterion #3).
+fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(), AppError> {
+    match cursor.position {
+        Some(d) if d == sort_discriminator(sort) => Ok(()),
+        Some(_) | None => Err(AppError::Validation(format!(
+            "RequiresRefresh: cursor sort mismatch (expected {sort:?})"
+        ))),
+    }
 }
 
 /// Inner implementation of `list_pages_with_metadata`. Cursor-paginated
@@ -1553,12 +1615,13 @@ pub struct PageWithMetadataRow {
 ///
 /// **Cursor semantics:** the cursor carries the LAST row's sort-key
 /// value (in `deleted_at` for string / ISO-timestamp sorts; in `seq`
-/// for i64-count sorts) and the last row's `id` as the tiebreaker.
-/// First-page requests pass `cursor = None`. A stale cursor (e.g. from
-/// `list_blocks`) decodes successfully but yields an empty page when
-/// the sort-key slot doesn't match expected; this is the explicit
-/// design per PEND-56's pragmatic-cursor approach (no global
-/// `CURRENT_CURSOR_VERSION` bump).
+/// for i64-count sorts), the last row's `id` as the tiebreaker, and
+/// a sort-mode discriminator in `position` (Review Round 1 — protects
+/// against cross-sort / cross-IPC cursor reuse). First-page requests
+/// pass `cursor = None`. A stale cursor (e.g. from `list_blocks`) is
+/// rejected with `AppError::Validation("RequiresRefresh: …")` so the
+/// frontend can render a "Sort changed — refresh to continue" toast
+/// (PEND-56 acceptance criterion #3).
 #[instrument(skip(pool), err)]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
@@ -1575,6 +1638,11 @@ pub async fn list_pages_with_metadata_inner(
         }
     }
     let req = PageRequest::new(cursor, limit)?;
+    // Reject any cursor whose sort-mode discriminator doesn't match the
+    // requested sort. This is the BLOCKER fix from Review Round 1.
+    if let Some(c) = req.after.as_ref() {
+        validate_pages_metadata_cursor(c, filter.sort)?;
+    }
     let limit_plus_one = req.limit + 1; // probe-for-more pattern
 
     // SELECT shape — the 4 metadata aggregates as correlated subqueries.
@@ -1595,34 +1663,31 @@ pub async fn list_pages_with_metadata_inner(
                b.scheduled_date, b.page_id,
                (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
                    AS last_modified_at,
-               (SELECT COUNT(*) FROM block_links bl
+               (SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
                    JOIN blocks descendant ON bl.target_id = descendant.id
-                   WHERE descendant.page_id = b.id AND descendant.deleted_at IS NULL)
+                   JOIN blocks src ON bl.source_id = src.id
+                   WHERE descendant.page_id = b.id
+                     AND descendant.deleted_at IS NULL
+                     AND src.deleted_at IS NULL)
                    AS inbound_link_count,
                (SELECT COUNT(*) FROM blocks descendant
                    WHERE descendant.page_id = b.id
                      AND descendant.deleted_at IS NULL
                      AND descendant.id != b.id)
                    AS child_block_count,
-               (
-                   (CASE WHEN EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id)
-                         THEN 1 ELSE 0 END) |
-                   (CASE WHEN EXISTS(SELECT 1 FROM blocks descendant
-                                     WHERE descendant.page_id = b.id
-                                       AND descendant.deleted_at IS NULL
-                                       AND descendant.todo_state IS NOT NULL)
-                         THEN 2 ELSE 0 END) |
-                   (CASE WHEN EXISTS(SELECT 1 FROM blocks descendant
-                                     WHERE descendant.page_id = b.id
-                                       AND descendant.deleted_at IS NULL
-                                       AND descendant.scheduled_date IS NOT NULL)
-                         THEN 4 ELSE 0 END) |
-                   (CASE WHEN EXISTS(SELECT 1 FROM blocks descendant
-                                     WHERE descendant.page_id = b.id
-                                       AND descendant.deleted_at IS NULL
-                                       AND descendant.due_date IS NOT NULL)
-                         THEN 8 ELSE 0 END)
-               ) AS has_property_flags
+               EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.todo_state IS NOT NULL) AS has_todo,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.scheduled_date IS NOT NULL) AS has_scheduled,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.due_date IS NOT NULL) AS has_due
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -1671,21 +1736,37 @@ pub async fn list_pages_with_metadata_inner(
             }
         }
         PageSort::RecentlyModified => {
-            // Keyset: (last_modified_at, id) DESC. NULL last_modified_at
-            // sorts LAST (NULLS LAST). Cursor stashes last_modified_at
-            // in `deleted_at` slot (it's already a string).
+            // Keyset: (COALESCE(last_modified_at, NULL_SENTINEL), id) DESC.
+            //
+            // Review Round 1 found that `(SELECT MAX(...)) < ?2` returns
+            // NULL → false for pages with no op_log entries, so they
+            // appeared on page 1 (NULLS LAST in the ORDER BY) but
+            // vanished on every cursor page after. Fix: COALESCE NULL to
+            // `LAST_MOD_NULL_SENTINEL` (a string that sorts BEFORE any
+            // plausible ISO timestamp in DESC order — `'0001-01-01'` is
+            // before any modern app date and is a valid ISO 8601 prefix).
+            // The keyset comparison then works uniformly for NULL and
+            // non-NULL rows; the sort still puts NULL-last (`'0001-...'`
+            // is the smallest, sorted last in DESC).
+            //
+            // The cursor stashes the COALESCE'd value (never a literal
+            // NULL) so the post-NULL pages keyset cleanly.
+            const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
             if let Some(c) = cursor_ref {
-                let last_mod = c.deleted_at.clone().unwrap_or_default();
+                let last_mod = c
+                    .deleted_at
+                    .clone()
+                    .unwrap_or_else(|| LAST_MOD_NULL_SENTINEL.to_string());
                 sql.push_str(
                     " AND ( \
-                         (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) < ?2 \
+                         COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) < ?2 \
                          OR ( \
-                             (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) = ?2 \
+                             COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) = ?2 \
                              AND b.id > ?3 \
                          ) \
                        ) \
                        ORDER BY \
-                           (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) DESC NULLS LAST, \
+                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) DESC, \
                            b.id ASC \
                        LIMIT ?4",
                 );
@@ -1694,35 +1775,43 @@ pub async fn list_pages_with_metadata_inner(
                     .bind(&last_mod)
                     .bind(&c.id)
                     .bind(limit_plus_one)
+                    .bind(LAST_MOD_NULL_SENTINEL)
                     .fetch_all(pool)
                     .await?;
                 return build_metadata_response(rows, req.limit, filter.sort);
             } else {
                 sql.push_str(
                     " ORDER BY \
-                           (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) DESC NULLS LAST, \
+                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?2) DESC, \
                            b.id ASC \
-                       LIMIT ?2",
+                       LIMIT ?3",
                 );
                 let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
                     .bind(&filter.space_id)
+                    .bind(LAST_MOD_NULL_SENTINEL)
                     .bind(limit_plus_one)
                     .fetch_all(pool)
                     .await?;
                 return build_metadata_response(rows, req.limit, filter.sort);
             }
         }
-        PageSort::MostLinked | PageSort::Biggest => {
+        PageSort::MostLinked | PageSort::MostContent => {
             // Keyset: (count, id) DESC. Cursor stashes the count in
             // `seq` slot (i64). Both sort modes share the shape; the
             // SELECT column differs.
             let count_expr = match filter.sort {
                 PageSort::MostLinked => {
-                    "(SELECT COUNT(*) FROM block_links bl \
+                    // Same DISTINCT-source + soft-deleted-source filter
+                    // as the SELECT-list version above so the keyset
+                    // matches the displayed count.
+                    "(SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                        JOIN blocks descendant ON bl.target_id = descendant.id \
-                       WHERE descendant.page_id = b.id AND descendant.deleted_at IS NULL)"
+                       JOIN blocks src ON bl.source_id = src.id \
+                       WHERE descendant.page_id = b.id \
+                         AND descendant.deleted_at IS NULL \
+                         AND src.deleted_at IS NULL)"
                 }
-                PageSort::Biggest => {
+                PageSort::MostContent => {
                     "(SELECT COUNT(*) FROM blocks descendant \
                        WHERE descendant.page_id = b.id \
                          AND descendant.deleted_at IS NULL \
@@ -1757,7 +1846,7 @@ pub async fn list_pages_with_metadata_inner(
                 return build_metadata_response(rows, req.limit, filter.sort);
             }
         }
-        PageSort::Ulid => {
+        PageSort::Default => {
             // Keyset: id ASC only. Cursor stashes last id in the
             // standard `id` slot.
             if let Some(c) = cursor_ref {
@@ -1795,40 +1884,51 @@ fn build_metadata_response(
     if has_more {
         rows.truncate(limit_us);
     }
+    // Tag every cursor with the sort discriminator (Review Round 1) so
+    // `validate_pages_metadata_cursor` can reject cross-sort reuse.
+    let disc = Some(sort_discriminator(sort));
     let next_cursor = if has_more {
         rows.last().map(|last| -> Result<String, AppError> {
             let cursor = match sort {
                 PageSort::Alphabetical => Cursor {
                     id: last.id.clone(),
-                    position: None,
+                    position: disc,
                     deleted_at: last.content.clone(),
                     seq: None,
                     rank: None,
                 },
                 PageSort::RecentlyModified => Cursor {
                     id: last.id.clone(),
-                    position: None,
-                    deleted_at: last.last_modified_at.clone(),
+                    position: disc,
+                    // RecentlyModified always stashes the COALESCE'd
+                    // value (real ISO timestamp OR `LAST_MOD_NULL_SENTINEL`)
+                    // so the keyset works uniformly for NULL and
+                    // non-NULL rows — Review Round 1 HIGH #2 fix.
+                    deleted_at: Some(
+                        last.last_modified_at
+                            .clone()
+                            .unwrap_or_else(|| "0001-01-01T00:00:00Z".to_string()),
+                    ),
                     seq: None,
                     rank: None,
                 },
                 PageSort::MostLinked => Cursor {
                     id: last.id.clone(),
-                    position: None,
+                    position: disc,
                     deleted_at: None,
                     seq: Some(last.inbound_link_count),
                     rank: None,
                 },
-                PageSort::Biggest => Cursor {
+                PageSort::MostContent => Cursor {
                     id: last.id.clone(),
-                    position: None,
+                    position: disc,
                     deleted_at: None,
                     seq: Some(last.child_block_count),
                     rank: None,
                 },
-                PageSort::Ulid => Cursor {
+                PageSort::Default => Cursor {
                     id: last.id.clone(),
-                    position: None,
+                    position: disc,
                     deleted_at: None,
                     seq: None,
                     rank: None,

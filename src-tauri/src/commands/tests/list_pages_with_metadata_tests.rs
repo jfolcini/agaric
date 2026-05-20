@@ -24,14 +24,14 @@ async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
     assign_to_space(pool, id, TEST_SPACE_ID).await;
 }
 
-/// Seed an op_log row stamped with the given timestamp. Bypasses the
-/// op-log immutability trigger via `_op_log_mutation_allowed` (the same
-/// escape hatch the production materializer uses on writes).
+/// Seed an op_log row stamped with the given timestamp.
+///
+/// Review Round 1 — robustness reviewer flagged the prior version
+/// reaching for the `_op_log_mutation_allowed` bypass with a misspelled
+/// column name (`key` vs the actual `token`, see migration 0036). The
+/// op_log immutability triggers guard UPDATE / DELETE only — INSERT is
+/// unguarded — so the bypass dance was both wrong and unnecessary.
 async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
-    sqlx::query("INSERT INTO _op_log_mutation_allowed (key) VALUES (1)")
-        .execute(pool)
-        .await
-        .ok();
     sqlx::query(
         "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) \
          VALUES (\
@@ -49,10 +49,6 @@ async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("DELETE FROM _op_log_mutation_allowed")
-        .execute(pool)
-        .await
-        .ok();
 }
 
 /// Seed an inbound link FROM `source` TO `target`.
@@ -142,7 +138,10 @@ async fn list_pages_with_metadata_returns_pages_in_space_with_metadata_columns()
     );
     assert_eq!(alpha.inbound_link_count, 0);
     assert_eq!(alpha.child_block_count, 0);
-    assert_eq!(alpha.has_property_flags, 0);
+    assert!(!alpha.flags.has_tags);
+    assert!(!alpha.flags.has_todo);
+    assert!(!alpha.flags.has_scheduled);
+    assert!(!alpha.flags.has_due);
 }
 
 // ── Sort: alphabetical ────────────────────────────────────────────────────
@@ -196,13 +195,19 @@ async fn recently_modified_sort_returns_pages_by_op_log_max_desc() {
 // ── Sort: most_linked ─────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn most_linked_sort_counts_descendant_inbound_links() {
+async fn most_linked_sort_counts_distinct_inbound_sources() {
+    // Review Round 1 (robustness) — `inbound_link_count` is
+    // `COUNT(DISTINCT source_id)`, NOT `COUNT(*)`. One source linking to
+    // both the page AND its descendant counts as one. This test would
+    // have failed against the prior (incorrect) `COUNT(*)` semantics.
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "Popular").await;
     seed_page(&pool, "01PAGE000000000000000000B1", "Loner").await;
     seed_page(&pool, "01PAGE000000000000000000C1", "SourcePage").await;
-    // 2 links INTO Popular (one to the page, one to a descendant); 0 into Loner.
+    seed_page(&pool, "01PAGE000000000000000000D1", "OtherSource").await;
+    // SourcePage links INTO Popular (page) AND its descendant. With
+    // DISTINCT, this is 1, not 2.
     seed_child(
         &pool,
         "01CHILD0000000000000000A2",
@@ -222,6 +227,13 @@ async fn most_linked_sort_counts_descendant_inbound_links() {
         "01CHILD0000000000000000A2",
     )
     .await;
+    // OtherSource → Popular: a second distinct source, so total = 2.
+    seed_link(
+        &pool,
+        "01PAGE000000000000000000D1",
+        "01PAGE000000000000000000A1",
+    )
+    .await;
 
     let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::MostLinked), None, Some(50))
         .await
@@ -236,6 +248,8 @@ async fn most_linked_sort_counts_descendant_inbound_links() {
         .iter()
         .find(|p| p.content.as_deref() == Some("Loner"))
         .unwrap();
+    // SourcePage + OtherSource each link to Popular's subtree = 2 distinct sources.
+    // The pre-DISTINCT bug would have reported 3 (two from SourcePage, one from OtherSource).
     assert_eq!(popular.inbound_link_count, 2);
     assert_eq!(loner.inbound_link_count, 0);
     // Ordering: Popular first (highest count), Loner / SourcePage at tail.
@@ -260,7 +274,7 @@ async fn biggest_sort_counts_descendant_blocks() {
         .await;
     }
 
-    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Biggest), None, Some(50))
+    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::MostContent), None, Some(50))
         .await
         .unwrap();
     let big = resp
@@ -288,7 +302,7 @@ async fn ulid_sort_returns_pages_in_id_ascending() {
     seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
     seed_page(&pool, "01PAGE000000000000000000M1", "M").await;
 
-    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Ulid), None, Some(50))
+    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Default), None, Some(50))
         .await
         .unwrap();
     let ids: Vec<&str> = resp.items.iter().map(|p| p.id.as_str()).collect();
@@ -463,17 +477,21 @@ async fn has_property_flags_reflects_tags_todo_scheduled_due() {
 
     seed_page(&pool, "01PAGE000000000000000000E1", "Empty").await;
 
-    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Ulid), None, Some(50))
+    let resp = list_pages_with_metadata_inner(&pool, filter(PageSort::Default), None, Some(50))
         .await
         .unwrap();
     let by_id: std::collections::HashMap<&str, &PageWithMetadataRow> =
         resp.items.iter().map(|p| (p.id.as_str(), p)).collect();
 
-    assert_eq!(by_id["01PAGE000000000000000000A1"].has_property_flags, 1); // tags bit
-    assert_eq!(by_id["01PAGE000000000000000000B1"].has_property_flags, 2); // todo bit
-    assert_eq!(by_id["01PAGE000000000000000000C1"].has_property_flags, 4); // scheduled bit
-    assert_eq!(by_id["01PAGE000000000000000000D1"].has_property_flags, 8); // due bit
-    assert_eq!(by_id["01PAGE000000000000000000E1"].has_property_flags, 0); // none
+    assert!(by_id["01PAGE000000000000000000A1"].flags.has_tags);
+    assert!(by_id["01PAGE000000000000000000B1"].flags.has_todo);
+    assert!(by_id["01PAGE000000000000000000C1"].flags.has_scheduled);
+    assert!(by_id["01PAGE000000000000000000D1"].flags.has_due);
+    let empty = &by_id["01PAGE000000000000000000E1"];
+    assert!(!empty.flags.has_tags);
+    assert!(!empty.flags.has_todo);
+    assert!(!empty.flags.has_scheduled);
+    assert!(!empty.flags.has_due);
 }
 
 // ── Space filter ──────────────────────────────────────────────────────────
@@ -536,6 +554,142 @@ async fn limit_out_of_range_returns_validation_error() {
         format!("{err}").contains("limit must be in"),
         "expected limit clamp error, got: {err}"
     );
+}
+
+// ── Cursor sort-mode discriminator (Review Round 1 — three reviewers) ─────
+
+#[tokio::test]
+async fn cursor_from_different_sort_mode_returns_requires_refresh() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for (i, name) in ["Alpha", "Beta", "Gamma"].iter().enumerate() {
+        seed_page(&pool, &format!("01PAGE0000000000000000P{i:02}"), name).await;
+    }
+    // Page 1 with alphabetical to get a real cursor.
+    let page1 =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(2))
+            .await
+            .unwrap();
+    let alpha_cursor = page1.next_cursor.expect("page1 has a cursor");
+
+    // Replay against MostLinked — must reject with RequiresRefresh.
+    let err = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::MostLinked),
+        Some(alpha_cursor.clone()),
+        Some(2),
+    )
+    .await
+    .expect_err("cursor sort-mode mismatch must reject");
+    assert!(
+        format!("{err}").contains("RequiresRefresh"),
+        "validation must carry RequiresRefresh prefix; got: {err}"
+    );
+
+    // Same cursor against the same sort it was issued for — must succeed.
+    let _ = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::Alphabetical),
+        Some(alpha_cursor),
+        Some(2),
+    )
+    .await
+    .expect("same-sort replay must succeed");
+}
+
+#[tokio::test]
+async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+
+    // A cursor lacking the position-slot discriminator (e.g. one
+    // emitted by `list_blocks` or a pre-PEND-56 client) must be
+    // rejected with RequiresRefresh.
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    let legacy_json = r#"{"id":"01PAGE000000000000000000A1"}"#;
+    let legacy_cursor = URL_SAFE_NO_PAD.encode(legacy_json);
+    let err = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::Alphabetical),
+        Some(legacy_cursor),
+        Some(2),
+    )
+    .await
+    .expect_err("legacy cursor without discriminator must reject");
+    assert!(
+        format!("{err}").contains("RequiresRefresh"),
+        "validation must carry RequiresRefresh prefix; got: {err}"
+    );
+}
+
+// ── NULL last_modified_at via COALESCE sentinel (Review Round 1) ──────────
+
+#[tokio::test]
+async fn recently_modified_includes_pages_without_op_log_at_tail() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "WithOpLog").await;
+    seed_page(&pool, "01PAGE000000000000000000B1", "NoOpLog").await;
+    seed_op_log(&pool, "01PAGE000000000000000000A1", "2026-05-01T00:00:00Z").await;
+
+    let resp =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::RecentlyModified), None, Some(50))
+            .await
+            .unwrap();
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    // The COALESCE sentinel ('0001-01-01...') sorts before any real ISO
+    // date in DESC order → no-op-log page sorts to the tail (still
+    // present, just last).
+    assert_eq!(contents, vec!["WithOpLog", "NoOpLog"]);
+}
+
+#[tokio::test]
+async fn recently_modified_paginates_through_no_op_log_pages() {
+    // Review Round 1 — Maintainability HIGH #2 regression test.
+    // The pre-COALESCE keyset dropped no-op-log pages from every
+    // cursor page after page 1 (NULL comparisons returned NULL → false).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for (i, name) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+        seed_page(&pool, &format!("01PAGE0000000000000000P{i:02}"), name).await;
+    }
+    // Only the first two have op_log entries; the other 3 are NULL.
+    seed_op_log(&pool, "01PAGE0000000000000000P00", "2026-05-01T00:00:00Z").await;
+    seed_op_log(&pool, "01PAGE0000000000000000P01", "2026-04-01T00:00:00Z").await;
+
+    let page1 =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::RecentlyModified), None, Some(2))
+            .await
+            .unwrap();
+    assert_eq!(page1.items.len(), 2);
+    let contents1: Vec<&str> = page1
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(contents1, vec!["A", "B"]);
+
+    let page2 = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::RecentlyModified),
+        page1.next_cursor,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let contents2: Vec<&str> = page2
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    // C and D — the no-op-log pages — must appear, NOT be silently dropped.
+    assert_eq!(contents2, vec!["C", "D"]);
 }
 
 // ── Soft-deleted pages excluded ───────────────────────────────────────────

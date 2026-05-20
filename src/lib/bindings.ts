@@ -1358,6 +1358,23 @@ export type PageLink = {
 };
 
 /**
+ *  Boolean facts about a page's contents (Review Round 1: replaces a
+ *  `has_property_flags: i64` bitmask). Each field maps 1:1 to an
+ *  `EXISTS` subquery in the metadata SELECT. Adding a new flag is
+ *  purely additive — new `bool` column, no consumer surprises.
+ */
+export type PagePropertyFlags = {
+	/**  Page itself carries a `block_tags` row. */
+	hasTags: boolean,
+	/**  At least one descendant has a non-NULL `todo_state`. */
+	hasTodo: boolean,
+	/**  At least one descendant has a non-NULL `scheduled_date`. */
+	hasScheduled: boolean,
+	/**  At least one descendant has a non-NULL `due_date`. */
+	hasDue: boolean,
+};
+
+/**
  *  Paginated response.
  *
  *  `total_count` is `Option<i64>` because cursor pagination does not in
@@ -1391,12 +1408,28 @@ export type PageResponse<T> = {
 /**
  *  Sort mode for [`list_pages_with_metadata_inner`].
  *
- *  These are the SQL-server-derived sort modes. The frontend's
- *  `recent` (per-device visit history) and `created` (ULID DESC) modes
- *  reuse the `Ulid` SQL ordering and re-sort the loaded page client-
- *  side; neither comes over the wire.
+ *  These are the server-derived sort modes the IPC exposes. The
+ *  frontend may layer two additional sorts that don't go over the wire:
+ *    - `recent` — per-device visit history (sourced from `getRecentPages()`).
+ *    - `created` — ULID DESC (just `Default` reversed in JS).
+ *  Both reuse the `Default` SQL ordering and re-sort the loaded page
+ *  client-side.
  */
-export type PageSort = "alphabetical" | "recently-modified" | "most-linked" | "biggest" | "ulid";
+export type PageSort =
+/**  Title ascending, case-insensitive. Default for "browse my pages". */
+"alphabetical" |
+/**  Last-modified timestamp (max op_log.created_at) DESC. */
+"recently-modified" |
+/**  Inbound-link count DESC (page + descendant link targets). */
+"most-linked" |
+/**  Descendant-block count DESC. */
+"most-content" |
+/**
+ *  Default backend ordering — block id ASC. Useful for debugging
+ *  and as the wire shape for the frontend-only `recent` / `created`
+ *  sorts that re-sort client-side.
+ */
+"default";
 
 /**
  *  Row returned by [`list_pages_with_metadata_inner`].
@@ -1407,16 +1440,16 @@ export type PageSort = "alphabetical" | "recently-modified" | "most-linked" | "b
  */
 export type PageWithMetadataRow = {
 	id: string,
-	block_type: string,
+	blockType: string,
 	content: string | null,
-	parent_id: string | null,
+	parentId: string | null,
 	position: number | null,
-	deleted_at: string | null,
-	todo_state: string | null,
+	deletedAt: string | null,
+	todoState: string | null,
 	priority: string | null,
-	due_date: string | null,
-	scheduled_date: string | null,
-	page_id: string | null,
+	dueDate: string | null,
+	scheduledDate: string | null,
+	pageId: string | null,
 	/**
 	 *  max(`op_log.created_at`) over the page itself. None if the
 	 *  page has no op-log entries (which should never happen — every
@@ -1424,19 +1457,22 @@ export type PageWithMetadataRow = {
 	 *  is `Option` to absorb edge cases like manually-imported rows
 	 *  without a synthesised op-log entry).
 	 */
-	last_modified_at: string | null,
+	lastModifiedAt: string | null,
 	/**
 	 *  COUNT of `block_links` targeting this page or any of its
 	 *  descendants. Always emitted (zero for un-linked pages).
 	 */
-	inbound_link_count: number,
+	inboundLinkCount: number,
 	/**
 	 *  COUNT of non-deleted descendants (blocks where `page_id = id`,
 	 *  excluding the page itself). Always emitted.
 	 */
-	child_block_count: number,
-	/**  Bitmask. See the module-level comment for the bit allocation. */
-	has_property_flags: number,
+	childBlockCount: number,
+	/**
+	 *  Typed flag struct (Review Round 1: replaces the prior
+	 *  `has_property_flags: i64` bitmask — see [`PagePropertyFlags`]).
+	 */
+	flags: PagePropertyFlags,
 };
 
 /**

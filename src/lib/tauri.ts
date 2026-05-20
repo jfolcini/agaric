@@ -503,7 +503,13 @@ export async function listPagesWithMetadata(params: {
 }): Promise<PageResponse<PageWithMetadataRow>> {
   return unwrap(
     await commands.listPagesWithMetadata(
-      { sort: params.sort ?? 'alphabetical', spaceId: params.spaceId },
+      // No frontend-side default — the Rust `#[default] Alphabetical`
+      // attribute on `PageSort` is the single source of truth. Sending
+      // an explicit value here would silently drift if the backend
+      // default ever changes (Review Round 1 — UX MEDIUM #5).
+      { sort: params.sort ?? null, spaceId: params.spaceId } as Parameters<
+        typeof commands.listPagesWithMetadata
+      >[0],
       params.cursor ?? null,
       params.limit ?? null,
     ),
