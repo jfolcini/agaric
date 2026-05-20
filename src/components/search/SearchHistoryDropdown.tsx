@@ -30,6 +30,24 @@ export interface SearchHistoryDropdownProps {
   onPick: (query: string) => void
   /** Wipe the per-space MRU list. */
   onClear: () => void
+  /**
+   * PEND-73 Phase 3.U2 — id attached to the inner `role="listbox"` so
+   * the owning input can wire `aria-controls` to it. Stable per
+   * dropdown instance; supplied by the parent so two dropdowns on the
+   * same page (e.g. desktop palette vs mobile sheet) don't collide.
+   */
+  listboxId: string
+  /**
+   * Index of the currently-active history row driven by the parent's
+   * `useSearchHistoryCycling.activeIndex`. `-1` means none active
+   * (typing). Renders `aria-selected={idx === activeIndex}` per row.
+   */
+  activeIndex: number
+}
+
+/** Stable per-row id. Pure function of the listbox id + row index. */
+export function searchHistoryRowId(listboxId: string, index: number): string {
+  return `${listboxId}-opt-${index}`
 }
 
 export function SearchHistoryDropdown({
@@ -37,6 +55,8 @@ export function SearchHistoryDropdown({
   visible,
   onPick,
   onClear,
+  listboxId,
+  activeIndex,
 }: SearchHistoryDropdownProps): React.ReactElement | null {
   const { t } = useTranslation()
   if (!visible) return null
@@ -60,6 +80,7 @@ export function SearchHistoryDropdown({
       ) : (
         <div
           role="listbox"
+          id={listboxId}
           aria-label={listboxLabel}
           data-testid="search-history-list"
           className="m-0 list-none p-0"
@@ -69,8 +90,9 @@ export function SearchHistoryDropdown({
               // The query string is the natural key. Duplicates can't
               // occur in this list (the store dedupes on insert).
               key={entry}
+              id={searchHistoryRowId(listboxId, idx)}
               role="option"
-              aria-selected={false}
+              aria-selected={idx === activeIndex}
               tabIndex={-1}
               data-testid={`search-history-entry-${idx}`}
               onClick={() => onPick(entry)}

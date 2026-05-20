@@ -2,10 +2,49 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 796 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 797 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1242+ REVIEW-LATER items across 796 sessions.
+- **Previously-resolved counter:** 1243+ REVIEW-LATER items across 797 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 797 — PEND-73 deferred cycle 4: U2 history listbox a11y (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 U2 (SearchHistoryDropdown listbox a11y) |
+| **Tests added** | +4 frontend (listbox id wiring, row id format, aria-selected from activeIndex, activeIndex=-1 means none active) |
+| **Files touched** | 4 |
+
+**Summary:** Screen readers can now announce the active history row as the user arrows through `↑` / `↓`. The wiring threads through three layers:
+
+- **Hook (`useSearchHistoryCycling`)** — `SearchHistoryCycling` interface gains `activeIndex: number`. Derived from `state.mode === 'browsing' ? state.index : -1`. No behavioural change in cycling; new field is a read-only projection.
+- **Dropdown (`SearchHistoryDropdown`)** — Two new required props: `listboxId: string` and `activeIndex: number`. The inner `<div role="listbox">` carries the supplied id; each row gets `id={`${listboxId}-opt-${idx}`}` and `aria-selected={idx === activeIndex}`. Exported `searchHistoryRowId(listboxId, idx)` helper so consumers (the SearchPanel's combobox-attrs builder) can derive the active-descendant id without re-deriving the template.
+- **SearchPanel** — `historyListboxId = useId()` (stable per-instance, no cross-mount collision). `inputComboboxAttrs` extends its `aria-expanded` / `aria-controls` / `aria-activedescendant` triad to point at the history listbox when no autocomplete is active. Autocomplete + history are mutually exclusive by visibility gate (history wants empty query; autocomplete wants caret content), so the two don't fight.
+
+The existing 8 dropdown tests were also refactored onto a `renderDropdown(partials)` helper to absorb the new required props once.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 5 → 4 (U2 shipped).
+- **Previously resolved:** 1242+ → 1243+ across 796 → 797 sessions.
+
+**Files touched (this session):**
+- `src/hooks/useSearchHistoryCycling.ts` (+9; activeIndex field)
+- `src/components/search/SearchHistoryDropdown.tsx` (+24 / −1; new props + id format + helper export)
+- `src/components/SearchPanel.tsx` (+27 / −5; useId + combobox-attrs history branch + prop wiring)
+- `src/components/search/__tests__/SearchHistoryDropdown.test.tsx` (+58 / −76; renderDropdown helper + 4 new a11y tests)
+- `pending/PEND-73-search-audit-followups.md` (U2 row updated)
+
+**Verification:**
+- `npx vitest run` — 10304 / 10304 pass (+4 vs prior 10300).
+- `npx tsc -b --noEmit` — clean.
+
+**Process notes:** The two listboxes (history + autocomplete) share the same input's `aria-controls`, which the WAI-ARIA spec allows as long as only one is `aria-expanded=true` at a time. Their visibility gates already guarantee mutual exclusion, so the branch in `inputComboboxAttrs` is structural rather than guarded.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 796 — PEND-73 deferred cycle 3: U8 selection-range snapshot (2026-05-20)
 

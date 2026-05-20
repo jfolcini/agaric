@@ -30,6 +30,14 @@ export interface SearchHistoryCycling {
   handleKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => boolean
   /** Reset to typing mode externally (e.g. when history changes). */
   reset: () => void
+  /**
+   * PEND-73 Phase 3.U2 — index of the currently-active history row
+   * for the WAI-ARIA listbox-with-input-combobox pattern. `-1` when
+   * the user is typing (no row is active). Consumers render this as
+   * `aria-selected={idx === activeIndex}` on each row and wire
+   * `aria-activedescendant` on the input to the corresponding row id.
+   */
+  activeIndex: number
 }
 
 interface BrowseState {
@@ -129,5 +137,11 @@ export function useSearchHistoryCycling(
     [state, writeQuery],
   )
 
-  return { handleKeyDown, reset }
+  // PEND-73 Phase 3.U2 — surface the browse index for the listbox a11y
+  // wiring. -1 when typing (no active descendant). The dropdown
+  // consumer reads this and renders `aria-selected` per row; the
+  // input wires `aria-activedescendant` to the matching row id.
+  const activeIndex = state.mode === 'browsing' ? state.index : -1
+
+  return { handleKeyDown, reset, activeIndex }
 }

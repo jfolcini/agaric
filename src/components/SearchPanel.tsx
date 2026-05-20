@@ -29,7 +29,7 @@
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
@@ -533,6 +533,11 @@ export function SearchPanel(): React.ReactElement {
   const pushHistory = useSearchHistoryStore((s) => s.push)
   const clearHistory = useSearchHistoryStore((s) => s.clear)
   const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
+  // PEND-73 Phase 3.U2 — stable id for the history listbox so the
+  // owning input can wire `aria-controls` and `aria-activedescendant`.
+  // React.useId() returns a per-instance stable string; safe across
+  // SSR + multiple mounts.
+  const historyListboxId = useId()
 
   // PEND-60 Phase 1 — caret-anchored autocomplete.
   // The active anchor is suppressed in regex mode so structured-filter
@@ -555,13 +560,21 @@ export function SearchPanel(): React.ReactElement {
   // once the popover has reported its live cmdk-generated ids (axe
   // requires `aria-controls` whenever expanded=true on a combobox, and
   // those ids land one effect-tick after `autocompleteOpen` toggles).
+  //
+  // PEND-73 Phase 3.U2 — when the autocomplete is NOT open and the
+  // history dropdown IS (input empty + focused + entries exist), wire
+  // the combobox attrs to the history listbox so screen readers can
+  // announce the active row as the user arrows through history.
+  // Autocomplete + history are mutually exclusive by visibility gate
+  // (history wants empty query; autocomplete wants caret content).
   const expanded = autocompleteOpen && autocompleteAriaIds != null
+  const historyVisible = inputFocused && query.length === 0 && historyEntries.length > 0
   const inputComboboxAttrs = useMemo(
     () => ({
       role: 'combobox' as const,
       'aria-autocomplete': 'list' as const,
       'aria-haspopup': 'listbox' as const,
-      'aria-expanded': expanded,
+      'aria-expanded': expanded || historyVisible,
       ...(expanded && autocompleteAriaIds != null
         ? {
             'aria-controls': autocompleteAriaIds.listboxId,
@@ -569,9 +582,18 @@ export function SearchPanel(): React.ReactElement {
               ? { 'aria-activedescendant': autocompleteAriaIds.activeDescendantId }
               : {}),
           }
-        : {}),
+        : historyVisible
+          ? {
+              'aria-controls': historyListboxId,
+              ...(cycling.activeIndex >= 0
+                ? {
+                    'aria-activedescendant': `${historyListboxId}-opt-${cycling.activeIndex}`,
+                  }
+                : {}),
+            }
+          : {}),
     }),
-    [expanded, autocompleteAriaIds],
+    [expanded, autocompleteAriaIds, historyVisible, historyListboxId, cycling.activeIndex],
   )
   // Dismissal is cleared on every keystroke — typing again re-opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a body-read dep — re-arm on every new keystroke.
@@ -905,6 +927,8 @@ export function SearchPanel(): React.ReactElement {
             visible={inputFocused && query.length === 0 && historyEntries.length > 0}
             onPick={handlePickHistory}
             onClear={handleClearHistory}
+            listboxId={historyListboxId}
+            activeIndex={cycling.activeIndex}
           />
         }
       />
