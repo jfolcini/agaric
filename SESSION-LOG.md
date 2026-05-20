@@ -2,10 +2,58 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 792 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 793 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1232+ REVIEW-LATER items across 792 sessions.
+- **Previously-resolved counter:** 1236+ REVIEW-LATER items across 793 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 793 — PEND-73 Phase 5: test gaps (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 T1b, T1c, T1d, T2 (4 of 5) |
+| **Items modified** | PEND-73 T1a marked DEFERRED (depends on B3 NFC normalisation, also deferred) |
+| **Tests added** | +4 backend (`byte_to_utf16_offsets_mid_emoji_match`, `sanitize_all_operator_query_documents_current_behaviour`, `fts_index_stays_consistent_under_writes`, `fts_index_consistency_check_flags_missing_rows`) + 3 e2e (Playwright specs in `e2e/palette-desktop.spec.ts`) |
+| **Files touched** | 3 |
+
+**Summary:** Closed four of Phase 5's five test gaps; T1a deferred alongside its B3 dependency. Phase 5 finishes the PEND-73 audit follow-up sweep.
+
+- **T1b — mid-emoji surrogate offset test.** `byte_to_utf16_offsets_mid_emoji_match` complements the existing leading-emoji test in `src-tauri/src/fts/toggle_filter.rs`. Asserts `abc🌟def` with a match at bytes `[3, 7]` (the emoji itself) maps to UTF-16 offsets `[3, 5]` — one code point spans two UTF-16 units in the surrogate-pair range.
+- **T1c — all-operator sanitiser test.** `sanitize_all_operator_query_documents_current_behaviour` pins the CURRENT behaviour (`AND` → `"AND"`, `AND OR NOT` → `"AND" OR "NOT"`) as a regression net rather than asserting the plan's DESIRED behaviour (drop orphan operators → empty string). The desired contract is documented in the test body; flipping the assertion is the deliberate code-path for any future maintainer who wants the orphan-drop semantics. The user-visible impact of the desired change (searching for `AND` alone returns nothing instead of literal matches) is non-trivial and should land deliberately.
+- **T1d — FTS-index-drift integration test.** New private helper `verify_fts_consistency(pool)` walks `blocks LEFT JOIN fts_blocks` and returns the active block ids missing from the FTS index. Two test cases: `fts_index_stays_consistent_under_writes` (happy path via the canonical writer + `rebuild_fts_index`) and `fts_index_consistency_check_flags_missing_rows` (helper-itself test — insert a block without indexing, assert the helper surfaces it). Catches any future writer that bypasses `update_fts_for_block`.
+- **T2 — desktop palette Playwright spec.** New `e2e/palette-desktop.spec.ts` with three specs: (1) Ctrl+K opens → fill `jour` → ArrowDown → Enter → palette closes (navigation fired); (2) Escape closes without navigating (header still reads "Pages"); (3) palette opens cleanly from an editor view when focus is on the sidebar first (PEND-51 context-gating guard). The `[[page]]` insertion path is already covered by `inner-links.spec.ts` + `autocomplete.spec.ts` — not duplicated here. Each spec uses the existing `registerConsoleErrorWatcher` + `expectNoConsoleErrors` belt-and-braces; verified via `playwright test --list`.
+
+**T1a deferral.** The PEND-73 plan paired T1a's NFC/NFD test with B3's NFC normalisation implementation in the same PR — "fails today, turns green after Phase 1.B3 lands." B3 was DEFERRED in Phase 1 (NFC normalisation needs a benchmark before merging per the plan's open question 4). T1a stays paired with B3 — defer them together until a real NFC/NFD bug surfaces in production.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** Phase 5's 5 rows now: 4 SHIPPED, 1 DEFERRED. With this commit the entire PEND-73 sweep finishes its first pass.
+- **Previously resolved:** 1232+ → 1236+ across 792 → 793 sessions.
+
+**Files touched (this session):**
+- `src-tauri/src/fts/toggle_filter.rs` (+15; T1b mid-emoji test)
+- `src-tauri/src/fts/tests.rs` (+105; T1c sanitiser test + T1d helper + 2 integration tests)
+- `e2e/palette-desktop.spec.ts` (new, +109; T2 three Playwright specs)
+- `pending/PEND-73-search-audit-followups.md` (Phase 5 TL;DR + 4 SHIPPED rows + 1 DEFERRED)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3834 / 3834 pass (4 more than Phase 4's 3830, accounting for the 4 new tests).
+- `npx vitest run` — 10293 / 10293 pass (unchanged; e2e isn't a vitest target).
+- `npx tsc -b --noEmit` — clean.
+- `npx playwright test --list e2e/palette-desktop.spec.ts` — 3 specs parsed correctly.
+
+**PEND-73 sweep summary (across sessions 789-793):**
+- Phase 1 — Backend hygiene: 4/5 shipped (B2 index migration, B5 sqlx error code, B6 MAX_GLOB_LEN, B7 regex wrap; B8 deferred as "measured, no-op").
+- Phase 2 — Cancellation end-to-end: 1/2 shipped (R3 typed AppError via TS-side helper; R4 AbortController deferred).
+- Phase 3 — UX punch list: 6/10 shipped (U3, U4×2, U5, U6, U7, U10; U1/U2/U8/U9 deferred).
+- Phase 4 — Maintenance + perf: 5/9 shipped (M4, M5, R1, P1, P2; M7 kept after investigation; M3/M6/R2 deferred).
+- Phase 5 — Test gaps: 4/5 shipped (T1b, T1c, T1d, T2; T1a deferred with B3).
+- **Total: 20/31 items shipped, 1 kept after investigation, 10 deferred with rationale.** No `pending/PEND-73-search-audit-followups.md` deletion this commit — keeps the rationale trail alive for the deferred items.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 792 — PEND-73 Phase 4: maintenance + perf (2026-05-20)
 

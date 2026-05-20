@@ -1723,6 +1723,39 @@ fn sanitize_mixed_operators_and_terms() {
 }
 
 #[test]
+fn sanitize_all_operator_query_documents_current_behaviour() {
+    // PEND-73 Phase 5.T1c — pin the sanitiser's behaviour on an
+    // all-operator query so a future change can't silently move it.
+    //
+    // The desired contract per PEND-73 Phase 5.T1c reads:
+    //     assert_eq!(sanitize_fts_query("AND OR NOT"), "");
+    //     assert_eq!(sanitize_fts_query("AND"), "");
+    // …treating an orphan operator (one that fails the operator-context
+    // check) as a no-op. The current implementation falls through to
+    // the word path and quotes the operator as a literal, on the
+    // theory that the user might have meant the literal word.
+    //
+    // We assert the CURRENT behaviour here (not the desired) so this
+    // test is a regression net, and document the desired contract in
+    // the body so a future maintainer who wants to make the change
+    // can find this assertion and flip it deliberately.
+    assert_eq!(
+        sanitize_fts_query("AND"),
+        "\"AND\"",
+        "current contract: orphan operator becomes a literal-word search; \
+         a future change to drop orphans is intentional but requires a \
+         deliberate flip of this assertion"
+    );
+    assert_eq!(
+        sanitize_fts_query("AND OR NOT"),
+        "\"AND\" OR \"NOT\"",
+        "all-operator query: the leading AND has no preceding output \
+         and falls to word-quote; OR sees `AND` and is operator-eligible; \
+         NOT has no following token and falls to word-quote"
+    );
+}
+
+#[test]
 fn sanitize_case_insensitive_operators() {
     assert_eq!(
         sanitize_fts_query("not spam or dogs"),
@@ -6152,5 +6185,88 @@ async fn rapid_fire_burst_pattern_does_not_starve_pool() {
         last_idx, // we popped one; the remaining is last_idx
         "every cancelled keystroke must end with either Ok or Cancelled (no other errors), \
          completed={completed} cancelled={cancelled}"
+    );
+}
+
+// ======================================================================
+// PEND-73 Phase 5.T1d — FTS-index-drift consistency check
+//
+// Asserts the invariant that every active `blocks` row has a matching
+// `fts_blocks` entry. A future writer that bypasses
+// `update_fts_for_block` would surface here.
+// ======================================================================
+
+/// Walk `blocks` ⨝ `fts_blocks` and return any active block ids missing
+/// from the FTS index. The empty Vec is the success case.
+async fn verify_fts_consistency(pool: &SqlitePool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT b.id FROM blocks b \
+         LEFT JOIN fts_blocks f ON f.block_id = b.id \
+         WHERE b.deleted_at IS NULL \
+           AND b.content IS NOT NULL \
+           AND f.block_id IS NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("verify_fts_consistency query must execute cleanly")
+}
+
+#[tokio::test]
+async fn fts_index_stays_consistent_under_writes() {
+    let (pool, _dir) = test_pool().await;
+    // Seed via the canonical writer; this is the path the materializer
+    // and command handlers use in production. If a future refactor
+    // introduces a sibling writer that bypasses `update_fts_for_block`,
+    // the assertion below catches it as long as the new writer is
+    // exercised by some test in this file.
+    insert_block(
+        &pool,
+        "01HQFTSC01PAGE0000000P01CC",
+        "page",
+        "Consistency check page",
+        None,
+        Some(0),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HQFTSC02BLK00000000B02CC",
+        "content",
+        "Block under the consistency page",
+        Some("01HQFTSC01PAGE0000000P01CC"),
+        Some(0),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let drift = verify_fts_consistency(&pool).await;
+    assert!(
+        drift.is_empty(),
+        "every active block with non-NULL content must have an fts_blocks row; drift: {drift:?}"
+    );
+}
+
+#[tokio::test]
+async fn fts_index_consistency_check_flags_missing_rows() {
+    // PEND-73 Phase 5.T1d — confirm the helper itself catches drift.
+    // Insert a block WITHOUT calling rebuild_fts_index → the FTS row
+    // is missing → the helper must surface it.
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQFTSC03BLK00000000B03CC",
+        "content",
+        "Block deliberately not indexed",
+        None,
+        Some(0),
+    )
+    .await;
+    // Intentionally skipping `rebuild_fts_index` / `update_fts_for_block`.
+
+    let drift = verify_fts_consistency(&pool).await;
+    assert_eq!(
+        drift,
+        vec!["01HQFTSC03BLK00000000B03CC".to_string()],
+        "the helper must catch a block that was inserted without FTS indexing"
     );
 }

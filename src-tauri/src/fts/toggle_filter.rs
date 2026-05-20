@@ -863,6 +863,22 @@ mod unit_tests {
     }
 
     #[test]
+    fn byte_to_utf16_offsets_mid_emoji_match() {
+        // PEND-73 Phase 5.T1b — the existing test above covers a leading
+        // emoji + trailing ASCII; this one matches the emoji itself
+        // when it sits between ASCII runs. `🌟` = 4 bytes UTF-8 / 2
+        // UTF-16 code units. `abc` = bytes 0-3 / units 0-3; `🌟` =
+        // bytes 3-7 / units 3-5; `def` = bytes 7-10 / units 5-8.
+        let text = "abc🌟def";
+        let offsets = byte_to_utf16_offsets(text, &[(3, 7)]);
+        assert_eq!(
+            offsets,
+            vec![MatchOffset { start: 3, end: 5 }],
+            "the emoji match spans one code point but two UTF-16 units"
+        );
+    }
+
+    #[test]
     fn apply_post_filter_caps_offsets_at_max() {
         // Build a row with `'a' * 100` content; regex `.` matches every
         // char; expect exactly `MAX_OFFSETS_PER_BLOCK` offsets.
