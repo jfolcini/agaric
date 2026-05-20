@@ -1,0 +1,90 @@
+# Flathub manifest scaffold for Agaric.
+#
+# STATUS: scaffold-only — NOT submitted to Flathub yet. See
+# `packaging/flathub/README.md` for the submission plan and the open
+# questions that block submission today.
+#
+# The manifest below mirrors the existing AppImage build path so the
+# Flatpak builder reuses the same compiled bundle (rather than
+# re-compiling Rust inside the Flatpak sandbox, which would 4x build
+# wall-clock for no behavioural difference). If Flathub reviewers
+# require an in-sandbox build, this scaffold has to flip to a
+# rust-toolchain extension + cargo build inside the sandbox.
+#
+# App ID rationale (io.github.jfolcini.Agaric): Flathub's convention
+# for personal-project apps without a registered domain. The
+# in-bundle Tauri identifier stays `com.agaric.app` (existing AppImage
+# identity); Flatpak's app ID is a separate addressing scheme for the
+# Flathub registry only.
+
+app-id: io.github.jfolcini.Agaric
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: agaric
+
+# Sandbox permissions — keep MINIMAL. Each new permission requires
+# a written justification in the Flathub PR review thread.
+finish-args:
+  # Wayland-first, X11 fallback (Flatpak's standard graphical pair).
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  # GPU compositing for WebKit/CEF surface acceleration; Flatpak's
+  # standard hardware-accel share.
+  - --device=dri
+  # Network: Agaric talks to LAN peers (sync), GitHub Releases
+  # (updater), and Google APIs (gcal push, opt-in only). The Flatpak
+  # network is the simplest model; Agaric's own permission model
+  # (capability allowlist + user-driven OAuth) is the load-bearing
+  # control.
+  - --share=network
+  # Persistent app data. Flatpak namespaces this under
+  # `~/.var/app/io.github.jfolcini.Agaric/data/` automatically; the
+  # extra `--filesystem=xdg-data/com.agaric.app:create` line below is
+  # for the migration path from a prior AppImage install that wrote
+  # under `~/.local/share/com.agaric.app/`. Remove this filesystem
+  # line once the in-app migration path is documented.
+  - --filesystem=xdg-data/com.agaric.app:create
+  # Notifications (sync, gcal push events).
+  - --talk-name=org.freedesktop.Notifications
+  # Keyring access for the OAuth refresh token (Tauri's plugin-keychain
+  # routes through libsecret on Linux).
+  - --talk-name=org.freedesktop.secrets
+
+# The build pipeline mirrors the AppImage build. The simple-type
+# module just unpacks the bundled .deb from the GitHub release; this
+# keeps the Flatpak sandbox out of the Rust compile path.
+#
+# Replace `${VERSION}` and `${DEB_SHA256}` before submitting. A small
+# Python pre-submit script under `packaging/flathub/scripts/`
+# (TODO — file when actually submitting) can lift these from the
+# GitHub release JSON automatically.
+modules:
+  - name: agaric
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 ./usr/bin/agaric /app/bin/agaric
+      - install -Dm644 ./usr/share/applications/agaric.desktop /app/share/applications/io.github.jfolcini.Agaric.desktop
+      - install -Dm644 ./usr/share/icons/hicolor/256x256/apps/agaric.png /app/share/icons/hicolor/256x256/apps/io.github.jfolcini.Agaric.png
+      # Rename the .desktop's Icon= field to match the new icon name.
+      - sed -i 's|^Icon=.*|Icon=io.github.jfolcini.Agaric|' /app/share/applications/io.github.jfolcini.Agaric.desktop
+      # Rename the binary path the .desktop launches.
+      - sed -i 's|^Exec=.*|Exec=agaric|' /app/share/applications/io.github.jfolcini.Agaric.desktop
+      # MetaInfo (AppStream metadata for Flathub presentation page).
+      - install -Dm644 io.github.jfolcini.Agaric.metainfo.xml /app/share/metainfo/io.github.jfolcini.Agaric.metainfo.xml
+    sources:
+      - type: archive
+        url: https://github.com/jfolcini/agaric/releases/download/${VERSION}/agaric_${VERSION}_amd64.deb
+        sha256: ${DEB_SHA256}
+        # The .deb is an ar archive; archive-type=deb tells flatpak-
+        # builder to unpack data.tar.* automatically.
+        archive-type: deb
+        only-arches: [x86_64]
+      - type: archive
+        url: https://github.com/jfolcini/agaric/releases/download/${VERSION}/agaric_${VERSION}_arm64.deb
+        sha256: ${DEB_ARM64_SHA256}
+        archive-type: deb
+        only-arches: [aarch64]
+      - type: file
+        path: io.github.jfolcini.Agaric.metainfo.xml
