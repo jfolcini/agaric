@@ -4390,6 +4390,43 @@ async fn partitioned_empty_query_returns_empty_partitions() {
         assert!(!resp.pages.has_more);
         assert!(!resp.blocks.has_more);
     }
+
+    // PEND-69 — also cover the empty-space case: a non-empty query
+    // against a space that has zero matching rows must yield two
+    // empty partitions with `has_more=false`. Exercises the
+    // post-`MATCH` filter path (FTS5 returns rows that are then
+    // filtered out by the space predicate), proving the two-scan
+    // partition machinery doesn't synthesise phantom `has_more`
+    // signals on an empty result.
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Empty Space").await;
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            space_id: Some(FTS_SPACE_A_ID.to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        resp.pages.items.is_empty(),
+        "zero-page space must yield empty pages partition"
+    );
+    assert!(
+        resp.blocks.items.is_empty(),
+        "zero-page space must yield empty blocks partition"
+    );
+    assert!(
+        !resp.pages.has_more,
+        "empty-space query must not signal pages.has_more"
+    );
+    assert!(
+        !resp.blocks.has_more,
+        "empty-space query must not signal blocks.has_more"
+    );
 }
 
 #[tokio::test]
@@ -5430,4 +5467,178 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
         ),
         other => panic!("expected AppError::Validation(InvalidRegex: …); got {other:?}"),
     }
+}
+
+// ======================================================================
+// PEND-69 — partition correctness + filter pushdown tests
+// ======================================================================
+
+/// PEND-69 F1 — when content blocks rank above the only page hit, the
+/// pages partition must still surface the page. The pre-PEND-69
+/// single-scan-then-Rust-partition shape failed this case: 60
+/// content blocks crowd out the lone page within the
+/// `min(page_limit + block_limit + 1, MAX_SEARCH_RESULTS)` scan
+/// window. The two-scan shape guarantees a per-partition window so
+/// the page is never invisible.
+#[tokio::test]
+async fn partitioned_scan_returns_pages_when_blocks_outrank_them() {
+    let (pool, _dir) = test_pool().await;
+
+    // One matching page; 60 matching content blocks that share the
+    // FTS keyword. The content blocks' `content` is short so their
+    // FTS rank tends to be at least as good as the page's title hit
+    // — under the old shape the page typically lost the rank race.
+    let page_id = pt_block_id(0);
+    insert_block(
+        &pool,
+        &page_id,
+        "page",
+        "partitioned outranked page",
+        None,
+        Some(0),
+    )
+    .await;
+    for i in 1..=60 {
+        let content_id = pt_block_id(i);
+        insert_block(
+            &pool,
+            &content_id,
+            "content",
+            // Repeat the keyword so the trigram rank stays high.
+            "partitioned partitioned partitioned",
+            Some(&page_id),
+            Some(i64::from(i)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        5,  // page_limit
+        20, // block_limit
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.pages.items.len(),
+        1,
+        "pages partition must return the one matching page regardless of how many content blocks outrank it"
+    );
+    assert_eq!(
+        resp.pages.items[0].block_type, "page",
+        "pages partition row must be page-typed"
+    );
+    assert!(
+        !resp.pages.has_more,
+        "pages.has_more must be false — only one page existed in total"
+    );
+}
+
+/// PEND-69 F2 — regex page-only queries must surface all matching
+/// pages even when content blocks dominate the table. Pre-PEND-69
+/// the regex SQL scan grabbed the 1000 most-recent rows ANY-type
+/// then dropped non-pages in Rust, so 5 pages buried below 2000
+/// recently-inserted content rows would disappear.
+///
+/// Two-pool worker threads: the regex scan itself is small but
+/// `insert_block` writes a lot of rows; default flavor is fine.
+#[tokio::test]
+async fn partitioned_regex_page_filter_returns_pages_when_content_dominates() {
+    let (pool, _dir) = test_pool().await;
+
+    // Pages go in FIRST — their ULIDs sort below the content blocks'
+    // and `regex_mode_query` orders `b.id DESC` (recency proxy). So
+    // under the pre-F2 shape the 1000-row pre-filter window would
+    // be entirely content rows; the pages would be invisible.
+    for i in 0..5 {
+        let pid = pt_block_id(i);
+        insert_block(
+            &pool,
+            &pid,
+            "page",
+            &format!("regex_page_target_{i}"),
+            None,
+            Some(i64::from(i)),
+        )
+        .await;
+    }
+    // 2000 newer content rows (higher-ULID prefix) that don't match
+    // the user's regex but DO match the regex builder's structural
+    // filter (content IS NOT NULL).
+    for i in 5..2005 {
+        let cid = pt_block_id(i);
+        insert_block(
+            &pool,
+            &cid,
+            "content",
+            "filler content row without target keyword",
+            None,
+            Some(i64::from(i)),
+        )
+        .await;
+    }
+    // FTS index isn't used by the regex path, but rebuild_fts_index
+    // is a no-op cost on top of a pool-only check.
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "regex_page_target_".to_string(),
+        20,
+        20,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.pages.items.len(),
+        5,
+        "regex pages scan must return all 5 matching pages; pre-F2 dropped them past the 1000-row pre-filter cap"
+    );
+    for row in &resp.pages.items {
+        assert_eq!(
+            row.block_type, "page",
+            "regex pages partition must be page-typed-only"
+        );
+    }
+}
+
+/// PEND-69 F5 — verify the SQL builder omits the `snippet(fts_blocks,
+/// …)` call when the toggle bundle will trigger a post-filter that
+/// clears `row.snippet` anyway. Asserts on the emitted SQL string via
+/// the test-only `fts_select_prefix_for_test` accessor — cheaper and
+/// more direct than a runtime SQL trace.
+#[test]
+fn partitioned_snippet_skipped_when_post_filter_clears_it() {
+    use super::search::fts_select_prefix_for_test;
+
+    // Snippet-on branch: the SQL must include the `snippet(` function
+    // call so the FTS path can carry `<mark>` boundaries to the
+    // frontend (the no-toggle case).
+    let with = fts_select_prefix_for_test(true);
+    assert!(
+        with.contains("snippet(fts_blocks"),
+        "snippet=true must emit the `snippet(fts_blocks, …)` call: {with}"
+    );
+
+    // Snippet-off branch: when downstream clears `row.snippet`
+    // (any toggle on, regex or non-regex) the SQL must not invoke
+    // `snippet(` — we project `NULL` instead so SQLite skips the
+    // per-row tokenizer walk.
+    let without = fts_select_prefix_for_test(false);
+    assert!(
+        !without.contains("snippet("),
+        "snippet=false must omit the `snippet(` call: {without}"
+    );
+    assert!(
+        without.contains("NULL as snippet"),
+        "snippet=false must synthesise NULL so the row deserialises with Option<String>=None: {without}"
+    );
 }

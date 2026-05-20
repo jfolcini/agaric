@@ -858,12 +858,13 @@ pub struct PartitionedSearchResponse {
     pub blocks: PageResponse<SearchBlockRow>,
 }
 
-/// PEND-61 Phase 1 — partitioned search inner.
+/// PEND-61 Phase 1 / PEND-69 F1 — partitioned search inner.
 ///
-/// One FTS5 scan, two partitions:
+/// Two parallel FTS5 scans, two partitions:
 ///
 /// 1. **`pages`** — rows where `block_type == "page"`, capped at
-///    `page_limit`.
+///    `page_limit`. SQL pushes the `block_type = 'page'` predicate
+///    so a content-heavy DB can't crowd pages out of the result set.
 /// 2. **`blocks`** — ALL rows in rank order (no `block_type` filter),
 ///    capped at `block_limit`.
 ///
@@ -880,19 +881,21 @@ pub struct PartitionedSearchResponse {
 ///
 /// ## `has_more` semantics
 ///
-/// - `pages.has_more = true` iff the `pages` partition filled to
-///   `page_limit` AND either (a) more page-typed rows existed in the
-///   fetched set, or (b) the combined fetch hit
-///   [`fts::search::MAX_SEARCH_RESULTS`].
-/// - `blocks.has_more = true` iff the `blocks` partition filled to
-///   `block_limit` AND either (a) at least one additional row existed
-///   in the fetched set, or (b) the combined fetch hit
-///   [`fts::search::MAX_SEARCH_RESULTS`].
+/// PEND-69 F1 — `has_more` is derived from a `limit + 1` probe on
+/// each scan independently. Either partition is `true` iff its scan
+/// returned more rows than its cap (resolves Open Q3 — probe approach).
+///
 /// - `next_cursor = None` for both (palette doesn't paginate).
 /// - `total_count = None` for both.
 ///
 /// Empty / whitespace queries short-circuit to two empty partitions —
 /// mirrors the [`search_blocks_inner`] short-circuit.
+///
+/// ## Failure semantics
+///
+/// Resolves PEND-69 Open Q2 — fail-fast. The two parallel scans run
+/// under `tokio::try_join!`; if either errors, the other is dropped
+/// and the error propagates without a partial response.
 #[instrument(skip(pool, filter), err)]
 pub async fn search_blocks_partitioned_inner(
     pool: &SqlitePool,
@@ -927,8 +930,10 @@ pub async fn search_blocks_partitioned_inner(
     };
     let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
 
-    // One FTS scan. `filter.block_type_filter` is intentionally dropped
-    // here — the partitioning is the entire point of this IPC.
+    // PEND-69 F1 — `search_with_toggles_partitioned` runs the two
+    // scans in parallel under `tokio::try_join!` and returns each
+    // partition's `has_more` from a `limit + 1` probe. No further
+    // partitioning needed in this caller.
     let scan = fts::search_with_toggles_partitioned(
         pool,
         &query,
@@ -944,45 +949,17 @@ pub async fn search_blocks_partitioned_inner(
     )
     .await?;
 
-    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
-    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
-
-    // Partition in Rust. Pre-scan the count of page-typed rows so we can
-    // compute `pages.has_more` without re-scanning the (capped) set.
-    let total_pages_in_scan = scan.rows.iter().filter(|r| r.block_type == "page").count();
-    let total_rows_in_scan = scan.rows.len();
-
-    let pages_items: Vec<SearchBlockRow> = scan
-        .rows
-        .iter()
-        .filter(|r| r.block_type == "page")
-        .take(page_limit_usize)
-        .cloned()
-        .collect();
-    // `blocks` is unrestricted — every row, capped at `block_limit`.
-    let blocks_items: Vec<SearchBlockRow> = scan.rows.into_iter().take(block_limit_usize).collect();
-
-    let pages_filled = pages_items.len() == page_limit_usize && page_limit_usize > 0;
-    let pages_overflow = total_pages_in_scan > pages_items.len();
-    // Pages partition: more to show iff we filled AND (more pages
-    // exist beyond the cap, OR the SQL ceiling clipped the scan).
-    let pages_has_more = pages_filled && (pages_overflow || scan.ceiling_hit);
-
-    let blocks_filled = blocks_items.len() == block_limit_usize && block_limit_usize > 0;
-    let blocks_overflow = total_rows_in_scan > blocks_items.len();
-    let blocks_has_more = blocks_filled && (blocks_overflow || scan.ceiling_hit);
-
     Ok(PartitionedSearchResponse {
         pages: PageResponse {
-            items: pages_items,
+            items: scan.pages,
             next_cursor: None,
-            has_more: pages_has_more,
+            has_more: scan.pages_has_more,
             total_count: None,
         },
         blocks: PageResponse {
-            items: blocks_items,
+            items: scan.blocks,
             next_cursor: None,
-            has_more: blocks_has_more,
+            has_more: scan.blocks_has_more,
             total_count: None,
         },
     })

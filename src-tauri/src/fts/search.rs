@@ -302,6 +302,8 @@ pub async fn search_fts(
         exclude_page_globs,
         block_type_filter,
         metadata,
+        true, // `search_fts` always emits snippets — its caller has no
+              // post-filter that would clobber them.
     )
     .await?;
 
@@ -360,6 +362,12 @@ pub async fn search_fts(
 ///   [`search_fts`] today; the partitioned caller passes
 ///   `block_type_filter = None` to fetch the unrestricted candidate
 ///   set and partitions in Rust.
+/// - `with_snippet` — PEND-69 F5. `false` omits the FTS5
+///   `snippet(...)` call from the SELECT (projects `NULL` instead) so
+///   we don't re-tokenize once per row when the downstream pipeline
+///   will overwrite `row.snippet = None` anyway (regex / non-regex
+///   toggle post-filter paths). Saves a per-row tokenizer walk; the
+///   FTS5 `snippet()` cost compounds on cold cache.
 #[allow(clippy::too_many_arguments)]
 async fn fts_fetch_rows(
     pool: &SqlitePool,
@@ -375,6 +383,7 @@ async fn fts_fetch_rows(
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
+    with_snippet: bool,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit
@@ -387,12 +396,22 @@ async fn fts_fetch_rows(
     // documented in PEND-50's "Edge cases" as tunable. The leading /
     // trailing `…` flag truncation. The result is rendered as React
     // nodes by the frontend; NEVER `dangerouslySetInnerHTML`.
-    let mut sql = String::from(
+    //
+    // PEND-69 F5 — when the downstream pipeline will clear
+    // `row.snippet` (toggle post-filter paths), project `NULL` instead
+    // of calling `snippet()` so we don't pay the per-row tokenizer
+    // walk just to throw the result away.
+    let snippet_select = if with_snippet {
+        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+    } else {
+        "NULL as snippet"
+    };
+    let mut sql = format!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
-                snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet,
+                {snippet_select},
                 fts.rank as search_rank
          FROM fts_blocks fts
          JOIN blocks b ON b.id = fts.block_id
@@ -624,40 +643,55 @@ fn fts_row_to_block_row(r: FtsSearchRow) -> SearchBlockRow {
 // PEND-61 Phase 1 — partitioned FTS scan
 // ---------------------------------------------------------------------------
 
-/// Outcome of [`search_fts_partitioned`] — the unrestricted rank-ordered
-/// candidate set plus a flag indicating whether the combined fetch was
-/// capped by [`MAX_SEARCH_RESULTS`].
+/// Outcome of [`search_fts_partitioned`] — two pre-partitioned candidate
+/// sets (page-only + unrestricted), each with its own `has_more` flag
+/// derived from a `limit + 1` probe.
 ///
-/// The caller (the `search_blocks_partitioned` IPC) then partitions in
-/// Rust: pages = rows with `block_type == "page"` capped at `page_limit`,
-/// blocks = ALL rows capped at `block_limit`. The `ceiling_hit` flag
-/// participates in the per-partition `has_more` semantics — when the
-/// combined fetch saturates the ceiling, either partition can legitimately
-/// report `has_more = true` regardless of its own intra-partition cap.
+/// PEND-69 F1 — the previous one-scan-then-partition shape could drop
+/// the pages partition entirely when 49 content blocks ranked above
+/// the only page hit. The two-scan shape guarantees the pages
+/// partition reflects matching pages regardless of content rank.
+///
+/// The same row may appear in both partitions (a page-typed row is in
+/// `pages` AND in `blocks`); the palette merges by `page_id`.
 pub(crate) struct FtsPartitionedScan {
-    /// Rank-ordered candidate set (no `block_type` filter applied at the
-    /// SQL layer). The length is bounded by
-    /// `min(page_limit + block_limit + 1, MAX_SEARCH_RESULTS)`.
-    pub rows: Vec<SearchBlockRow>,
-    /// `true` iff the combined fetch returned exactly
-    /// [`MAX_SEARCH_RESULTS`] rows — the SQL ceiling, not the caller's
-    /// `page_limit + block_limit + 1` ask. Distinct from
-    /// `rows.len() > page_limit + block_limit` because the ceiling can
-    /// be hit even when one partition is empty.
-    pub ceiling_hit: bool,
+    /// Page-only partition (`block_type = 'page'`) in rank order,
+    /// capped at the caller's `page_limit`.
+    pub pages: Vec<SearchBlockRow>,
+    /// Unrestricted partition (any `block_type`) in rank order, capped
+    /// at the caller's `block_limit`.
+    pub blocks: Vec<SearchBlockRow>,
+    /// `true` iff the pages scan returned `page_limit + 1` rows — the
+    /// probe approach (resolves PEND-69 Open Q3). Lets the caller
+    /// signal accurate per-partition pagination instead of inferring
+    /// from the global ceiling.
+    pub pages_has_more: bool,
+    /// `true` iff the blocks scan returned `block_limit + 1` rows.
+    /// Same probe semantics as `pages_has_more`.
+    pub blocks_has_more: bool,
 }
 
-/// PEND-61 Phase 1 — one-pass FTS scan for the palette's two-partition
-/// view. Reuses the same SQL builder as [`search_fts`] but bypasses the
-/// `block_type_filter` (the partitioning is done in Rust by the caller)
-/// and returns no cursor (the palette doesn't paginate).
+/// PEND-61 Phase 1 / PEND-69 F1 — two parallel FTS scans for the
+/// palette's two-partition view. Each scan reuses the same SQL builder
+/// as [`search_fts`]; the pages scan adds `block_type = 'page'` to the
+/// WHERE clause and uses `with_snippet = with_snippet_pages`, the
+/// blocks scan adds no `block_type` filter.
+///
+/// Both scans use a `limit + 1` probe so the caller can signal accurate
+/// per-partition `has_more` (resolves PEND-69 Open Q3).
 ///
 /// All other filters — `parent_id`, `tag_ids`, `space_id`, page-name
-/// globs, metadata predicates — are honoured the same way as
-/// [`search_fts`].
+/// globs, metadata predicates — are honoured identically on both
+/// scans.
 ///
-/// Empty / whitespace queries short-circuit to an empty result with
-/// `ceiling_hit = false`, mirroring [`search_fts`].
+/// Concurrency: both scans run via [`tokio::try_join!`] on the shared
+/// read pool. With `max_connections(4)` we afford two reads per IPC.
+/// Fail-fast semantics (PEND-69 Open Q2) — if either scan errors, the
+/// other is dropped and the error propagates without a partial
+/// response.
+///
+/// Empty / whitespace queries short-circuit to two empty partitions,
+/// mirroring [`search_fts`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_fts_partitioned(
     pool: &SqlitePool,
@@ -670,12 +704,15 @@ pub(crate) async fn search_fts_partitioned(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     metadata: &MetadataPredicates,
+    with_snippet: bool,
 ) -> Result<FtsPartitionedScan, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
         return Ok(FtsPartitionedScan {
-            rows: Vec::new(),
-            ceiling_hit: false,
+            pages: Vec::new(),
+            blocks: Vec::new(),
+            pages_has_more: false,
+            blocks_has_more: false,
         });
     }
 
@@ -685,42 +722,125 @@ pub(crate) async fn search_fts_partitioned(
     // tokens) — same short-circuit as `search_fts`.
     if sanitized.is_empty() {
         return Ok(FtsPartitionedScan {
-            rows: Vec::new(),
-            ceiling_hit: false,
+            pages: Vec::new(),
+            blocks: Vec::new(),
+            pages_has_more: false,
+            blocks_has_more: false,
         });
     }
 
-    // Combined fetch = page_limit + block_limit + 1 so the caller can
-    // detect per-partition overflow without a second query. Cap at
-    // MAX_SEARCH_RESULTS as the SQL ceiling. `u64` math protects against
-    // pathological `u32::MAX + u32::MAX` overflow before the i64 cast.
-    let combined: u64 = u64::from(page_limit) + u64::from(block_limit) + 1;
-    let max_results_u64 = u64::try_from(MAX_SEARCH_RESULTS).unwrap_or(u64::MAX);
-    let capped = combined.min(max_results_u64);
-    // `capped` ≤ MAX_SEARCH_RESULTS (100), which fits an i64.
-    let fetch_limit = i64::try_from(capped).unwrap_or(MAX_SEARCH_RESULTS);
+    // PEND-69 F1 — each scan independently caps at `MAX_SEARCH_RESULTS`
+    // and asks for `limit + 1` to probe for overflow. `u64` math
+    // protects against pathological `u32::MAX + 1` before the i64 cast.
+    let pages_fetch_limit = limit_plus_one_capped(page_limit);
+    let blocks_fetch_limit = limit_plus_one_capped(block_limit);
 
-    let rows = fts_fetch_rows(
+    // Run both scans concurrently. `try_join!` fails fast on the first
+    // error — no partial response.
+    let pages_future = fts_fetch_rows(
         pool,
         &sanitized,
         None, // no cursor — palette doesn't paginate
         0.0,
         "",
-        fetch_limit,
+        pages_fetch_limit,
         parent_id,
         tag_ids,
         space_id,
         include_page_globs,
         exclude_page_globs,
-        None, // PEND-61: block_type filter is applied in Rust, not SQL
+        Some("page"), // PEND-69 F1: page-only pre-filter at SQL
         metadata,
-    )
-    .await?;
+        with_snippet,
+    );
+    let blocks_future = fts_fetch_rows(
+        pool,
+        &sanitized,
+        None,
+        0.0,
+        "",
+        blocks_fetch_limit,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        None, // unrestricted
+        metadata,
+        with_snippet,
+    );
+    let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 
-    let ceiling_hit = i64::try_from(rows.len()).unwrap_or(i64::MAX) >= MAX_SEARCH_RESULTS;
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    // `limit == 0` is a degenerate ask — the caller doesn't want any
+    // rows from this partition, so there's nothing to "have more" of.
+    // Without this guard the `limit + 1 = 1` probe would set
+    // `has_more = true` against an empty result slice (existing
+    // `partitioned_zero_limits_yield_empty_partitions_and_no_has_more`
+    // contract).
+    let pages_has_more = page_limit_usize > 0 && pages_rows.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && blocks_rows.len() > block_limit_usize;
+
+    let pages: Vec<SearchBlockRow> = pages_rows
+        .into_iter()
+        .take(page_limit_usize)
+        .map(fts_row_to_block_row)
+        .collect();
+    let blocks: Vec<SearchBlockRow> = blocks_rows
+        .into_iter()
+        .take(block_limit_usize)
+        .map(fts_row_to_block_row)
+        .collect();
 
     Ok(FtsPartitionedScan {
-        rows: rows.into_iter().map(fts_row_to_block_row).collect(),
-        ceiling_hit,
+        pages,
+        blocks,
+        pages_has_more,
+        blocks_has_more,
     })
+}
+
+/// Compute the `limit + 1` probe SQL `LIMIT` value, capped at
+/// [`MAX_SEARCH_RESULTS`]. Shared helper for the per-partition scan
+/// limits in [`search_fts_partitioned`].
+fn limit_plus_one_capped(limit: u32) -> i64 {
+    let raw: u64 = u64::from(limit).saturating_add(1);
+    let max_results_u64 = u64::try_from(MAX_SEARCH_RESULTS).unwrap_or(u64::MAX);
+    let capped = raw.min(max_results_u64);
+    i64::try_from(capped).unwrap_or(MAX_SEARCH_RESULTS)
+}
+
+// ---------------------------------------------------------------------------
+// PEND-69 — test-only SQL builder accessor
+// ---------------------------------------------------------------------------
+
+/// Test-only: expose the FTS5 SELECT prefix the runtime would emit for
+/// a given `with_snippet` choice. Used to assert that `snippet(` is
+/// absent when the downstream pipeline will clear `row.snippet`.
+///
+/// Returns just the first `format!` shape — the dynamic per-filter
+/// `AND` clauses are appended after this prefix and don't change the
+/// `snippet(` presence question.
+#[cfg(test)]
+pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
+    let snippet_select = if with_snippet {
+        "snippet(fts_blocks, 1, '<mark>', '</mark>', '…', 32) as snippet"
+    } else {
+        "NULL as snippet"
+    };
+    format!(
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                b.deleted_at,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id,
+                {snippet_select},
+                fts.rank as search_rank
+         FROM fts_blocks fts
+         JOIN blocks b ON b.id = fts.block_id
+         WHERE fts_blocks MATCH ?1
+           AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR fts.rank > ?3
+                OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
+    )
 }

@@ -147,7 +147,12 @@ pub async fn search_with_toggles(
                 total_count: None,
             });
         }
-        let mut response = regex_mode_query(
+        // PEND-69 F2 — `block_type_filter` is now pushed into the
+        // regex SQL builder so we don't drag the full 1000-row
+        // pre-filter window through Rust just to discard non-matching
+        // types. Removes the post-fetch `Vec::retain()` that lived
+        // here previously.
+        let response = regex_mode_query(
             pool,
             query,
             page,
@@ -157,17 +162,10 @@ pub async fn search_with_toggles(
             include_page_globs,
             exclude_page_globs,
             toggles,
+            block_type_filter,
             metadata,
         )
         .await?;
-        // PEND-51 — `block_type_filter` post-narrow for the regex path.
-        // The regex SQL scan doesn't push the filter into the WHERE
-        // clause (it's a hot path; keep the SQL stable), so we trim
-        // the candidate rows here. The cap above (`REGEX_PRE_FILTER_CAP`)
-        // already bounds the worst-case size of `response.items`.
-        if let Some(bt) = block_type_filter {
-            response.items.retain(|row| row.block_type == bt);
-        }
         return Ok(response);
     }
 
@@ -199,25 +197,26 @@ pub async fn search_with_toggles(
     Ok(response)
 }
 
-/// PEND-61 Phase 1 — partitioned sibling of [`search_with_toggles`].
+/// PEND-61 Phase 1 / PEND-69 F1 — partitioned sibling of
+/// [`search_with_toggles`].
 ///
-/// Returns the unrestricted rank-ordered candidate set in a single FTS
-/// scan (no `block_type` filter at the SQL layer — the caller partitions
-/// in Rust). The `ceiling_hit` flag participates in the per-partition
-/// `has_more` semantics; see [`super::search::FtsPartitionedScan`] for
-/// the contract.
+/// Returns two pre-partitioned candidate sets (pages-only +
+/// unrestricted) via two parallel scans. Each partition's `has_more`
+/// is derived from a `limit + 1` probe (PEND-69 Open Q3) so the
+/// frontend can paginate accurately without inferring from the global
+/// SQL ceiling.
 ///
 /// Toggle dispatch mirrors [`search_with_toggles`]:
 ///
-/// - `is_regex` → falls through to [`regex_mode_query`] which already
-///   doesn't apply `block_type_filter` at SQL; the partitioning happens
-///   on the returned `Vec`.
+/// - `is_regex` → two parallel [`regex_mode_query`] scans; the pages
+///   scan pushes `block_type = 'page'` into SQL (PEND-69 F2) instead
+///   of post-fetch `Vec::retain()`. Each scan asks for `limit + 1`.
 /// - `case_sensitive` / `whole_word` → FTS5 candidate set narrowed by
-///   the post-filter regex pass.
-/// - All toggles off → straight FTS5 scan.
+///   the post-filter regex pass. Snippets are omitted at SQL build
+///   time (PEND-69 F5) because `apply_post_filter` clears them anyway.
+/// - All toggles off → straight FTS5 partitioned scan, snippets kept.
 ///
-/// Returns a [`FtsPartitionedScan`] so the caller can detect the SQL
-/// ceiling independent of the per-partition cap.
+/// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_with_toggles_partitioned(
     pool: &SqlitePool,
@@ -238,44 +237,73 @@ pub(crate) async fn search_with_toggles_partitioned(
         // every row).
         if query.trim().is_empty() {
             return Ok(super::search::FtsPartitionedScan {
-                rows: Vec::new(),
-                ceiling_hit: false,
+                pages: Vec::new(),
+                blocks: Vec::new(),
+                pages_has_more: false,
+                blocks_has_more: false,
             });
         }
-        // The regex path uses its own `PageRequest`-based pre-filter
-        // cap (`REGEX_PRE_FILTER_CAP`); for the partitioned caller we
-        // request the combined page+block window via the same
-        // page-limit field. The regex SQL scan reads `page.limit`
-        // only as a post-loop trim — `REGEX_PRE_FILTER_CAP` is the
-        // real bound. We trim manually to the combined window after.
-        let combined: u64 = u64::from(page_limit) + u64::from(block_limit) + 1;
-        let combined_i64 = i64::try_from(combined).unwrap_or(i64::MAX);
-        let page = PageRequest::new(None, Some(combined_i64))?;
-        let response = regex_mode_query(
+        // PEND-69 F1 — two parallel regex scans, each with a
+        // `limit + 1` probe. The pages scan pushes
+        // `block_type = 'page'` into SQL (PEND-69 F2). `REGEX_PRE_FILTER_CAP`
+        // still bounds each scan's worst-case row count.
+        let pages_page = PageRequest::new(None, Some(probe_limit_i64(page_limit)))?;
+        let blocks_page = PageRequest::new(None, Some(probe_limit_i64(block_limit)))?;
+        let pages_future = regex_mode_query(
             pool,
             query,
-            &page,
+            &pages_page,
             parent_id,
             tag_ids,
             space_id,
             include_page_globs,
             exclude_page_globs,
             toggles,
+            Some("page"),
             metadata,
-        )
-        .await?;
-        // Regex-mode doesn't honour `MAX_SEARCH_RESULTS` (uses its
-        // own `REGEX_PRE_FILTER_CAP`); `ceiling_hit` stays false on
-        // this path. The palette's `has_more` semantics rely on the
-        // per-partition fill instead.
+        );
+        let blocks_future = regex_mode_query(
+            pool,
+            query,
+            &blocks_page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            toggles,
+            None,
+            metadata,
+        );
+        let (pages_resp, blocks_resp) = tokio::try_join!(pages_future, blocks_future)?;
+
+        let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+        let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+        // `limit == 0` — same degenerate-ask guard as the FTS path;
+        // the caller asked for nothing, so don't claim there's more.
+        let pages_has_more = page_limit_usize > 0 && pages_resp.items.len() > page_limit_usize;
+        let blocks_has_more = block_limit_usize > 0 && blocks_resp.items.len() > block_limit_usize;
+
+        let mut pages = pages_resp.items;
+        pages.truncate(page_limit_usize);
+        let mut blocks = blocks_resp.items;
+        blocks.truncate(block_limit_usize);
         return Ok(super::search::FtsPartitionedScan {
-            rows: response.items,
-            ceiling_hit: false,
+            pages,
+            blocks,
+            pages_has_more,
+            blocks_has_more,
         });
     }
 
-    // FTS5 candidate set (today's path) — one scan, no block_type
-    // filter at SQL level.
+    // PEND-69 F5 — when the toggle bundle will trigger the post-filter
+    // sweep, the snippets emitted by `snippet(fts_blocks, …)` are
+    // clobbered to `None` by `apply_post_filter`. Omit the SQL
+    // function call entirely in that case so SQLite skips the per-row
+    // tokenizer walk.
+    let with_snippet = !toggles.any();
+
+    // FTS5 candidate set — two parallel scans (page-only + unrestricted).
     let mut scan = super::search::search_fts_partitioned(
         pool,
         query,
@@ -287,6 +315,7 @@ pub(crate) async fn search_with_toggles_partitioned(
         include_page_globs,
         exclude_page_globs,
         metadata,
+        with_snippet,
     )
     .await?;
 
@@ -296,11 +325,21 @@ pub(crate) async fn search_with_toggles_partitioned(
     }
 
     // `case_sensitive` and/or `whole_word` on → compile a post-filter
-    // regex from the literal query and narrow the FTS candidate set.
+    // regex from the literal query and narrow each partition's
+    // candidate set.
     let pattern = compose_literal_pattern(query, toggles);
     let re = build_regex(&pattern)?;
-    apply_post_filter(&mut scan.rows, &re);
+    apply_post_filter(&mut scan.pages, &re);
+    apply_post_filter(&mut scan.blocks, &re);
     Ok(scan)
+}
+
+/// PEND-69 F1 — compute the `limit + 1` probe value for a regex-mode
+/// pre-filter scan as an `i64` clamped to fit
+/// [`PageRequest::new`]'s domain.
+fn probe_limit_i64(limit: u32) -> i64 {
+    let raw: u64 = u64::from(limit).saturating_add(1);
+    i64::try_from(raw).unwrap_or(i64::MAX)
 }
 
 /// Compose the post-FTS regex pattern for the **non-regex** toggle
@@ -419,6 +458,12 @@ pub(crate) fn byte_to_utf16_offsets(
 /// Wall-time scales with the structurally-filtered block count, not
 /// the FTS candidate count. The pre-filter cap
 /// ([`REGEX_PRE_FILTER_CAP`]) bounds the worst case.
+///
+/// PEND-69 F2 — `block_type_filter` is pushed into the SQL WHERE
+/// clause so a page-only regex query doesn't waste the 1000-row
+/// pre-filter budget on content blocks that would be dropped client-
+/// side. The caller passes `Some("page")` for the pages partition,
+/// `None` for the unrestricted set.
 #[allow(clippy::too_many_arguments)]
 async fn regex_mode_query(
     pool: &SqlitePool,
@@ -430,6 +475,7 @@ async fn regex_mode_query(
     include_page_globs: &[String],
     exclude_page_globs: &[String],
     toggles: SearchToggles,
+    block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Compose the final regex. `case_sensitive` flips the (?i) flag;
@@ -537,6 +583,19 @@ async fn regex_mode_query(
     let metadata_binds =
         super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
 
+    // PEND-69 F2 — push `block_type` into SQL instead of post-fetch
+    // `Vec::retain()`. Eliminates the 1000-row drag for page-only
+    // regex queries where matching pages live beyond the pre-filter
+    // cap.
+    let block_type_idx = if block_type_filter.is_some() {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.block_type = ?{i}"));
+        next_param += 1;
+        Some(i)
+    } else {
+        None
+    };
+
     let cap_idx = next_param;
     // PEND-55 — ULID prefixes are monotonically time-sortable, so
     // `ORDER BY b.id DESC` yields most-recent-first without a
@@ -553,6 +612,7 @@ async fn regex_mode_query(
         space_idx,
         include_start,
         exclude_start,
+        block_type_idx,
     );
 
     let mut db_query = sqlx::query_as::<_, RegexScanRow>(&sql);
@@ -580,6 +640,11 @@ async fn regex_mode_query(
     // number / date / ref variants for `prop:` four-column matching.
     for v in &metadata_binds {
         db_query = v.bind(db_query);
+    }
+    // PEND-69 F2 — bind `block_type` value in the same order the SQL
+    // builder declared it (after metadata, before the LIMIT cap).
+    if let Some(bt) = block_type_filter {
+        db_query = db_query.bind(bt);
     }
     db_query = db_query.bind(REGEX_PRE_FILTER_CAP);
 
