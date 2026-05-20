@@ -2,10 +2,45 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 799 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 800 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1245+ REVIEW-LATER items across 799 sessions.
+- **Previously-resolved counter:** 1245+ REVIEW-LATER items across 800 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 800 — PEND-73 deferred cycle 7+8: U9 + B8 final defers (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (doc-only) |
+| **Items closed** | — |
+| **Items modified** | PEND-73 U9 + B8 marked FINAL DEFER with rationale |
+| **Tests added** | 0 |
+| **Files touched** | 2 |
+
+**Summary:** Closing out the PEND-73 deferred-items sweep. Both remaining items have explicit "defer if cost exceeds N" escape hatches in the original plan's open questions; neither has surfaced a real user-facing problem since the original 2026-05-19 audit.
+
+- **U9 (mode-memory consolidation)** — Plan's open question 3 says "if Phase 3.U9 grows beyond ~2 h, defer". Actual scope is ~4-5 h: sheet store needs a `paletteQueryByMode: Record<PaletteMode, string>` field, bridge needs bi-directional mirror, palette store needs a `setQueryByModeFromSheet(map)` method, plus tests for every cross-store flow. The bridge already mirrors the VISIBLE query (palette current mode ↔ sheet) via `useSearchSheetBridge`; only per-mode palette memory BEYOND the current mode is lost on a sheet round-trip. Marginal UX win vs invasive cross-store coupling. Revisit only if a user reports friction.
+- **B8 (COUNT(DISTINCT) → EXISTS)** — Plan's "measured, no-op" escape. Total cost ~6 h: build a runnable 10k-block bench harness, implement the dynamic per-tag EXISTS rewrite across two call sites, measure both shapes, decide. The win is data-shape-dependent (scales with the number of AND'd tags, the cardinality of `block_tags` per block, and the read pool's cache state) and may not exceed the 5% threshold the plan names. Both call sites are READ-only and not user-visibly slow today. Revisit only when a real user-facing slowdown surfaces.
+
+**PEND-73 final tally (sessions 789-800):**
+- Phase 1 — Backend hygiene: 4/5 shipped (B2 / B5 / B6 / B7; B8 final defer)
+- Phase 2 — Cancellation end-to-end: 2/2 shipped (R3 in 790; R4 as library shape in 798)
+- Phase 3 — UX punch list: 9/10 shipped (U1 + U3 + U4 + U5 + U6 + U7 + U8 + U10 + U2; U9 final defer)
+- Phase 4 — Maintenance + perf: 8/9 shipped (M3 + M4 + M5 + M6 + R1 + R2 + P1 + P2; M7 kept after investigation)
+- Phase 5 — Test gaps: 4/5 shipped (T1b + T1c + T1d + T2; T1a shipped alongside B3 in 795)
+- **Aggregate: 27/31 shipped, 1 kept after investigation, 2 final defers (B8 + U9), 1 paired-shipped (T1a + B3 together).** No remaining "scoped but not yet attempted" items.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 2 → 0. The plan file stays in place as a historical/rationale record; no further action is scoped without a user-visible trigger.
+- **Previously resolved:** 1245+ → 1245+ (doc-only).
+
+**Files touched (this session):**
+- `pending/PEND-73-search-audit-followups.md` (U9 + B8 rows updated with FINAL DEFER rationale)
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 799 — PEND-73 deferred cycle 6: M6 useShallow palette selectors (2026-05-20)
 
