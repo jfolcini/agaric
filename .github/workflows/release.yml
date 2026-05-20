@@ -969,6 +969,33 @@ jobs:
         with:
           subject-path: ${{ env.OPENVEX_FILE }}
 
+      # `generate-vex` runs in parallel with `build-and-release`, which
+      # owns the canonical "Ensure draft release exists" step. If this
+      # job's upload races ahead of the build matrix's first runner,
+      # `gh release upload` fails with `release not found` (observed on
+      # run #26161723232). Run the same idempotent
+      # check-or-create-or-reuse here so the upload below has a release
+      # to attach to regardless of ordering. Same swallow-422 shape as
+      # build-and-release uses for the 4-way matrix race.
+      - name: Ensure draft release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft release for tag $TAG already exists; reusing."
+          else
+            echo "Creating draft release for tag $TAG..."
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Agaric $TAG" \
+              --notes "Release notes will be finalized by the workflow." \
+              || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+
       # Mirror the per-platform Sigstore-bundle upload pattern from
       # build-and-release: attach the bundle as a release asset so
       # Scorecard's `Signed-Releases` heuristic sees a matching
