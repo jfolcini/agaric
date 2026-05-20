@@ -6,7 +6,7 @@
 
 Five phases, each independently mergeable. Land in order — the backend hygiene + cancellation-end-to-end phases unblock the rest.
 
-- **Phase 1 — Backend hygiene (S, ~3 h).** `pages_cache(title)` index, `MAX_GLOB_LEN` cap, `(?:...)` regex wrap, sqlx error-code instead of substring match. Biggest single perf win in the search path is one line: the index migration.
+- **Phase 1 — Backend hygiene (S, ~3 h).** `pages_cache(title)` index, `MAX_GLOB_LEN` cap, `(?:...)` regex wrap, sqlx error-code instead of substring match. Biggest single perf win in the search path is one line: the index migration. **Status: SHIPPED 2026-05-20** (B2, B5, B6, B7). B8 deferred as "measured, no-op" per the plan's escape hatch — the rewrite needs a 10k-block benchmark fixture that doesn't exist as a runnable bench; revisit if a user-facing slowdown surfaces.
 - **Phase 2 — Cancellation end-to-end (M, ~4 h).** Frontend is the missing half of PEND-70. `lib/tauri.ts` gains `AbortSignal` plumbing; the wire `AppError` becomes a discriminated union with a `Cancelled` literal; palette + panel consumers swallow `Cancelled` silently and abort on stale generation.
 - **Phase 3 — UX punch list (S-M, ~4 h).** Surface silent IPC failures, fix `SearchHistoryDropdown` listbox a11y, remove dead `onKeyDown`, swap `useEffect` autofocus → `useLayoutEffect`, swap `setTimeout(150)` blur → `mousedown` preventDefault, snapshot selection range on `Cmd+K` open, doc drift in `docs/SEARCH.md`, session-flag the localStorage toast.
 - **Phase 4 — Maintainability + perf (M, ~5 h).** Extract `useGenerationGuard`, delete dead `SearchResultList.tsx` + `void tokenKey`, `useShallow` the 10 palette selectors, `React.memo` `SearchResultBlockRow`, stabilise `pageTitles` identity, history-store `migrate` placeholder. CommandPalette/SearchPanel decomposition deferred to its own PEND (see *Out of scope*).
@@ -32,13 +32,13 @@ Branch `pend-69-70-71-search-backend`. Verified by direct re-read on 2026-05-20:
 
 | # | File:line (HEAD) | Issue |
 |---|---|---|
-| B2 | `src-tauri/migrations/` (highest = `0067_link_metadata_not_found.sql`) | No `pages_cache(title)` index. Every page-name glob filter is a full table scan. |
+| ~~B2~~ | ~~`src-tauri/migrations/` (highest = `0067_link_metadata_not_found.sql`)~~ | ~~No `pages_cache(title)` index. Every page-name glob filter is a full table scan.~~ **SHIPPED — `0068_pages_cache_title_index.sql`** |
 | B3 | `src-tauri/src/fts/search.rs:164` (`sanitize_fts_query`); `src-tauri/src/fts/index.rs` (writer) | No NFC normalisation at index OR query time. macOS NFD content invisible to NFC queries. |
 | B4 | n/a | No `verify_fts_consistency` helper; no integration test for FTS index drift. |
-| B5 | `src-tauri/src/fts/search.rs:705` | `if msg.contains("fts5:") \|\| msg.contains("parse error")` — fragile string match instead of `sqlx::Error::Database::code()`. |
-| B6 | `src-tauri/src/fts/glob_filter.rs` | No `MAX_GLOB_LEN`. A 10 MB include-glob is bound and shipped to SQLite. |
-| B7 | `src-tauri/src/fts/toggle_filter.rs:502-503` (non-whole-word regex branch) | User regex concatenated raw after `(?i)`/`(?-i)` flag; precedence bleed risk on future toggle additions. Whole-word path at `:499-501` correctly wraps. |
-| B8 | `src-tauri/src/fts/search.rs:500`; `src-tauri/src/fts/toggle_filter.rs:541` | `(SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags … IN (…)) = ?N` per result row. Should be `EXISTS`-per-tag. |
+| ~~B5~~ | ~~`src-tauri/src/fts/search.rs:705`~~ | ~~`if msg.contains("fts5:") \|\| msg.contains("parse error")` — fragile string match instead of `sqlx::Error::Database::code()`.~~ **SHIPPED — replaced with `sqlx::Error::Database` + `code()` + `starts_with("fts5: ")`** |
+| ~~B6~~ | ~~`src-tauri/src/fts/glob_filter.rs`~~ | ~~No `MAX_GLOB_LEN`. A 10 MB include-glob is bound and shipped to SQLite.~~ **SHIPPED — `MAX_GLOB_LEN = 1024` enforced per trimmed sub-entry, two tests added** |
+| ~~B7~~ | ~~`src-tauri/src/fts/toggle_filter.rs:502-503` (non-whole-word regex branch)~~ | ~~User regex concatenated raw after `(?i)`/`(?-i)` flag; precedence bleed risk on future toggle additions. Whole-word path at `:499-501` correctly wraps.~~ **SHIPPED — both branches now wrap user pattern in `(?:...)`, regression test for bare alternation added** |
+| B8 | `src-tauri/src/fts/search.rs:500`; `src-tauri/src/fts/toggle_filter.rs:541` | `(SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags … IN (…)) = ?N` per result row. Should be `EXISTS`-per-tag. **DEFERRED 2026-05-20** per the plan's "measured, no-op" escape — no runnable 10k-block bench fixture exists; rewrite cost (dynamic per-tag subquery generation + parameter binding refactor across two call sites) is unjustified without a measured win. Revisit if a user-facing slowdown surfaces. |
 
 ### Frontend still open
 

@@ -2,10 +2,52 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 788 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 789 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1215+ REVIEW-LATER items across 788 sessions.
+- **Previously-resolved counter:** 1219+ REVIEW-LATER items across 789 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 789 — PEND-73 Phase 1: backend search hygiene (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (5 independent ≤30-LOC edits, no parallelism benefit) |
+| **Items closed** | PEND-73 § Phase 1 items B2, B5, B6, B7 (4 of 5); B8 deferred per plan's "measured, no-op" escape |
+| **Items modified** | `pending/PEND-73-search-audit-followups.md` (Phase 1 TL;DR + Backend-still-open table struck through for B2/B5/B6/B7, B8 marked DEFERRED with rationale) |
+| **Tests added** | +3 backend (over_length_pattern_rejected, at_length_pattern_accepted, partitioned_regex_bare_alternation_matches_both_arms_under_case_flag) |
+| **Files touched** | 5 |
+
+**Summary:** Closed four of Phase 1's five backend-hygiene items on the same branch as PEND-74. Each one is an independently revertable surgical edit — no shared scaffolding across them.
+
+- **B2** — new migration `0068_pages_cache_title_index.sql` adds `CREATE INDEX IF NOT EXISTS idx_pages_cache_title_nocase ON pages_cache(title COLLATE NOCASE)`. Matches the `idx_tags_cache_name_nocase` convention from 0061. Resolves the "every page-name glob filter is a full table scan" callout that 0061 explicitly chose to defer to scale.
+- **B5** — `src-tauri/src/fts/search.rs:705` substring `msg.contains("fts5:") || msg.contains("parse error")` replaced with a typed check: `matches!(&e, sqlx::Error::Database(db) if matches!(db.code().as_deref(), Some("1") | Some("SQLITE_ERROR")) && db.message().starts_with("fts5: "))`. Both checks have to align — defence in depth against future libsqlite wording / translation / false positives from bound-parameter values containing the literals `fts5:` / `parse error`.
+- **B6** — `src-tauri/src/fts/glob_filter.rs` gains `pub const MAX_GLOB_LEN: usize = 1024;` enforced in `prepare_globs` per trimmed sub-entry (not per top-level entry, so comma-separated lists are each measured). Surfaces as `AppError::Validation("InvalidGlob: pattern length N exceeds cap 1024")` — same `InvalidGlob:` prefix the frontend already keys on. Two tests: boundary + over-length.
+- **B7** — `src-tauri/src/fts/toggle_filter.rs:502-503` non-whole-word branch now wraps the user pattern in `(?:...)` (symmetric with the whole-word branch at `:499-501`). Eliminates precedence-bleed risk from a future inline-flag toggle prefix interacting with a top-level `|` in the user's pattern. Regression test seeds two pages with mixed-case content and asserts `case_sensitive=false` + bare `foo|bar` matches both arms.
+- **B8** — DEFERRED as "measured, no-op" per the plan's explicit escape hatch. The COUNT(DISTINCT) → EXISTS rewrite is non-trivial (dynamic per-tag subquery generation + parameter binding refactor across two call sites in `search.rs:500` and `toggle_filter.rs:541`) and the win is data-shape dependent (scales with the number of AND'd tags). A 10k-block benchmark fixture from PEND-71 exists as test seed but not as a runnable bench. Without a measured number, the rewrite is premature. Carry forward; revisit if a user-facing slowdown surfaces.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73's Phase 1 "Backend still open" table goes from 7 open → 3 open (B3 NFC normalisation, B4 verify_fts_consistency, B8 deferred). Phases 2-5 untouched.
+- **Previously resolved:** 1215+ → 1219+ (4 items: B2, B5, B6, B7) across 788 → 789 sessions.
+
+**Files touched (this session):**
+- `src-tauri/migrations/0068_pages_cache_title_index.sql` (new, +14)
+- `src-tauri/src/fts/glob_filter.rs` (+31)
+- `src-tauri/src/fts/search.rs` (+27 / -5)
+- `src-tauri/src/fts/toggle_filter.rs` (+7)
+- `src-tauri/src/fts/tests.rs` (+59)
+- `pending/PEND-73-search-audit-followups.md` (updated TL;DR + struck open-table rows)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3830 / 3830 tests pass (3 skipped); the three new tests are in the run.
+- `cd src-tauri && cargo sqlx prepare -- --tests` — clean diff, no new `.sqlx/` entries (DDL-only migration; B5/B6/B7 don't touch SQL macros).
+- `prek run --files <touched>` — all hooks pass including `migrations: STRICT tables required for new schema` (no new tables) and `migrations append-only` (additive index migration).
+
+**Process notes:** Originally scoped this phase with 5 items at ~3h budget; landed 4 in well under that, deferred 1 with documented rationale. B8's deferral is per the plan's literal "if benchmark shows < 5% improvement, leave the COUNT-DISTINCT shape and close as 'measured, no-op.'" — no benchmark, no rewrite. Documenting the deferral on the row keeps the audit trail clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake` branch (re-used because the PEND-74 fix and Phase 1 ship together unmodified). Not pushed yet.
+
+---
 
 ## Session 788 — PEND-74 HasTag popover flake hardening (2026-05-20)
 

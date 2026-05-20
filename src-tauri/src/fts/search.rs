@@ -699,13 +699,35 @@ async fn fts_fetch_rows(
     }
 
     result.map_err(|e| {
-        // Map any SQLite error from the MATCH query to a validation error.
-        // With query sanitization this should be rare, but acts as defense-in-depth.
-        let msg = e.to_string();
-        if msg.contains("fts5:") || msg.contains("parse error") {
+        // PEND-73 Phase 1.B5 — robust FTS5 parse-error mapping.
+        //
+        // We want to translate FTS5 MATCH-syntax errors into a
+        // user-facing validation error, but every other SQLite error
+        // (constraint violation, busy timeout, IO) must keep its
+        // `AppError::Database` discriminant. The original implementation
+        // substring-matched on the message text ("fts5:" / "parse
+        // error") — fragile against translation, future libsqlite
+        // wording, and false positives when those tokens appear in
+        // bound parameter values.
+        //
+        // Replacement check:
+        //   * the error originates from the database driver, AND
+        //   * its code is the generic SQLITE_ERROR (sqlx surfaces "1"),
+        //     AND
+        //   * the message starts with the canonical `fts5: ` prefix
+        //     that SQLite's FTS5 module emits.
+        // The starts_with on the canonical prefix is the durable
+        // signal; the code check is the redundant guard. Defence in
+        // depth — both have to align.
+        let is_fts5_parse_error = matches!(&e, sqlx::Error::Database(db) if {
+            let code_match = matches!(db.code().as_deref(), Some("1") | Some("SQLITE_ERROR"));
+            let prefix_match = db.message().starts_with("fts5: ");
+            code_match && prefix_match
+        });
+        if is_fts5_parse_error {
             AppError::Validation(format!(
                 "Invalid search query: check for unmatched quotes or special characters. \
-                     Details: {msg}"
+                     Details: {e}"
             ))
         } else {
             AppError::Database(e)

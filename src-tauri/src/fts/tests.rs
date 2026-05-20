@@ -5470,6 +5470,65 @@ async fn partitioned_regex_alternation_matches_both() {
 }
 
 #[tokio::test]
+async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() {
+    // PEND-73 Phase 1.B7 — regression guard for the (?:...) wrap around
+    // the user pattern. The historical risk: `(?i)foo|bar` composed by
+    // string-concat is fine today, but any future prefix toggle in
+    // front of `query` (e.g. `(?s)`) would interact with the top-level
+    // `|` via precedence. The new `(?i)(?:foo|bar)` shape isolates the
+    // user's pattern in a group so the alternation can't escape.
+    //
+    // Behavioural check: a bare alternation (no user-supplied parens)
+    // must still match both arms case-insensitively under
+    // `case_sensitive=false`.
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQPTRGAW01PAGE0000000P01",
+        "page",
+        "Foo content",
+        None,
+        Some(0),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01HQPTRGAW02PAGE0000000P02",
+        "page",
+        "BAR content",
+        None,
+        Some(1),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "foo|bar".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            case_sensitive: false,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("bare-alternation regex must execute cleanly");
+
+    let surviving_ids: Vec<&str> = resp.blocks.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        surviving_ids.contains(&"01HQPTRGAW01PAGE0000000P01"),
+        "case-insensitive `foo|bar` must match `Foo content`: {surviving_ids:?}"
+    );
+    assert!(
+        surviving_ids.contains(&"01HQPTRGAW02PAGE0000000P02"),
+        "case-insensitive `foo|bar` must match `BAR content`: {surviving_ids:?}"
+    );
+}
+
+#[tokio::test]
 async fn partitioned_regex_invalid_pattern_returns_validation_error() {
     // `is_regex=true` + invalid regex pattern `"*"` (Rust's regex crate
     // rejects unanchored `*` as a repetition operator with no

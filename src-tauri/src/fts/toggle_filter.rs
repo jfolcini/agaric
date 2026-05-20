@@ -500,7 +500,14 @@ async fn regex_mode_query(
         pattern.push_str(query);
         pattern.push_str(")(?-u:\\b)");
     } else {
+        // PEND-73 Phase 1.B7 — wrap the user pattern in a non-capturing
+        // group so a leading inline flag in the user's input (e.g.
+        // `(?i)foo|bar`) cannot rebind the case flag we just emitted
+        // and bleed precedence across the top-level `|`. Symmetric with
+        // the whole-word branch above.
+        pattern.push_str("(?:");
         pattern.push_str(query);
+        pattern.push(')');
     }
     let re = build_regex(&pattern)?;
 
