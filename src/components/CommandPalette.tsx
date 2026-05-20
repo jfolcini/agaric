@@ -54,6 +54,8 @@ import {
 } from '@/components/ui/command'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useFailedOnce } from '@/hooks/useFailedOnce'
+import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { isCancellation } from '@/lib/app-error'
 import { jaroWinkler } from '@/lib/jaro-winkler'
@@ -418,11 +420,13 @@ export function PaletteBody({
     setDebouncedQuery(trimmed.length === 0 || isCommandsModeInput(trimmed) ? '' : trimmed)
   }, [query])
 
-  // Stale-response generation counter — mirrors `usePaginatedQuery` /
-  // PEND-51's same guard. Re-bumped on every keystroke; an in-flight
-  // response from an earlier keystroke is dropped if its generation
-  // doesn't match.
-  const generationRef = useRef(0)
+  // PEND-73 Phase 4.M3 — race-discard via the shared `useGenerationGuard`
+  // hook. Re-bumped on every keystroke; an in-flight response from an
+  // earlier keystroke is dropped if its id doesn't match.
+  const searchGen = useGenerationGuard()
+  // PEND-73 Phase 3.U1 — surface real IPC failures (non-cancellation)
+  // once per session via a toast. Logger still captures every failure.
+  const surfaceFailureOnce = useFailedOnce()
   const [pages, setPages] = useState<SearchBlockRow[]>([])
   const [blocks, setBlocks] = useState<SearchBlockRow[]>([])
   // PEND-61 CR — `loading` gates the escalation footer + the
@@ -457,8 +461,7 @@ export function PaletteBody({
       setBlocks([])
       return
     }
-    generationRef.current += 1
-    const gen = generationRef.current
+    const gen = searchGen.next()
     setLoading(true)
 
     const spaceId = currentSpaceId ?? ''
@@ -475,13 +478,13 @@ export function PaletteBody({
 
     fetchPromise
       .then(({ pages: p, blocks: b }) => {
-        if (gen !== generationRef.current) return
+        if (!searchGen.isCurrent(gen)) return
         setPages(p.items)
         setBlocks(b.items)
         setLoading(false)
       })
       .catch((err) => {
-        if (gen !== generationRef.current) return
+        if (!searchGen.isCurrent(gen)) return
         // PEND-73 Phase 2 — swallow PEND-70 backend cancellations
         // silently. They fire on every superseded keystroke when a fast
         // typist races the read pool, and the stale-generation guard
@@ -495,11 +498,22 @@ export function PaletteBody({
           { query: effectiveQuery, linkMode },
           err,
         )
+        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        surfaceFailureOnce('palette:search', () => notify.error(t('search.failed')))
         setPages([])
         setBlocks([])
         setLoading(false)
       })
-  }, [effectiveQuery, linkMode, mode, spaceIsReady, currentSpaceId])
+  }, [
+    effectiveQuery,
+    linkMode,
+    mode,
+    spaceIsReady,
+    currentSpaceId,
+    searchGen,
+    surfaceFailureOnce,
+    t,
+  ])
 
   // Merge → group → blended FTS+fuzzy ranking → cap.
   const groups = useMemo(
@@ -1519,7 +1533,10 @@ function TagsModeBody({
   const [tags, setTags] = useState<SearchBlockRow[]>([])
   const [loading, setLoading] = useState(false)
   const [debouncedQuery, setDebouncedQuery] = useState('')
-  const generationRef = useRef(0)
+  // PEND-73 Phase 4.M3 — shared race-discard hook.
+  const tagsGen = useGenerationGuard()
+  // PEND-73 Phase 3.U1 — once-per-session failure surface.
+  const surfaceTagsFailureOnce = useFailedOnce()
   const debounced = useDebouncedCallback((value: string) => {
     setDebouncedQuery(value)
   }, PALETTE_DEBOUNCE_MS)
@@ -1531,8 +1548,7 @@ function TagsModeBody({
 
   useEffect(() => {
     if (!spaceIsReady) return
-    generationRef.current += 1
-    const gen = generationRef.current
+    const gen = tagsGen.next()
     setLoading(true)
     searchBlocks({
       query: debouncedQuery,
@@ -1541,19 +1557,21 @@ function TagsModeBody({
       spaceId: currentSpaceId ?? '',
     })
       .then((resp) => {
-        if (gen !== generationRef.current) return
+        if (!tagsGen.isCurrent(gen)) return
         setTags(resp.items)
         setLoading(false)
       })
       .catch((err) => {
-        if (gen !== generationRef.current) return
+        if (!tagsGen.isCurrent(gen)) return
         // PEND-73 Phase 2 — see sibling catch site rationale.
         if (isCancellation(err)) return
         logger.warn('CommandPalette', 'tags search failed', { query: debouncedQuery }, err)
+        // PEND-73 Phase 3.U1 — once-per-session toast for real failures.
+        surfaceTagsFailureOnce('palette:tags', () => notify.error(t('search.failed')))
         setTags([])
         setLoading(false)
       })
-  }, [debouncedQuery, currentSpaceId, spaceIsReady])
+  }, [debouncedQuery, currentSpaceId, spaceIsReady, tagsGen, surfaceTagsFailureOnce, t])
 
   if (!loading && tags.length === 0) {
     return (

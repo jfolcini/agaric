@@ -2,10 +2,48 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 793 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 794 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1236+ REVIEW-LATER items across 793 sessions.
+- **Previously-resolved counter:** 1239+ REVIEW-LATER items across 794 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 794 — PEND-73 deferred cycle 1: M3 + R2 + U1 (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 M3 (useGenerationGuard), R2 (bridge epoch), U1 (broader IPC toast) |
+| **Items modified** | — |
+| **Tests added** | +7 frontend (useGenerationGuard) |
+| **Files touched** | 7 |
+
+**Summary:** First pass through the deferred PEND-73 backlog. Three small frontend refactors landed together because they share the "introduce a new hook + migrate three sites" shape.
+
+- **M3 — `useGenerationGuard` hook.** New `src/hooks/useGenerationGuard.ts` exporting `{ next, isCurrent }` memoised so the returned object is dep-stable across re-renders. Replaces three hand-rolled `useRef(0)` + `generationRef.current += 1` + `if (gen !== generationRef.current) return` triples in `CommandPalette.tsx` (search effect + tags effect) and `useAutocompleteSources.ts` (tag-debounce). 7 unit tests cover monotonic increment, identity-stability, cross-render counter preservation, and the unseen-id edge case. The autocomplete tag-debounce site keeps the hook even after the eventual `AbortController` migration — the debounce is its own race, not the IPC.
+- **R2 — bridge epoch counter.** `useSearchSheetBridge.ts` gains a `lastWroteRef` that tracks the most recent value the bridge wrote INTO the segment store. The subscription listener checks this ref BEFORE falling through to the existing `q !== sheet.query` guard, suppressing the echo of our own seed write so a future writer that observes intermediate post-anchor-normalised query states can't ping-pong through the bridge. Structural rather than incidental — the current store shape no-ops identical writes, but the ref makes the guard durable against future writer additions.
+- **U1 — broader IPC toast via `useFailedOnce`.** New `src/hooks/useFailedOnce.ts` exports a `(key, run) => boolean` predicate backed by a module-level `Set<string>`. Three palette catch sites now `surfaceFailureOnce('palette:search' / 'palette:tags' / 'autocomplete:tags', () => notify.error(t('search.failed')))` AFTER the cancellation swallow and the `logger.warn`. User sees the signal exactly once per surface per session; logs capture every failure. `usePaginatedQuery` already toasts via its `onError` plumbing — no gate needed at that site.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 11 → 8 (M3 + R2 + U1 shipped).
+- **Previously resolved:** 1236+ → 1239+ across 793 → 794 sessions.
+
+**Files touched (this session):**
+- `src/hooks/useGenerationGuard.ts` (new, +57)
+- `src/hooks/__tests__/useGenerationGuard.test.ts` (new, +54)
+- `src/hooks/useFailedOnce.ts` (new, +56)
+- `src/hooks/useSearchSheetBridge.ts` (+19 / −2; lastWroteRef + echo suppression)
+- `src/hooks/useAutocompleteSources.ts` (+8 / −7; guard + failure surface + useTranslation)
+- `src/components/CommandPalette.tsx` (+12 / −8; two guard migrations + two failure surfaces)
+- `pending/PEND-73-search-audit-followups.md` (M3 / R2 / U1 rows updated)
+
+**Verification:**
+- `npx vitest run` — 10300 / 10300 pass (+7 vs Phase 5's 10293).
+- `npx tsc -b --noEmit` — clean.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 793 — PEND-73 Phase 5: test gaps (2026-05-20)
 
