@@ -33,7 +33,7 @@ Branch `pend-69-70-71-search-backend`. Verified by direct re-read on 2026-05-20:
 | # | File:line (HEAD) | Issue |
 |---|---|---|
 | ~~B2~~ | ~~`src-tauri/migrations/` (highest = `0067_link_metadata_not_found.sql`)~~ | ~~No `pages_cache(title)` index. Every page-name glob filter is a full table scan.~~ **SHIPPED — `0068_pages_cache_title_index.sql`** |
-| B3 | `src-tauri/src/fts/search.rs:164` (`sanitize_fts_query`); `src-tauri/src/fts/index.rs` (writer) | No NFC normalisation at index OR query time. macOS NFD content invisible to NFC queries. |
+| ~~B3~~ | ~~`src-tauri/src/fts/search.rs:164` (`sanitize_fts_query`); `src-tauri/src/fts/index.rs` (writer)~~ | ~~No NFC normalisation at index OR query time. macOS NFD content invisible to NFC queries.~~ **SHIPPED 2026-05-20** — `nfc_normalise()` helper in `strip.rs` exported pub(crate); applied at the end of `strip_for_fts_with_maps` (index side) and at the top of `sanitize_fts_query` (query side). `unicode-normalization = "0.1.25"` added to Cargo.toml as an explicit dep (was already transitive). NFC↔NFD asymmetry is gone. |
 | B4 | n/a | No `verify_fts_consistency` helper; no integration test for FTS index drift. |
 | ~~B5~~ | ~~`src-tauri/src/fts/search.rs:705`~~ | ~~`if msg.contains("fts5:") \|\| msg.contains("parse error")` — fragile string match instead of `sqlx::Error::Database::code()`.~~ **SHIPPED — replaced with `sqlx::Error::Database` + `code()` + `starts_with("fts5: ")`** |
 | ~~B6~~ | ~~`src-tauri/src/fts/glob_filter.rs`~~ | ~~No `MAX_GLOB_LEN`. A 10 MB include-glob is bound and shipped to SQLite.~~ **SHIPPED — `MAX_GLOB_LEN = 1024` enforced per trimmed sub-entry, two tests added** |
@@ -70,7 +70,7 @@ Branch `pend-69-70-71-search-backend`. Verified by direct re-read on 2026-05-20:
 
 | # | What's missing |
 |---|---|
-| T1a | NFC vs NFD normalisation test (the B3 fix needs a guard). **DEFERRED 2026-05-20** — pair with B3 when an NFC/NFD bug surfaces. |
+| ~~T1a~~ | ~~NFC vs NFD normalisation test (the B3 fix needs a guard).~~ **SHIPPED 2026-05-20** — `partitioned_nfc_query_matches_nfd_content` seeds NFD content (`cafe´` with combining acute) and asserts an NFC query (`café` with U+00E9) matches it. Pre-condition assertion confirms the raw byte sequences differ before reaching the FTS path. |
 | ~~T1b~~ | ~~Mid-emoji surrogate test in `byte_to_utf16_offsets` (existing test at `toggle_filter.rs:777` covers leading emoji only).~~ **SHIPPED 2026-05-20** — `byte_to_utf16_offsets_mid_emoji_match` added; asserts `abc🌟def` → match at `[3, 7]` byte → `[3, 5]` UTF-16 (one code point = two units). |
 | ~~T1c~~ | ~~All-operator queries (`"AND OR NOT"`) sanitiser test.~~ **SHIPPED 2026-05-20** — `sanitize_all_operator_query_documents_current_behaviour` pins the current sanitiser behaviour (`AND` → `"AND"`, `AND OR NOT` → `"AND" OR "NOT"`) as a regression net. The plan's desired contract (drop orphan operators → empty string) is documented in the test body; flipping the assertion is the deliberate code-path for any future maintainer who wants that contract. |
 | ~~T1d~~ | ~~FTS-index-drift integration test — `verify_fts_consistency` walks `blocks` and asserts every row has a matching `fts_blocks` row.~~ **SHIPPED 2026-05-20** — `verify_fts_consistency` helper + two integration tests: `fts_index_stays_consistent_under_writes` (happy path) and `fts_index_consistency_check_flags_missing_rows` (helper-itself test for the case where a writer skips FTS indexing). Catches any future writer that bypasses `update_fts_for_block`. |

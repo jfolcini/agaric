@@ -5503,6 +5503,59 @@ async fn partitioned_regex_alternation_matches_both() {
 }
 
 #[tokio::test]
+async fn partitioned_nfc_query_matches_nfd_content() {
+    // PEND-73 B3 / T1a — NFC normalisation guard.
+    //
+    // macOS volume content tends to be NFD-encoded (filename
+    // decomposition; copy-paste from Safari can preserve NFD), and
+    // typed queries on most platforms default to NFC. Without
+    // normalisation, an NFC query for "café" misses the NFD content
+    // "café" (the second one has the acute as a combining
+    // codepoint). With B3's index-time + query-time NFC normalisation,
+    // both ends agree on the canonical form.
+    //
+    // Sanity: assert the two raw strings are NOT byte-equal before
+    // the fix would even attempt to make them match.
+    let nfc_query = "caf\u{00E9}"; // U+00E9 = é (NFC composed)
+    let nfd_content = "caf\u{0065}\u{0301}"; // 'e' + combining acute (NFD)
+    assert_ne!(
+        nfc_query.as_bytes(),
+        nfd_content.as_bytes(),
+        "test pre-condition: NFC and NFD encodings must be byte-different"
+    );
+
+    let (pool, _dir) = test_pool().await;
+    insert_block(
+        &pool,
+        "01HQNFC001PAGE0000000P01CC",
+        "page",
+        nfd_content,
+        None,
+        Some(0),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        nfc_query.to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect("NFC query against NFD content must execute cleanly");
+
+    let surviving_ids: Vec<&str> = resp.pages.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        surviving_ids.contains(&"01HQNFC001PAGE0000000P01CC"),
+        "NFC query `{nfc_query}` must match NFD content `{nfd_content}` after normalisation; \
+         got pages: {surviving_ids:?}"
+    );
+}
+
+#[tokio::test]
 async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() {
     // PEND-73 Phase 1.B7 — regression guard for the (?:...) wrap around
     // the user pattern. The historical risk: `(?i)foo|bar` composed by

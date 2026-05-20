@@ -222,7 +222,24 @@ pub(crate) fn strip_for_fts_with_maps(
         .replace("\\~", "~")
         .replace("\\=", "=");
 
-    result
+    // PEND-73 B3 — NFC-normalise the stripped output before it enters
+    // the FTS index. macOS volume content tends to land NFD (filename
+    // decomposition; copy-paste from Safari can preserve NFD); an NFC
+    // query (the default for typed input on most platforms) would
+    // otherwise miss NFD-indexed content. The pair to this is the
+    // query-time NFC normalisation in `sanitize_fts_query`.
+    nfc_normalise(&result)
+}
+
+/// PEND-73 B3 — NFC normalisation helper. Allocates a fresh `String`
+/// because `unicode-normalization` returns an iterator; we collect
+/// once at the FTS boundary (index-write or query-sanitise). The
+/// common case (input already NFC) still re-allocates; the cost is
+/// a per-string walk that is dominated by the SQL bind that
+/// follows.
+pub(crate) fn nfc_normalise(input: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    input.nfc().collect()
 }
 
 // ---------------------------------------------------------------------------

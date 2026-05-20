@@ -2,10 +2,49 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 794 (latest entry 2026-05-20).
+- **This file:** sessions 401 – 795 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1239+ REVIEW-LATER items across 794 sessions.
+- **Previously-resolved counter:** 1241+ REVIEW-LATER items across 795 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 795 — PEND-73 deferred cycle 2: B3 + T1a NFC normalisation (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only |
+| **Items closed** | PEND-73 B3 (NFC normalisation), T1a (NFC test) |
+| **Tests added** | +1 backend (partitioned_nfc_query_matches_nfd_content) |
+| **Files touched** | 4 |
+
+**Summary:** Index-time + query-time NFC normalisation closes the macOS-NFD-content invisible-to-NFC-query asymmetry. The two ends of the FTS pipeline (writer + sanitiser) now agree on the canonical form.
+
+- **B3** — New `pub(crate) fn nfc_normalise(input: &str) -> String` in `src-tauri/src/fts/strip.rs`. Wraps `unicode_normalization::UnicodeNormalization::nfc()` and collects into a `String`. Applied at:
+  - `strip_for_fts_with_maps` (line 226) — index-time, before the SQL bind. Every FTS index entry is NFC-normalised at write time regardless of which writer (per-block update or bulk rebuild) routes through this function.
+  - `sanitize_fts_query` (line 168, in `search.rs`) — query-time, before tokenisation. The MATCH clause sees NFC even when the user pasted NFD content into the input.
+- **Dep** — `unicode-normalization = "0.1.25"` added to `src-tauri/Cargo.toml`. It was already transitive (via the `regex` stack and others), so the addition is free in lockfile terms; the explicit dep guards against a future transitive removal.
+- **T1a** — `partitioned_nfc_query_matches_nfd_content` seeds NFD content (`cafe\u{0301}` = `e` + combining acute) and asserts an NFC query (`caf\u{00E9}` = composed é) matches it. Pre-condition assert confirms the raw byte sequences differ before reaching the FTS path; would-fail-without-B3.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-73 deferred items 8 → 6 (B3 + T1a shipped).
+- **Previously resolved:** 1239+ → 1241+ across 794 → 795 sessions.
+
+**Files touched (this session):**
+- `src-tauri/Cargo.toml` (+6; unicode-normalization explicit dep + comment)
+- `src-tauri/src/fts/strip.rs` (+15; nfc_normalise helper + apply in strip_for_fts_with_maps)
+- `src-tauri/src/fts/search.rs` (+7; NFC normalisation at top of sanitize_fts_query)
+- `src-tauri/src/fts/tests.rs` (+58; T1a test)
+- `pending/PEND-73-search-audit-followups.md` (B3 + T1a rows updated)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3835 / 3835 pass (1 flaky in sync_files, unrelated; was flaky before this commit too).
+- `cd src-tauri && cargo sqlx prepare -- --tests` — clean diff (no new SQL macros, no schema changes).
+
+**Process notes:** The trigram FTS tokenizer indexes scalar-by-scalar, so NFC vs NFD produce DIFFERENT trigram sets ("caf"/"afé" vs "caf"/"afe"/"fe´"). Normalising both ends to NFC is the lowest-cost convergence; index-and-query-on-NFD would also work but every typed query on most platforms is NFC by default. The per-string walk cost is dominated by the SQL bind that follows; benchmark-time impact is below noise.
+
+**Commit plan:** single commit on `fix-pend-74-hastag-flake`. Not pushed.
+
+---
 
 ## Session 794 — PEND-73 deferred cycle 1: M3 + R2 + U1 (2026-05-20)
 

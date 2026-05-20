@@ -165,7 +165,13 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
     /// Trigram tokenizer minimum match length — see migration
     /// `0006_fts5_trigram.sql` (`tokenize = 'trigram case_sensitive 0'`).
     const TRIGRAM_MIN_LEN: usize = 3;
-    let tokens = tokenize_query(query);
+    // PEND-73 B3 — NFC-normalise the query before tokenisation so an
+    // NFC query reaches the NFC-normalised FTS index emitted by
+    // `strip_for_fts_with_maps`. Without this, NFD content (macOS
+    // pastes, NFD-encoded filenames embedded in titles) becomes
+    // invisible to NFC queries.
+    let normalised = super::strip::nfc_normalise(query);
+    let tokens = tokenize_query(&normalised);
     let len = tokens.len();
     let mut output_parts: Vec<String> = Vec::new();
 

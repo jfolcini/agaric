@@ -127,6 +127,12 @@ chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
 regex = "1"
 aho-corasick = "1"
+# PEND-73 B3 — NFC normalisation at FTS index time + query time. The
+# crate is already a transitive dep (via the regex stack and a few
+# other transitives in the lockfile); pinning it explicitly here is
+# what makes our direct `use unicode_normalization::UnicodeNormalization`
+# safe against a future transitive removal.
+unicode-normalization = "0.1.25"
 base64 = "0.22.1"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "0.0.12"
