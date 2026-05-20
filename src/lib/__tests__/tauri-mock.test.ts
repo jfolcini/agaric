@@ -2945,7 +2945,7 @@ describe('MAINT-226 — scope-filter parity', () => {
   // -------------------------------------------------------------------------
   // list_unfinished_tasks (backend: list_unfinished_tasks)
   // -------------------------------------------------------------------------
-  it('list_unfinished_tasks honours active scope', () => {
+  it('list_unfinished_tasks honours active scope', async () => {
     const { blockId: foreignBlockId } = seedForeignFixture({
       asTask: { todo_state: 'TODO', due_date: '2026-04-10' },
     })
@@ -2958,10 +2958,8 @@ describe('MAINT-226 — scope-filter parity', () => {
       | Promise<{
           items: Array<Record<string, unknown>>
         }>
-    // The mock returns a Promise — resolve before asserting.
-    return Promise.resolve(result).then((r) => {
-      expect(r.items.map((b) => b['id'])).not.toContain(foreignBlockId)
-    })
+    const r = await result
+    expect(r.items.map((b) => b['id'])).not.toContain(foreignBlockId)
   })
 
   // -------------------------------------------------------------------------

@@ -80,7 +80,8 @@ test.describe('Editor lifecycle', () => {
     // Click the first seed block to focus it. Static blocks are passive
     // div containers (MAINT-162), located via data-testid.
     const firstBlock = page.locator('[data-testid="block-static"]').first()
-    const originalText = await firstBlock.textContent()
+    const originalText = (await firstBlock.textContent())?.trim()
+    if (!originalText) throw new Error('seed block had no text content')
     await firstBlock.click()
 
     // TipTap editor should appear
@@ -89,7 +90,7 @@ test.describe('Editor lifecycle', () => {
 
     // Press Escape to discard and unfocus without changing
     await editor.press('Escape')
-    await expect(page.getByText(originalText?.trim())).toBeVisible()
+    await expect(page.getByText(originalText)).toBeVisible()
   })
 
   test('deletes a block via the delete button', async ({ page }) => {

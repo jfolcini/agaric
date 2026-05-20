@@ -161,10 +161,10 @@ export function HistoryView(): React.ReactElement {
 
   // Post-revert / post-restore reload — clears local pagination state
   // and re-issues the initial query.
-  const reloadAfterMutation = useCallback(async () => {
+  const reloadAfterMutation = useCallback(() => {
     clearSelection()
     setEntries([])
-    await reload()
+    reload()
   }, [clearSelection, reload, setEntries])
 
   // ── Render ───────────────────────────────────────────────────────
