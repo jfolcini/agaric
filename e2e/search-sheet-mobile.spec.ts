@@ -40,8 +40,9 @@ test.describe('Search sheet (mobile viewport)', () => {
     await waitForBoot(page)
 
     // Pages list is a non-page view → defaultModeForView returns
-    // 'all-pages'. The Journal nav button doubles as a way to get
-    // back to a page view if we want to test the other default.
+    // 'all-pages'. It also has no `useInPageFindStore.container`
+    // registered, so the 'in-page' segment shows the empty-state CTA
+    // instead of the toolbar — verified below.
     await page.getByRole('button', { name: 'Pages', exact: true }).click()
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Pages')
 
@@ -63,16 +64,24 @@ test.describe('Search sheet (mobile viewport)', () => {
     await expect(paletteInput).toBeVisible()
     await expect(page.getByTestId('in-page-find-toolbar')).toHaveCount(0)
 
-    // Segment swap → in-page-find toolbar renders, palette unmounts.
+    // Segment swap to 'in-page': no container registered on Pages list
+    // so the empty state with its "Switch to All pages" CTA renders,
+    // NOT the toolbar.
     await page.getByTestId('search-sheet-segment-in-page').click()
-    await expect(page.getByTestId('in-page-find-toolbar')).toBeVisible()
+    await expect(page.getByTestId('search-sheet-in-page-empty')).toBeVisible()
+    await expect(page.getByTestId('in-page-find-toolbar')).toHaveCount(0)
     await expect(paletteInput).toHaveCount(0)
 
-    // Swap back, query the palette, and tap the escalation footer.
-    await page.getByTestId('search-sheet-segment-all-pages').click()
+    // The empty-state CTA flips the segment back to 'all-pages'.
+    await page.getByTestId('search-sheet-in-page-empty-switch').click()
+    await expect(page.getByTestId('search-sheet-segment-all-pages')).toHaveAttribute(
+      'data-state',
+      'on',
+    )
     await expect(paletteInput).toBeVisible()
-    await paletteInput.fill('Getting')
 
+    // Query the palette, then tap the escalation footer.
+    await paletteInput.fill('Getting')
     const escalation = page.getByTestId('palette-escalation-footer')
     await expect(escalation).toBeVisible()
     await escalation.click()
