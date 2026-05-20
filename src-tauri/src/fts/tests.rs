@@ -4768,9 +4768,15 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         crate::commands::queries::SearchFilter::default(),
     );
 
-    let joined = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
-        tokio::join!(fut0, fut1, fut2, fut3, fut4)
-    })
+    // Box the inner future to keep clippy's `large_futures` lint quiet —
+    // the five composed `search_blocks_partitioned_inner` calls inflate
+    // the inline future past clippy's 16KB warning threshold. The box is
+    // otherwise indistinguishable from inline composition (single
+    // once-per-test allocation, no behavioural change).
+    let joined = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        Box::pin(async move { tokio::join!(fut0, fut1, fut2, fut3, fut4) }),
+    )
     .await
     .expect("five concurrent partitioned searches must not deadlock within 5s");
 
@@ -4926,7 +4932,7 @@ async fn partitioned_long_query_returns_empty_via_short_circuit() {
     // bytes including the space). The exact size isn't load-bearing —
     // any sub-trigram-only input >> bytecode buffer exercises the
     // path. We pick 100K to match the plan's stated size.
-    let huge: String = std::iter::repeat("a ").take(50_000).collect();
+    let huge: String = "a ".repeat(50_000);
     assert!(huge.len() >= 100_000, "fixture must be at least 100KB");
 
     let resp = crate::commands::queries::search_blocks_partitioned_inner(
