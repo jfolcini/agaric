@@ -1,6 +1,8 @@
 # PEND-66 — Replace `document.execCommand('insertText')` in palette page-link insertion
 
 > Tracking PEND. PEND-51's Cmd+K palette uses `document.execCommand('insertText', false, value)` to insert `[[Page Title]]` links into contenteditable when the user picks a page in `[[`-autocomplete mode. **`execCommand` is officially deprecated** but it's the only API that preserves the editor's undo history. The autonomous review session decided to file this for tracking so the maintainer is aware before browsers actually remove support.
+>
+> **Status (last review 2026-05-20):** still watch-and-act. None of the 4 triggers below have fired. Chrome 130+ ships warnings but no errors; Safari 18 and Firefox 134 unchanged. PEND-73 Phase 3.U8 (selection-range snapshot, shipped 2026-05-20 via PR #43) touched the same code path to plant the snapshotted range before the `execCommand` call without replacing the call itself. No additional action; revisit Q3 2026.
 
 ## TL;DR
 
@@ -11,9 +13,9 @@
 
 ## Current state — verified
 
-- `src/components/SearchPalette.tsx` uses `execCommand('insertText', false, '[[Page Title]]')` in the `[[`-autocomplete path; cited inline with the rationale comment.
-- TS compiler warns: `'execCommand' is deprecated. [6385]`.
-- Browser support: still present in Chrome / Safari / Firefox as of 2026.
+- `src/components/CommandPalette.tsx::insertPageLinkInto` (formerly in `SearchPalette.tsx` — renamed during PEND-61's cmdk refactor) uses `execCommand('insertText', false, '[[Page Title]]')` on the contenteditable branch; cited inline with the rationale comment + the PEND-73 Phase 3.U8 selection-range snapshot wrapping the call.
+- TS compiler warns: `'execCommand' is deprecated. [6385]` (ESM bundled output unchanged).
+- Browser support: still present in Chrome / Safari / Firefox as of 2026-05-20.
 - TipTap (the editor) has its own command API (`editor.chain().focus().insertContent(text).run()`) that preserves undo correctly. But the palette inserts into the **previously-focused element**, which may not be a TipTap instance — could be a plain `<input>`, a `<textarea>`, or a TipTap-managed contenteditable.
 
 ## Watch trigger
@@ -89,5 +91,6 @@ If `execCommand` still works in target WebViews when the trigger fires, just sup
 ## Related
 
 - PEND-51 (landed) — introduced the `execCommand` usage.
-- `src/components/SearchPalette.tsx` — implementation site.
+- PEND-61 (landed) — renamed `SearchPalette.tsx` → `CommandPalette.tsx` during the cmdk refactor; the `execCommand` call now lives in `CommandPalette.tsx::insertPageLinkInto`.
+- PEND-73 Phase 3.U8 (landed 2026-05-20) — snapshots the live selection range at palette open time and restores it before the `execCommand` call so the insert lands at the user's original caret. Did NOT replace the call.
 - TipTap docs on `editor.commands.insertContent` — replacement API for TipTap-managed editors.
