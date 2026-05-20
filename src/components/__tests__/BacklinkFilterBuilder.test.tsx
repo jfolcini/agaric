@@ -1215,7 +1215,25 @@ describe('BacklinkFilterBuilder', () => {
       })
     })
 
+    // PEND-74 — flake hardening. Two changes together remove the race:
+    //   1. Pre-seed `listTagsByPrefix` with the same `tagsData` shape so
+    //      the 150 ms debounced IPC's `setTagSearchResults` swaps `items`
+    //      to an array whose keys match the initial `tags` prop — no
+    //      `CommandItem` remount around the click.
+    //   2. Sync on the IPC mock BEFORE clicking the option so the
+    //      `tagSearchLoading` flicker has already settled; then assert on
+    //      the trigger-button label flipping to "Review", which only
+    //      happens if `handleSelect` actually ran. Radix's outside-click
+    //      path can satisfy the old popover-unmount waitFor without
+    //      `handleSelect` having fired, hiding the missed click.
+    function preseedTagSearchMock(): void {
+      vi.mocked(listTagsByPrefix).mockResolvedValue(
+        tagsData.map((t) => ({ tag_id: t.id, name: t.name, usage_count: 0, updated_at: '' })),
+      )
+    }
+
     it('selects a tag from popover and sets tagValue', async () => {
+      preseedTagSearchMock()
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ tags: tagsData, onFiltersChange })
@@ -1223,35 +1241,19 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
-      // Open popover and select "Review"
       await user.click(screen.getByRole('button', { name: 'Project' }))
+      await waitFor(() => {
+        expect(listTagsByPrefix).toHaveBeenCalled()
+      })
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
-      // TEST-3 root-cause fix — Repeated mitigations (3s/10s → 5s/15s →
-      // 10s/30s → testid-textContent fallback) all targeted the
-      // trigger-label re-render, which is the laggy side of the
-      // setState chain under parallel load. `handleSelect` in
-      // HasTagFilterForm.tsx is the only code path that closes this
-      // popover and it calls `setTagValue(tagId)` BEFORE
-      // `setTagSearchOpen(false)` synchronously in the same React
-      // event handler. React 18 batches both setStates — they commit
-      // in one render. So waiting for the option to UNMOUNT (which
-      // requires `tagSearchOpen=false` to have committed) is a
-      // sufficient proof that the sibling `setTagValue('01TAG_REVW')`
-      // also committed. The downstream Apply-button test (sibling
-      // "creates HasTag filter when tag is selected and Apply clicked")
-      // verifies the observable end state via `onFiltersChange`, so
-      // a redundant trigger-label DOM probe here only adds racy
-      // failure surface without strengthening the test's contract.
-      await waitFor(
-        () => {
-          expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
-        },
-        { timeout: 10000 },
-      )
-    }, 30000)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+      })
+    })
 
     it('creates HasTag filter when tag is selected and Apply clicked', async () => {
+      preseedTagSearchMock()
       const user = userEvent.setup()
       const onFiltersChange = vi.fn()
       renderBuilder({ tags: tagsData, onFiltersChange })
@@ -1259,31 +1261,22 @@ describe('BacklinkFilterBuilder', () => {
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
       await user.selectOptions(screen.getByLabelText('Filter category'), 'has-tag')
 
-      // Open popover and select "Review"
       await user.click(screen.getByRole('button', { name: 'Project' }))
+      await waitFor(() => {
+        expect(listTagsByPrefix).toHaveBeenCalled()
+      })
       await user.click(screen.getByRole('option', { name: 'Review' }))
 
-      // TEST-3 root-cause fix — popover unmount is sufficient proof
-      // that `handleSelect` ran (only code path that calls
-      // `setTagSearchOpen(false)`); React batches its sibling
-      // `setTagValue` call into the same commit, so the Apply click
-      // below will read the new tagValue. See the verbose rationale
-      // on the sibling test "selects a tag from popover and sets
-      // tagValue".
-      await waitFor(
-        () => {
-          expect(screen.queryByRole('option', { name: 'Review' })).toBeNull()
-        },
-        { timeout: 10000 },
-      )
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument()
+      })
 
-      // Click Apply
       await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
       expect(onFiltersChange).toHaveBeenCalledWith([
         expect.objectContaining({ type: 'HasTag', tag_id: '01TAG_REVW' }),
       ])
-    }, 30000)
+    })
 
     it('shows "Select tag" label when no tags are available', async () => {
       const user = userEvent.setup()

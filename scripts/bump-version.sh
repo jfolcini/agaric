@@ -13,7 +13,7 @@
 #   - src-tauri/Cargo.lock              (regen via `cargo update -p agaric`)
 #   - src-tauri/tauri.conf.json         (`"version": "X.Y.Z"`)
 #   - package.json                      (`"version": "X.Y.Z"`)
-#   - package-lock.json                 (regen via `npm install --package-lock-only --ignore-scripts`)
+#   - package-lock.json                 (two-field `jq` edit — version-only)
 #
 # Usage
 # -----
@@ -87,7 +87,7 @@ if [ -z "$REPO_ROOT" ]; then
 fi
 cd "$REPO_ROOT"
 
-for cmd in jq npm cargo git; do
+for cmd in jq cargo git; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "ERROR: required command '$cmd' not found in PATH." >&2
     exit 1
@@ -150,21 +150,21 @@ fi
 
 # ── Regenerate lock files ───────────────────────────────────────────────────
 
-# package-lock.json mirrors package.json. The flag set below is the
-# defensive shape for a CI / release context: the npm binary itself is
-# pinned by the `packageManager` field in `package.json` (Corepack
-# resolves + integrity-checks it); `--package-lock-only` regenerates
-# the lockfile without writing node_modules; `--ignore-scripts` skips
-# postinstall scripts (Tauri binary downloads); `--no-audit` /
-# `--no-fund` suppress non-error output so the redirect captures only
-# real failures. Stderr is NOT silenced so genuine resolution errors
-# surface in CI logs.
-npm install \
-  --package-lock-only \
-  --ignore-scripts \
-  --no-audit \
-  --no-fund \
-  >/dev/null
+# package-lock.json mirrors package.json. A pure version bump touches
+# exactly two fields in the lockfile (`.version` and
+# `.packages[""].version`) — verified empirically against every prior
+# bump commit. We edit them directly with `jq` rather than shelling out
+# to `npm install --package-lock-only`, which OpenSSF Scorecard's
+# pinned-dependencies check flags as `npmCommand not pinned by hash`
+# (code-scanning alert #115). Direct `jq` edit removes the npm
+# invocation entirely; if a future bump ever needs to do more than
+# version-substitute (e.g. dependency graph change), restore the
+# `npm install --package-lock-only --ignore-scripts` path and reopen
+# the Scorecard finding.
+TMP="$(mktemp)"
+jq --arg v "$NEW_VERSION" '.version = $v | .packages[""].version = $v' \
+  package-lock.json > "$TMP"
+mv "$TMP" package-lock.json
 
 # Cargo.lock — `cargo update` with the package + precise version is the
 # minimal-diff way to bump just the agaric workspace member.

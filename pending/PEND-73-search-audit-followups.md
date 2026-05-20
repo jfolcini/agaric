@@ -98,7 +98,7 @@ Enforce in `prepare_globs` before brace expansion. Surface as `AppError::Validat
 
 **P1.B7 — regex wrap.** `src-tauri/src/fts/toggle_filter.rs:502-503` → always wrap `query` in `(?:...)` regardless of `whole_word`. Symmetric with `:499-501`. Pre-existing test `regex_alternation_matches_both` should still pass; add one that asserts `(?i)foo|bar` user input doesn't combine the alternation with the flag prefix.
 
-**P1.B5 — sqlx error-code.** Replace the `msg.contains` at `src-tauri/src/fts/search.rs:705` with `if let sqlx::Error::Database(db_err) = &err { if matches!(db_err.code().as_deref(), Some("1") | Some("SQLITE_ERROR")) && msg.starts_with("fts5: ") { … } }`. The starts_with on the canonical `fts5: ` prefix that SQLite emits is durable; the substring match was not.
+**P1.B5 — sqlx error-code.** Replace the `msg.contains` at `src-tauri/src/fts/search.rs:705` with `if let sqlx::Error::Database(db_err) = &err { if matches!(db_err.code().as_deref(), Some("1") | Some("SQLITE_ERROR")) && msg.starts_with("fts5: ") { … } }`. The starts_with on the canonical `fts5:` prefix that SQLite emits is durable; the substring match was not.
 
 **P1.B8 — COUNT(DISTINCT) → EXISTS.** Refactor the tag-AND clause at `search.rs:500` and `toggle_filter.rs:541` to emit one `EXISTS (SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?N)` per active tag. Benchmark against the 10k-block fixture from PEND-71; defer if no measurable win. **Acceptance:** if benchmark shows < 5% improvement, leave the COUNT-DISTINCT shape and close as "measured, no-op."
 
@@ -142,6 +142,7 @@ export async function invokeWithAbort<T>(
 Then in `CommandPalette.tsx:450-503`, replace the `generationRef`-only pattern with a per-effect `AbortController` whose `.abort()` fires on cleanup AND on new keystroke. Same in `SearchPanel.tsx`'s query effect. Both call sites can drop their hand-rolled `generationRef` in favour of "if signal aborted, return."
 
 **Cancellation UX contract.** When `invokeWithAbort` rejects with `kind: 'Cancelled'`, the consumer:
+
 - swallows silently (no toast — cancellation is the expected case),
 - does NOT clear results (stale UI is better than flashing empty),
 - does NOT increment any error counter.
@@ -151,12 +152,14 @@ Add a `isCancellation(err)` helper in `lib/tauri.ts`.
 ### Phase 3 — UX punch list (S-M, ~4 h)
 
 **P3.U1 — surface IPC failures.** Once Phase 2's `isCancellation` helper exists, the three catches can do:
+
 ```ts
 if (!isCancellation(err)) {
   notify.error(t('search.failed'));
   logger.warn(...);
 }
 ```
+
 Cap to once-per-session per surface via a small `useFailedOnce(key)` hook (in-memory `Set`, no persistence).
 
 **P3.U2 — SearchHistoryDropdown listbox a11y.** Promote rows to a real roving-index listbox driven by `aria-activedescendant`. The history-cycling hook (`useSearchHistoryCycling`) already owns `↑`/`↓` semantics — extend it to also drive the dropdown's `activeId` when focus is in the input and the dropdown is open. Rows toggle `aria-selected={id === activeId}`. Mouseover updates `activeId`; click commits.
@@ -168,16 +171,19 @@ Cap to once-per-session per surface via a small `useFailedOnce(key)` hook (in-me
 **P3.U5 — mousedown preventDefault.** Replace `SearchPanel.tsx:851-856`'s `setTimeout(150)` blur deferral with `onMouseDown={(e) => e.preventDefault()}` on the `SearchHistoryDropdown` rows. Input keeps focus through the click; `onClick` commits as normal. Delete the magic timeout.
 
 **P3.U6, U7 — doc drift.** Two surgical edits to `docs/SEARCH.md`:
+
 - Lines 21-24: rewrite "fires two parallel `searchBlocks`" → "fires one `searchBlocksPartitioned` call (page-only + unrestricted scans run in parallel server-side per PEND-69)."
 - Lines 325-326: rewrite the `<CommandPalette variant="embedded" />` claim to match the actual `<PaletteBody>` mount path. Either rename `PaletteBody` to `EmbeddedPalette` (more discoverable) or just fix the doc to say `<PaletteBody>`. Recommendation: fix the doc; rename is a separate concern.
 
 Also document the palette modes (`>`, `#`, `?`) — currently missing from §"Quick palette".
 
 **P3.U8 — snapshot selection range on Cmd+K open.** `useCommandPaletteStore.ts:135-136`: extend `open$()` to capture:
+
 ```ts
 const sel = document.getSelection();
 const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
 ```
+
 Store `range` alongside `activeElement`. `insertPageLinkInto` (`CommandPalette.tsx:181`) uses the snapshotted range's `startContainer` + `startOffset` instead of re-reading `selectionStart`. Falls back to `selectionStart` if no range captured (compat).
 
 **P3.U9 — consolidate mode-memory.** Three layers (sheet, palette, in-page-find) is one too many. Move the "current query per mode" state onto `useSearchSheetStore` (the outermost). Bridge in `useSearchSheetBridge` writes through to the inner stores; inner stores no longer own the per-mode memory. Document the contract in `docs/architecture/search.md` §"Mode memory" — new section.
@@ -187,6 +193,7 @@ Store `range` alongside `activeElement`. `insertPageLinkInto` (`CommandPalette.t
 ### Phase 4 — Maintainability + perf (M, ~5 h)
 
 **P4.M3 — useGenerationGuard.** New `src/hooks/useGenerationGuard.ts`:
+
 ```ts
 export function useGenerationGuard() {
   const gen = useRef(0);
@@ -196,6 +203,7 @@ export function useGenerationGuard() {
   };
 }
 ```
+
 Replace `CommandPalette.tsx:422`, `:1512`, and `useAutocompleteSources.ts:83`. With Phase 2's `AbortController` this becomes vestigial in the IPC path — but the autocomplete tag-debounce path still benefits.
 
 **P4.M4 — delete dead code.** `rm src/components/SearchPanel/SearchResultList.tsx` after confirming zero imports (`grep -r "SearchResultList" src/ src-tauri/`). Remove the dangling reference comment at `SearchPanel.tsx:973`.
@@ -213,6 +221,7 @@ Replace `CommandPalette.tsx:422`, `:1512`, and `useAutocompleteSources.ts:83`. W
 **P4.P1 — React.memo SearchResultBlockRow.** Wrap the default export in `React.memo` keyed on `row.id`, `isFocused`, `loading`. Parent (`SearchResultGroups`) re-renders every focus change today; the memo localises render cost to the two rows that actually changed state.
 
 **P4.P2 — stable pageTitles identity.** `SearchPanel.tsx:237`: change the `setPageTitles(new Map(...))` pattern. Two options:
+
 - **(a)** Maintain `pageTitles` outside React state (a `useRef<Map>` + a `version: number` state for memo invalidation).
 - **(b)** Only `setPageTitles` when the map's *contents* actually changed (shallow compare keys + values before replacing).
 
@@ -221,6 +230,7 @@ Recommendation: (b). Simpler, no ref aliasing, and the breadcrumb-resolution eff
 ### Phase 5 — Test gaps (S, ~3 h)
 
 **P5.T1a — NFC normalisation.** New test `partitioned_nfc_query_matches_nfd_content`:
+
 - Seed a block with content NFD-encoded (`"café"` with combining acute, `café`).
 - Query `"café"` NFC-encoded.
 - Assert match.
@@ -228,11 +238,13 @@ Recommendation: (b). Simpler, no ref aliasing, and the breadcrumb-resolution eff
 Fails today; turns green after Phase 1.B3 lands. Pair the test with the implementation in the same PR.
 
 **P5.T1b — mid-emoji surrogate.** Extend `byte_to_utf16_offsets` test at `toggle_filter.rs:777`:
+
 - Content: `"abc🌟def"`.
 - Regex: `"🌟"`.
 - Assert `match_offsets[0].start == 3 && match_offsets[0].end == 5` (the emoji is one code point = two UTF-16 units).
 
 **P5.T1c — all-operator queries.** Add to the sanitiser test block:
+
 ```rust
 #[test]
 fn sanitiser_all_operator_query_yields_safe_match() {
@@ -240,9 +252,11 @@ fn sanitiser_all_operator_query_yields_safe_match() {
     assert_eq!(sanitize_fts_query("AND"), "");
 }
 ```
+
 The current implementation may pass `"AND"` through verbatim (it survives the operator gate when alone). Asserts the desired contract; fix the sanitiser if the test fails.
 
 **P5.T1d — FTS-drift integration test.** New `src-tauri/src/fts/tests.rs::verify_fts_consistency`:
+
 ```rust
 async fn verify_fts_consistency(pool: &SqlitePool) -> Vec<BlockId> {
     sqlx::query_scalar(
@@ -260,9 +274,11 @@ async fn fts_index_stays_consistent_under_writes() {
     assert!(drift.is_empty(), "FTS drift: {:?}", drift);
 }
 ```
+
 Catches future writers that bypass `update_fts_for_block`.
 
 **P5.T2 — desktop palette e2e.** New `e2e/palette-desktop.spec.ts`:
+
 - Open via `Cmd+K` (Mac) / `Ctrl+K` (others).
 - Type a partial page name.
 - Assert at least one page group renders.

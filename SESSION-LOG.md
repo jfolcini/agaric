@@ -2,10 +2,50 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 787 (latest entry 2026-05-19).
+- **This file:** sessions 401 – 788 (latest entry 2026-05-20).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1214+ REVIEW-LATER items across 787 sessions.
+- **Previously-resolved counter:** 1215+ REVIEW-LATER items across 788 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 788 — PEND-74 HasTag popover flake hardening (2026-05-20)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-20 |
+| **Subagents** | orchestrator-only (single-file test fix) |
+| **Items closed** | PEND-74 (plan file deleted from `pending/`) |
+| **Items modified** | — |
+| **Tests added** | 0 (hardened 2 existing tests) |
+| **Files touched** | 2 |
+
+**Summary:** Closed PEND-74 by hardening the two B-72 HasTag tests against the parallel-suite flake without touching production code. PEND-74's diagnosis was that the test's popover-unmount `waitFor` was an insufficient witness for `handleSelect` having run — Radix's outside-click path closes the popover on its own when the click on the `Review` option misses (e.g. the option unmounts during the 150 ms debounced-IPC loading flicker), satisfying the `waitFor` while `setTagValue` never fires. Apply then submits the default `tag_id`, surfacing as `onFiltersChange` called with `01TAG_PROJ` instead of `01TAG_REVW`.
+
+Combined two of the three PEND-74 options into one fix (cheaper than each alone, but cumulatively more robust):
+
+- **Option 3 (pre-seed mock).** Both tests now `vi.mocked(listTagsByPrefix).mockResolvedValue(...)` the same `tagsData` rows, so the post-IPC `tagSearchResults` update produces an array whose `CommandItem` keys match the initial `tags` prop. React reconciles to the same DOM nodes — no remount around the click.
+- **Option 1 (assertion swap).** Replaced the `option Review` unmount `waitFor` with `getByRole('button', { name: 'Review' })`. The trigger button's label only flips when `setTagValue('01TAG_REVW')` actually commits, so a missed click fails deterministically instead of silently passing-then-failing-at-Apply.
+- **Settle-the-flicker step.** After opening the popover, both tests now `waitFor(() => expect(listTagsByPrefix).toHaveBeenCalled())` before clicking the `Review` option. This ensures the debounced IPC has already fired and any `tagSearchLoading` transition has completed before the click — closing the click-during-loading-unmount window even if React batching ever changes.
+
+Stripped now-redundant 30 000 ms test timeouts and 10 000 ms `waitFor` budgets (the previous trigger-label DOM probe needed them; the new pattern is fast).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** no change (PEND-74 was a standalone `pending/` file, not a REVIEW-LATER row).
+- **Previously resolved:** 1214+ → 1215+ across 787 → 788 sessions.
+
+**Files touched (this session):**
+- `src/components/__tests__/BacklinkFilterBuilder.test.tsx` (+24 / -47)
+- `pending/PEND-74-fix-test3-hastag-flake.md` (deleted, −68)
+
+**Verification:**
+- `npx vitest run src/components/__tests__/BacklinkFilterBuilder.test.tsx` — 75 / 75 pass.
+- `npx vitest run -t "B-72"` looped 10× — 10 / 10 pass.
+- `npx vitest run` (full parallel suite) ×4 — 439 files / 10288 tests pass each run.
+
+**Process notes:** PEND-74's author preferred Option 3 ("smallest, most defensible"). Analysis of the actual code path showed the race is the `tagSearchLoading` flicker briefly unmounting `CommandItem`s while React commits the debounce-side setStates, not (just) the items-array reference swap. Option 3 in isolation only covers the swap; combining it with Option 1's assertion swap + an explicit settle-on-mock-call step is what closes the actual race window. Production code (`HasTagFilterForm.tsx`) untouched.
+
+**Commit plan:** single commit on a topic branch (`fix-pend-74-hastag-flake`), not pushed yet.
+
+---
 
 ## Session 787 — PEND-67 phases 3, 4, 5, 8 (final batch) (2026-05-19)
 
