@@ -10,13 +10,17 @@
 import type { VirtualItem } from '@tanstack/react-virtual'
 import { FileText, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { PageTreeItem } from '@/components/PageTreeItem'
 import { Button } from '@/components/ui/button'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
+import type { DensityMode } from '../../hooks/usePageBrowserDensity'
 import type { PageBrowserRow } from '../../hooks/usePageBrowserGrouping'
+import type { PageWithMetadataRow } from '../../lib/tauri'
+import { DensityRow } from './DensityRow'
 
 export interface PageBrowserRowRendererProps {
   virtualRow: VirtualItem
@@ -34,6 +38,18 @@ export interface PageBrowserRowRendererProps {
   onPageSelect: ((pageId: string, title?: string) => void) | undefined
   onCreateUnder: (namespacePath: string) => void
   onDeleteRequest: (target: { id: string; name: string } | null) => void
+  /**
+   * PEND-56 Phase 3 — when `true`, the leaf `page` row is rendered via
+   * `<DensityRow>` (metadata-aware, density-aware). When `false`, the
+   * legacy `PageRow` is rendered unchanged — this is the default until
+   * the `pageBrowser.densityV1` localStorage flag flips.
+   */
+  flagOn: boolean
+  /**
+   * PEND-56 Phase 3 — active density mode for the `<DensityRow>` body.
+   * Always passed down; `PageRow` ignores it when `flagOn === false`.
+   */
+  density: DensityMode
 }
 
 const rowStyle = (start: number): React.CSSProperties => ({
@@ -50,6 +66,12 @@ export function PageBrowserRowRenderer(
   const { row } = props
   if (row.kind === 'header') return <HeaderRow {...props} row={row} />
   if (row.kind === 'tree-page') return <TreePageRow {...props} row={row} />
+  // PEND-56 Phase 3 — gate the new `<DensityRow>` leaf body behind the
+  // `pageBrowser.densityV1` flag (carried as `flagOn`). When the flag
+  // is off the existing `PageRow` renders unchanged; when on, the
+  // density-aware row reads its metadata via a cast through
+  // `PageWithMetadataRow` (the IPC payload is a structural superset).
+  if (props.flagOn) return <DensityPageRow {...props} row={row} />
   return <PageRow {...props} row={row} />
 }
 
@@ -169,6 +191,99 @@ function TreePageRow({
         />
       </div>
     </div>
+  )
+}
+
+/**
+ * PEND-56 Phase 3 — adapter from the row-renderer's props plus the
+ * `PageBrowserRow` discriminated union member to the typed primitive
+ * props that `<DensityRow>` expects.
+ *
+ * The `page` field is typed as `BlockRow` (the grouping hook normalises
+ * to it) but, when the `pageBrowser.densityV1` flag is on, the
+ * underlying payload is actually a `PageWithMetadataRow`. The two share
+ * the `id` / `content` columns by structural overlap, and the metadata
+ * fields (`lastModifiedAt`, `inboundLinkCount`, `childBlockCount`,
+ * `flags`) live alongside on the same row object — we read them through
+ * a typed cast and fall back to safe zero defaults when the cast misses
+ * (e.g. an optimistically-inserted `BlockRow` from the create form).
+ */
+interface DensityPageRowProps extends PageBrowserRowRendererProps {
+  row: Extract<PageBrowserRow, { kind: 'page' }>
+}
+
+function DensityPageRow({
+  virtualRow,
+  row,
+  measureElement,
+  focusedIndex,
+  filterText,
+  aliasMatchId,
+  deletingId,
+  isStarred,
+  toggleStar,
+  onPageSelect,
+  onDeleteRequest,
+  density,
+}: DensityPageRowProps): React.ReactElement {
+  const { page, pageIndex } = row
+  const trimmedFilter = filterText.trim()
+  const showAliasBadge =
+    aliasMatchId === page.id &&
+    trimmedFilter !== '' &&
+    !matchesSearchFolded(page.content ?? '', trimmedFilter)
+
+  // The grouping hook normalises the payload to `BlockRow`; when the
+  // flag is on, the row object is actually a `PageWithMetadataRow` with
+  // the metadata columns set. Optimistic inserts from the create form
+  // are still raw `BlockRow`s — `?? 0` / `?? false` keeps them safe.
+  const meta = page as unknown as Partial<PageWithMetadataRow>
+  const lastModifiedAt = meta.lastModifiedAt ?? null
+  const inboundLinkCount = meta.inboundLinkCount ?? 0
+  const childBlockCount = meta.childBlockCount ?? 0
+  const hasTags = meta.flags?.hasTags ?? false
+  const hasTodo = meta.flags?.hasTodo ?? false
+  const hasScheduled = meta.flags?.hasScheduled ?? false
+  const hasDue = meta.flags?.hasDue ?? false
+
+  // PEND-56 Phase 3 — stabilise the bridging callback so `React.memo`'s
+  // shallow compare on `<DensityRow>` hits across parent re-renders.
+  // Without the `useCallback` the inline arrow allocated a fresh
+  // function identity per render of every row, defeating the memo for
+  // the entire visible list on any keystroke / star toggle. The signature
+  // bridge is necessary because `DensityRowProps.onSelect` requires a
+  // non-optional title while `PageBrowserRowRenderer`'s `onPageSelect`
+  // is optional.
+  const handleSelect = useCallback(
+    (pageId: string, title: string) => onPageSelect?.(pageId, title),
+    [onPageSelect],
+  )
+
+  return (
+    <DensityRow
+      pageId={page.id}
+      title={page.content}
+      filterText={trimmedFilter}
+      density={density}
+      virtualRowIndex={virtualRow.index}
+      virtualRowStart={virtualRow.start}
+      measureElement={measureElement}
+      pageIndex={pageIndex}
+      focusedIndex={focusedIndex}
+      starred={isStarred(page.id)}
+      showAliasBadge={showAliasBadge}
+      deleting={deletingId === page.id}
+      lastModifiedAt={lastModifiedAt}
+      inboundLinkCount={inboundLinkCount}
+      childBlockCount={childBlockCount}
+      hasTags={hasTags}
+      hasTodo={hasTodo}
+      hasScheduled={hasScheduled}
+      hasDue={hasDue}
+      onSelect={handleSelect}
+      onToggleStar={toggleStar}
+      onDeleteRequest={onDeleteRequest}
+    />
   )
 }
 
