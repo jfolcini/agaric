@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  AppStream MetaInfo for Flathub's presentation page (https://flathub.org).
+  Scaffold — pre-submission. The screenshots/release nodes need real
+  URLs before the Flathub PR is opened (see packaging/flathub/README.md
+  open question 3).
+-->
+<component type="desktop-application">
+  <id>io.github.jfolcini.Agaric</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Agaric</name>
+  <summary>Local-first outliner and personal knowledge base</summary>
+
+  <description>
+    <p>
+      Agaric is a local-first outliner and personal knowledge base. All
+      data lives on the user's device; LAN sync between paired devices
+      is opt-in and TLS-authenticated. Optional Google Calendar push
+      surfaces journal entries as calendar events.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Block-based outliner with TipTap-powered rich text and slash commands.</li>
+      <li>Full-text search across all pages with filter syntax (tags, properties, paths, date ranges).</li>
+      <li>Per-space organisation; cross-space tags and references.</li>
+      <li>Backlinks, page links, and a graph view.</li>
+      <li>Local-first storage in SQLite; no server-side store, no telemetry.</li>
+      <li>LAN sync between paired devices (TLS + TOFU, no cloud).</li>
+      <li>Optional Google Calendar push for journal entries.</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.jfolcini.Agaric.desktop</launchable>
+
+  <url type="homepage">https://github.com/jfolcini/agaric</url>
+  <url type="bugtracker">https://github.com/jfolcini/agaric/issues</url>
+  <url type="vcs-browser">https://github.com/jfolcini/agaric</url>
+
+  <developer id="io.github.jfolcini">
+    <name>jfolcini</name>
+  </developer>
+
+  <!--
+    Screenshots — TODO before Flathub PR submission. The Flathub
+    presentation page renders these. Open question 3 in
+    packaging/flathub/README.md tracks "what URL hosting do we want
+    for screenshots". The placeholder below points at a path that
+    does not exist yet; will fail Flathub's validator.
+  -->
+  <screenshots>
+    <screenshot type="default">
+      <caption>Agaric main window</caption>
+      <image>https://raw.githubusercontent.com/jfolcini/agaric/main/docs/social-preview.png</image>
+    </screenshot>
+  </screenshots>
+
+  <!--
+    Releases — Flathub uses the most recent <release> for the version
+    badge. Update on each release; the bump-version.sh script could
+    eventually template this in (TODO open question 2).
+  -->
+  <releases>
+    <release version="0.1.38" date="2026-05-20"/>
+    <release version="0.1.37" date="2026-05-20"/>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+
+  <categories>
+    <category>Office</category>
+    <category>WordProcessor</category>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>outliner</keyword>
+    <keyword>notes</keyword>
+    <keyword>journal</keyword>
+    <keyword>knowledge-base</keyword>
+    <keyword>local-first</keyword>
+    <keyword>markdown</keyword>
+  </keywords>
+</component>

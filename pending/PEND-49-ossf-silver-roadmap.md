@@ -142,11 +142,24 @@ After steps 1-5, the Silver percentage should sit in the high-90s, with only Buc
 - **Impact:** **Medium.** Silver tier is a visible posture signal (the badge auto-updates) and a real bar for some downstream consumers (e.g., distros, Flathub reviewers, corporate procurement). It is **not** load-bearing for the current user base.
 - **Risk:** **Low.** No item here changes the runtime; the engineering items (PEND-48, Flathub) touch build / packaging only. The doc items (5a, 5b) are documentation, not code.
 
+## Status (2026-05-20)
+
+Open question 1 resolved by maintainer: **yes, go for Silver.** Three of the four engineering items shipped in the same branch as this status update (PR #44):
+
+- **5a `assurance_case`** — section added to [`docs/architecture/threat-model.md`](../docs/architecture/threat-model.md#assurance-case). Six top-level claims, each linked to the cited STRIDE row + CI evidence. **OpenSSF form: flip to Met, point at the new section anchor.**
+- **5b `security_review`** — `docs/security/` directory with [`README.md`](../docs/security/README.md) (cadence contract) + the first review report ([`review-2026-05-20.md`](../docs/security/review-2026-05-20.md)). **OpenSSF form: flip to Met, point at the latest review.**
+- **5c `installation_common` (Flathub)** — manifest scaffold at `packaging/flathub/`; see [`packaging/flathub/README.md`](../packaging/flathub/README.md) for status + 4 open questions that block the actual Flathub PR. **OpenSSF form: stays Unmet until Flathub submission merges.**
+- **5d `build_reproducible`** — unchanged; tracked separately as PEND-48 multi-week tentpole.
+
+After the maintainer flips the form rows for 5a + 5b (and Bucket 1 — see below), the Silver percentage should move from 93 % → ~95-96 %. The cap stays at ~95-96 % per Open question 1's original analysis until Buckets 2/3/4 unblock (some on external trigger, some on policy).
+
+**Bucket 1 form-only update is still pending the maintainer logging into bestpractices.dev** (a 15-minute web form edit). Expected lift: +2 criteria.
+
 ## Open questions
 
-1. **Should the maintainer pursue Silver at all while solo?** Buckets 2 + 3 + 4 will cap Silver at ~95 % no matter how much work goes into Bucket 5 — and Gold is not in scope while solo. If the answer is "Silver isn't worth chasing as long as ≥3 criteria are structurally unmet", the conclusion is to ship Bucket 1 (cheap, instant) and stop. Bucket 5 then ships opportunistically as side-effects of other work (e.g., PEND-48 when reproducibility becomes a Flathub gate; `assurance_case` if a downstream consumer asks for it).
+1. ~~**Should the maintainer pursue Silver at all while solo?**~~ **Resolved 2026-05-20: yes.** 5a + 5b shipped locally; 5c scaffolded; 5d still PEND-48.
 2. **Bucket 5c sequencing vs. PEND-36.** PEND-36 (Play Store) has its own 4 maintainer decisions still open (D1-D3). Holding the desktop package work behind PEND-36 risks blocking on the Play Store paperwork timeline. Treat the four platforms (Android / Linux / macOS / Windows) as independent.
-3. **5b cadence enforcement.** Annual reviews drift without a forcing function. Options: a yearly `prek.toml` hook reading the `mtime` on the latest `docs/security/review-*.md` and warning past 12 months, or a calendar reminder. Decide before the first review writes the precedent.
+3. **5b cadence enforcement.** Annual reviews drift without a forcing function. Options: a yearly `prek.toml` hook reading the `mtime` on the latest `docs/security/review-*.md` and warning past 12 months, or a calendar reminder. The first review's own follow-up section names a tentative 2026-11-20 mid-window check; if no minor cut by then, plan the next review around it.
 
 ## Related
 
