@@ -8,7 +8,7 @@
  * Extracted from `PageBrowser.tsx` (MAINT-128).
  */
 
-import { Plus, Search } from 'lucide-react'
+import { Plus, Rows3, Search } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -18,11 +18,13 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import type { DensityMode } from '../../hooks/usePageBrowserDensity'
 import type { SortOption } from '../../hooks/usePageBrowserSort'
 
 export interface PageBrowserHeaderProps {
@@ -38,6 +40,12 @@ export interface PageBrowserHeaderProps {
   onFilterTextChange: (value: string) => void
   sortOption: SortOption
   onSortChange: (value: SortOption) => void
+  /**
+   * Current density mode (PEND-56). Persisted in localStorage via
+   * `usePageBrowserDensity`; passed in by `PageBrowser` orchestrator.
+   */
+  density: DensityMode
+  onDensityChange: (value: DensityMode) => void
   /**
    * Total number of pages available (from the backend `total_count`).
    * When omitted, the count chip is not rendered.
@@ -64,6 +72,8 @@ export function PageBrowserHeader({
   onFilterTextChange,
   sortOption,
   onSortChange,
+  density,
+  onDensityChange,
   totalCount,
   filteredCount,
   isFiltering,
@@ -156,6 +166,35 @@ export function PageBrowserHeader({
               <SelectItem value="alphabetical">{t('pageBrowser.sortAlphabetical')}</SelectItem>
               <SelectItem value="recent">{t('pageBrowser.sortRecent')}</SelectItem>
               <SelectItem value="created">{t('pageBrowser.sortCreated')}</SelectItem>
+              <SelectSeparator />
+              <SelectItem value="recently-modified">
+                {t('pageBrowser.sortRecentlyModified')}
+              </SelectItem>
+              <SelectItem value="most-linked">{t('pageBrowser.sortMostLinked')}</SelectItem>
+              <SelectItem value="most-content">{t('pageBrowser.sortMostContent')}</SelectItem>
+              <SelectItem value="default">{t('pageBrowser.sortDefault')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={density} onValueChange={(v) => onDensityChange(v as DensityMode)}>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SelectTrigger
+                    size="sm"
+                    className="w-auto min-w-[7rem]"
+                    aria-label={t('pageBrowser.densityLabel')}
+                  >
+                    <Rows3 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                    <SelectValue />
+                  </SelectTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t('pageBrowser.densityPersistedTooltip')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <SelectContent>
+              <SelectItem value="compact">{t('pageBrowser.densityCompact')}</SelectItem>
+              <SelectItem value="regular">{t('pageBrowser.densityRegular')}</SelectItem>
+              <SelectItem value="expanded">{t('pageBrowser.densityExpanded')}</SelectItem>
             </SelectContent>
           </Select>
         </div>

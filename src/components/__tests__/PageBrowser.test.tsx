@@ -21,7 +21,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
@@ -105,6 +105,8 @@ beforeEach(() => {
   // round-trip values through sessionStorage; isolate each test.
   sessionStorage.clear()
   localStorage.removeItem('page-browser-sort')
+  localStorage.removeItem('page-browser-density')
+  localStorage.removeItem('pageBrowser.densityV1')
   localStorage.removeItem('starred-pages')
   // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
   // call on `useSpaceStore.isReady`. Seed the store so tests exercise
@@ -1440,7 +1442,7 @@ describe('PageBrowser', () => {
   })
 
   describe('sort dropdown', () => {
-    it('renders sort dropdown with 3 options', async () => {
+    it('renders sort dropdown with 7 options', async () => {
       mockedInvoke.mockResolvedValueOnce({
         items: [makePage({ id: 'P1', content: 'A Page' })],
         next_cursor: null,
@@ -1456,8 +1458,16 @@ describe('PageBrowser', () => {
       expect(sortSelect).toBeInTheDocument()
 
       const options = within(sortSelect).getAllByRole('option')
-      expect(options).toHaveLength(3)
-      expect(options.map((o) => o.textContent)).toEqual(['Alphabetical', 'Recent', 'Created'])
+      expect(options).toHaveLength(7)
+      expect(options.map((o) => o.textContent)).toEqual([
+        'Alphabetical',
+        'Recent',
+        'Created',
+        'Recently modified',
+        'Most linked',
+        'Most content',
+        'Default',
+      ])
     })
 
     it('defaults to Alphabetical sort', async () => {
@@ -2996,6 +3006,589 @@ describe('PageBrowser', () => {
       for (let i = beforeCount; i < capturedEstimateSizes.length; i++) {
         expect(capturedEstimateSizes[i]).toBe(initialEstimateSize)
       }
+    })
+  })
+
+  // ── PEND-56 Phase 3 — density-v1 flag-on path ─────────────────────
+  //
+  // The localStorage flag `pageBrowser.densityV1` swings the queryFn
+  // from `listBlocks` to `listPagesWithMetadata` and routes the leaf
+  // rows through `<DensityRow>`. These tests pin the flag ON in
+  // `beforeEach`, clear it in `afterEach`, and verify the wiring.
+  describe('PEND-56 — density-v1 flag', () => {
+    beforeEach(() => {
+      localStorage.setItem('pageBrowser.densityV1', 'true')
+    })
+    afterEach(() => {
+      localStorage.removeItem('pageBrowser.densityV1')
+      localStorage.removeItem('page-browser-density')
+    })
+
+    /** Shape that mirrors what `list_pages_with_metadata` returns. */
+    function makeMetaPage(overrides: {
+      id: string
+      content: string | null
+      lastModifiedAt?: string | null
+      inboundLinkCount?: number
+      childBlockCount?: number
+      flags?: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
+    }) {
+      return {
+        id: overrides.id,
+        blockType: 'page',
+        content: overrides.content,
+        parentId: null,
+        position: null,
+        deletedAt: null,
+        todoState: null,
+        priority: null,
+        dueDate: null,
+        scheduledDate: null,
+        pageId: overrides.id,
+        lastModifiedAt: overrides.lastModifiedAt ?? null,
+        inboundLinkCount: overrides.inboundLinkCount ?? 0,
+        childBlockCount: overrides.childBlockCount ?? 0,
+        flags: overrides.flags ?? {
+          hasTags: false,
+          hasTodo: false,
+          hasScheduled: false,
+          hasDue: false,
+        },
+      }
+    }
+
+    it('calls list_pages_with_metadata (and not list_blocks) on mount when the flag is on', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const metadataCalls = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'list_pages_with_metadata',
+      )
+      expect(metadataCalls.length).toBeGreaterThan(0)
+
+      const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+      expect(listBlocksCalls).toHaveLength(0)
+    })
+
+    it('renders leaf rows via <DensityRow> at the default `regular` density', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const densityRows = container.querySelectorAll('[data-page-item][data-density]')
+      expect(densityRows.length).toBeGreaterThan(0)
+      expect(densityRows[0]?.getAttribute('data-density')).toBe('regular')
+    })
+
+    it('switching density via the header Select updates every leaf row', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              makeMetaPage({ id: 'P1', content: 'Apple' }),
+              makeMetaPage({ id: 'P2', content: 'Banana' }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 2,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
+      await user.selectOptions(densitySelect, 'compact')
+
+      await waitFor(() => {
+        const rows = container.querySelectorAll('[data-page-item][data-density]')
+        expect(rows.length).toBeGreaterThan(0)
+        for (const r of rows) {
+          expect(r.getAttribute('data-density')).toBe('compact')
+        }
+      })
+    })
+
+    it('density persists across remount via localStorage', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const first = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
+      await user.selectOptions(densitySelect, 'expanded')
+
+      // Wait for the row to pick up the new density.
+      await waitFor(() => {
+        const row = first.container.querySelector('[data-page-item][data-density]')
+        expect(row?.getAttribute('data-density')).toBe('expanded')
+      })
+
+      // Sanity: the preference was written to localStorage.
+      expect(localStorage.getItem('page-browser-density')).toBe('expanded')
+
+      first.unmount()
+
+      const second = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const row = second.container.querySelector('[data-page-item][data-density]')
+      expect(row?.getAttribute('data-density')).toBe('expanded')
+    })
+
+    it('density toggle invalidates the saved scroll offset (sessionStorage.removeItem fires)', async () => {
+      const user = userEvent.setup()
+      // Seed a stored offset for the active space so the restore effect
+      // fires and `restoredRef.current` flips to `true` BEFORE the
+      // density change — only then does the clear effect fire.
+      sessionStorage.setItem('pageBrowser:scrollOffset:SPACE_TEST', '60')
+
+      const removeItemSpy = vi.spyOn(Storage.prototype, 'removeItem')
+
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              makeMetaPage({ id: 'P1', content: 'Apple' }),
+              makeMetaPage({ id: 'P2', content: 'Banana' }),
+              makeMetaPage({ id: 'P3', content: 'Cherry' }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 3,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Wait for restoration to finish before flipping density (else
+      // the clear effect short-circuits on `restoredRef === false`).
+      await waitFor(() => expect(scrollToOffsetMock).toHaveBeenCalled())
+
+      removeItemSpy.mockClear()
+
+      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
+      await user.selectOptions(densitySelect, 'compact')
+
+      await waitFor(() => {
+        const calls = removeItemSpy.mock.calls.map((c) => c[0])
+        expect(calls).toContain('pageBrowser:scrollOffset:SPACE_TEST')
+      })
+
+      removeItemSpy.mockRestore()
+    })
+
+    it('selecting `most-linked` sort passes `sort: most-linked` to the IPC', async () => {
+      const user = userEvent.setup()
+      const calls: Array<Record<string, unknown>> = []
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          calls.push(args as Record<string, unknown>)
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 3 })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'most-linked')
+
+      await waitFor(() => {
+        const seenSorts = calls.map((c) => (c['filter'] as Record<string, unknown>)?.['sort'])
+        expect(seenSorts).toContain('most-linked')
+      })
+    })
+
+    it('selecting `alphabetical` sort maps to the `default` wire enum (frontend-only sort)', async () => {
+      const user = userEvent.setup()
+      const calls: Array<Record<string, unknown>> = []
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          calls.push(args as Record<string, unknown>)
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      // Seed a non-alphabetical default so we can observe the change
+      // back to `alphabetical` triggering a fresh IPC call.
+      localStorage.setItem('page-browser-sort', 'most-linked')
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'alphabetical')
+
+      await waitFor(() => {
+        // The most recent IPC call should carry `sort: default` because
+        // `alphabetical` is the frontend-only re-sort mode.
+        const last = calls.at(-1)
+        expect(last).toBeDefined()
+        const filter = last?.['filter'] as Record<string, unknown> | undefined
+        expect(filter?.['sort']).toBe('default')
+      })
+
+      localStorage.removeItem('page-browser-sort')
+    })
+
+    it('selecting `recently-modified` sort passes `sort: recently-modified` to the IPC', async () => {
+      const user = userEvent.setup()
+      const calls: Array<Record<string, unknown>> = []
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          calls.push(args as Record<string, unknown>)
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'recently-modified')
+
+      await waitFor(() => {
+        const seenSorts = calls.map((c) => (c['filter'] as Record<string, unknown>)?.['sort'])
+        expect(seenSorts).toContain('recently-modified')
+      })
+    })
+
+    it('RequiresRefresh: cursor recovery retries once with no cursor', async () => {
+      // First load: returns page 1 with a next_cursor so the auto-load
+      // fires a second IPC. The first cursor-bearing call rejects with
+      // an AppError tagged `RequiresRefresh:` (v2 cursor mismatch); the
+      // recovery wrapper retries once with `cursor: null`. The retry
+      // resolves successfully.
+      const cursoredCalls: Array<Record<string, unknown>> = []
+      let cursoredCallCount = 0
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          const a = (args ?? {}) as Record<string, unknown>
+          if (a['cursor'] == null) {
+            // Either the initial load or the recovery retry — both
+            // resolve normally. Distinguish by whether we've already
+            // served a cursor-bearing call.
+            if (cursoredCallCount === 0) {
+              return Promise.resolve({
+                items: [makeMetaPage({ id: 'P1', content: 'Apple' })],
+                next_cursor: 'STALE_V1_CURSOR',
+                has_more: true,
+                total_count: 2,
+              })
+            }
+            // Recovery retry — return the next page-from-the-top.
+            cursoredCalls.push(a)
+            return Promise.resolve({
+              items: [makeMetaPage({ id: 'P2', content: 'Banana' })],
+              next_cursor: null,
+              has_more: false,
+              total_count: 2,
+            })
+          }
+          // Cursor-bearing call → reject with the v2 mismatch error
+          // the first time, succeed the second.
+          cursoredCallCount += 1
+          if (cursoredCallCount === 1) {
+            return Promise.reject({
+              kind: 'validation',
+              message: 'RequiresRefresh: cursor sort mismatch',
+            })
+          }
+          cursoredCalls.push(a)
+          return Promise.resolve({
+            items: [makeMetaPage({ id: 'P2', content: 'Banana' })],
+            next_cursor: null,
+            has_more: false,
+            total_count: 2,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+
+      // Both batches eventually surface despite the v2 cursor rejection.
+      await screen.findByText('Apple')
+      await waitFor(() => {
+        expect(screen.queryByText('Banana')).toBeInTheDocument()
+      })
+
+      // The cursor-bearing call rejected once → recovery fired a
+      // cursorless retry. Confirm the rejection was observed by counting
+      // the cursor-bearing attempts.
+      expect(cursoredCallCount).toBeGreaterThanOrEqual(1)
+    })
+
+    it('a11y audit passes at every density', async () => {
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              makeMetaPage({ id: 'P1', content: 'Accessible page' }),
+              makeMetaPage({ id: 'P2', content: 'Another page' }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 2,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const user = userEvent.setup()
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Accessible page')
+
+      // Audit at the default `regular` density first.
+      let results = await axe(container)
+      expect(results).toHaveNoViolations()
+
+      // Then `compact` and `expanded`.
+      const densitySelect = screen.getByRole('combobox', { name: /row density/i })
+      await user.selectOptions(densitySelect, 'compact')
+      await waitFor(() => {
+        const r = container.querySelector('[data-page-item][data-density]')
+        expect(r?.getAttribute('data-density')).toBe('compact')
+      })
+      results = await axe(container)
+      expect(results).toHaveNoViolations()
+
+      await user.selectOptions(densitySelect, 'expanded')
+      await waitFor(() => {
+        const r = container.querySelector('[data-page-item][data-density]')
+        expect(r?.getAttribute('data-density')).toBe('expanded')
+      })
+      results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── PEND-56 Phase 3 — sort comparator vs metadata ─────────────────
+  //
+  // The frontend `sortPages` comparator re-sorts the loaded page when
+  // the chosen sort is one of the metadata-aware modes. These tests
+  // hand-craft rows with known counts/timestamps and confirm the
+  // displayed order matches the comparator (alphabetical tiebreaker).
+  describe('PEND-56 — sort comparator vs metadata', () => {
+    beforeEach(() => {
+      localStorage.setItem('pageBrowser.densityV1', 'true')
+    })
+    afterEach(() => {
+      localStorage.removeItem('pageBrowser.densityV1')
+      localStorage.removeItem('page-browser-sort')
+    })
+
+    function makeMetaPage(overrides: {
+      id: string
+      content: string | null
+      lastModifiedAt?: string | null
+      inboundLinkCount?: number
+      childBlockCount?: number
+    }) {
+      return {
+        id: overrides.id,
+        blockType: 'page',
+        content: overrides.content,
+        parentId: null,
+        position: null,
+        deletedAt: null,
+        todoState: null,
+        priority: null,
+        dueDate: null,
+        scheduledDate: null,
+        pageId: overrides.id,
+        lastModifiedAt: overrides.lastModifiedAt ?? null,
+        inboundLinkCount: overrides.inboundLinkCount ?? 0,
+        childBlockCount: overrides.childBlockCount ?? 0,
+        flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+      }
+    }
+
+    function renderedTitles(): Array<string | null | undefined> {
+      return within(screen.getByRole('grid'))
+        .getAllByRole('row')
+        .filter((r) => r.hasAttribute('data-page-item'))
+        .map((r) => r.querySelector('.page-browser-item-title')?.textContent)
+    }
+
+    it('most-linked orders by inboundLinkCount DESC with alphabetical tiebreaker', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              // Two-tie at link count 1 → alphabetical tiebreaker (Apple, Cherry).
+              makeMetaPage({ id: 'P1', content: 'Apple', inboundLinkCount: 1 }),
+              makeMetaPage({ id: 'P2', content: 'Banana', inboundLinkCount: 5 }),
+              makeMetaPage({ id: 'P3', content: 'Cherry', inboundLinkCount: 1 }),
+              makeMetaPage({ id: 'P4', content: 'Date', inboundLinkCount: 3 }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 4,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'most-linked')
+
+      await waitFor(() => {
+        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
+      })
+    })
+
+    it('most-content orders by childBlockCount DESC with alphabetical tiebreaker', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              makeMetaPage({ id: 'P1', content: 'Apple', childBlockCount: 2 }),
+              makeMetaPage({ id: 'P2', content: 'Banana', childBlockCount: 10 }),
+              makeMetaPage({ id: 'P3', content: 'Cherry', childBlockCount: 2 }),
+              makeMetaPage({ id: 'P4', content: 'Date', childBlockCount: 7 }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 4,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'most-content')
+
+      await waitFor(() => {
+        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
+      })
+    })
+
+    it('recently-modified orders by lastModifiedAt DESC with alphabetical tiebreaker', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              makeMetaPage({
+                id: 'P1',
+                content: 'Apple',
+                lastModifiedAt: '2026-01-01T00:00:00Z',
+              }),
+              makeMetaPage({
+                id: 'P2',
+                content: 'Banana',
+                lastModifiedAt: '2026-03-01T00:00:00Z',
+              }),
+              // Same timestamp as Apple → alphabetical tiebreaker.
+              makeMetaPage({
+                id: 'P3',
+                content: 'Cherry',
+                lastModifiedAt: '2026-01-01T00:00:00Z',
+              }),
+              makeMetaPage({
+                id: 'P4',
+                content: 'Date',
+                lastModifiedAt: '2026-02-01T00:00:00Z',
+              }),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 4,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const sortSelect = screen.getByRole('combobox', { name: /sort order/i })
+      await user.selectOptions(sortSelect, 'recently-modified')
+
+      await waitFor(() => {
+        expect(renderedTitles()).toEqual(['Banana', 'Date', 'Apple', 'Cherry'])
+      })
     })
   })
 })
