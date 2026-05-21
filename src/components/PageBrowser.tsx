@@ -26,14 +26,21 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { DENSITY_ROW_HEIGHT, usePageBrowserDensity } from '../hooks/usePageBrowserDensity'
 import { usePageBrowserGrouping } from '../hooks/usePageBrowserGrouping'
-import { usePageBrowserSort } from '../hooks/usePageBrowserSort'
+import { pageSortWireFor, usePageBrowserSort } from '../hooks/usePageBrowserSort'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
-import type { BlockRow } from '../lib/tauri'
-import { createPageInSpace, listBlocks, resolvePageByAlias } from '../lib/tauri'
+import { isAppError } from '../lib/app-error'
+import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
+import {
+  createPageInSpace,
+  listBlocks,
+  listPagesWithMetadata,
+  resolvePageByAlias,
+} from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
@@ -43,13 +50,67 @@ import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 import { ViewHeader } from './ViewHeader'
 
 const HEADER_ROW_HEIGHT = 36
-const PAGE_ROW_HEIGHT = 44
 
 /// Bottom-of-list proximity in CSS pixels at which the auto-load
 /// pixel-trigger fires. Picked to give ~5-7 rows of headroom at the
-/// 44px PAGE_ROW_HEIGHT so the next page lands before the user hits
-/// the LoadMoreButton fallback.
+/// 44px regular-density row so the next page lands before the user
+/// hits the LoadMoreButton fallback. PEND-56 Phase 3 left this as a
+/// regular-density assumption: compact (32 px) gets one extra row of
+/// headroom, expanded (68 px) gets one fewer — both well inside the
+/// LoadMoreButton fallback envelope.
 const INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300
+
+/**
+ * PEND-56 Phase 3 — localStorage key gating the new
+ * `listPagesWithMetadata` + `<DensityRow>` code path. Stored as the
+ * bare string `'true'` / `'false'` (not JSON) so it can be flipped
+ * by hand from devtools without a parse-fail fallback. Any other
+ * value or a missing key falls back to `false`.
+ */
+const DENSITY_V1_FLAG_KEY = 'pageBrowser.densityV1'
+
+function usePageBrowserDensityV1Flag(): boolean {
+  // Defensive read — `localStorage` throws in private-mode Safari.
+  // No reactive subscription: the flag is set by hand or by tests
+  // before the component mounts, never toggled from the UI.
+  const [flagOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(DENSITY_V1_FLAG_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  return flagOn
+}
+
+/**
+ * PEND-56 Phase 3 — wrap a paginating IPC call so that a v2 cursor
+ * rejection (`AppError::Validation` with the `RequiresRefresh:` prefix)
+ * automatically retries once with no cursor. The cursor format bumped
+ * from v1 → v2 alongside the new sort modes, so a session that started
+ * before the new build emitted a stale cursor will round-trip safely
+ * on the next page load. If the cursorless retry also fails, the
+ * original error propagates and `usePaginatedQuery`'s `onError` toast
+ * fires (existing behaviour).
+ */
+async function withCursorRecovery<T>(
+  call: (cursor?: string) => Promise<T>,
+  cursor: string | undefined,
+): Promise<T> {
+  try {
+    return await call(cursor)
+  } catch (err) {
+    if (
+      cursor != null &&
+      isAppError(err) &&
+      err.kind === 'validation' &&
+      err.message.startsWith('RequiresRefresh:')
+    ) {
+      return call(undefined)
+    }
+    throw err
+  }
+}
 
 interface PageBrowserProps {
   /** Called when a page is selected. */
@@ -67,21 +128,60 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
 
+  // PEND-56 Phase 3 — density preference is loaded regardless of the
+  // density-v1 IPC flag so the user's stored choice persists across the
+  // flag flip. With the flag off the value is still threaded to
+  // `<PageBrowserHeader>` (so the selector works) and to
+  // `estimateSize` (so a future toggle re-measures correctly).
+  const { density, setDensity } = usePageBrowserDensity()
+  const flagOn = usePageBrowserDensityV1Flag()
+  // The two queryFn branches share a `useCallback` identity-stability
+  // contract — `usePaginatedQuery` refetches whenever the function
+  // identity changes, so we want one stable function per
+  // (space, sort, flag) tuple. `sortOption` is read below; declare a
+  // local alias before the queryFn so the dep list stays tight.
+  const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
+
   const queryFn = useCallback(
-    (cursor?: string) =>
-      // FEAT-3 Phase 4 — `listBlocks` requires `spaceId`. The `?? ''`
+    (cursor?: string) => {
+      // FEAT-3 Phase 4 — both IPCs require a `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: the empty
       // string forces a no-match SQL filter (returning an empty page)
       // instead of a runtime null deref. The `enabled: spaceIsReady`
       // gate below normally prevents this branch from firing.
-      listBlocks({
+      const spaceId = currentSpaceId ?? ''
+      if (flagOn) {
+        // PEND-56 Phase 3 — metadata-rich payload + server-derived
+        // sort. The wire sort enum is a 4-member subset of the
+        // frontend's 7 (`pageSortWireFor` does the mapping); the
+        // frontend-only sorts (`alphabetical`, `recent`, `created`,
+        // `default`) all map to wire `default` and re-sort client-side
+        // via `sortPages`.
+        return withCursorRecovery(
+          (c) =>
+            listPagesWithMetadata({
+              sort: pageSortWireFor(sortOption),
+              spaceId,
+              ...(c != null && { cursor: c }),
+              limit: PAGINATION_LIMIT,
+            }),
+          cursor,
+        )
+      }
+      return listBlocks({
         blockType: 'page',
         ...(cursor != null && { cursor }),
         limit: PAGINATION_LIMIT,
-        spaceId: currentSpaceId ?? '',
-      }),
-    [currentSpaceId],
+        spaceId,
+      })
+    },
+    [currentSpaceId, flagOn, sortOption],
   )
+  // `pages` is typed as the union — the grouping pipeline reads only
+  // the shared `BlockRow` fields, so callers can treat the unified
+  // shape as `BlockRow`. The metadata fields (when present) flow
+  // through unchanged and `<DensityRow>` reads them via the same
+  // typed cast in `PageBrowserRowRenderer`.
   const {
     items: pages,
     loading,
@@ -89,12 +189,18 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     loadMore,
     setItems: setPages,
     totalCount,
-  } = usePaginatedQuery(queryFn, {
+  } = usePaginatedQuery<BlockRow | PageWithMetadataRow>(queryFn, {
     onError: t('pageBrowser.loadFailed'),
     enabled: spaceIsReady,
   })
 
-  const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } = usePageDelete(setPages)
+  // `usePageDelete` predates the metadata-rich union type; its
+  // updater is typed against `BlockRow[]`. The two row shapes share
+  // every field the deletion path reads (`id`), so we narrow at the
+  // boundary with a typed cast instead of widening `usePageDelete`.
+  const setPagesAsBlockRows = setPages as (updater: (prev: BlockRow[]) => BlockRow[]) => void
+  const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } =
+    usePageDelete(setPagesAsBlockRows)
 
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
@@ -110,7 +216,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setFilterText(pendingFilter)
     setPendingPageBrowserFilter(null)
   }, [pendingFilter, setPendingPageBrowserFilter])
-  const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
@@ -260,9 +365,17 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   )
   const isSinglePageVault = pages.length <= 1 && !hasAnyNamespacedPage
 
+  // The grouping pipeline reads only the shared `id` / `content`
+  // fields, which both `BlockRow` (flag-off) and `PageWithMetadataRow`
+  // (flag-on) carry. The metadata extras (`lastModifiedAt`,
+  // `inboundLinkCount`, etc.) are preserved on the row object and
+  // re-read at the leaf via a typed cast in `PageBrowserRowRenderer`.
+  // Cast to `BlockRow[]` at the grouping boundary so the existing
+  // `usePageBrowserGrouping` / `sortPages` signatures stay unchanged.
+  const filteredPagesUnsortedAsBlockRows = filteredPagesUnsorted as unknown as BlockRow[]
   const { filteredPages, groupedRows, pageIndexToRowIndex, hasStarred, hasPages } =
     usePageBrowserGrouping({
-      filteredPagesUnsorted,
+      filteredPagesUnsorted: filteredPagesUnsortedAsBlockRows,
       sortPages,
       sortOption,
       starredIds,
@@ -285,25 +398,34 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     },
   })
 
-  // Reset focusedIndex when filter/sort changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText and sortOption intentionally trigger reset
+  // Reset focusedIndex when filter / sort / density changes.
+  // Density changes the row height, which moves what's visible at any
+  // given scroll offset — keeping `focusedIndex` stable across the
+  // toggle would land the focus ring on a row that's no longer where
+  // the user is looking.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText, sortOption, and density intentionally trigger reset
   useEffect(() => {
     setFocusedIndex(0)
-  }, [filterText, sortOption, setFocusedIndex])
+  }, [filterText, sortOption, density, setFocusedIndex])
 
   // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
-  // stable across re-renders that don't change `groupedRows`. TanStack
-  // Virtual treats option-identity changes as a re-measure trigger.
+  // stable across re-renders that don't change `groupedRows` or
+  // density. TanStack Virtual treats option-identity changes as a
+  // re-measure trigger — that's exactly what we want on a density
+  // flip, since the row height per page changes wholesale.
   const estimateSize = useCallback(
     (index: number) => {
       const row = groupedRows[index]
       if (row?.kind === 'header') return HEADER_ROW_HEIGHT
-      // Both `page` and `tree-page` share the 44px row height. The
-      // virtualizer's `measureElement` ref handler later corrects to
-      // actual height when descendants expand the wrapper.
-      return PAGE_ROW_HEIGHT
+      // PEND-56 Phase 3 — page-row height now driven by density.
+      // `tree-page` rows share the per-density leaf height (the
+      // virtualizer's `measureElement` ref handler corrects to the
+      // actual height when descendants expand the wrapper). The
+      // `regular` value (44 px) matches the pre-PEND-56 fixed height,
+      // so flag-off behaviour stays byte-identical.
+      return DENSITY_ROW_HEIGHT[density]
     },
-    [groupedRows],
+    [groupedRows, density],
   )
 
   const virtualizer = useVirtualizer({
@@ -397,13 +519,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     }
   }, [scrollStorageKey])
 
-  // Clear saved offset when filter / sort / space changes — the saved
-  // offset is keyed only by space, so a filter or sort change against
-  // the same space would otherwise restore a meaningless position the
-  // next time the user revisits this view. Allow restoration again on
-  // next mount by leaving `restoredRef` intact within this mount but
+  // Clear saved offset when filter / sort / density / space changes —
+  // the saved offset is keyed only by space, so a filter / sort /
+  // density change against the same space would otherwise restore a
+  // meaningless position the next time the user revisits this view.
+  // Density is included because the per-row pixel height changed
+  // wholesale (32 / 44 / 68 px), so the saved scrollTop no longer
+  // points at the same row index. Allow restoration again on next
+  // mount by leaving `restoredRef` intact within this mount but
   // dropping the stored value.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText and sortOption are the explicit triggers
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText, sortOption, and density are the explicit triggers
   useEffect(() => {
     if (scrollStorageKey == null) return
     // Skip the very first run (mount) — that's when we want to
@@ -412,7 +537,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // restoration completes, any subsequent change clears.
     if (!restoredRef.current) return
     sessionStorage.removeItem(scrollStorageKey)
-  }, [filterText, sortOption])
+  }, [filterText, sortOption, density])
 
   // PageBrowser pagination UX (2026-05-14) — auto-load near the
   // bottom. The index-based trigger (last *visible* virtual item
@@ -525,6 +650,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onFilterTextChange={setFilterText}
           sortOption={sortOption}
           onSortChange={setSortOption}
+          density={density}
+          onDensityChange={setDensity}
           totalCount={totalCount}
           filteredCount={filteredPages.length}
           isFiltering={isFiltering}
@@ -610,6 +737,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     onPageSelect={onPageSelect}
                     onCreateUnder={handleCreateUnder}
                     onDeleteRequest={setDeleteTarget}
+                    flagOn={flagOn}
+                    density={density}
                   />
                 )
               })}

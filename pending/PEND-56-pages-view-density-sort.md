@@ -1,5 +1,7 @@
 # PEND-56 — Pages view foundation: density rows + extended sort modes + per-page metadata IPC
 
+**Status (2026-05-21):** Phase 1 (backend) + Phase 2 (frontend hooks) shipped. Phase 3 (orchestrator wiring + DensityRow) shipping in this session.
+
 > **Foundation plan (1 of 3)** for the Pages-view redesign. Adds density-row rendering with
 > per-page metadata badges (last-modified, inbound-link count, child-block count, has-property
 > flags) and four new sort modes on top of today's three. Sibling plans **PEND-57** (bulk
