@@ -35,9 +35,12 @@ pub enum FilterPrimitive {
     Priority(String),
     // ── Pages-only ────────────────────────────────────────────────
     /// Pages-only — page has no inbound links AND no outbound links.
-    /// (`Stub` is similar but excludes the AND-no-outbound clause.)
+    /// (`HasNoInboundLinks` is the looser inbound-only sibling.)
     Orphan,
-    /// Pages-only — page has fewer than a "stub" threshold of descendants.
+    /// Pages-only — page has zero non-title descendants. Per PEND-58
+    /// (pending/PEND-58-pages-view-compound-filters.md:142): "Page
+    /// whose only block is its own title row (zero non-title
+    /// descendants)". Backed by `pages_cache.child_block_count == 0`.
     Stub,
     /// Pages-only — page has no inbound links (looser than `Orphan`).
     HasNoInboundLinks,
@@ -76,6 +79,21 @@ pub enum PropertyValue {
 /// `last-edited:` time-window spec. Phase 1 defines the shape; Phase 2
 /// implements the SQL bucket math against `pages_cache.last_edited_at`
 /// (or the future equivalent column).
+///
+/// PEND-58 Phase 2 review — the existing variants already cover the
+/// plan's full bucket vocabulary (pending/PEND-58-pages-view-compound-
+/// filters.md:144, lines 308-310):
+///
+/// | Chip token            | Variant          |
+/// |-----------------------|------------------|
+/// | `last-edited:today`        | `Rolling(1)`   |
+/// | `last-edited:this-week`    | `Rolling(7)`   |
+/// | `last-edited:this-month`   | `Rolling(30)`  |
+/// | `last-edited:older`        | `OlderThan(30)`|
+/// | `last-edited:>=YYYY-MM-DD` | `Range { .. }` |
+///
+/// No `LastEditedBucket` variant is needed — the parser maps each
+/// chip token to one of the variants above.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LastEditedSpec {
     /// Rolling N-days window. `Today`, `ThisWeek`, `ThisMonth` map to
@@ -347,29 +365,73 @@ impl Projection for PagesProjection {
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
     }
+    // ── Pages-only grooming primitives ─────────────────────────────
+    //
+    // PEND-58 Phase 2 — the three fragments below reference the
+    // materialised columns shipped by PEND-56b
+    // (`pages_cache.inbound_link_count`, `pages_cache.child_block_count`)
+    // rather than the pre-PEND-56b correlated subqueries that hit the
+    // 20k-page latency cliff measured during the materialisation review.
+    //
+    // Composition contract: the caller MUST splice these fragments into
+    // a SELECT that already `LEFT JOIN pages_cache pc ON pc.page_id = b.id`.
+    // The canonical example is the live IPC SELECT in
+    // `commands::pages::list_pages_with_metadata_inner`
+    // (`src-tauri/src/commands/pages.rs:1941-1942`). PEND-58 Phase 3 will
+    // wire the Pages IPC to consume `Vec<FilterPrimitive>` and reuse that
+    // exact JOIN; until then these fragments are SQL-level snapshots
+    // that compile but only execute against a `pc`-bearing context.
+    //
+    // `COALESCE(pc.<col>, 0)` defends against the no-`pages_cache`-row
+    // case the materializer's contract guarantees won't happen (every
+    // page gets a row on create per the materializer's lifecycle
+    // handlers + the migration 0069 backfill). If a future Pages-only
+    // primitive needs a count, materialise it on `pages_cache` via the
+    // PEND-56b pattern rather than introducing a new correlated
+    // subquery on the read path.
     fn compile_orphan(&self) -> WhereClause {
-        // Pages-only — no inbound AND no outbound links.
+        // Orphan := no inbound block-link edges AND no outbound block-link
+        // edges. The inbound side is index-served via the materialised
+        // `pc.inbound_link_count`. The outbound side has no materialised
+        // counterpart yet (the materializer maintains the page-level
+        // inbound aggregate only) — keep the `NOT EXISTS` here, and
+        // file a follow-up to materialise an `outbound_link_count` if
+        // measurement shows this term dominating.
+        //
+        // **Inbound semantic** (PEND-58 Phase-2 alignment with PEND-56b):
+        // `pc.inbound_link_count` aggregates `block_links` edges whose
+        // target is the page block *or any non-deleted descendant block*
+        // (see migration 0069 lines 56-64 + the metadata IPC SELECT at
+        // `commands/pages.rs:1660-1697`). This is broader than the
+        // Phase-1 `target_id = b.id` placeholder — block-reference
+        // `((ULID))` edges into a descendant content block now count as
+        // inbound. The alignment is **intentional**: it makes the filter
+        // match the inbound-link count rendered in `<DensityRow>` and
+        // the `MostLinked` sort, so a user clicking `orphan:` after
+        // seeing "0 ↗" on a row always agrees with the surfaced count.
         WhereClause::new(
-            "NOT EXISTS (SELECT 1 FROM block_links WHERE target_id = b.id) \
+            "COALESCE(pc.inbound_link_count, 0) = 0 \
              AND NOT EXISTS (SELECT 1 FROM block_links WHERE source_id = b.id)",
             Vec::new(),
         )
     }
     fn compile_stub(&self) -> WhereClause {
-        // Stub: page has fewer than 3 descendants. Threshold is the
-        // industry-conventional one for "needs more content"; tunable
-        // per PEND-58 follow-up if user feedback wants it.
-        WhereClause::new(
-            "(SELECT COUNT(*) FROM blocks d \
-              WHERE d.page_id = b.id AND d.deleted_at IS NULL AND d.id != b.id) < 3",
-            Vec::new(),
-        )
+        // Stub: a page whose only block is its own title row, i.e. zero
+        // non-title descendants. Matches the PEND-58 vocabulary spec
+        // verbatim ("Page whose only block is its own title row (zero
+        // non-title descendants)", pending/PEND-58-pages-view-compound-
+        // filters.md:142). The prior `< 3` threshold was a Phase-1
+        // placeholder. The new comparison is served by the materialised
+        // `pc.child_block_count` column.
+        WhereClause::new("COALESCE(pc.child_block_count, 0) = 0", Vec::new())
     }
     fn compile_has_no_inbound_links(&self) -> WhereClause {
-        WhereClause::new(
-            "NOT EXISTS (SELECT 1 FROM block_links WHERE target_id = b.id)",
-            Vec::new(),
-        )
+        // Looser companion to Orphan: zero inbound block-link edges,
+        // outbound side ignored. Same materialised column — and same
+        // "page OR any non-deleted descendant" semantic — as the
+        // inbound half of Orphan; see that fn's doc comment for the
+        // PEND-58 / PEND-56b alignment rationale.
+        WhereClause::new("COALESCE(pc.inbound_link_count, 0) = 0", Vec::new())
     }
 }
 
@@ -512,6 +574,79 @@ mod tests {
         }
     }
 
+    /// PEND-58 Phase 2 — snapshot the exact SQL fragments emitted by
+    /// the three Pages-only grooming primitives. These reference the
+    /// materialised `pages_cache` columns (PEND-56b), not the
+    /// pre-PEND-56b correlated subqueries. The composition site MUST
+    /// have `LEFT JOIN pages_cache pc ON pc.page_id = b.id` in scope.
+    #[test]
+    fn pages_only_primitives_emit_materialised_pages_cache_sql() {
+        let p = PagesProjection;
+
+        let orphan = p.compile(&FilterPrimitive::Orphan);
+        assert_eq!(
+            orphan.sql,
+            "COALESCE(pc.inbound_link_count, 0) = 0 \
+             AND NOT EXISTS (SELECT 1 FROM block_links WHERE source_id = b.id)",
+            "Orphan must read the materialised inbound count from pages_cache"
+        );
+        assert!(orphan.binds.is_empty(), "Orphan takes no binds");
+
+        let stub = p.compile(&FilterPrimitive::Stub);
+        assert_eq!(
+            stub.sql, "COALESCE(pc.child_block_count, 0) = 0",
+            "Stub must compare child_block_count == 0 (PEND-58 \"zero non-title descendants\")"
+        );
+        assert!(stub.binds.is_empty(), "Stub takes no binds");
+
+        let hnil = p.compile(&FilterPrimitive::HasNoInboundLinks);
+        assert_eq!(
+            hnil.sql, "COALESCE(pc.inbound_link_count, 0) = 0",
+            "HasNoInboundLinks must read the materialised inbound count from pages_cache"
+        );
+        assert!(hnil.binds.is_empty(), "HasNoInboundLinks takes no binds");
+
+        // Regression guard — the pre-PEND-56b shapes must NOT reappear.
+        for w in [&orphan, &stub, &hnil] {
+            assert!(
+                !w.sql.contains("d.page_id = b.id"),
+                "fragment must not regress to the COUNT(*) subquery shape: `{}`",
+                w.sql
+            );
+        }
+        assert!(
+            !stub.sql.contains("block_links"),
+            "Stub must not touch block_links: `{}`",
+            stub.sql
+        );
+        assert!(
+            !hnil.sql.contains("block_links"),
+            "HasNoInboundLinks must not touch block_links: `{}`",
+            hnil.sql
+        );
+    }
+
+    /// PEND-58 Phase 2 — confirms the LastEditedSpec variants already
+    /// cover the plan's bucket vocabulary so no new variant is needed.
+    /// See the doc comment on `LastEditedSpec` for the chip-token map.
+    #[test]
+    fn last_edited_spec_covers_pend58_bucket_vocabulary() {
+        let p = PagesProjection;
+        // `today` → Rolling(1)
+        let today = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::Rolling(1)));
+        assert_eq!(today.binds, vec![Bind::Text("-1 days".to_string())]);
+        // `this-week` → Rolling(7)
+        let week = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::Rolling(7)));
+        assert_eq!(week.binds, vec![Bind::Text("-7 days".to_string())]);
+        // `this-month` → Rolling(30)
+        let month = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::Rolling(30)));
+        assert_eq!(month.binds, vec![Bind::Text("-30 days".to_string())]);
+        // `older` → OlderThan(30)
+        let older = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::OlderThan(30)));
+        assert!(older.sql.contains("<"), "OlderThan must use `<` comparator");
+        assert_eq!(older.binds, vec![Bind::Text("-30 days".to_string())]);
+    }
+
     #[test]
     fn search_projection_rejects_pages_only_primitives_via_default_unsupported() {
         let p = SearchProjection;
@@ -619,5 +754,191 @@ mod tests {
         assert!(unsup.is_unsupported());
         let normal = WhereClause::new("1=1", Vec::new());
         assert!(!normal.is_unsupported());
+    }
+}
+
+// ── EXPLAIN QUERY PLAN tests (async, real DB) ────────────────────────────
+//
+// PEND-58 Phase 2 — assert each Pages-only grooming primitive composes
+// into a query plan that hits an indexed `pages_cache` row read rather
+// than the pre-PEND-56b correlated-subquery shape. Mirrors the
+// `most_linked_query_plan_uses_pages_cache_not_block_links` snapshot in
+// `commands::tests::list_pages_with_metadata_tests`.
+//
+// We assert *presence* and *absence* of table-name tokens in the plan,
+// not the full plan string — SQLite is allowed to reword
+// "SCAN" vs "SEARCH USING INDEX" across patch versions, and the
+// load-bearing contract is "uses pages_cache, not a block_links scan
+// for the inbound side".
+#[cfg(test)]
+mod explain_query_plan_tests {
+    use super::*;
+    use crate::commands::tests::common::{ensure_test_space, test_pool, TEST_SPACE_ID};
+    use sqlx::SqlitePool;
+
+    /// Seed enough page rows that SQLite picks a representative plan
+    /// (it sometimes collapses on empty tables) and seed the
+    /// `pages_cache` row the materializer would write in production.
+    async fn seed_pages(pool: &SqlitePool, n: u32) {
+        for i in 0..n {
+            let id = format!("01PAGE000000000000000F{i:04}");
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, 'page', ?, NULL, ?, ?)",
+            )
+            .bind(&id)
+            .bind(format!("p{i}"))
+            .bind(i as i64)
+            .bind(&id)
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT OR IGNORE INTO block_properties (block_id, key, value_ref) \
+                 VALUES (?, 'space', ?)",
+            )
+            .bind(&id)
+            .bind(TEST_SPACE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT OR IGNORE INTO pages_cache \
+                     (page_id, title, updated_at, inbound_link_count, child_block_count) \
+                 VALUES (?, ?, '2025-01-01T00:00:00Z', 0, 0)",
+            )
+            .bind(&id)
+            .bind(format!("p{i}"))
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// Run `EXPLAIN QUERY PLAN` against a SELECT that composes the
+    /// given `PagesProjection` primitive into the same JOIN shape the
+    /// IPC uses (`commands::pages::list_pages_with_metadata_inner`)
+    /// and return the plan as a single newline-joined string.
+    async fn explain_for(pool: &SqlitePool, fragment: &str) -> String {
+        let sql = format!(
+            "EXPLAIN QUERY PLAN \
+             SELECT b.id \
+             FROM blocks b \
+             LEFT JOIN pages_cache pc ON pc.page_id = b.id \
+             WHERE b.block_type = 'page' AND b.deleted_at IS NULL \
+               AND b.page_id IN ( \
+                   SELECT bp.block_id FROM block_properties bp \
+                   WHERE bp.key = 'space' AND bp.value_ref = ? \
+               ) \
+               AND {fragment}"
+        );
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(&sql)
+            .bind(TEST_SPACE_ID)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        rows.into_iter()
+            .map(|(_, _, _, detail)| detail)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[tokio::test]
+    async fn orphan_primitive_plan_reads_pages_cache() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        seed_pages(&pool, 16).await;
+        let frag = PagesProjection.compile(&FilterPrimitive::Orphan).sql;
+        let plan = explain_for(&pool, &frag).await;
+        eprintln!("[PEND-58 EXPLAIN Orphan]\n{plan}");
+        assert!(
+            plan.to_lowercase().contains("pages_cache"),
+            "Orphan plan must reference pages_cache; got:\n{plan}"
+        );
+        // Orphan's outbound term is `NOT EXISTS (SELECT 1 FROM block_links
+        // WHERE source_id = b.id)` — that subquery IS allowed to touch
+        // block_links (idx_block_links_source serves it). The previous
+        // *inbound* `target_id` scan must NOT appear.
+        assert!(
+            !plan.to_lowercase().contains("target_id"),
+            "Orphan plan must not scan block_links by target_id (use materialised inbound count); got:\n{plan}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stub_primitive_plan_reads_pages_cache_not_blocks_subquery() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        seed_pages(&pool, 16).await;
+        let frag = PagesProjection.compile(&FilterPrimitive::Stub).sql;
+        let plan = explain_for(&pool, &frag).await;
+        eprintln!("[PEND-58 EXPLAIN Stub]\n{plan}");
+        assert!(
+            plan.to_lowercase().contains("pages_cache"),
+            "Stub plan must reference pages_cache; got:\n{plan}"
+        );
+        // The pre-PEND-56b shape `(SELECT COUNT(*) FROM blocks d WHERE
+        // d.page_id = b.id ...) < 3` produced a `SCAN blocks AS d`
+        // alias in the plan. The materialised shape never aliases
+        // `blocks` as `d`.
+        assert!(
+            !plan.contains(" AS d") && !plan.contains(" d "),
+            "Stub plan must not scan the `blocks d` correlated subquery; got:\n{plan}"
+        );
+        assert!(
+            !plan.to_lowercase().contains("block_links"),
+            "Stub plan must not touch block_links at all; got:\n{plan}"
+        );
+    }
+
+    #[tokio::test]
+    async fn has_no_inbound_links_primitive_plan_reads_pages_cache() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        seed_pages(&pool, 16).await;
+        let frag = PagesProjection
+            .compile(&FilterPrimitive::HasNoInboundLinks)
+            .sql;
+        let plan = explain_for(&pool, &frag).await;
+        eprintln!("[PEND-58 EXPLAIN HasNoInboundLinks]\n{plan}");
+        assert!(
+            plan.to_lowercase().contains("pages_cache"),
+            "HasNoInboundLinks plan must reference pages_cache; got:\n{plan}"
+        );
+        assert!(
+            !plan.to_lowercase().contains("block_links"),
+            "HasNoInboundLinks plan must not scan block_links (use materialised inbound count); got:\n{plan}"
+        );
+    }
+
+    /// Composite check — AND'ing all three Pages-only primitives must
+    /// not degrade the plan (e.g. drop `pages_cache` for a temp-b-tree
+    /// scan). The planner is allowed to re-order the terms, but it
+    /// must still reach the `pages_cache` row.
+    #[tokio::test]
+    async fn composite_pages_only_primitives_keep_pages_cache_in_plan() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        seed_pages(&pool, 16).await;
+        let p = PagesProjection;
+        let frag = format!(
+            "({}) AND ({}) AND ({})",
+            p.compile(&FilterPrimitive::Orphan).sql,
+            p.compile(&FilterPrimitive::Stub).sql,
+            p.compile(&FilterPrimitive::HasNoInboundLinks).sql,
+        );
+        let plan = explain_for(&pool, &frag).await;
+        eprintln!("[PEND-58 EXPLAIN composite]\n{plan}");
+        assert!(
+            plan.to_lowercase().contains("pages_cache"),
+            "composite plan must reference pages_cache; got:\n{plan}"
+        );
+        // Orphan's outbound `NOT EXISTS (... source_id = b.id)` is the
+        // only allowed block_links access. The plan must not regress
+        // to an inbound `target_id` scan.
+        assert!(
+            !plan.to_lowercase().contains("target_id"),
+            "composite plan must not scan block_links by target_id; got:\n{plan}"
+        );
     }
 }
