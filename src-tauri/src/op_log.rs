@@ -1889,6 +1889,213 @@ mod tests {
         );
     }
 
+    /// PEND-56b / migration 0069: `pages_cache` must carry the
+    /// materialised `inbound_link_count` + `child_block_count` INTEGER
+    /// columns with `NOT NULL DEFAULT 0`. The backfill in the migration
+    /// uses the **exact SQL shape** of the live IPC aggregate in
+    /// `commands::pages::list_pages_with_metadata_inner`
+    /// (`src-tauri/src/commands/pages.rs:1666`) — this test seeds a
+    /// fixture and asserts that the same SQL applied to fresh rows
+    /// produces the expected counts, locking in the backfill contract
+    /// that the materializer hooks must thereafter maintain at O(1) per
+    /// op.
+    #[tokio::test]
+    async fn pages_cache_link_and_content_counts_post_migration_0069() {
+        let (pool, _dir) = test_pool().await;
+
+        // (a) Schema guards: both columns exist, both are INTEGER, both
+        // NOT NULL with DEFAULT 0.
+        let inbound: (String, i64, Option<String>) = sqlx::query_as(
+            "SELECT \"type\", \"notnull\", dflt_value \
+             FROM pragma_table_info('pages_cache') WHERE name = 'inbound_link_count'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("migration 0069 must add `inbound_link_count` to pages_cache");
+        assert_eq!(inbound.0, "INTEGER");
+        assert_eq!(inbound.1, 1);
+        assert_eq!(inbound.2.as_deref(), Some("0"));
+
+        let child: (String, i64, Option<String>) = sqlx::query_as(
+            "SELECT \"type\", \"notnull\", dflt_value \
+             FROM pragma_table_info('pages_cache') WHERE name = 'child_block_count'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("migration 0069 must add `child_block_count` to pages_cache");
+        assert_eq!(child.0, "INTEGER");
+        assert_eq!(child.1, 1);
+        assert_eq!(child.2.as_deref(), Some("0"));
+
+        // (b) Backfill contract: seed two pages with descendants + a
+        // soft-deleted descendant + cross-page links, then re-run the
+        // **same UPDATE SQL** the migration uses and assert the result
+        // matches what the live IPC SELECT in
+        // `list_pages_with_metadata_inner` would compute.
+        //
+        // Topology:
+        //   PAGE_A (page) — children: A_C1 (live), A_C2 (live), A_C3 (deleted)
+        //   PAGE_B (page) — children: B_C1 (live)
+        //   Links (source -> target):
+        //     A_C1 -> PAGE_B      (inbound to PAGE_B)
+        //     A_C2 -> PAGE_B      (inbound to PAGE_B, dedup'd by DISTINCT — but
+        //                          source is distinct so it does count)
+        //     A_C3 -> PAGE_B      (inbound source A_C3 is live; but A_C3 is
+        //                          a deleted DESCENDANT of A — DISTINCT applies
+        //                          to source_id without filtering on its
+        //                          live-ness, mirroring the live IPC shape)
+        //     B_C1 -> PAGE_A      (inbound to PAGE_A)
+        //     B_C1 -> A_C1        (inbound, but A_C1.page_id = PAGE_A so this
+        //                          contributes one DISTINCT source to PAGE_A)
+        //
+        // Expected (matching the live IPC `COUNT(DISTINCT bl.source_id)`):
+        //   PAGE_A.inbound_link_count = 1  (only B_C1 across both edges)
+        //   PAGE_B.inbound_link_count = 3  (A_C1, A_C2, A_C3 — all distinct)
+        //   PAGE_A.child_block_count  = 2  (A_C1, A_C2 — A_C3 is deleted)
+        //   PAGE_B.child_block_count  = 1  (B_C1)
+        for (id, page_id, deleted) in [
+            ("PAGE_A", "PAGE_A", false),
+            ("PAGE_B", "PAGE_B", false),
+            ("A_C1", "PAGE_A", false),
+            ("A_C2", "PAGE_A", false),
+            ("A_C3", "PAGE_A", true),
+            ("B_C1", "PAGE_B", false),
+        ] {
+            let deleted_at = if deleted {
+                Some("2025-01-15T12:00:00Z")
+            } else {
+                None
+            };
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at, page_id) \
+                 VALUES (?, 'content', '', NULL, 1, ?, ?)",
+            )
+            .bind(id)
+            .bind(deleted_at)
+            .bind(page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // pages_cache rows for the two pages (matches the materializer's
+        // post-CreateBlock writes).
+        for page_id in ["PAGE_A", "PAGE_B"] {
+            sqlx::query(
+                "INSERT INTO pages_cache (page_id, title, updated_at) \
+                 VALUES (?, ?, '2025-01-15T12:00:00Z')",
+            )
+            .bind(page_id)
+            .bind(page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        for (source, target) in [
+            ("A_C1", "PAGE_B"),
+            ("A_C2", "PAGE_B"),
+            ("A_C3", "PAGE_B"),
+            ("B_C1", "PAGE_A"),
+            ("B_C1", "A_C1"),
+        ] {
+            sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+                .bind(source)
+                .bind(target)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        // Re-run the backfill from migration 0069 verbatim (the new rows
+        // were inserted after migrations applied, so their counts are
+        // still the DEFAULT 0).
+        sqlx::query(
+            "UPDATE pages_cache SET inbound_link_count = ( \
+                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links AS bl \
+                 INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                 WHERE descendant.page_id = pages_cache.page_id \
+                   AND descendant.deleted_at IS NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE pages_cache SET child_block_count = ( \
+                 SELECT COUNT(*) FROM blocks AS descendant \
+                 WHERE descendant.page_id = pages_cache.page_id \
+                   AND descendant.deleted_at IS NULL \
+                   AND descendant.id != pages_cache.page_id)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let row_a = sqlx::query!(
+            "SELECT inbound_link_count AS \"i!: i64\", child_block_count AS \"c!: i64\" \
+             FROM pages_cache WHERE page_id = 'PAGE_A'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_a.i, 1,
+            "PAGE_A inbound count should be 1 (B_C1 distinct across both edges into PAGE_A's subtree)"
+        );
+        assert_eq!(
+            row_a.c, 2,
+            "PAGE_A child count should be 2 (A_C1, A_C2; A_C3 deleted)"
+        );
+
+        let row_b = sqlx::query!(
+            "SELECT inbound_link_count AS \"i!: i64\", child_block_count AS \"c!: i64\" \
+             FROM pages_cache WHERE page_id = 'PAGE_B'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_b.i, 3,
+            "PAGE_B inbound count should be 3 (A_C1, A_C2, A_C3 distinct sources)"
+        );
+        assert_eq!(row_b.c, 1, "PAGE_B child count should be 1 (B_C1)");
+
+        // (c) `materialised == computed` parity: assert the live IPC
+        // SELECT shape produces identical numbers when applied as a
+        // sibling subquery — this is the contract the materializer's
+        // O(1) hooks must uphold.
+        let parity = sqlx::query!(
+            "SELECT \
+                pc.page_id AS \"page_id!\", \
+                pc.inbound_link_count AS \"mat_in!: i64\", \
+                pc.child_block_count AS \"mat_ch!: i64\", \
+                (SELECT COUNT(DISTINCT bl.source_id) FROM block_links AS bl \
+                     INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                     WHERE descendant.page_id = pc.page_id \
+                       AND descendant.deleted_at IS NULL) AS \"calc_in!: i64\", \
+                (SELECT COUNT(*) FROM blocks AS descendant \
+                     WHERE descendant.page_id = pc.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND descendant.id != pc.page_id) AS \"calc_ch!: i64\" \
+             FROM pages_cache AS pc"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for r in parity {
+            assert_eq!(
+                r.mat_in, r.calc_in,
+                "page {}: materialised inbound_link_count must match live IPC aggregate",
+                r.page_id
+            );
+            assert_eq!(
+                r.mat_ch, r.calc_ch,
+                "page {}: materialised child_block_count must match live IPC aggregate",
+                r.page_id
+            );
+        }
+    }
+
     /// SQL-review B-4 / migration 0064: the native `attachment_id`
     /// column and its partial index `idx_op_log_attachment_id` must
     /// exist after migrations run. This pins the schema contract that
