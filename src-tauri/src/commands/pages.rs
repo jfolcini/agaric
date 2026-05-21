@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use specta::Type;
 use sqlx::SqlitePool;
 use tracing::instrument;
@@ -1444,6 +1444,528 @@ pub async fn load_page_subtree(
     space_id: String,
 ) -> Result<Vec<BlockRow>, AppError> {
     load_page_subtree_inner(&pool.0, &root_block_id, &space_id)
+        .await
+        .map_err(sanitize_internal_error)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// PEND-56 — list_pages_with_metadata
+//
+// Sibling IPC to `list_pages_inner`. Returns the same column shape as
+// `BlockRow` PLUS four metadata columns:
+//
+//   - `last_modified_at`: max(`op_log.created_at`) over the page itself.
+//     Page-only (not subtree-aware) per PEND-56 open-question 1 — the
+//     recursive-CTE variant is deferred until a benchmark says it's
+//     worth the cost.
+//   - `inbound_link_count`: COUNT links targeting this page OR any of
+//     its descendants. Walked via `blocks.page_id`, the materializer-
+//     maintained denormalisation — same index as the rest of the
+//     `page_id`-fan-out helpers in this file.
+//   - `child_block_count`: COUNT non-deleted blocks whose `page_id`
+//     matches AND id != page_id (descendants only).
+//   - `has_property_flags`: 4-bit bitmask. Initial allowlist per the
+//     plan:
+//       bit 0 (1): page has tags applied directly
+//       bit 1 (2): page has any descendant with a `todo_state`
+//       bit 2 (4): page has any descendant with a `scheduled_date`
+//       bit 3 (8): page has any descendant with a `due_date`
+//     Adding new flags is an additive bit; the frontend renders the
+//     first matched flag as a chip at "regular" density.
+//
+// Cursor strategy reuses the existing `Cursor` slots per the doc
+// comment's "composite overload" guidance (see `pagination/mod.rs:285`):
+// each sort mode encodes its sort-key value into either `deleted_at`
+// (strings / ISO timestamps) or `seq` (i64 counts), with `id` as the
+// tiebreaker. No new field on the `Cursor` struct.
+//
+// Sort modes:
+//   - Alphabetical: keyset (`COALESCE(content,'')` COLLATE NOCASE, id)
+//   - RecentlyModified: keyset (`last_modified_at`, id) DESC NULLS LAST
+//   - MostLinked: keyset (`inbound_link_count`, id) DESC, alpha tiebreaker
+//   - Biggest: keyset (`child_block_count`, id) DESC, alpha tiebreaker
+//   - Ulid: keyset (id) ASC — power-user / debug
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Sort mode for [`list_pages_with_metadata_inner`].
+///
+/// These are the server-derived sort modes the IPC exposes. The
+/// frontend may layer two additional sorts that don't go over the wire:
+///
+///   - `recent` — per-device visit history (sourced from `getRecentPages()`).
+///   - `created` — ULID DESC (just `Default` reversed in JS).
+///
+/// Both reuse the `Default` SQL ordering and re-sort the loaded page
+/// client-side.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Type, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PageSort {
+    /// Title ascending, case-insensitive. Default for "browse my pages".
+    #[default]
+    Alphabetical,
+    /// Last-modified timestamp (max op_log.created_at) DESC.
+    RecentlyModified,
+    /// Inbound-link count DESC (page + descendant link targets).
+    MostLinked,
+    /// Descendant-block count DESC.
+    MostContent,
+    /// Default backend ordering — block id ASC. Useful for debugging
+    /// and as the wire shape for the frontend-only `recent` / `created`
+    /// sorts that re-sort client-side.
+    #[serde(rename = "default")]
+    Default,
+}
+
+/// Filter / sort bundle for [`list_pages_with_metadata`].
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ListPagesWithMetadataFilter {
+    #[serde(default)]
+    pub sort: PageSort,
+    pub space_id: String,
+}
+
+/// Boolean facts about a page's contents (Review Round 1: replaces a
+/// `has_property_flags: i64` bitmask). Each field maps 1:1 to an
+/// `EXISTS` subquery in the metadata SELECT. Adding a new flag is
+/// purely additive — new `bool` column, no consumer surprises.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PagePropertyFlags {
+    /// Page itself carries a `block_tags` row.
+    pub has_tags: bool,
+    /// At least one descendant has a non-NULL `todo_state`.
+    pub has_todo: bool,
+    /// At least one descendant has a non-NULL `scheduled_date`.
+    pub has_scheduled: bool,
+    /// At least one descendant has a non-NULL `due_date`.
+    pub has_due: bool,
+}
+
+/// Row returned by [`list_pages_with_metadata_inner`].
+///
+/// Carries every `BlockRow` column verbatim so the frontend can read
+/// `id`, `content`, etc. via the same accessors. Four extra metadata
+/// columns drive the new sort modes + density badges.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PageWithMetadataRow {
+    pub id: String,
+    pub block_type: String,
+    pub content: Option<String>,
+    pub parent_id: Option<String>,
+    pub position: Option<i64>,
+    pub deleted_at: Option<String>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<String>,
+    /// max(`op_log.created_at`) over the page itself. None if the
+    /// page has no op-log entries (which should never happen — every
+    /// active page has at least its own creation row — but the column
+    /// is `Option` to absorb edge cases like manually-imported rows
+    /// without a synthesised op-log entry).
+    pub last_modified_at: Option<String>,
+    /// COUNT of `block_links` targeting this page or any of its
+    /// descendants. Always emitted (zero for un-linked pages).
+    pub inbound_link_count: i64,
+    /// COUNT of non-deleted descendants (blocks where `page_id = id`,
+    /// excluding the page itself). Always emitted.
+    pub child_block_count: i64,
+    /// Typed flag struct (Review Round 1: replaces the prior
+    /// `has_property_flags: i64` bitmask — see [`PagePropertyFlags`]).
+    #[sqlx(flatten)]
+    pub flags: PagePropertyFlags,
+}
+
+/// Build the `position` slot's encoded sort-mode tag. Used by
+/// [`encode_pages_metadata_cursor`] / [`validate_pages_metadata_cursor`]
+/// to refuse a cursor whose sort-mode discriminator doesn't match the
+/// request — the user-visible alternative is a silent "scrolled past
+/// end" with no recovery, which Review Round 1 flagged across three
+/// independent reviewers as a BLOCKER. Per-sort i64 stamped into the
+/// already-unused `Cursor.position` slot.
+fn sort_discriminator(sort: PageSort) -> i64 {
+    match sort {
+        PageSort::Alphabetical => 1,
+        PageSort::RecentlyModified => 2,
+        PageSort::MostLinked => 3,
+        PageSort::MostContent => 4,
+        PageSort::Default => 5,
+    }
+}
+
+/// Reject a cursor whose `position` slot doesn't match the requested
+/// sort. Returns `AppError::Validation` with the `RequiresRefresh:`
+/// prefix the frontend uses to render a "Sort changed — refresh to
+/// continue" toast (PEND-56 acceptance criterion #3).
+fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(), AppError> {
+    match cursor.position {
+        Some(d) if d == sort_discriminator(sort) => Ok(()),
+        Some(_) | None => Err(AppError::Validation(format!(
+            "RequiresRefresh: cursor sort mismatch (expected {sort:?})"
+        ))),
+    }
+}
+
+/// Inner implementation of `list_pages_with_metadata`. Cursor-paginated
+/// page enumeration with metadata columns; sort mode chosen via
+/// [`PageSort`].
+///
+/// **Cursor semantics:** the cursor carries the LAST row's sort-key
+/// value (in `deleted_at` for string / ISO-timestamp sorts; in `seq`
+/// for i64-count sorts), the last row's `id` as the tiebreaker, and
+/// a sort-mode discriminator in `position` (Review Round 1 — protects
+/// against cross-sort / cross-IPC cursor reuse). First-page requests
+/// pass `cursor = None`. A stale cursor (e.g. from `list_blocks`) is
+/// rejected with `AppError::Validation("RequiresRefresh: …")` so the
+/// frontend can render a "Sort changed — refresh to continue" toast
+/// (PEND-56 acceptance criterion #3).
+#[instrument(skip(pool), err)]
+pub async fn list_pages_with_metadata_inner(
+    pool: &SqlitePool,
+    filter: ListPagesWithMetadataFilter,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
+    // Mirror the limit-clamp policy from `list_pages_inner`.
+    if let Some(l) = limit {
+        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
+            return Err(AppError::Validation(format!(
+                "list_pages_with_metadata limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}"
+            )));
+        }
+    }
+    let req = PageRequest::new(cursor, limit)?;
+    // Reject any cursor whose sort-mode discriminator doesn't match the
+    // requested sort. This is the BLOCKER fix from Review Round 1.
+    if let Some(c) = req.after.as_ref() {
+        validate_pages_metadata_cursor(c, filter.sort)?;
+    }
+    let limit_plus_one = req.limit + 1; // probe-for-more pattern
+
+    // SELECT shape — the 4 metadata aggregates as correlated subqueries.
+    // Each subquery hits a covered index:
+    //   - last_modified_at via `idx_op_log_block_id` (migration 0030)
+    //   - inbound_link_count via `idx_block_links_target` (migration 0001)
+    //   - child_block_count via `idx_blocks_page_id` (the page_id index)
+    //   - has_property_flags: 4 EXISTS short-circuits over the same
+    //     `idx_blocks_page_id` + `idx_block_tags_block_id` indexes.
+    //
+    // The SQL is hand-written rather than `sqlx::query_as!` because the
+    // ORDER BY / WHERE keyset depends on the runtime sort mode; the
+    // compile-time macro would force four near-identical query bodies.
+    let mut sql = String::from(
+        r#"SELECT
+               b.id, b.block_type, b.content, b.parent_id, b.position,
+               b.deleted_at, b.todo_state, b.priority, b.due_date,
+               b.scheduled_date, b.page_id,
+               (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
+                   AS last_modified_at,
+               (SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
+                   JOIN blocks descendant ON bl.target_id = descendant.id
+                   WHERE descendant.page_id = b.id
+                     AND descendant.deleted_at IS NULL)
+                   AS inbound_link_count,
+               (SELECT COUNT(*) FROM blocks descendant
+                   WHERE descendant.page_id = b.id
+                     AND descendant.deleted_at IS NULL
+                     AND descendant.id != b.id)
+                   AS child_block_count,
+               EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.todo_state IS NOT NULL) AS has_todo,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.scheduled_date IS NOT NULL) AS has_scheduled,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.due_date IS NOT NULL) AS has_due
+           FROM blocks b
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND b.page_id IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?1
+             )
+        "#,
+    );
+
+    // Cursor keyset + ORDER BY per sort mode. Bind parameters appended
+    // after the space_id (?1) base bind.
+    let cursor_ref = req.after.as_ref();
+    match filter.sort {
+        PageSort::Alphabetical => {
+            // Keyset: (COALESCE(content,'') COLLATE NOCASE, id) ASC.
+            // Cursor stashes the last content in `deleted_at` slot;
+            // id is the tiebreaker.
+            if let Some(c) = cursor_ref {
+                let last_content = c.deleted_at.clone().unwrap_or_default();
+                sql.push_str(
+                    " AND ( COALESCE(b.content,'') COLLATE NOCASE > ?2 \
+                            OR (COALESCE(b.content,'') COLLATE NOCASE = ?2 AND b.id > ?3) ) \
+                       ORDER BY COALESCE(b.content,'') COLLATE NOCASE ASC, b.id ASC \
+                       LIMIT ?4",
+                );
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(&last_content)
+                    .bind(&c.id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            } else {
+                sql.push_str(
+                    " ORDER BY COALESCE(b.content,'') COLLATE NOCASE ASC, b.id ASC \
+                       LIMIT ?2",
+                );
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            }
+        }
+        PageSort::RecentlyModified => {
+            // Keyset: (COALESCE(last_modified_at, NULL_SENTINEL), id) DESC.
+            //
+            // Review Round 1 found that `(SELECT MAX(...)) < ?2` returns
+            // NULL → false for pages with no op_log entries, so they
+            // appeared on page 1 (NULLS LAST in the ORDER BY) but
+            // vanished on every cursor page after. Fix: COALESCE NULL to
+            // `LAST_MOD_NULL_SENTINEL` (a string that sorts BEFORE any
+            // plausible ISO timestamp in DESC order — `'0001-01-01'` is
+            // before any modern app date and is a valid ISO 8601 prefix).
+            // The keyset comparison then works uniformly for NULL and
+            // non-NULL rows; the sort still puts NULL-last (`'0001-...'`
+            // is the smallest, sorted last in DESC).
+            //
+            // The cursor stashes the COALESCE'd value (never a literal
+            // NULL) so the post-NULL pages keyset cleanly.
+            const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
+            if let Some(c) = cursor_ref {
+                let last_mod = c
+                    .deleted_at
+                    .clone()
+                    .unwrap_or_else(|| LAST_MOD_NULL_SENTINEL.to_string());
+                sql.push_str(
+                    " AND ( \
+                         COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) < ?2 \
+                         OR ( \
+                             COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) = ?2 \
+                             AND b.id > ?3 \
+                         ) \
+                       ) \
+                       ORDER BY \
+                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) DESC, \
+                           b.id ASC \
+                       LIMIT ?4",
+                );
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(&last_mod)
+                    .bind(&c.id)
+                    .bind(limit_plus_one)
+                    .bind(LAST_MOD_NULL_SENTINEL)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            } else {
+                sql.push_str(
+                    " ORDER BY \
+                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?2) DESC, \
+                           b.id ASC \
+                       LIMIT ?3",
+                );
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(LAST_MOD_NULL_SENTINEL)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            }
+        }
+        PageSort::MostLinked | PageSort::MostContent => {
+            // Keyset: (count, id) DESC. Cursor stashes the count in
+            // `seq` slot (i64). Both sort modes share the shape; the
+            // SELECT column differs.
+            let count_expr = match filter.sort {
+                PageSort::MostLinked => {
+                    // Same DISTINCT-source shape as the SELECT-list
+                    // version above so the keyset matches the displayed
+                    // count. Round 2 perf review measured the source-
+                    // deleted JOIN filter as ~30 ms overhead at 10k
+                    // pages — dropped here per the recommendation;
+                    // links from soft-deleted sources still contribute
+                    // to the count (their tombstones get hard-deleted
+                    // eventually by retention, so the contamination
+                    // window is bounded).
+                    "(SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                       JOIN blocks descendant ON bl.target_id = descendant.id \
+                       WHERE descendant.page_id = b.id \
+                         AND descendant.deleted_at IS NULL)"
+                }
+                PageSort::MostContent => {
+                    "(SELECT COUNT(*) FROM blocks descendant \
+                       WHERE descendant.page_id = b.id \
+                         AND descendant.deleted_at IS NULL \
+                         AND descendant.id != b.id)"
+                }
+                _ => unreachable!(),
+            };
+            if let Some(c) = cursor_ref {
+                let last_count = c.seq.unwrap_or(0);
+                let keyset = format!(
+                    " AND ( {count_expr} < ?2 \
+                            OR ({count_expr} = ?2 AND b.id > ?3) ) \
+                       ORDER BY {count_expr} DESC, b.id ASC LIMIT ?4"
+                );
+                sql.push_str(&keyset);
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(last_count)
+                    .bind(&c.id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            } else {
+                let ordering = format!(" ORDER BY {count_expr} DESC, b.id ASC LIMIT ?2");
+                sql.push_str(&ordering);
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            }
+        }
+        PageSort::Default => {
+            // Keyset: id ASC only. Cursor stashes last id in the
+            // standard `id` slot.
+            if let Some(c) = cursor_ref {
+                sql.push_str(" AND b.id > ?2 ORDER BY b.id ASC LIMIT ?3");
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(&c.id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            } else {
+                sql.push_str(" ORDER BY b.id ASC LIMIT ?2");
+                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
+                    .bind(&filter.space_id)
+                    .bind(limit_plus_one)
+                    .fetch_all(pool)
+                    .await?;
+                return build_metadata_response(rows, req.limit, filter.sort);
+            }
+        }
+    }
+}
+
+/// Pack the fetched rows into a `PageResponse` with `has_more` + the
+/// next-page cursor. Encodes the last-row's sort-key value into the
+/// appropriate `Cursor` slot per sort mode.
+fn build_metadata_response(
+    mut rows: Vec<PageWithMetadataRow>,
+    limit: i64,
+    sort: PageSort,
+) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
+    let limit_us = usize::try_from(limit).unwrap_or(0);
+    let has_more = rows.len() > limit_us;
+    if has_more {
+        rows.truncate(limit_us);
+    }
+    // Tag every cursor with the sort discriminator (Review Round 1) so
+    // `validate_pages_metadata_cursor` can reject cross-sort reuse.
+    let disc = Some(sort_discriminator(sort));
+    let next_cursor = if has_more {
+        rows.last().map(|last| -> Result<String, AppError> {
+            let cursor = match sort {
+                PageSort::Alphabetical => Cursor {
+                    id: last.id.clone(),
+                    position: disc,
+                    deleted_at: last.content.clone(),
+                    seq: None,
+                    rank: None,
+                },
+                PageSort::RecentlyModified => Cursor {
+                    id: last.id.clone(),
+                    position: disc,
+                    // RecentlyModified always stashes the COALESCE'd
+                    // value (real ISO timestamp OR `LAST_MOD_NULL_SENTINEL`)
+                    // so the keyset works uniformly for NULL and
+                    // non-NULL rows — Review Round 1 HIGH #2 fix.
+                    deleted_at: Some(
+                        last.last_modified_at
+                            .clone()
+                            .unwrap_or_else(|| "0001-01-01T00:00:00Z".to_string()),
+                    ),
+                    seq: None,
+                    rank: None,
+                },
+                PageSort::MostLinked => Cursor {
+                    id: last.id.clone(),
+                    position: disc,
+                    deleted_at: None,
+                    seq: Some(last.inbound_link_count),
+                    rank: None,
+                },
+                PageSort::MostContent => Cursor {
+                    id: last.id.clone(),
+                    position: disc,
+                    deleted_at: None,
+                    seq: Some(last.child_block_count),
+                    rank: None,
+                },
+                PageSort::Default => Cursor {
+                    id: last.id.clone(),
+                    position: disc,
+                    deleted_at: None,
+                    seq: None,
+                    rank: None,
+                },
+            };
+            cursor.encode()
+        })
+    } else {
+        None
+    }
+    .transpose()?;
+    Ok(PageResponse {
+        items: rows,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
+/// Tauri command: paginated page list with per-page metadata columns
+/// (last-modified timestamp, inbound link count, descendant count,
+/// has-property bitmask) and a richer sort taxonomy than `list_pages`.
+///
+/// Frontend wires this from `PageBrowser` when the `densityV1` flag is
+/// on; the flag-off path continues to use `list_blocks(blockType='page')`.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn list_pages_with_metadata(
+    pool: State<'_, ReadPool>,
+    filter: ListPagesWithMetadataFilter,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
+    list_pages_with_metadata_inner(&pool.0, filter, cursor, limit)
         .await
         .map_err(sanitize_internal_error)
 }

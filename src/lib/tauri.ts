@@ -22,6 +22,8 @@ export type {
   MoveResponse,
   PageHeading,
   PageResponse,
+  PageSort,
+  PageWithMetadataRow,
   PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
@@ -64,6 +66,8 @@ import type {
   MoveResponse,
   PageHeading,
   PageResponse,
+  PageSort,
+  PageWithMetadataRow,
   PartitionedSearchResponse,
   PropertyDefinition,
   PurgeResponse,
@@ -474,6 +478,41 @@ export async function listJournalPagesInRange(params: {
 }): Promise<BlockRow[]> {
   return unwrap(
     await commands.listJournalPagesInRange(params.startDate, params.endDate, params.spaceId),
+  )
+}
+
+/**
+ * PEND-56 — paginated page list with per-page metadata columns:
+ * `last_modified_at`, `inbound_link_count`, `child_block_count`, and a
+ * `has_property_flags` bitmask (bit 0 tags / 1 todo / 2 scheduled / 3 due).
+ *
+ * Sibling of {@link listBlocks} (which serves the existing flat-row Pages
+ * view). This wrapper is what `PageBrowser` calls when the
+ * `pageBrowser.densityV1` flag is on.
+ *
+ * Sort modes that need server-derived sort keys (`recently-modified`,
+ * `most-linked`, `biggest`) cursor-paginate via the new keysets. The
+ * frontend-only `recent` (per-device visit history) and `created`
+ * (ULID DESC) modes reuse the `ulid` SQL ordering and re-sort in JS.
+ */
+export async function listPagesWithMetadata(params: {
+  sort?: PageSort | undefined
+  spaceId: string
+  cursor?: string | undefined
+  limit?: SafeLimit | undefined
+}): Promise<PageResponse<PageWithMetadataRow>> {
+  return unwrap(
+    await commands.listPagesWithMetadata(
+      // No frontend-side default — the Rust `#[default] Alphabetical`
+      // attribute on `PageSort` is the single source of truth. Sending
+      // an explicit value here would silently drift if the backend
+      // default ever changes (Review Round 1 — UX MEDIUM #5).
+      { sort: params.sort ?? null, spaceId: params.spaceId } as Parameters<
+        typeof commands.listPagesWithMetadata
+      >[0],
+      params.cursor ?? null,
+      params.limit ?? null,
+    ),
   )
 }
 

@@ -103,4 +103,116 @@ describe('usePageBrowserSort', () => {
     // Output is a different reference.
     expect(sorted).not.toBe(pages)
   })
+
+  // ── PEND-56 — 4 new sort modes ──────────────────────────────────────
+
+  it('sortPages with "default" option sorts by ULID ascending (raw backend order)', () => {
+    localStorage.setItem('page-browser-sort', 'default')
+    const { result } = renderHook(() => usePageBrowserSort())
+    const pages = [
+      makePage({ id: '01ZZZZ', content: 'Z' }),
+      makePage({ id: '01AAAA', content: 'A' }),
+    ]
+    const sorted = result.current.sortPages(pages)
+    expect(sorted.map((p) => p.id)).toEqual(['01AAAA', '01ZZZZ'])
+  })
+
+  it('sortPages with "recently-modified" reads the lastModifiedAt field DESC', () => {
+    localStorage.setItem('page-browser-sort', 'recently-modified')
+    const { result } = renderHook(() => usePageBrowserSort())
+    const pages = [
+      // Metadata-row shape (camelCase) — only metadata rows expose
+      // lastModifiedAt; BlockRow callers fall back to alphabetical.
+      makeMetaRow('P1', 'A', { lastModifiedAt: '2026-01-01T00:00:00Z' }),
+      makeMetaRow('P2', 'B', { lastModifiedAt: '2026-05-01T00:00:00Z' }),
+      makeMetaRow('P3', 'C', { lastModifiedAt: '2026-03-01T00:00:00Z' }),
+    ]
+    const sorted = result.current.sortPages(pages)
+    expect(sorted.map((p) => p.id)).toEqual(['P2', 'P3', 'P1'])
+  })
+
+  it('sortPages with "most-linked" reads inboundLinkCount DESC, alphabetical tiebreaker', () => {
+    localStorage.setItem('page-browser-sort', 'most-linked')
+    const { result } = renderHook(() => usePageBrowserSort())
+    const pages = [
+      makeMetaRow('P1', 'Bravo', { inboundLinkCount: 5 }),
+      makeMetaRow('P2', 'Alpha', { inboundLinkCount: 5 }),
+      makeMetaRow('P3', 'Delta', { inboundLinkCount: 10 }),
+    ]
+    const sorted = result.current.sortPages(pages)
+    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P2', 'P1'])
+  })
+
+  it('sortPages with "most-content" reads childBlockCount DESC, alphabetical tiebreaker', () => {
+    localStorage.setItem('page-browser-sort', 'most-content')
+    const { result } = renderHook(() => usePageBrowserSort())
+    const pages = [
+      makeMetaRow('P1', 'Bravo', { childBlockCount: 50 }),
+      makeMetaRow('P2', 'Alpha', { childBlockCount: 50 }),
+      makeMetaRow('P3', 'Delta', { childBlockCount: 100 }),
+    ]
+    const sorted = result.current.sortPages(pages)
+    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P2', 'P1'])
+  })
+
+  it('metadata sort falls back to alphabetical when rows are BlockRow (no metadata)', () => {
+    // The flag-off code path uses BlockRow (no lastModifiedAt). The
+    // sort must not crash — falls through to alphabetical.
+    localStorage.setItem('page-browser-sort', 'recently-modified')
+    const { result } = renderHook(() => usePageBrowserSort())
+    const pages = [
+      makePage({ id: 'P1', content: 'Bravo' }),
+      makePage({ id: 'P2', content: 'Alpha' }),
+    ]
+    const sorted = result.current.sortPages(pages)
+    expect(sorted.map((p) => p.content)).toEqual(['Alpha', 'Bravo'])
+  })
+
+  it('parser accepts all 7 sort options', () => {
+    const allSorts = [
+      'alphabetical',
+      'recent',
+      'created',
+      'recently-modified',
+      'most-linked',
+      'most-content',
+      'default',
+    ] as const
+    for (const sort of allSorts) {
+      localStorage.setItem('page-browser-sort', sort)
+      const { result, unmount } = renderHook(() => usePageBrowserSort())
+      expect(result.current.sortOption).toBe(sort)
+      unmount()
+    }
+  })
 })
+
+// Minimal metadata-row factory for the new sort tests. The
+// PageWithMetadataRow shape is camelCase; the sortPages discriminator
+// looks for `lastModifiedAt` to detect it. The returned object is cast
+// to the type the production wrapper would produce, via the import.
+import type { PageWithMetadataRow } from '../../lib/tauri'
+
+function makeMetaRow(
+  id: string,
+  content: string,
+  meta: { lastModifiedAt?: string; inboundLinkCount?: number; childBlockCount?: number } = {},
+): PageWithMetadataRow {
+  return {
+    id,
+    blockType: 'page',
+    content,
+    parentId: null,
+    position: null,
+    deletedAt: null,
+    todoState: null,
+    priority: null,
+    dueDate: null,
+    scheduledDate: null,
+    pageId: id,
+    lastModifiedAt: meta.lastModifiedAt ?? '2026-01-01T00:00:00Z',
+    inboundLinkCount: meta.inboundLinkCount ?? 0,
+    childBlockCount: meta.childBlockCount ?? 0,
+    flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+  }
+}

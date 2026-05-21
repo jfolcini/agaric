@@ -719,6 +719,15 @@ export const commands = {
 	 *  in `space_id`.  Delegates to [`load_page_subtree_inner`].
 	 */
 	loadPageSubtree: (rootBlockId: string, spaceId: string) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("load_page_subtree", { rootBlockId, spaceId })),
+	/**
+	 *  Tauri command: paginated page list with per-page metadata columns
+	 *  (last-modified timestamp, inbound link count, descendant count,
+	 *  has-property bitmask) and a richer sort taxonomy than `list_pages`.
+	 *
+	 *  Frontend wires this from `PageBrowser` when the `densityV1` flag is
+	 *  on; the flag-off path continues to use `list_blocks(blockType='page')`.
+	 */
+	listPagesWithMetadata: (filter: ListPagesWithMetadataFilter, cursor: string | null, limit: number | null) => typedError<PageResponse<PageWithMetadataRow>, AppError>(__TAURI_INVOKE("list_pages_with_metadata", { filter, cursor, limit })),
 };
 
 /* Types */
@@ -1229,6 +1238,12 @@ export type LinkMetadata = {
 	not_found?: boolean,
 };
 
+/**  Filter / sort bundle for [`list_pages_with_metadata`]. */
+export type ListPagesWithMetadataFilter = {
+	sort?: PageSort,
+	spaceId: string,
+};
+
 /**  One log file's name + contents returned by [`read_logs_for_report`]. */
 export type LogFileEntry = {
 	name: string,
@@ -1343,6 +1358,23 @@ export type PageLink = {
 };
 
 /**
+ *  Boolean facts about a page's contents (Review Round 1: replaces a
+ *  `has_property_flags: i64` bitmask). Each field maps 1:1 to an
+ *  `EXISTS` subquery in the metadata SELECT. Adding a new flag is
+ *  purely additive — new `bool` column, no consumer surprises.
+ */
+export type PagePropertyFlags = {
+	/**  Page itself carries a `block_tags` row. */
+	hasTags: boolean,
+	/**  At least one descendant has a non-NULL `todo_state`. */
+	hasTodo: boolean,
+	/**  At least one descendant has a non-NULL `scheduled_date`. */
+	hasScheduled: boolean,
+	/**  At least one descendant has a non-NULL `due_date`. */
+	hasDue: boolean,
+};
+
+/**
  *  Paginated response.
  *
  *  `total_count` is `Option<i64>` because cursor pagination does not in
@@ -1371,6 +1403,78 @@ export type PageResponse<T> = {
 	 *  `total_count` directly without having to check for an absent key.
 	 */
 	total_count: number | null,
+};
+
+/**
+ *  Sort mode for [`list_pages_with_metadata_inner`].
+ *
+ *  These are the server-derived sort modes the IPC exposes. The
+ *  frontend may layer two additional sorts that don't go over the wire:
+ *
+ *    - `recent` — per-device visit history (sourced from `getRecentPages()`).
+ *    - `created` — ULID DESC (just `Default` reversed in JS).
+ *
+ *  Both reuse the `Default` SQL ordering and re-sort the loaded page
+ *  client-side.
+ */
+export type PageSort =
+/**  Title ascending, case-insensitive. Default for "browse my pages". */
+"alphabetical" |
+/**  Last-modified timestamp (max op_log.created_at) DESC. */
+"recently-modified" |
+/**  Inbound-link count DESC (page + descendant link targets). */
+"most-linked" |
+/**  Descendant-block count DESC. */
+"most-content" |
+/**
+ *  Default backend ordering — block id ASC. Useful for debugging
+ *  and as the wire shape for the frontend-only `recent` / `created`
+ *  sorts that re-sort client-side.
+ */
+"default";
+
+/**
+ *  Row returned by [`list_pages_with_metadata_inner`].
+ *
+ *  Carries every `BlockRow` column verbatim so the frontend can read
+ *  `id`, `content`, etc. via the same accessors. Four extra metadata
+ *  columns drive the new sort modes + density badges.
+ */
+export type PageWithMetadataRow = {
+	id: string,
+	blockType: string,
+	content: string | null,
+	parentId: string | null,
+	position: number | null,
+	deletedAt: string | null,
+	todoState: string | null,
+	priority: string | null,
+	dueDate: string | null,
+	scheduledDate: string | null,
+	pageId: string | null,
+	/**
+	 *  max(`op_log.created_at`) over the page itself. None if the
+	 *  page has no op-log entries (which should never happen — every
+	 *  active page has at least its own creation row — but the column
+	 *  is `Option` to absorb edge cases like manually-imported rows
+	 *  without a synthesised op-log entry).
+	 */
+	lastModifiedAt: string | null,
+	/**
+	 *  COUNT of `block_links` targeting this page or any of its
+	 *  descendants. Always emitted (zero for un-linked pages).
+	 */
+	inboundLinkCount: number,
+	/**
+	 *  COUNT of non-deleted descendants (blocks where `page_id = id`,
+	 *  excluding the page itself). Always emitted.
+	 */
+	childBlockCount: number,
+	/**
+	 *  Typed flag struct (Review Round 1: replaces the prior
+	 *  `has_property_flags: i64` bitmask — see [`PagePropertyFlags`]).
+	 */
+	flags: PagePropertyFlags,
 };
 
 /**

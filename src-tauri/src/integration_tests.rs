@@ -856,6 +856,11 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
     delete_block_inner(&pool, DEV, &mat, ids[1].clone())
         .await
         .unwrap();
+    // Without this drain the trash assertion at the bottom races the
+    // second delete's RebuildBlockTagRefsCache / soft-delete fanout —
+    // TRY 1 sees `trash.items.len() == 0` and nextest masks it with a
+    // pass-on-retry. Mirror the settle after the first delete above.
+    settle_bg_tasks(&mat).await;
 
     assign_all_to_test_space(&pool).await;
     let live = list_blocks_inner(
