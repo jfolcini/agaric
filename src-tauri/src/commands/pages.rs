@@ -1609,6 +1609,246 @@ fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(),
     }
 }
 
+/// Sentinel substituted for NULL `last_modified_at` in the
+/// `RecentlyModified` keyset (Review Round 1 HIGH #2 fix). A string
+/// that sorts BEFORE any plausible ISO timestamp in DESC order so the
+/// keyset comparison works uniformly for NULL and non-NULL rows;
+/// `'0001-...'` is the smallest, sorted last in DESC.
+const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
+
+/// Heterogeneous bind value for the runtime-composed
+/// `list_pages_with_metadata_inner` query. The IPC composes the SQL
+/// per sort mode and binds parameters in order; this enum exists so
+/// the per-mode bind list can mix `&str` (space_id, content cursor)
+/// and `i64` (counts, limits) without per-arm `.bind()` chains.
+enum SqlBind<'a> {
+    Str(&'a str),
+    OwnedStr(String),
+    I64(i64),
+}
+
+impl<'a> SqlBind<'a> {
+    /// Bind this value onto a `sqlx::query_as::<…>` chain. Helper to
+    /// keep the binding loop in `list_pages_with_metadata_inner` a
+    /// one-liner per parameter.
+    fn bind_to<'q, O>(
+        self,
+        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>
+    where
+        'a: 'q,
+    {
+        match self {
+            SqlBind::Str(s) => q.bind(s),
+            SqlBind::OwnedStr(s) => q.bind(s),
+            SqlBind::I64(i) => q.bind(i),
+        }
+    }
+}
+
+/// Per-sort descriptor extracted from the body of
+/// `list_pages_with_metadata_inner`. Collapses what used to be a
+/// 5-arm match with ~250 lines of near-duplicate SQL composition into
+/// a small lookup table; each arm of `keyset_for` is one of these
+/// variants and the IPC consumes the descriptor via a single shared
+/// `apply` method.
+///
+/// **Bind contract:** every variant assumes `?1 = filter.space_id`.
+/// SQL fragments emitted here use `?2 .. ?N` for the remaining slots;
+/// the composer asserts the bind count matches the placeholder count.
+///
+/// **Why an enum rather than a `struct` with fn pointers / closures?**
+/// The five sort modes have three distinct keyset shapes (string-ASC,
+/// string-DESC-with-null-sentinel, i64-DESC) plus a degenerate "id
+/// only" mode. A flat struct couldn't model the `RecentlyModified`
+/// null-sentinel slot without optional fields that the other variants
+/// would have to leave `None`; modelling each shape explicitly keeps
+/// the bind-position arithmetic readable and the exhaustiveness check
+/// honest.
+enum SortKeyset {
+    /// `(key_expr, id) ASC` keyset. Cursor stashes the last row's key
+    /// in the `deleted_at` slot (string). Used by `Alphabetical`.
+    StringAsc {
+        /// SQL expression for the sort key (e.g.
+        /// `COALESCE(b.content,'') COLLATE NOCASE`). Composed verbatim
+        /// into the keyset predicate and ORDER BY.
+        key_expr: &'static str,
+    },
+    /// `(key_expr, id) DESC` keyset where `key_expr` references a
+    /// trailing NULL-sentinel bind slot (`?S`). The composer
+    /// substitutes the runtime bind position into the placeholder.
+    /// Used by `RecentlyModified`.
+    StringDescNullCoalesced {
+        /// SQL template with `{S}` as the sentinel bind placeholder.
+        /// E.g. `COALESCE((SELECT MAX(created_at) FROM op_log WHERE
+        /// block_id = b.id), ?{S})`. The composer substitutes `{S}`
+        /// with the actual bind position.
+        key_expr_template: &'static str,
+        /// String written to the sentinel slot at runtime.
+        null_sentinel: &'static str,
+    },
+    /// `(key_expr, id) DESC` keyset over an i64-typed column. Cursor
+    /// stashes the last row's count in the `seq` slot. Used by
+    /// `MostLinked` and `MostContent` — both now read from
+    /// `pages_cache` (materialised by the materializer) so the
+    /// expression is a column reference, not a subquery.
+    I64Desc {
+        /// SQL expression for the sort key. After PEND-56b this is
+        /// `pc.inbound_link_count` or `pc.child_block_count` — a
+        /// materialised column reached via the LEFT JOIN to
+        /// `pages_cache pc`.
+        key_expr: &'static str,
+    },
+    /// `b.id ASC` only. No extra sort-key slot. Used by `Default`.
+    IdOnly,
+}
+
+/// Map a [`PageSort`] to its [`SortKeyset`] descriptor.
+fn keyset_for(sort: PageSort) -> SortKeyset {
+    match sort {
+        PageSort::Alphabetical => SortKeyset::StringAsc {
+            key_expr: "COALESCE(b.content,'') COLLATE NOCASE",
+        },
+        PageSort::RecentlyModified => SortKeyset::StringDescNullCoalesced {
+            key_expr_template:
+                "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
+            null_sentinel: LAST_MOD_NULL_SENTINEL,
+        },
+        // PEND-56b: read from the materialised `pages_cache` column
+        // instead of the per-row `COUNT(DISTINCT bl.source_id) FROM
+        // block_links` correlated subquery. The materializer keeps
+        // `pc.inbound_link_count` byte-identical to the canonical
+        // SELECT on every block-lifecycle op; see
+        // `pages_cache_count_parity` for the guarding test.
+        PageSort::MostLinked => SortKeyset::I64Desc {
+            key_expr: "COALESCE(pc.inbound_link_count, 0)",
+        },
+        // PEND-56b: see above; reads `pc.child_block_count` via the
+        // same LEFT JOIN.
+        PageSort::MostContent => SortKeyset::I64Desc {
+            key_expr: "COALESCE(pc.child_block_count, 0)",
+        },
+        PageSort::Default => SortKeyset::IdOnly,
+    }
+}
+
+/// Append the keyset WHERE clause and ORDER BY for this descriptor.
+/// Returns the bind values (in order) that the caller must append to
+/// the `query_as` chain after the leading `?1 = space_id`.
+///
+/// `cursor` is the decoded keyset position from the prior page (None
+/// for first-page requests). `limit_plus_one` is the LIMIT bind value
+/// (probe-for-more pattern).
+///
+/// **Bind position arithmetic:** the leading bind is `?1` (space_id),
+/// and this function appends binds at positions `?2 .. ?N` in the
+/// order returned. Each variant computes the LIMIT placeholder
+/// position from the trailing bind count so the SQL stays
+/// self-consistent.
+impl SortKeyset {
+    fn apply<'a>(
+        self,
+        sql: &mut String,
+        cursor: Option<&'a Cursor>,
+        limit_plus_one: i64,
+    ) -> Vec<SqlBind<'a>> {
+        let mut binds: Vec<SqlBind<'a>> = Vec::new();
+        match (self, cursor) {
+            // ── StringAsc: (key, id) ASC ──────────────────────────
+            (SortKeyset::StringAsc { key_expr }, Some(c)) => {
+                let last_key = c.deleted_at.clone().unwrap_or_default();
+                // Binds: ?2=last_key, ?3=last_id, ?4=limit.
+                sql.push_str(&format!(
+                    " AND ( {key_expr} > ?2 \
+                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
+                       ORDER BY {key_expr} ASC, b.id ASC \
+                       LIMIT ?4"
+                ));
+                binds.push(SqlBind::OwnedStr(last_key));
+                binds.push(SqlBind::Str(c.id.as_str()));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            (SortKeyset::StringAsc { key_expr }, None) => {
+                // Binds: ?2=limit.
+                sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?2"));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            // ── StringDescNullCoalesced: (key, id) DESC + sentinel ─
+            (
+                SortKeyset::StringDescNullCoalesced {
+                    key_expr_template,
+                    null_sentinel,
+                },
+                Some(c),
+            ) => {
+                let last_key = c
+                    .deleted_at
+                    .clone()
+                    .unwrap_or_else(|| null_sentinel.to_string());
+                // Sentinel lives at ?5; cursor binds are ?2=last_key,
+                // ?3=last_id, ?4=limit. The template references the
+                // sentinel via `{S}` so we substitute the literal
+                // bind position before pushing.
+                let key_expr = key_expr_template.replace("{S}", "5");
+                sql.push_str(&format!(
+                    " AND ( {key_expr} < ?2 \
+                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
+                       ORDER BY {key_expr} DESC, b.id ASC \
+                       LIMIT ?4"
+                ));
+                binds.push(SqlBind::OwnedStr(last_key));
+                binds.push(SqlBind::Str(c.id.as_str()));
+                binds.push(SqlBind::I64(limit_plus_one));
+                binds.push(SqlBind::Str(null_sentinel));
+            }
+            (
+                SortKeyset::StringDescNullCoalesced {
+                    key_expr_template,
+                    null_sentinel,
+                },
+                None,
+            ) => {
+                // Sentinel at ?2; limit at ?3.
+                let key_expr = key_expr_template.replace("{S}", "2");
+                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?3"));
+                binds.push(SqlBind::Str(null_sentinel));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            // ── I64Desc: (key, id) DESC over an i64 column ────────
+            (SortKeyset::I64Desc { key_expr }, Some(c)) => {
+                let last_count = c.seq.unwrap_or(0);
+                // Binds: ?2=last_count, ?3=last_id, ?4=limit.
+                sql.push_str(&format!(
+                    " AND ( {key_expr} < ?2 \
+                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
+                       ORDER BY {key_expr} DESC, b.id ASC LIMIT ?4"
+                ));
+                binds.push(SqlBind::I64(last_count));
+                binds.push(SqlBind::Str(c.id.as_str()));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            (SortKeyset::I64Desc { key_expr }, None) => {
+                // Binds: ?2=limit.
+                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?2"));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            // ── IdOnly: id ASC only (Default sort) ────────────────
+            (SortKeyset::IdOnly, Some(c)) => {
+                // Binds: ?2=last_id, ?3=limit.
+                sql.push_str(" AND b.id > ?2 ORDER BY b.id ASC LIMIT ?3");
+                binds.push(SqlBind::Str(c.id.as_str()));
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+            (SortKeyset::IdOnly, None) => {
+                // Binds: ?2=limit.
+                sql.push_str(" ORDER BY b.id ASC LIMIT ?2");
+                binds.push(SqlBind::I64(limit_plus_one));
+            }
+        }
+        binds
+    }
+}
+
 /// Inner implementation of `list_pages_with_metadata`. Cursor-paginated
 /// page enumeration with metadata columns; sort mode chosen via
 /// [`PageSort`].
@@ -1622,6 +1862,24 @@ fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(),
 /// rejected with `AppError::Validation("RequiresRefresh: …")` so the
 /// frontend can render a "Sort changed — refresh to continue" toast
 /// (PEND-56 acceptance criterion #3).
+///
+/// **PEND-56b — materialised counts:** `inbound_link_count` and
+/// `child_block_count` are read from `pages_cache.{inbound_link_count,
+/// child_block_count}` via a LEFT JOIN, NOT computed per-row via the
+/// `COUNT(DISTINCT …) FROM block_links` / `COUNT(*) FROM blocks`
+/// correlated subqueries the prior implementation used. The
+/// materializer keeps `pages_cache` rows byte-identical to the
+/// canonical SELECT on every CreateBlock / EditBlock / DeleteBlock /
+/// RestoreBlock / PurgeBlock op; see `materializer::tests::
+/// pages_cache_count_parity` for the guarding integration test.
+///
+/// **Defensive contract:** the JOIN is LEFT and the columns are
+/// COALESCE'd to 0. The materializer guarantees a `pages_cache` row
+/// for every live page (`apply_create_block_via_loro` for block_type
+/// = 'page' INSERTs the row), so a missing row indicates a
+/// materializer bug. The COALESCE keeps the IPC alive while the bug
+/// is investigated — the parity tests should catch the underlying
+/// drift before users see a stale `0`.
 #[instrument(skip(pool), err)]
 pub async fn list_pages_with_metadata_inner(
     pool: &SqlitePool,
@@ -1645,17 +1903,19 @@ pub async fn list_pages_with_metadata_inner(
     }
     let limit_plus_one = req.limit + 1; // probe-for-more pattern
 
-    // SELECT shape — the 4 metadata aggregates as correlated subqueries.
-    // Each subquery hits a covered index:
+    // SELECT shape — the two count aggregates (inbound_link_count,
+    // child_block_count) are now reads from the materialised
+    // `pages_cache` columns (PEND-56b). The remaining metadata
+    // aggregates stay as correlated subqueries — out of scope for this
+    // refactor:
     //   - last_modified_at via `idx_op_log_block_id` (migration 0030)
-    //   - inbound_link_count via `idx_block_links_target` (migration 0001)
-    //   - child_block_count via `idx_blocks_page_id` (the page_id index)
-    //   - has_property_flags: 4 EXISTS short-circuits over the same
+    //   - has_property_flags: 4 EXISTS short-circuits over the
     //     `idx_blocks_page_id` + `idx_block_tags_block_id` indexes.
     //
-    // The SQL is hand-written rather than `sqlx::query_as!` because the
-    // ORDER BY / WHERE keyset depends on the runtime sort mode; the
-    // compile-time macro would force four near-identical query bodies.
+    // The SQL is hand-written rather than `sqlx::query_as!` because
+    // the ORDER BY / WHERE keyset depends on the runtime sort mode;
+    // the compile-time macro would force four near-identical query
+    // bodies.
     let mut sql = String::from(
         r#"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -1663,16 +1923,8 @@ pub async fn list_pages_with_metadata_inner(
                b.scheduled_date, b.page_id,
                (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
                    AS last_modified_at,
-               (SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl
-                   JOIN blocks descendant ON bl.target_id = descendant.id
-                   WHERE descendant.page_id = b.id
-                     AND descendant.deleted_at IS NULL)
-                   AS inbound_link_count,
-               (SELECT COUNT(*) FROM blocks descendant
-                   WHERE descendant.page_id = b.id
-                     AND descendant.deleted_at IS NULL
-                     AND descendant.id != b.id)
-                   AS child_block_count,
+               COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
+               COALESCE(pc.child_block_count, 0) AS child_block_count,
                EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
                EXISTS(SELECT 1 FROM blocks descendant
                        WHERE descendant.page_id = b.id
@@ -1687,6 +1939,7 @@ pub async fn list_pages_with_metadata_inner(
                          AND descendant.deleted_at IS NULL
                          AND descendant.due_date IS NOT NULL) AS has_due
            FROM blocks b
+           LEFT JOIN pages_cache pc ON pc.page_id = b.id
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.page_id IN (
@@ -1696,181 +1949,20 @@ pub async fn list_pages_with_metadata_inner(
         "#,
     );
 
-    // Cursor keyset + ORDER BY per sort mode. Bind parameters appended
-    // after the space_id (?1) base bind.
+    // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
+    // the SQL fragment, ORDER BY, and the per-mode bind list so the
+    // composition stays in one place rather than the 5 inline arms
+    // the prior implementation duplicated.
+    let keyset = keyset_for(filter.sort);
     let cursor_ref = req.after.as_ref();
-    match filter.sort {
-        PageSort::Alphabetical => {
-            // Keyset: (COALESCE(content,'') COLLATE NOCASE, id) ASC.
-            // Cursor stashes the last content in `deleted_at` slot;
-            // id is the tiebreaker.
-            if let Some(c) = cursor_ref {
-                let last_content = c.deleted_at.clone().unwrap_or_default();
-                sql.push_str(
-                    " AND ( COALESCE(b.content,'') COLLATE NOCASE > ?2 \
-                            OR (COALESCE(b.content,'') COLLATE NOCASE = ?2 AND b.id > ?3) ) \
-                       ORDER BY COALESCE(b.content,'') COLLATE NOCASE ASC, b.id ASC \
-                       LIMIT ?4",
-                );
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(&last_content)
-                    .bind(&c.id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            } else {
-                sql.push_str(
-                    " ORDER BY COALESCE(b.content,'') COLLATE NOCASE ASC, b.id ASC \
-                       LIMIT ?2",
-                );
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            }
-        }
-        PageSort::RecentlyModified => {
-            // Keyset: (COALESCE(last_modified_at, NULL_SENTINEL), id) DESC.
-            //
-            // Review Round 1 found that `(SELECT MAX(...)) < ?2` returns
-            // NULL → false for pages with no op_log entries, so they
-            // appeared on page 1 (NULLS LAST in the ORDER BY) but
-            // vanished on every cursor page after. Fix: COALESCE NULL to
-            // `LAST_MOD_NULL_SENTINEL` (a string that sorts BEFORE any
-            // plausible ISO timestamp in DESC order — `'0001-01-01'` is
-            // before any modern app date and is a valid ISO 8601 prefix).
-            // The keyset comparison then works uniformly for NULL and
-            // non-NULL rows; the sort still puts NULL-last (`'0001-...'`
-            // is the smallest, sorted last in DESC).
-            //
-            // The cursor stashes the COALESCE'd value (never a literal
-            // NULL) so the post-NULL pages keyset cleanly.
-            const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
-            if let Some(c) = cursor_ref {
-                let last_mod = c
-                    .deleted_at
-                    .clone()
-                    .unwrap_or_else(|| LAST_MOD_NULL_SENTINEL.to_string());
-                sql.push_str(
-                    " AND ( \
-                         COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) < ?2 \
-                         OR ( \
-                             COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) = ?2 \
-                             AND b.id > ?3 \
-                         ) \
-                       ) \
-                       ORDER BY \
-                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?5) DESC, \
-                           b.id ASC \
-                       LIMIT ?4",
-                );
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(&last_mod)
-                    .bind(&c.id)
-                    .bind(limit_plus_one)
-                    .bind(LAST_MOD_NULL_SENTINEL)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            } else {
-                sql.push_str(
-                    " ORDER BY \
-                           COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?2) DESC, \
-                           b.id ASC \
-                       LIMIT ?3",
-                );
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(LAST_MOD_NULL_SENTINEL)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            }
-        }
-        PageSort::MostLinked | PageSort::MostContent => {
-            // Keyset: (count, id) DESC. Cursor stashes the count in
-            // `seq` slot (i64). Both sort modes share the shape; the
-            // SELECT column differs.
-            let count_expr = match filter.sort {
-                PageSort::MostLinked => {
-                    // Same DISTINCT-source shape as the SELECT-list
-                    // version above so the keyset matches the displayed
-                    // count. Round 2 perf review measured the source-
-                    // deleted JOIN filter as ~30 ms overhead at 10k
-                    // pages — dropped here per the recommendation;
-                    // links from soft-deleted sources still contribute
-                    // to the count (their tombstones get hard-deleted
-                    // eventually by retention, so the contamination
-                    // window is bounded).
-                    "(SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                       JOIN blocks descendant ON bl.target_id = descendant.id \
-                       WHERE descendant.page_id = b.id \
-                         AND descendant.deleted_at IS NULL)"
-                }
-                PageSort::MostContent => {
-                    "(SELECT COUNT(*) FROM blocks descendant \
-                       WHERE descendant.page_id = b.id \
-                         AND descendant.deleted_at IS NULL \
-                         AND descendant.id != b.id)"
-                }
-                _ => unreachable!(),
-            };
-            if let Some(c) = cursor_ref {
-                let last_count = c.seq.unwrap_or(0);
-                let keyset = format!(
-                    " AND ( {count_expr} < ?2 \
-                            OR ({count_expr} = ?2 AND b.id > ?3) ) \
-                       ORDER BY {count_expr} DESC, b.id ASC LIMIT ?4"
-                );
-                sql.push_str(&keyset);
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(last_count)
-                    .bind(&c.id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            } else {
-                let ordering = format!(" ORDER BY {count_expr} DESC, b.id ASC LIMIT ?2");
-                sql.push_str(&ordering);
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            }
-        }
-        PageSort::Default => {
-            // Keyset: id ASC only. Cursor stashes last id in the
-            // standard `id` slot.
-            if let Some(c) = cursor_ref {
-                sql.push_str(" AND b.id > ?2 ORDER BY b.id ASC LIMIT ?3");
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(&c.id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            } else {
-                sql.push_str(" ORDER BY b.id ASC LIMIT ?2");
-                let rows = sqlx::query_as::<_, PageWithMetadataRow>(&sql)
-                    .bind(&filter.space_id)
-                    .bind(limit_plus_one)
-                    .fetch_all(pool)
-                    .await?;
-                return build_metadata_response(rows, req.limit, filter.sort);
-            }
-        }
+    let binds = keyset.apply(&mut sql, cursor_ref, limit_plus_one);
+
+    let mut query = sqlx::query_as::<_, PageWithMetadataRow>(&sql).bind(&filter.space_id);
+    for bind in binds {
+        query = bind.bind_to(query);
     }
+    let rows = query.fetch_all(pool).await?;
+    build_metadata_response(rows, req.limit, filter.sort)
 }
 
 /// Pack the fetched rows into a `PageResponse` with `has_more` + the
@@ -1909,7 +2001,7 @@ fn build_metadata_response(
                     deleted_at: Some(
                         last.last_modified_at
                             .clone()
-                            .unwrap_or_else(|| "0001-01-01T00:00:00Z".to_string()),
+                            .unwrap_or_else(|| LAST_MOD_NULL_SENTINEL.to_string()),
                     ),
                     seq: None,
                     rank: None,

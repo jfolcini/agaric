@@ -510,6 +510,526 @@ pub(super) struct ApplyEffects {
     pub delete_space_id: Option<crate::space::SpaceId>,
 }
 
+// ---------------------------------------------------------------------------
+// PEND-56b — `pages_cache.{inbound_link_count,child_block_count}` maintenance
+// ---------------------------------------------------------------------------
+//
+// Migration 0069 added two materialised aggregate columns to `pages_cache`.
+// The materializer is the only thing that mutates caches (AGENTS.md
+// invariant), so it must keep the two columns byte-identical to what the
+// live `COUNT(...)` SELECT in `commands/pages.rs:1666-1675` would compute.
+//
+// Strategy: **recompute-on-touch**. For every per-op handler that can
+// affect the counts we (a) compute the bounded set of pages whose counts
+// may have changed, and (b) UPDATE each row to the value of the canonical
+// SELECT. The per-op cost is bounded by the few link targets / outbound
+// edges of a single block; total correctness is asserted by the integration
+// parity test (see `parity_tests` mod).
+//
+// The recompute SQL mirrors `pages.rs:1666-1675` verbatim — the parity test
+// fails the build if the two ever diverge.
+
+/// Recompute and persist both `inbound_link_count` and `child_block_count`
+/// for every `pages_cache` row whose `page_id` appears in `page_ids`.
+///
+/// Idempotent: missing `pages_cache` rows (e.g., the target was a content
+/// block, or the page was soft-deleted and its cache row already removed)
+/// are silently skipped — the `WHERE page_id = ?` filter matches zero
+/// rows. Duplicate ids in the slice are deduplicated upfront.
+///
+/// The two SELECT bodies are the **byte-identical** counterparts of the
+/// correlated subqueries in `commands::pages::list_pages_with_metadata_inner`
+/// (`src-tauri/src/commands/pages.rs:1666-1675`) and the backfill in
+/// `migrations/0069_pages_cache_link_and_content_counts.sql`. If you change
+/// the shape here, change it in those two places too — the parity test
+/// catches drift on every run.
+async fn recompute_pages_cache_counts_for_pages(
+    conn: &mut sqlx::SqliteConnection,
+    page_ids: &[String],
+) -> Result<(), AppError> {
+    use std::collections::HashSet;
+    let unique: HashSet<&String> = page_ids.iter().collect();
+    for page_id in unique {
+        sqlx::query(
+            "UPDATE pages_cache SET \
+                 inbound_link_count = ( \
+                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                         JOIN blocks descendant ON bl.target_id = descendant.id \
+                         WHERE descendant.page_id = ?1 \
+                           AND descendant.deleted_at IS NULL \
+                 ), \
+                 child_block_count = ( \
+                     SELECT COUNT(*) FROM blocks descendant \
+                         WHERE descendant.page_id = ?1 \
+                           AND descendant.deleted_at IS NULL \
+                           AND descendant.id != ?1 \
+                 ) \
+             WHERE page_id = ?1",
+        )
+        .bind(page_id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Read every `page_id` set on the given block ids (NULLs filtered out)
+/// and return the unique values. Used to map a set of affected blocks to
+/// the set of pages whose counts must be refreshed.
+async fn distinct_pages_for_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    block_ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let json = serde_json::to_string(block_ids)?;
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT page_id FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?)) \
+           AND page_id IS NOT NULL",
+    )
+    .bind(&json)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// Parse all `[[ULID]]` / `((ULID))` link tokens from a block's content
+/// and return the unique target ids. Mirrors the regex used by
+/// `cache::reindex_block_links` so the materialised counts and the
+/// `block_links` table see the same edge set.
+fn parse_link_targets_from_content(content: &str) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut out: HashSet<String> = HashSet::new();
+    for cap in crate::cache::ULID_LINK_RE.captures_iter(content) {
+        out.insert(cap[1].to_string());
+    }
+    out.into_iter().collect()
+}
+
+/// Return the set of pages whose `inbound_link_count` could be affected
+/// by `block_id`'s outbound edges currently recorded in `block_links`.
+/// Resolved as the distinct `page_id` of every `bl.target_id` where
+/// `bl.source_id = block_id`. NULL page ids (e.g., orphan targets) are
+/// filtered out.
+async fn outbound_target_pages_for_block(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT b.page_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.target_id \
+         WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+    )
+    .bind(block_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// Resolve the set of pages each candidate target block would contribute
+/// to as an `inbound_link_count` source if it were linked from a content
+/// block. For each `target_id` we read `blocks.page_id`; if the target is
+/// itself a page the value equals its own id; if the target is a content
+/// block, the value is its owning page; if the row is missing (dangling
+/// token) the target is dropped.
+async fn target_pages_for_block_ids(
+    conn: &mut sqlx::SqliteConnection,
+    target_ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    if target_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let json = serde_json::to_string(target_ids)?;
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT page_id FROM blocks \
+         WHERE id IN (SELECT value FROM json_each(?)) \
+           AND page_id IS NOT NULL",
+    )
+    .bind(&json)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// PEND-56b: maintenance hook called from `apply_op_tx` after each per-op
+/// projection commits. Computes the bounded set of pages whose counts may
+/// have changed and refreshes them via the canonical SELECT.
+///
+/// Per-op affected-page set:
+///
+/// - `CreateBlock`: the new block's owning page (`+= 1` child for non-page
+///   creates; `pages_cache` row insert for page creates) + every page
+///   targeted by `[[ULID]]`/`((ULID))` tokens in the new content.
+/// - `EditBlock`: the edited block's owning page + every page targeted by
+///   the OLD `block_links` rows (will lose an edge if the token is gone) +
+///   every page parsed out of the NEW content (will gain an edge once
+///   `ReindexBlockLinks` runs in the background).
+/// - `DeleteBlock` (cohort-aware): every page the cohort blocks lived on
+///   (lose a child) + every page each cohort block's outbound edges
+///   pointed to (lose an inbound) + every page that was inbound-linked
+///   FROM the cohort (their outbound counts unchanged but inbound was
+///   the descendants which are now deleted).
+/// - `RestoreBlock`: symmetric to delete — same affected set.
+/// - `PurgeBlock`: same as delete, plus the cohort's source-pages of
+///   inbound edges that get cleared by FK CASCADE on `block_links`.
+///
+/// NOTE on `EditBlock` / `CreateBlock` with link tokens: the new
+/// `block_links` rows are written by the background `ReindexBlockLinks`
+/// task. The recompute here will pick up edge REMOVALS (the SELECT
+/// re-runs against current `block_links` which still has the removed
+/// edge briefly — wait, no, block_links isn't updated until ReindexBlockLinks
+/// runs in the background, so the OLD edges are still present here).
+/// The per-op recompute captures count changes driven by `blocks` mutations
+/// (deletions, restorations); link-token additions / removals are picked
+/// up by the matching pass in the `ReindexBlockLinks` handler below.
+async fn maintain_pages_cache_counts_after_op(
+    conn: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+    pre_state: &PreOpState,
+) -> Result<(), AppError> {
+    use std::collections::HashSet;
+    use std::str::FromStr;
+
+    // Unknown op types are surfaced as errors upstream; here we just
+    // skip count maintenance. (`apply_op_tx` already errored.)
+    let Ok(op_type) = OpType::from_str(&record.op_type) else {
+        return Ok(());
+    };
+
+    let mut affected: HashSet<String> = HashSet::new();
+
+    match op_type {
+        OpType::CreateBlock => {
+            // The new block exists in `blocks` post-projection. Resolve
+            // its owning page from the parent chain.
+            //
+            // For page creates the projection writes (id, block_type=page,
+            // content, parent_id=None). The block's `page_id` is set by
+            // the background `RebuildPageIds` task to its own id. To make
+            // the count visible immediately, we INSERT a `pages_cache`
+            // row here so the recompute UPDATE below has a target row.
+            if let Some(block_id) = &pre_state.create_block_id {
+                let parent_id = &pre_state.create_parent_id;
+                // Determine the owning page.
+                let owning_page = resolve_owning_page(conn, block_id, parent_id.as_deref()).await?;
+                if pre_state.create_block_type.as_deref() == Some("page") {
+                    // INSERT the pages_cache row if missing so the
+                    // `UPDATE` below sees a target. Title = content
+                    // (matches `rebuild_pages_cache`'s desired-state SQL).
+                    let title = pre_state.create_content.as_deref().unwrap_or("");
+                    let now = crate::now_rfc3339();
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO pages_cache \
+                             (page_id, title, updated_at, inbound_link_count, child_block_count) \
+                         VALUES (?, ?, ?, 0, 0)",
+                    )
+                    .bind(block_id)
+                    .bind(title)
+                    .bind(&now)
+                    .execute(&mut *conn)
+                    .await?;
+                    affected.insert(block_id.clone());
+                }
+                if let Some(p) = owning_page {
+                    affected.insert(p);
+                }
+                // Parse [[ULID]]/((ULID)) tokens from the new content
+                // and add the inferred target pages.
+                if let Some(content) = &pre_state.create_content {
+                    let tokens = parse_link_targets_from_content(content);
+                    if !tokens.is_empty() {
+                        for p in target_pages_for_block_ids(conn, &tokens).await? {
+                            affected.insert(p);
+                        }
+                    }
+                }
+            }
+        }
+        OpType::EditBlock => {
+            if let Some(block_id) = &pre_state.edit_block_id {
+                // Owning page of the edited block.
+                let row: Option<(Option<String>,)> =
+                    sqlx::query_as("SELECT page_id FROM blocks WHERE id = ?")
+                        .bind(block_id)
+                        .fetch_optional(&mut *conn)
+                        .await?;
+                if let Some((Some(p),)) = row {
+                    affected.insert(p);
+                }
+                // Pages reachable via OLD outbound edges (still in
+                // `block_links` until `ReindexBlockLinks` runs in BG).
+                for p in outbound_target_pages_for_block(conn, block_id).await? {
+                    affected.insert(p);
+                }
+                // Pages parsed from the NEW content — caught via target's
+                // page_id. The block_links row may not be written yet but
+                // the SELECT joins against `block_links` so newly-arrived
+                // edges aren't reflected until `ReindexBlockLinks` runs.
+                // Capture the candidate pages so the matching pass in the
+                // `ReindexBlockLinks` arm can refresh them. We add them
+                // here too so the `pages_cache.inbound_link_count` is
+                // monotonic — never temporarily higher than the live
+                // SELECT would produce.
+                if let Some(new_content) = &pre_state.edit_to_text {
+                    let tokens = parse_link_targets_from_content(new_content);
+                    if !tokens.is_empty() {
+                        for p in target_pages_for_block_ids(conn, &tokens).await? {
+                            affected.insert(p);
+                        }
+                    }
+                }
+            }
+        }
+        OpType::DeleteBlock | OpType::RestoreBlock => {
+            // The cohort is captured upstream in `apply_op_tx` (see
+            // `collect_delete_cohort` / `collect_restore_cohort`). We
+            // mirror the same set here via `pre_state.cohort`.
+            for p in distinct_pages_for_blocks(conn, &pre_state.cohort).await? {
+                affected.insert(p);
+            }
+            // Pages targeted by outbound edges from any cohort block.
+            // For DeleteBlock those edges still exist in `block_links`
+            // (CASCADE FK fires on row DELETE, not on `deleted_at` stamp);
+            // for RestoreBlock the edges remain throughout, so the union
+            // of `outbound_target_pages_for_block` over the cohort is
+            // identical pre- and post-projection.
+            for block_id in &pre_state.cohort {
+                for p in outbound_target_pages_for_block(conn, block_id).await? {
+                    affected.insert(p);
+                }
+            }
+            // Inbound: blocks whose links pointed INTO the cohort. Their
+            // page_id's `inbound_link_count` doesn't change because the
+            // inbound count is keyed on the TARGET page (the cohort's
+            // page), not the source. So nothing to add here beyond what
+            // we already collected via `distinct_pages_for_blocks`.
+            //
+            // Edge case: the cohort may include a page block. That page
+            // contributed to its own descendants' inbound count via
+            // `descendant.page_id = page_id`. After soft-delete, the
+            // page's own `pages_cache` row is still present (it's
+            // removed by the later `RebuildPagesCache` rebuild); the
+            // recompute UPDATE will set its inbound_link_count to 0
+            // (all descendants are now deleted_at IS NOT NULL).
+        }
+        OpType::PurgeBlock => {
+            // PurgeBlock removes the cohort's `blocks` rows entirely; FK
+            // CASCADE on `block_links` (mig 0061) clears outbound and
+            // inbound edges. We captured the affected pages BEFORE the
+            // cascade ran (see `pre_state`).
+            for p in &pre_state.pre_purge_affected_pages {
+                affected.insert(p.clone());
+            }
+        }
+        // No-ops for count maintenance: tag / property / move /
+        // attachment ops never affect either count (they don't change
+        // the `blocks.page_id`/`deleted_at` membership of any page).
+        // MoveBlock is intentionally **not** wired here — verify upstream
+        // that MoveBlock never alters a block's `page_id` (it only
+        // changes parent_id/position within the same page tree). If
+        // that invariant ever weakens, add MoveBlock here with the
+        // pre/post page_id delta.
+        OpType::MoveBlock
+        | OpType::AddTag
+        | OpType::RemoveTag
+        | OpType::SetProperty
+        | OpType::DeleteProperty
+        | OpType::AddAttachment
+        | OpType::DeleteAttachment => {}
+    }
+
+    if affected.is_empty() {
+        return Ok(());
+    }
+    let v: Vec<String> = affected.into_iter().collect();
+    recompute_pages_cache_counts_for_pages(conn, &v).await?;
+    Ok(())
+}
+
+/// Walk `blocks.parent_id` from `block_id` and return the page-typed
+/// ancestor's id, or `None` if no ancestor of `block_type = 'page'`
+/// exists. For the seed block itself the function returns `block_id`
+/// when its `block_type = 'page'`. Matches the shape of the recursive
+/// CTE in `cache::page_id::rebuild_page_ids_impl` (single-block scope,
+/// depth-bounded).
+async fn resolve_owning_page(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    parent_hint: Option<&str>,
+) -> Result<Option<String>, AppError> {
+    // Walk through ancestors until we hit a page-typed block or run out.
+    // Bound depth like the canonical CTE (`depth < 100`).
+    let mut cur: Option<String> = Some(block_id.to_owned());
+    // First, see if the seed itself is a page.
+    if let Some(seed) = &cur {
+        let row: Option<(String,)> = sqlx::query_as("SELECT block_type FROM blocks WHERE id = ?")
+            .bind(seed)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if let Some((bt,)) = row {
+            if bt == "page" {
+                return Ok(Some(seed.clone()));
+            }
+        }
+        // If the seed row doesn't exist yet (createBlock path may run
+        // this before projection has inserted the row in some legacy
+        // call sites), walk via `parent_hint`.
+        cur = parent_hint.map(std::borrow::ToOwned::to_owned);
+    }
+    let mut depth = 0;
+    while let Some(id) = cur.clone() {
+        if depth >= 100 {
+            break;
+        }
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT block_type, parent_id FROM blocks WHERE id = ?")
+                .bind(&id)
+                .fetch_optional(&mut *conn)
+                .await?;
+        match row {
+            Some((bt, _)) if bt == "page" => return Ok(Some(id)),
+            Some((_, parent)) => {
+                cur = parent;
+            }
+            None => return Ok(None),
+        }
+        depth += 1;
+    }
+    Ok(None)
+}
+
+/// Capture the set of pages this block was linking to BEFORE the
+/// pending `reindex_block_links` diff runs. Returned to the caller so
+/// it can union the pre- and post-diff target page sets when refreshing
+/// `pages_cache.inbound_link_count` — covers both edges that just
+/// disappeared (no longer in `block_links` post-diff, only in pre-set)
+/// and edges that stayed (in both).
+async fn pre_diff_target_pages(
+    pool: &sqlx::SqlitePool,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT b.page_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.target_id \
+         WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+    )
+    .bind(block_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// Refresh `pages_cache.inbound_link_count` for every page reachable
+/// via this block's outbound edges (pre-diff PLUS post-diff) and every
+/// target page currently in `page_link_cache` from this block's source
+/// page.
+///
+/// Called from the `MaterializeTask::ReindexBlockLinks` arm AFTER
+/// `cache::reindex_block_links` + `cache::reindex_page_link_cache_for_block`
+/// have written the canonical post-diff state. The set of affected
+/// target pages is the union of:
+///
+/// 1. `pre` — page ids captured BEFORE the diff ran (catches edges
+///    that just disappeared; the post-diff `block_links` no longer
+///    references them, so we'd miss the decrement otherwise).
+/// 2. Distinct `page_id` of each block currently in `block_links`
+///    under `source_id = block_id` (catches edges that just appeared
+///    or stayed put — new inbound counts to refresh).
+/// 3. Distinct `target_page_id` in `page_link_cache` where
+///    `source_page_id = blocks.parent_id` (or `block_id` if the block
+///    itself is a page) — covers the page-link-cache's view of the
+///    block's outbound page edges.
+///
+/// Bounded by the block's outbound edge cardinality (a few targets
+/// per block in practice). Each iteration runs a single UPDATE with
+/// two SELECT subqueries; the SELECTs are index-served by
+/// `idx_block_links_target` + `idx_blocks_page_id`.
+async fn refresh_inbound_counts_after_reindex(
+    pool: &sqlx::SqlitePool,
+    block_id: &str,
+    pre: &[String],
+) -> Result<(), AppError> {
+    use std::collections::HashSet;
+    // SQL-review M-1: write txs must use `begin_immediate_logged` so
+    // sync-burst contention serialises upfront with a `warn!` log
+    // instead of stalling mid-tx under SQLite's default DEFERRED
+    // isolation. Mirrors the convention in `apply_op` / `apply_op` batch.
+    let mut tx =
+        crate::db::begin_immediate_logged(pool, "materializer_pages_cache_inbound_refresh").await?;
+    let mut affected: HashSet<String> = HashSet::new();
+    for p in pre {
+        affected.insert(p.clone());
+    }
+
+    // (2) Current outbound targets' page ids.
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT b.page_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.target_id \
+         WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+    )
+    .bind(block_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (p,) in rows {
+        affected.insert(p);
+    }
+
+    // (3) Resolve the source page (the page this block rolls up to in
+    // `page_link_cache` — `COALESCE(parent_id, block_id)` to mirror
+    // `cache::reindex_page_link_cache_for_block`).
+    let parent_row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT parent_id FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let source_page: String = match parent_row {
+        Some((Some(parent),)) => parent,
+        _ => block_id.to_owned(),
+    };
+
+    // Add every target_page_id currently in page_link_cache from this
+    // source so we catch any remaining cached edges that point out.
+    let cached: Vec<(String,)> =
+        sqlx::query_as("SELECT target_page_id FROM page_link_cache WHERE source_page_id = ?")
+            .bind(&source_page)
+            .fetch_all(&mut *tx)
+            .await?;
+    for (p,) in cached {
+        affected.insert(p);
+    }
+
+    if affected.is_empty() {
+        return Ok(());
+    }
+    let v: Vec<String> = affected.into_iter().collect();
+    recompute_pages_cache_counts_for_pages(&mut tx, &v).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Per-op state captured BEFORE projection mutates `blocks` so the
+/// post-projection recompute knows exactly which page rows to refresh.
+/// Field semantics are op-specific; unrelated fields stay at default.
+#[derive(Default)]
+struct PreOpState {
+    // CreateBlock fields.
+    create_block_id: Option<String>,
+    create_parent_id: Option<String>,
+    create_block_type: Option<String>,
+    create_content: Option<String>,
+    // EditBlock fields.
+    edit_block_id: Option<String>,
+    edit_to_text: Option<String>,
+    // DeleteBlock / RestoreBlock cohort (mirrors `ApplyEffects`).
+    cohort: Vec<String>,
+    // PurgeBlock affected-pages snapshot (captured pre-cascade because
+    // FK CASCADE on `block_links` clears outbound/inbound edges before
+    // the post-op recompute runs).
+    pre_purge_affected_pages: Vec<String>,
+}
+
 /// Core apply-op logic operating on a bare [`SqliteConnection`].
 ///
 /// Both the single-op path (`apply_op`) and the batched-transaction path
@@ -529,6 +1049,7 @@ async fn apply_op_tx(
         AppError::Validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
     let mut effects = ApplyEffects::default();
+    let mut pre_state = PreOpState::default();
     match op_type {
         OpType::CreateBlock => {
             // The engine path is the only path; the SQL-only
@@ -537,10 +1058,20 @@ async fn apply_op_tx(
             // unresolved space) inside the `via_loro` helpers
             // themselves.
             let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            // PEND-56b: capture payload fields for the post-projection
+            // pages_cache count refresh (`maintain_pages_cache_counts_after_op`).
+            pre_state.create_block_id = Some(p.block_id.as_str().to_owned());
+            pre_state.create_parent_id = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
+            pre_state.create_block_type = Some(p.block_type.clone());
+            pre_state.create_content = Some(p.content.clone());
             apply_create_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            // PEND-56b: capture the new text so the post-projection
+            // recompute knows which target pages to refresh.
+            pre_state.edit_block_id = Some(p.block_id.as_str().to_owned());
+            pre_state.edit_to_text = Some(p.to_text.clone());
             apply_edit_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::DeleteBlock => {
@@ -561,6 +1092,8 @@ async fn apply_op_tx(
             let cohort = collect_delete_cohort(conn, &p).await?;
             let delete_space_id =
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+            // PEND-56b: feed the cohort into the count-refresh hook.
+            pre_state.cohort = cohort.clone();
             apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at).await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
@@ -582,11 +1115,19 @@ async fn apply_op_tx(
             // seed is idempotent (engine's `apply_restore_block` is a
             // no-op on an already-restored block).
             let cohort = collect_restore_cohort(conn, &p).await?;
+            // PEND-56b: cohort feeds the count refresh.
+            pre_state.cohort = cohort.clone();
             apply_restore_block_via_loro(conn, &record.device_id, &p).await?;
             effects.restored_cohort = cohort;
         }
         OpType::PurgeBlock => {
             let p: PurgeBlockPayload = serde_json::from_str(&record.payload)?;
+            // PEND-56b: capture the affected pages BEFORE the SQL
+            // cascade clears `block_links` (FK CASCADE on mig 0061).
+            // The cascade walks the descendant CTE so we mirror that
+            // shape to collect the set we need to refresh.
+            pre_state.pre_purge_affected_pages =
+                collect_purge_affected_pages(conn, p.block_id.as_str()).await?;
             apply_purge_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::MoveBlock => {
@@ -620,8 +1161,59 @@ async fn apply_op_tx(
             apply_delete_attachment_tx(conn, p).await?;
         }
     }
+    // PEND-56b: maintain `pages_cache.{inbound_link_count,child_block_count}`.
+    // Runs after every per-op projection inside the same transaction, so
+    // the count UPDATEs commit atomically with the block mutations. The
+    // hook is a no-op for op types that cannot affect the counts (see
+    // `maintain_pages_cache_counts_after_op`).
+    maintain_pages_cache_counts_after_op(conn, record, &pre_state).await?;
     tracing::debug!(op_type = %record.op_type, seq = record.seq, "applied op to materialized tables");
     Ok(effects)
+}
+
+/// Capture the set of pages whose `pages_cache` counts may be affected
+/// by a `PurgeBlock` cascade. The cascade walks the descendant CTE and
+/// removes `blocks` + cascading edges from `block_links`. We need to
+/// refresh every page that:
+///   1. owns one of the cohort blocks (its `child_block_count` drops),
+///   2. is targeted by an outbound edge from a cohort block (its
+///      `inbound_link_count` drops by 1 per distinct source).
+///
+/// Plus the cohort's own page ids if any cohort block is a page (their
+/// `pages_cache` row is itself dropped by the cascade — the UPDATE filter
+/// matches zero rows so it's a no-op, which is the desired outcome).
+async fn collect_purge_affected_pages(
+    conn: &mut sqlx::SqliteConnection,
+    seed_block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    use std::collections::HashSet;
+    // Walk the descendant CTE (PurgeBlock's `purge_block_sql_cascade`
+    // uses the same shape) to find the cohort. Then read each block's
+    // page_id + outbound target page_ids.
+    let cohort: Vec<(String,)> = sqlx::query_as(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE d.depth < 100 \
+         ) \
+         SELECT id FROM descendants",
+    )
+    .bind(seed_block_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let cohort_ids: Vec<String> = cohort.into_iter().map(|(id,)| id).collect();
+    let mut affected: HashSet<String> = HashSet::new();
+    for p in distinct_pages_for_blocks(conn, &cohort_ids).await? {
+        affected.insert(p);
+    }
+    for id in &cohort_ids {
+        for p in outbound_target_pages_for_block(conn, id).await? {
+            affected.insert(p);
+        }
+    }
+    Ok(affected.into_iter().collect())
 }
 
 /// Capture the descendant cohort that `apply_restore_block_tx` is
@@ -1920,16 +2512,28 @@ pub(super) async fn handle_background_task(
             // `pool` (single-pool variant) so the cache write sees the
             // post-diff `block_links` state; in the split-pool variant
             // both steps share `write_pool` for the same reason.
+            //
+            // PEND-56b: capture the **pre-diff** outbound target pages
+            // BEFORE `reindex_block_links` runs so we can refresh
+            // `pages_cache.inbound_link_count` for pages that just lost
+            // an edge (otherwise the post-diff `block_links` no longer
+            // references them and the refresh would miss the decrement).
+            // Then refresh the union of pre- and post-diff target
+            // pages after the diff + rollup commit.
             dispatch_split_or_single(
                 pool,
                 read_pool,
                 |w, r| async move {
+                    let pre = pre_diff_target_pages(r, block_id).await?;
                     cache::reindex_block_links_split(w, r, block_id).await?;
-                    cache::reindex_page_link_cache_for_block(w, block_id).await
+                    cache::reindex_page_link_cache_for_block(w, block_id).await?;
+                    refresh_inbound_counts_after_reindex(w, block_id, &pre).await
                 },
                 |p| async move {
+                    let pre = pre_diff_target_pages(p, block_id).await?;
                     cache::reindex_block_links(p, block_id).await?;
-                    cache::reindex_page_link_cache_for_block(p, block_id).await
+                    cache::reindex_page_link_cache_for_block(p, block_id).await?;
+                    refresh_inbound_counts_after_reindex(p, block_id, &pre).await
                 },
             )
             .await

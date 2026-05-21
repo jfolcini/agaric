@@ -962,8 +962,8 @@ mod tests_m82 {
     ///
     /// Takes an existing `Materializer` rather than constructing a new
     /// one — building a second `Materializer` over the same writer pool
-    /// spawns another set of background consumers (foreground + background
-    /// + cache-init + metrics tasks) that compete for the writer pool's
+    /// spawns another set of background consumers (foreground, background,
+    /// cache-init, metrics tasks) that compete for the writer pool's
     /// `max_connections(2)` budget. Under nextest's parallel test load the
     /// extra contention pushed `journal_for_date_finds_existing_page_via_either_pool`
     /// past sqlx's 30 s pool-acquire deadline → `Database(PoolTimedOut)`

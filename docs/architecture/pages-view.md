@@ -10,7 +10,7 @@ The Pages view is the canonical "show me every page in this space" surface. It f
 | Plan | Scope | Status |
 |------|-------|--------|
 | **PEND-56** | Density rows + 7 sort modes + per-page metadata IPC (`list_pages_with_metadata`) | Phase 1 (backend) + Phase 2 (frontend hooks) shipped. Phase 3 (orchestrator wiring + `DensityRow`) shipping now. |
-| **PEND-56b** | Materialise `inbound_link_count` + `child_block_count` into `pages_cache`; extract a `SortKeyset` descriptor | Pending — fixes the scaling cliff PEND-56's correlated-subquery aggregates hit around 20k pages. |
+| **PEND-56b** | Materialise `inbound_link_count` + `child_block_count` into `pages_cache`; extract a `SortKeyset` descriptor | Shipped — closes the 20k-page scaling cliff (335 ms → 34 ms). See "Materialised counts" below. |
 | **PEND-57** | Multi-select + bulk ops + saved views (filter+sort+density snapshots in localStorage) | Pending — consumes the density-row primitive and the metadata columns this plan adds. |
 | **PEND-58** | Compound filters (`tag:` / `path:` / `has-property:` / `last-edited:` / Pages-only `orphan:` / `stub:` / `has-no-inbound-links:`) sharing the parser with Search | Phase 1 (`FilterPrimitive` extraction) shipped; builds on PEND-56's cursor + metadata columns. |
 
@@ -75,8 +75,8 @@ Seven options. Three carried forward from the legacy three-mode list; four added
 | `recent` | Frontend-only (`getRecentPages()` MRU lookup) | `default` | n/a — local visit history layered on top | Per-device localStorage history; never goes over the wire. |
 | `created` | Frontend-only (ULID DESC) | `default` | `id` | Treats the ULID timestamp prefix as creation order. |
 | `recently-modified` | Wire — backend `last_modified_at` DESC | `recently-modified` | `last_modified_at` (in `Cursor.deleted_at` slot) + `id` tiebreaker | NULL `last_modified_at` is COALESCE'd to `'0001-01-01'` so the keyset works uniformly across NULL + non-NULL rows. |
-| `most-linked` | Wire — backend `inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Hits the scaling cliff at ~20k pages today (see PEND-56b). |
-| `most-content` | Wire — backend `child_block_count` DESC | `most-content` | `child_block_count` (in `Cursor.seq` slot) + `id` tiebreaker | Same cliff shape as `most-linked`. |
+| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column (PEND-56b). ~34 ms at 20k pages. |
+| `most-content` | Wire — `pages_cache.child_block_count` DESC | `most-content` | `child_block_count` (in `Cursor.seq` slot) + `id` tiebreaker | Same materialised path as `most-linked`. |
 | `default` | Wire — backend `id ASC` | `default` | `id` | Power-user / debug; also the wire shape the three frontend-only sorts reuse. |
 
 Cursor implications:
@@ -132,22 +132,28 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 | `child_block_count` | `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
 
-### Known scaling cliff at ~20k pages
+### Materialised counts (PEND-56b)
 
-The `most-linked` and `most-content` sorts run the `block_links → blocks` JOIN + `COUNT(DISTINCT)` aggregation **for every page in the space** before the LIMIT + keyset filter applies — SQLite can't push the keyset under the aggregate. Measured latencies (warm steady-state, sqlite 3.50.6):
+`inbound_link_count` and `child_block_count` are **materialised into `pages_cache`** (migration `0069`). The IPC's SELECT LEFT JOINs `pages_cache` and reads the cached columns directly; the previous per-page `COUNT(DISTINCT bl.source_id)` / `COUNT(*)` correlated subqueries are gone.
 
-- `most-linked` first-page: 95 ms @ 10k pages, **335 ms @ 20k pages**.
-- `most-content` first-page: 8 ms @ 10k pages, ~20 ms @ 20k pages.
+The materializer maintains both columns byte-identically to the canonical SELECT on every `CreateBlock` / `EditBlock` / `DeleteBlock` / `RestoreBlock` / `PurgeBlock` op (helpers live in `src-tauri/src/materializer/handlers.rs`). The implementation uses **recompute-on-touch** (re-run the canonical aggregate for affected pages on each op) rather than delta-math — per-op cost is bounded by the affected-page count (typically 1-5) and the parity test catches any drift.
 
-The fix is **PEND-56b**: materialise `inbound_link_count` and `child_block_count` into `pages_cache`, maintained by the materializer on every block / link lifecycle event. The aggregate sort then becomes `ORDER BY pages_cache.inbound_link_count DESC LIMIT 50` — index-served, no per-row aggregation. The same plan extracts a `SortKeyset` descriptor so each `match filter.sort` arm in `list_pages_with_metadata_inner` becomes a one-line lookup, and the materialised-vs-computed swap is a one-line change per mode.
+The parity contract is non-negotiable: `src-tauri/src/materializer/tests.rs::pages_cache_count_parity` exercises a mixed 10-page fixture through every materializer op and asserts `pages_cache.{inbound,child}_block_count == SELECT COUNT(...) FROM block_links / blocks` after each step.
 
-See `pending/PEND-56b-pages-materialization-followup.md` for the migration shape, the materializer maintenance hooks, and the regression test (1000-page fixture: `materialised == computed` on every block-lifecycle path).
+**Measured latencies** (warm steady-state, sqlite 3.50.6, 20k pages, 100k links):
 
-`last_modified_at` is not materialised in PEND-56b — it is served cheaply by `idx_op_log_block_id` and does not hit the same cliff at the measured scales.
+| Sort | Before (correlated subqueries) | After (materialised columns) |
+|---|---|---|
+| `most-linked` first-page | 335 ms | **34 ms** (10× win) |
+| `most-content` first-page | ~20 ms | sub-10 ms |
+
+`EXPLAIN QUERY PLAN` for `most-linked` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is sub-50 ms and an index would add maintenance cost on every link change without paying for itself).
+
+`last_modified_at` is not materialised — it is served cheaply by `idx_op_log_block_id` and does not hit the same cliff at the measured scales.
 
 ## Open extension points
 
 - **PEND-57** (multi-select + bulk ops + saved views). Consumes `<DensityRow>` (extends it with a select checkbox), reads the metadata columns to drive bulk operations, and snapshots the `{filterSet, sort, density}` triple to `agaric:pages:savedViews:v1` in localStorage. Backend graduation of saved views is out of scope; the per-device storage shape is the long-term contract.
-- **PEND-58** (compound filters). Extends `ListPagesWithMetadataFilter` with a `Vec<FilterPrimitive>` field, shared with `SearchFilter` via the `FilterPrimitive` enum + per-surface `Projection` trait. The Pages-only `orphan:` / `stub:` / `has-no-inbound-links:` primitives ride the same metadata columns this plan introduces; PEND-56b's materialised counts are the prerequisite for those facets at scale.
+- **PEND-58** (compound filters). Extends `ListPagesWithMetadataFilter` with a `Vec<FilterPrimitive>` field, shared with `SearchFilter` via the `FilterPrimitive` enum + per-surface `Projection` trait. The Pages-only `orphan:` / `stub:` / `has-no-inbound-links:` primitives ride the same metadata columns this plan introduces; the materialised counts shipped in PEND-56b are the prerequisite for those facets at scale.
 - **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in PEND-57 / PEND-58.
 - **Subtree-aware `last_modified_at`** — deferred per PEND-56 open question #1. The recursive-CTE variant is a single SELECT change once benchmark evidence justifies it.
