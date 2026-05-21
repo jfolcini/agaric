@@ -50,6 +50,32 @@ async function openKebabMenu(page: import('@playwright/test').Page) {
 // is imported above. See the JSDoc there for the split-keystroke rationale
 // (it avoids the slash-extension's 200ms single-match auto-execute timer).
 
+/**
+ * Open the template picker via the /template slash command and return its
+ * dialog locator.
+ *
+ * The previous pattern — type `template`, then click the TEMPLATE
+ * suggestion-list item — was unreliable under parallel load. The slash
+ * extension's `AUTO_EXEC_DELAY_MS = 200ms` single-match auto-execute timer
+ * (see `src/editor/extensions/slash-command.ts:23`) reliably fires for a
+ * single-match query like `template`. The auto-exec dispatches
+ * `ctx.openTemplatePicker()` (`src/hooks/useBlockSlashCommands/`) which
+ * opens the dialog AND closes the suggestion popover. The follow-up
+ * `.click({ force: true })` on the suggestion item then races the timer:
+ * if auto-exec fires first the click target is gone, Playwright keeps
+ * waiting for the locator until the 30s test timeout. force:true does NOT
+ * bypass the locator's existence wait — only the actionability check.
+ *
+ * Mirroring real user behaviour (and the existing auto-exec UX) is more
+ * deterministic — wait for the dialog the timer opens, no click race.
+ */
+async function openTemplatePicker(page: import('@playwright/test').Page) {
+  await typeSlashCommand(page, 'template')
+  const dialog = activeRoleDialog(page)
+  await expect(dialog).toBeVisible({ timeout: 5000 })
+  return dialog
+}
+
 // ===========================================================================
 // 1. Save a page as template
 // ===========================================================================
@@ -144,23 +170,7 @@ test.describe('Template picker via slash command', () => {
   test('/template slash command shows template picker dialog', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    // Select the TEMPLATE item from the slash menu.
-    // Under heavy parallel load, the React scheduler can detach the
-    // suggestion item between the visibility check and the click
-    // (it's inside a Radix popover that React may unmount + remount
-    // during concurrent commits). force:true bypasses the stability
-    // check so the click fires before the DOM swap (TEST-3 flake,
-    // session 679 verification pass).
-    const templateItem = list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' })
-    await expect(templateItem).toBeVisible()
-    await templateItem.click({ force: true })
-
-    // TEST-1b: The template picker sets role="dialog"; scope to the active
-    // one so a stale dialog from a previous test can't resolve-to-N.
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
 
     // Should show the seeded template
     await expect(dialog.getByText('Meeting Notes Template')).toBeVisible()
@@ -169,12 +179,7 @@ test.describe('Template picker via slash command', () => {
   test('template picker shows preview text', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
 
     // Should show "Select a template" heading
     await expect(dialog.getByText('Select a template')).toBeVisible()
@@ -186,17 +191,7 @@ test.describe('Template picker via slash command', () => {
   test('Escape closes the template picker', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    // Match the force-click pattern at line 158: under parallel load
-    // the Radix popover can detach + remount the suggestion item between
-    // visibility check and click, repeatedly retrying until timeout.
-    await list
-      .locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' })
-      .click({ force: true })
-
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
 
     await page.keyboard.press('Escape')
 
@@ -216,14 +211,9 @@ test.describe('Apply template', () => {
   test('selecting template inserts blocks and shows success toast', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    // Select TEMPLATE from slash menu
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
+    const dialog = await openTemplatePicker(page)
 
     // Pick the Meeting Notes Template from the picker
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
     await dialog.getByText('Meeting Notes Template').click()
 
     // Success toast
@@ -233,11 +223,7 @@ test.describe('Apply template', () => {
   test('applied template blocks appear on the page', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
     await dialog.getByText('Meeting Notes Template').click()
 
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
@@ -264,11 +250,7 @@ test.describe('Template variable expansion', () => {
   test('<% today %> is expanded to current date', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
 
@@ -287,11 +269,7 @@ test.describe('Template variable expansion', () => {
   test('<% page title %> is expanded to target page title', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
-    const list = await typeSlashCommand(page, 'template')
-
-    await list.locator('[data-testid="suggestion-item"]', { hasText: 'TEMPLATE' }).click()
-    const dialog = activeRoleDialog(page)
-    await expect(dialog).toBeVisible()
+    const dialog = await openTemplatePicker(page)
     await dialog.getByText('Meeting Notes Template').click()
     await expect(page.getByText('Template inserted')).toBeVisible({ timeout: 5000 })
 
