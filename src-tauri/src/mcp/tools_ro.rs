@@ -959,9 +959,19 @@ mod tests_m82 {
     /// FEAT-3p5 helper for the M-82 split-pool fixture: create a single
     /// space on the *writer* pool (the reader pool is `query_only = ON`
     /// and would reject the CreateBlock op).
-    async fn mk_space(write_pool: &SqlitePool, name: &str) -> String {
-        let materializer = Materializer::new(write_pool.clone());
-        create_space_inner(write_pool, DEV, &materializer, name.into(), None)
+    ///
+    /// Takes an existing `Materializer` rather than constructing a new
+    /// one — building a second `Materializer` over the same writer pool
+    /// spawns another set of background consumers (foreground + background
+    /// + cache-init + metrics tasks) that compete for the writer pool's
+    /// `max_connections(2)` budget. Under nextest's parallel test load the
+    /// extra contention pushed `journal_for_date_finds_existing_page_via_either_pool`
+    /// past sqlx's 30 s pool-acquire deadline → `Database(PoolTimedOut)`
+    /// on every retry. Reusing the test-scoped materializer halves the
+    /// background-task count and keeps the first `call_tool` inside its
+    /// budget.
+    async fn mk_space(write_pool: &SqlitePool, materializer: &Materializer, name: &str) -> String {
+        create_space_inner(write_pool, DEV, materializer, name.into(), None)
             .await
             .expect("create_space must succeed")
             .into_string()
@@ -996,10 +1006,10 @@ mod tests_m82 {
     /// journal page.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn journal_for_date_uses_writer_pool_for_missing_date() {
-        let (tools, _mat, _dir) = mk_split_tools().await;
+        let (tools, mat, _dir) = mk_split_tools().await;
         // FEAT-3p5: seed a space on the writer pool so the lookup has
         // somewhere to scope under.
-        let space = mk_space(&tools.writer_pool, "Personal").await;
+        let space = mk_space(&tools.writer_pool, &mat, "Personal").await;
 
         // No journal page exists for this date — the call must hit the
         // create branch, which is the path that previously failed on the
@@ -1044,7 +1054,7 @@ mod tests_m82 {
     async fn journal_for_date_finds_existing_page_via_either_pool() {
         // ── Wiring A — production split via init_pools() ──────────────
         let (tools_split, mat_split, _dir_split) = mk_split_tools().await;
-        let space_split = mk_space(&tools_split.writer_pool, "Personal").await;
+        let space_split = mk_space(&tools_split.writer_pool, &mat_split, "Personal").await;
         let date = "2025-09-10";
 
         // First call creates the page via the writer pool.
@@ -1099,7 +1109,7 @@ mod tests_m82 {
         let combined_path = combined_dir.path().join("m82-combined.db");
         let combined = crate::db::init_pool(&combined_path).await.unwrap();
         let mat_combined = Materializer::new(combined.clone());
-        let space_combined = mk_space(&combined, "Personal").await;
+        let space_combined = mk_space(&combined, &mat_combined, "Personal").await;
         create_page_in_space_inner(
             &combined,
             DEV,
