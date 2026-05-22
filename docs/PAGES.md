@@ -1,0 +1,110 @@
+<!-- markdownlint-disable MD060 -->
+# Pages view
+
+The Pages view is the canonical "show me every page in this space" surface — a flat, sortable, paginated list of every page in the active space. Beyond the name-substring search box at the top, it offers a row of **compound filter chips** that narrow the list *server-side*: instead of scrolling, you stack a few filters ("orphaned pages edited long ago") and the backend returns exactly that set.
+
+This page documents the user-facing filter vocabulary. For the data flow behind the list (the metadata IPC, the seven sort modes, density rows), see [Pages view architecture](architecture/pages-view.md). The same filter primitives power the find-across-pages surface — see [Search](SEARCH.md) for the query-input side of that story.
+
+## Overview
+
+Compound filters live in a chip row above the page list. You add a chip from the **Add filter** popover, and each chip narrows the result set. Chips combine with AND: every page in the result satisfies *every* applied chip. The filtering happens in SQL on the backend, so the count and the list stay correct regardless of how many pages the space holds — you are not filtering a partial, already-paginated page in the browser.
+
+The chip set is split into two groups, mirroring the popover:
+
+- **Filters** (shared with Search): Tag, Page path, Has property, the Last-edited buckets, and Priority. A `tag:` chip applied here returns the same pages whose blocks the Search surface returns for the same tag — the two surfaces share one filter engine and never drift.
+- **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, and No inbound links.
+
+### Enabling the chip row
+
+The compound-filter chip row ships behind a localStorage flag and is **off by default** today. It rides the same `list_pages_with_metadata` code path as density rows, so it is gated by the same flag:
+
+- **Flag key:** `pageBrowser.densityV1`
+- **Value:** the bare string `'true'` (anything else, or a missing key, falls back to off — the value is *not* JSON-wrapped).
+
+A power user flips it from the devtools console:
+
+```js
+localStorage.setItem('pageBrowser.densityV1', 'true')
+```
+
+then reloads. The flag is read once when the Pages view mounts (it is not reactive), so a reload is required after flipping it. To turn it back off, `localStorage.removeItem('pageBrowser.densityV1')` and reload. The flag-read lives in `src/components/PageBrowser.tsx`; the chip row itself is `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
+
+With the flag off, the Pages view behaves exactly as it always has: the name-substring box filters the loaded list and there is no chip row.
+
+## Filter facets
+
+Each facet adds one chip. The chip label is the human-readable summary shown on the chip; the popover offers the same labels under **Add filter**. The facet semantics are defined in `src-tauri/src/filters/primitive.rs`.
+
+### Pages-only facets
+
+These describe a page's connectivity or emptiness — concepts that only exist at the page level, so they are absent from Search.
+
+| Chip label | What it matches | Example |
+|---|---|---|
+| **Orphan** | A page with **no inbound links *and* no outbound links** — nothing points to it and it points to nothing. Prime archival / merge candidate. | Surface every disconnected page so you can decide whether to keep, merge, or archive it. |
+| **Stub** | An empty-but-named page: **zero non-title descendants**. The page exists and has a title, but no content blocks under it. | Find the named placeholders you created and never filled in. |
+| **No inbound links** | A page with **zero backlinks** — nobody has linked *to* it yet (its own outbound links don't count). The looser sibling of Orphan. | Discover pages that exist in the space but aren't woven into your link graph. |
+
+Two notes on the link counting, so the results aren't surprising:
+
+- **"Inbound" means page *or any descendant*.** The inbound count counts block-reference and `[[page]]` edges that target the page block **or any non-deleted block under it**. So a page is *not* "No inbound links" if some deep content block inside it is referenced from elsewhere, even when the page title itself has no backlinks. This is deliberate: it matches the inbound-link count rendered on each density row and the "Most linked" sort, so clicking **No inbound links** after seeing "0 inbound" on a row always agrees with the surfaced number.
+- **Orphan is a strict superset of No inbound links.** Every Orphan page also has no inbound links. Applying both chips at once is redundant but not an error — the backend evaluates the redundancy away. The chips both render; the result is identical to Orphan alone.
+
+### Last-edited buckets
+
+The Last-edited facet adds one of four recency buckets. The buckets are **rolling** windows measured back from now (not calendar-aligned weeks/months), driven by each page's most recent edit:
+
+| Chip label | What it matches |
+|---|---|
+| **Edited today** | Edited within the last day (a rolling 1-day window). |
+| **Edited this week** | Edited within the last 7 days (rolling). |
+| **Edited this month** | Edited within the last 30 days (rolling). |
+| **Edited long ago** | *Not* edited in the last 30 days — the stale tail. |
+
+Because the buckets are rolling, "this week" is the last seven days, not "since Monday." A page that crosses a bucket boundary between two views moves to the correct bucket on the next load with no manual refresh — the boundary is computed at query time.
+
+### Shared facets
+
+These behave identically here and on the Search surface. The same chip applied on both surfaces returns intersecting result sets.
+
+| Chip label | What it matches | Example |
+|---|---|---|
+| **Tag** | Pages carrying the given tag. Enter a tag name or id in the inline editor. Multiple Tag chips AND together. | A **Tag** chip for `urgent` returns every page tagged urgent. |
+| **Page path** | Pages whose **title** matches a glob, case-insensitively. `*` is any run of characters, `?` is one. A bare word with no wildcard becomes a substring match. | `Projects/*` matches every page whose title starts with `Projects/`; `Alpha` matches any title containing "Alpha". |
+| **Has property** | Pages carrying a property key — optionally constrained to a value. Leave the value blank to match "has the key at all"; fill it in to match "key equals value." | **Has property** with key `status` matches any page with a `status` property; key `status`, value `draft` matches only `status = draft`. |
+| **Priority** | Pages with the given priority. The popover offers `A`, `B`, `C`. | **Priority** `A` returns the A-priority pages. |
+
+The popover also defines an implicit **Space** filter — you are always scoped to the active space — but it is never offered as a chip because it is always on.
+
+## Worked examples
+
+### Find stale, unconnected pages
+
+The classic grooming sweep: pages nothing links to that also haven't been touched in a while — strong candidates for archival.
+
+1. Open **Add filter** and, under **Pages**, click **Orphan**.
+2. Open **Add filter** again and, under **Filters**, click the **Edited long ago** bucket.
+
+The list now shows only pages that are both disconnected and stale. The two chips read **Orphan** and **Edited long ago**; removing either widens the set (drop **Orphan** to see *all* stale pages; drop **Edited long ago** to see *all* orphans).
+
+### What changed this week
+
+A quick "where did I leave off" view:
+
+1. Open **Add filter** and click the **Edited this week** bucket under **Filters**.
+
+The list collapses to pages edited in the last seven days. Pair it with the **Recently modified** sort (from the sort control) to read them newest-first.
+
+## Combining filters
+
+- **Chips AND together.** Every applied chip must be satisfied. There is no OR between chips — to widen a set, remove a chip rather than add one.
+- **Filters compose with sort and the search box.** The chip set, the sort order, and the name-substring box are orthogonal axes. You can apply **Orphan**, sort by **Most linked**, and type a substring in the search box all at once; each narrows or orders independently.
+- **Soft cap of 8 chips.** Most grooming flows use two to four chips. The Add-filter popover starts warning at eight ("Many filters can slow the view") because each extra clause adds query cost. This is a *soft* warning, not a hard limit — you can keep adding chips past eight; the UI just stops being confident the view will stay fast. The cap constant is `MAX_PAGE_FILTERS` in `src/components/PageBrowser/PageBrowserFilterRow.tsx`.
+- **Remove a chip** with its `×`; the result set widens and the list refetches from the top.
+
+## Notes and limitations
+
+- **The search box is separate from the chips.** The name-substring box at the top of the Pages view filters by page title only — it is *not* a query input. Typing `tag:urgent` into it searches for a page literally titled "tag:urgent" (almost always zero results), because the Pages input does **not** parse inline filter syntax. Structured filters live exclusively in chips. This is a deliberate split: the Pages box is a "jump to the page I half-remember the name of" affordance, and mixing prefix syntax into it would force users to memorise prefixes for a view that should be obvious at first paint. (The Search surface *does* parse inline `tag:` / `path:` syntax, because Search has a real query that composes naturally with filters — see [Search](SEARCH.md).)
+- **An invalid filter returns zero results, not an error.** A Tag chip pointing at a tag that no longer exists simply matches nothing; the chip still renders with the value you gave it, so you can remove it. The backend does not round-trip every chip for validation.
+- **Empty state.** With no chips applied, the Pages view shows every page in the active space, sorted by your current sort and paginated normally — identical to the no-filter view. An empty chip row renders just the **Add filter** button.
+- **Pages-only facets vs Search.** The Orphan / Stub / No-inbound-links facets are never offered on the Search surface; conversely, Search-only facets (regex, case-sensitive, whole-word, snippet) are never offered here. The per-surface allow-list that enforces this is documented alongside the filter primitives in `src-tauri/src/filters/primitive.rs`.

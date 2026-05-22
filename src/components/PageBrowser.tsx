@@ -687,8 +687,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       {/* PEND-58 Phase 3 — compound-filter chip-row. Only on the
           metadata IPC path; the legacy `listBlocks` path has no
-          server-side filter support. */}
-      {flagOn && pages.length > 0 && (
+          server-side filter support. Rendered when there are pages to
+          groom OR filters are already active — the latter keeps the
+          chips reachable when a filter narrows the result set to zero,
+          so the user can always remove the filter that emptied the view. */}
+      {flagOn && (pages.length > 0 || filters.length > 0) && (
         <PageBrowserFilterRow
           filters={filters}
           onAddFilter={handleAddFilter}

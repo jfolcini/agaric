@@ -32,7 +32,7 @@ Think Logseq or Notion, but:
 
 ### Blocks and Pages
 
-Everything is a block. A **page** is just a special block type that acts as a container. Blocks nest via parent-child relationships with drag-and-drop reordering. Pages support namespaced titles (`work/meetings/standup`) with breadcrumb navigation.
+Everything is a block. A **page** is just a special block type that acts as a container. Blocks nest via parent-child relationships with drag-and-drop reordering. Pages support namespaced titles (`work/meetings/standup`) with breadcrumb navigation. The Pages view adds density rows, seven sort modes, and compound grooming filters (orphan / stub / no-inbound-links / last-edited + shared tag / path / property / priority) — see [`docs/PAGES.md`](docs/PAGES.md).
 
 ### Journal
 
