@@ -300,6 +300,61 @@ export const HANDLERS: Record<string, Handler> = {
       })
     }
 
+    // PEND-58 Phase 3 — compound filters. AND-compose the requested
+    // `filter.filters` primitives over the metadata rows. The mock honours
+    // the primitives whose facts it can derive from the in-memory store;
+    // the rest are documented as approximations / no-ops below. Frontend
+    // integration tests drive these.
+    //
+    // Implemented exactly:
+    //   - `Stub`              → childBlockCount === 0. The backend's
+    //                           threshold is "< 3 descendants"; the mock's
+    //                           seeds use 0-vs-many, so `=== 0` is the
+    //                           faithful approximation at the granularity
+    //                           tests exercise (documented divergence:
+    //                           the mock does NOT admit 1-2 child pages).
+    //   - `HasNoInboundLinks` → inboundLinkCount === 0. The mock always
+    //                           reports 0 inbound links (it doesn't model
+    //                           `block_links`), so this filter is a no-op
+    //                           pass-through — every page satisfies it.
+    //                           Documented approximation.
+    //   - `Orphan`            → inboundLinkCount === 0 AND no outbound
+    //                           links. The mock can't see outbound links
+    //                           either, so it approximates Orphan as
+    //                           "inboundLinkCount === 0" (== always true).
+    //                           Documented approximation; same caveat as
+    //                           HasNoInboundLinks.
+    //   - `Tag`               → the page carries the tag id in `blockTags`.
+    //   - `Priority`          → blocks.priority === the requested value.
+    // Any other primitive (PathGlob, HasProperty, LastEdited, Space,
+    // and all Search-only primitives) is treated as a permissive no-op in
+    // the mock — the backend is the source of truth for those; frontend
+    // tests that need them mock at the IPC boundary directly.
+    const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
+    const filtered = rows.filter((r) =>
+      filters.every((f) => {
+        switch (f['type'] as string) {
+          case 'Stub':
+            return r.childBlockCount === 0
+          case 'HasNoInboundLinks':
+            return r.inboundLinkCount === 0
+          case 'Orphan':
+            // Mock reports 0 inbound always and can't see outbound; the
+            // inbound check is the only fact it can assert.
+            return r.inboundLinkCount === 0
+          case 'Tag':
+            return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
+          case 'Priority':
+            return r.priority === (f['priority'] as string)
+          default:
+            // Unmodelled primitive — permissive pass-through.
+            return true
+        }
+      }),
+    )
+    rows.length = 0
+    rows.push(...filtered)
+
     // Sort.
     rows.sort((x, y) => {
       let primary = 0

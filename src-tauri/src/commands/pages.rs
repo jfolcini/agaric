@@ -12,6 +12,7 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
+use crate::filters::{FilterPrimitive, PagesProjection, Projection};
 use crate::import;
 use crate::import::ImportResult;
 use crate::materializer::Materializer;
@@ -1523,6 +1524,16 @@ pub struct ListPagesWithMetadataFilter {
     #[serde(default)]
     pub sort: PageSort,
     pub space_id: String,
+    /// PEND-58 Phase 3 — compound filter primitives applied server-side,
+    /// AND-joined into the WHERE before the keyset/ORDER BY/LIMIT. Empty
+    /// (the default) preserves the pre-PEND-58 "no filter" behaviour, so
+    /// existing callers and the flag-off path are unaffected. Each
+    /// primitive is gated against [`PagesProjection::allowed_keys`] and
+    /// rejected with [`AppError::Validation`] if it is not a Pages-surface
+    /// token (defence-in-depth — the frontend never sends Search-only
+    /// primitives, but the backend must not trust that).
+    #[serde(default)]
+    pub filters: Vec<FilterPrimitive>,
 }
 
 /// Boolean facts about a page's contents (Review Round 1: replaces a
@@ -1653,9 +1664,12 @@ impl<'a> SqlBind<'a> {
 /// variants and the IPC consumes the descriptor via a single shared
 /// `apply` method.
 ///
-/// **Bind contract:** every variant assumes `?1 = filter.space_id`.
-/// SQL fragments emitted here use `?2 .. ?N` for the remaining slots;
-/// the composer asserts the bind count matches the placeholder count.
+/// **Bind contract:** `?1 = filter.space_id` always. PEND-58 splices
+/// compound-filter clauses (with their own `?` binds) into the WHERE
+/// between space_id and the keyset; `SortKeyset::apply` therefore numbers
+/// its placeholders from a runtime `base` offset (`1 + filter_bind_count`)
+/// rather than the hardcoded `?2`. With no filters, `base = 1` reproduces
+/// the original `?2 .. ?N` numbering.
 ///
 /// **Why an enum rather than a `struct` with fn pointers / closures?**
 /// The five sort modes have three distinct keyset shapes (string-ASC,
@@ -1746,31 +1760,51 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
 /// position from the trailing bind count so the SQL stays
 /// self-consistent.
 impl SortKeyset {
+    /// Append the keyset predicate + ORDER BY + LIMIT and return the
+    /// keyset binds in order.
+    ///
+    /// **PEND-58 — `base` bind offset:** the keyset's placeholders used to
+    /// be hardcoded `?2 .. ?5` on the assumption that `?1 = space_id` was
+    /// the only bind before them. Phase 3 splices compound-filter clauses
+    /// (each with its own `?` binds) into the WHERE *between* the space_id
+    /// bind and the keyset. `base` is the highest placeholder position
+    /// already consumed (`1` for space_id plus the filter-bind count); the
+    /// keyset numbers its own placeholders from `base + 1` so SQLite's
+    /// positional binding stays aligned regardless of how many filter
+    /// binds preceded it. With no filters, `base = 1` reproduces the old
+    /// `?2 ..` numbering exactly.
     fn apply<'a>(
         self,
         sql: &mut String,
         cursor: Option<&'a Cursor>,
         limit_plus_one: i64,
+        base: usize,
     ) -> Vec<SqlBind<'a>> {
         let mut binds: Vec<SqlBind<'a>> = Vec::new();
+        // Placeholder positions, computed from the running `base`. Named
+        // for readability so the SQL templates read like the originals.
+        let p1 = base + 1;
+        let p2 = base + 2;
+        let p3 = base + 3;
+        let p4 = base + 4;
         match (self, cursor) {
             // ── StringAsc: (key, id) ASC ──────────────────────────
             (SortKeyset::StringAsc { key_expr }, Some(c)) => {
                 let last_key = c.deleted_at.clone().unwrap_or_default();
-                // Binds: ?2=last_key, ?3=last_id, ?4=limit.
+                // Binds: last_key, last_id, limit.
                 sql.push_str(&format!(
-                    " AND ( {key_expr} > ?2 \
-                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
+                    " AND ( {key_expr} > ?{p1} \
+                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
                        ORDER BY {key_expr} ASC, b.id ASC \
-                       LIMIT ?4"
+                       LIMIT ?{p3}"
                 ));
                 binds.push(SqlBind::OwnedStr(last_key));
                 binds.push(SqlBind::Str(c.id.as_str()));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             (SortKeyset::StringAsc { key_expr }, None) => {
-                // Binds: ?2=limit.
-                sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?2"));
+                // Binds: limit.
+                sql.push_str(&format!(" ORDER BY {key_expr} ASC, b.id ASC LIMIT ?{p1}"));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             // ── StringDescNullCoalesced: (key, id) DESC + sentinel ─
@@ -1785,16 +1819,16 @@ impl SortKeyset {
                     .deleted_at
                     .clone()
                     .unwrap_or_else(|| null_sentinel.to_string());
-                // Sentinel lives at ?5; cursor binds are ?2=last_key,
-                // ?3=last_id, ?4=limit. The template references the
+                // Sentinel lives at p4; cursor binds are p1=last_key,
+                // p2=last_id, p3=limit. The template references the
                 // sentinel via `{S}` so we substitute the literal
                 // bind position before pushing.
-                let key_expr = key_expr_template.replace("{S}", "5");
+                let key_expr = key_expr_template.replace("{S}", &p4.to_string());
                 sql.push_str(&format!(
-                    " AND ( {key_expr} < ?2 \
-                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
+                    " AND ( {key_expr} < ?{p1} \
+                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
                        ORDER BY {key_expr} DESC, b.id ASC \
-                       LIMIT ?4"
+                       LIMIT ?{p3}"
                 ));
                 binds.push(SqlBind::OwnedStr(last_key));
                 binds.push(SqlBind::Str(c.id.as_str()));
@@ -1808,45 +1842,134 @@ impl SortKeyset {
                 },
                 None,
             ) => {
-                // Sentinel at ?2; limit at ?3.
-                let key_expr = key_expr_template.replace("{S}", "2");
-                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?3"));
+                // Sentinel at p1; limit at p2.
+                let key_expr = key_expr_template.replace("{S}", &p1.to_string());
+                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p2}"));
                 binds.push(SqlBind::Str(null_sentinel));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             // ── I64Desc: (key, id) DESC over an i64 column ────────
             (SortKeyset::I64Desc { key_expr }, Some(c)) => {
                 let last_count = c.seq.unwrap_or(0);
-                // Binds: ?2=last_count, ?3=last_id, ?4=limit.
+                // Binds: last_count, last_id, limit.
                 sql.push_str(&format!(
-                    " AND ( {key_expr} < ?2 \
-                            OR ({key_expr} = ?2 AND b.id > ?3) ) \
-                       ORDER BY {key_expr} DESC, b.id ASC LIMIT ?4"
+                    " AND ( {key_expr} < ?{p1} \
+                            OR ({key_expr} = ?{p1} AND b.id > ?{p2}) ) \
+                       ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p3}"
                 ));
                 binds.push(SqlBind::I64(last_count));
                 binds.push(SqlBind::Str(c.id.as_str()));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             (SortKeyset::I64Desc { key_expr }, None) => {
-                // Binds: ?2=limit.
-                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?2"));
+                // Binds: limit.
+                sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p1}"));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             // ── IdOnly: id ASC only (Default sort) ────────────────
             (SortKeyset::IdOnly, Some(c)) => {
-                // Binds: ?2=last_id, ?3=limit.
-                sql.push_str(" AND b.id > ?2 ORDER BY b.id ASC LIMIT ?3");
+                // Binds: last_id, limit.
+                sql.push_str(&format!(" AND b.id > ?{p1} ORDER BY b.id ASC LIMIT ?{p2}"));
                 binds.push(SqlBind::Str(c.id.as_str()));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             (SortKeyset::IdOnly, None) => {
-                // Binds: ?2=limit.
-                sql.push_str(" ORDER BY b.id ASC LIMIT ?2");
+                // Binds: limit.
+                sql.push_str(&format!(" ORDER BY b.id ASC LIMIT ?{p1}"));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
         }
         binds
     }
+}
+
+/// PEND-58 Phase 3 — compile the compound-filter primitives for the Pages
+/// surface into a single AND-joined SQL fragment plus its ordered binds.
+///
+/// Returns `(sql_fragment, binds)` where `sql_fragment` is either empty
+/// (no filters) or a leading-` AND (...)`-style string ready to splice
+/// after the base WHERE and `binds` are the bind values in the SAME
+/// left-to-right order their `?` placeholders appear in the fragment.
+///
+/// Steps (mirrors PEND-58 §"Filter primitive contract" / §Performance):
+///
+/// 1. **Allowed-keys gate** — reject any primitive whose token is not in
+///    [`PagesProjection::allowed_keys`] with [`AppError::Validation`]
+///    (`InvalidFilter:` prefix). Defence-in-depth: the frontend never
+///    sends Search-only primitives, but the backend must not trust that.
+/// 2. **Cost-order** — sort by [`FilterPrimitive::cost_hint`] (stable, so
+///    equal-cost primitives keep their request order) so index-backed
+///    clauses run before full-scan ones, letting SQLite narrow the row
+///    set with the cheap clause's index first.
+/// 3. **Compile + AND-join** — each clause is `PagesProjection.compile`d
+///    into a `WhereClause`; the SQL fragments are AND-joined and the binds
+///    concatenated in the same order.
+fn compile_pages_filters(
+    filters: &[FilterPrimitive],
+) -> Result<(String, Vec<SqlBind<'static>>), AppError> {
+    if filters.is_empty() {
+        return Ok((String::new(), Vec::new()));
+    }
+
+    let allowed = PagesProjection::allowed_keys();
+    // Allowed-keys gate first — fail loudly before compiling anything.
+    for prim in filters {
+        let key = prim.allowed_key();
+        if !allowed.contains(key) {
+            return Err(AppError::Validation(format!(
+                "InvalidFilter: `{key}` is not a valid filter on the Pages surface"
+            )));
+        }
+    }
+
+    // Cost-order: stable sort by cost_hint keeps equal-cost primitives in
+    // their request order while floating index-backed clauses first.
+    let mut ordered: Vec<&FilterPrimitive> = filters.iter().collect();
+    ordered.sort_by_key(|p| p.cost_hint());
+
+    let proj = PagesProjection;
+    let mut clauses: Vec<String> = Vec::with_capacity(ordered.len());
+    let mut binds: Vec<SqlBind<'static>> = Vec::new();
+    // The projection emits anonymous `?` placeholders. The base SELECT
+    // already uses an explicit `?1` (space_id) and the keyset uses explicit
+    // `?N` numbers downstream — mixing explicit and anonymous placeholders
+    // makes SQLite's positional numbering ambiguous (a bare `?` is numbered
+    // relative to the largest number seen so far, which is brittle across
+    // the spliced statement). We therefore renumber each fragment's `?` to
+    // explicit positions starting at `?2` (right after `?1 = space_id`) so
+    // the placeholder numbers are unambiguous regardless of compose order.
+    let mut next_pos = 2; // ?1 is space_id
+    for prim in ordered {
+        let wc = proj.compile(prim);
+        // The allowed-keys gate above admits only Pages-surface tokens, so
+        // a compiled `unsupported()` clause here means the projection has a
+        // hole the gate did not catch — a programmer error, not user input.
+        debug_assert!(
+            !wc.is_unsupported(),
+            "Pages-admitted primitive compiled to UNSUPPORTED: {prim:?}"
+        );
+        // Substitute each anonymous `?` left-to-right with `?{next_pos}`.
+        let mut sql = String::with_capacity(wc.sql.len());
+        for ch in wc.sql.chars() {
+            if ch == '?' {
+                sql.push('?');
+                sql.push_str(&next_pos.to_string());
+                next_pos += 1;
+            } else {
+                sql.push(ch);
+            }
+        }
+        clauses.push(format!("({sql})"));
+        for b in wc.binds {
+            binds.push(match b {
+                crate::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
+                crate::filters::primitive::Bind::Int(i) => SqlBind::I64(i),
+            });
+        }
+    }
+
+    let fragment = format!(" AND {}", clauses.join(" AND "));
+    Ok((fragment, binds))
 }
 
 /// Inner implementation of `list_pages_with_metadata`. Cursor-paginated
@@ -1949,16 +2072,32 @@ pub async fn list_pages_with_metadata_inner(
         "#,
     );
 
+    // PEND-58 — splice the compound-filter WHERE clauses BEFORE the
+    // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions
+    // `?2 .. ?{1 + filter_bind_count}` (right after `?1 = space_id`); the
+    // keyset then numbers its own placeholders from `base` so SQLite's
+    // positional binding stays aligned. Gate + cost-order + AND-join all
+    // happen in `compile_pages_filters`.
+    let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
+    sql.push_str(&filter_sql);
+    let base = 1 + filter_binds.len();
+
     // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
     // the SQL fragment, ORDER BY, and the per-mode bind list so the
     // composition stays in one place rather than the 5 inline arms
     // the prior implementation duplicated.
     let keyset = keyset_for(filter.sort);
     let cursor_ref = req.after.as_ref();
-    let binds = keyset.apply(&mut sql, cursor_ref, limit_plus_one);
+    let keyset_binds = keyset.apply(&mut sql, cursor_ref, limit_plus_one, base);
 
+    // Bind order: ?1 = space_id, then the filter binds (?2 ..), then the
+    // keyset binds (?{base+1} ..) — exactly matching the `?` appearance
+    // order in the composed SQL.
     let mut query = sqlx::query_as::<_, PageWithMetadataRow>(&sql).bind(&filter.space_id);
-    for bind in binds {
+    for bind in filter_binds {
+        query = bind.bind_to(query);
+    }
+    for bind in keyset_binds {
         query = bind.bind_to(query);
     }
     let rows = query.fetch_all(pool).await?;
