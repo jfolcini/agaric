@@ -514,20 +514,25 @@ pub(super) struct ApplyEffects {
 // PEND-56b — `pages_cache.{inbound_link_count,child_block_count}` maintenance
 // ---------------------------------------------------------------------------
 //
-// Migration 0069 added two materialised aggregate columns to `pages_cache`.
-// The materializer is the only thing that mutates caches (AGENTS.md
-// invariant), so it must keep the two columns byte-identical to what the
-// live `COUNT(...)` SELECT in `commands/pages.rs:1666-1675` would compute.
+// Migrations 0069/0070 added two materialised aggregate columns to
+// `pages_cache` (`inbound_link_count`, `child_block_count`) and backfilled
+// them. The materializer is the only thing that mutates caches (AGENTS.md
+// invariant), so it must keep the two columns equal to what a live recompute
+// over `blocks` + `block_links` would produce.
 //
 // Strategy: **recompute-on-touch**. For every per-op handler that can
 // affect the counts we (a) compute the bounded set of pages whose counts
 // may have changed, and (b) UPDATE each row to the value of the canonical
-// SELECT. The per-op cost is bounded by the few link targets / outbound
-// edges of a single block; total correctness is asserted by the integration
-// parity test (see `parity_tests` mod).
+// recompute SELECT in `recompute_pages_cache_counts_for_pages` (below). The
+// per-op cost is bounded by the few link targets / outbound edges of a
+// single block; total correctness is asserted by the integration parity
+// test (see the `pages_cache_count_parity` mod in `materializer/tests.rs`).
 //
-// The recompute SQL mirrors `pages.rs:1666-1675` verbatim — the parity test
-// fails the build if the two ever diverge.
+// The single source of truth for the count SELECT shape is
+// `recompute_pages_cache_counts_for_pages`. The migration-0070 backfill and
+// the parity test's `canonical_counts` use the same shape; the parity test
+// fails the build if the materialised columns ever diverge from a
+// from-first-principles recompute.
 
 /// Recompute and persist both `inbound_link_count` and `child_block_count`
 /// for every `pages_cache` row whose `page_id` appears in `page_ids`.
@@ -537,24 +542,27 @@ pub(super) struct ApplyEffects {
 /// are silently skipped — the `WHERE page_id = ?` filter matches zero
 /// rows. Duplicate ids in the slice are deduplicated upfront.
 ///
-/// `child_block_count` is the byte-identical counterpart of the correlated
-/// subquery in `commands::pages::list_pages_with_metadata_inner`
-/// (`src-tauri/src/commands/pages.rs`) and the backfill in
-/// `migrations/0069_pages_cache_link_and_content_counts.sql`.
+/// This recompute SELECT is the **single source of truth** for the two
+/// count columns. The migration-0070 backfill
+/// (`migrations/0070_pages_cache_inbound_link_count_exclude_same_page.sql`)
+/// and the parity test's `canonical_counts` derive the same values; if you
+/// change either subquery here, change them there too — the parity test
+/// catches drift on every run.
 ///
-/// `inbound_link_count` mirrors the **canonical backlink count** in
-/// `backlink/grouped.rs::eval_backlink_query_grouped`: it counts distinct
-/// source blocks that link into the page or any of its descendants while
-/// EXCLUDING same-page/self links (a source whose own `page_id` is the
-/// target page) and deleted/orphan sources (`src.deleted_at IS NULL`,
-/// `src.page_id IS NOT NULL`). The original 0069 backfill omitted those
-/// exclusions and over-counted; migration 0070 re-backfills existing rows
-/// with this corrected shape, which is what makes `Orphan` /
-/// `HasNoInboundLinks` / `MostLinked` / the `↗N` badge agree with the live
-/// backlink panel. If you change either shape here, change it in
-/// `migrations/0070_pages_cache_inbound_link_count_exclude_same_page.sql`,
-/// `backlink/grouped.rs`, and the parity test too — the parity test catches
-/// drift on every run.
+/// `child_block_count` is page-wide: every non-deleted block whose
+/// `page_id` is this page (excluding the page block itself). The backfill
+/// in migration 0069 seeded this column with the same shape.
+///
+/// `inbound_link_count` is also page-wide (NOT the single-block-scoped
+/// backlink count in `backlink/grouped.rs`, which evaluates one block's
+/// inbound edges): it counts distinct source blocks that link into the
+/// page or any of its descendants while EXCLUDING same-page/self links (a
+/// source whose own `page_id` is the target page) and deleted/orphan
+/// sources (`src.deleted_at IS NULL`, `src.page_id IS NOT NULL`). The
+/// original 0069 backfill omitted those exclusions and over-counted;
+/// migration 0070 re-backfills existing rows with this corrected shape,
+/// which is what makes `Orphan` / `HasNoInboundLinks` / `MostLinked` /
+/// the `↗N` badge agree with the live backlink panel.
 async fn recompute_pages_cache_counts_for_pages(
     conn: &mut sqlx::SqliteConnection,
     page_ids: &[String],
@@ -839,16 +847,37 @@ async fn maintain_pages_cache_counts_after_op(
                 affected.insert(p.clone());
             }
         }
-        // No-ops for count maintenance: tag / property / move /
-        // attachment ops never affect either count (they don't change
-        // the `blocks.page_id`/`deleted_at` membership of any page).
-        // MoveBlock is intentionally **not** wired here — verify upstream
-        // that MoveBlock never alters a block's `page_id` (it only
-        // changes parent_id/position within the same page tree). If
-        // that invariant ever weakens, add MoveBlock here with the
-        // pre/post page_id delta.
-        OpType::MoveBlock
-        | OpType::AddTag
+        OpType::MoveBlock => {
+            // E4: a MoveBlock CAN alter `page_id`. `commands/blocks/move_ops.rs`
+            // recomputes `page_id` for the moved block + its descendants on a
+            // cross-page reparent, so the source page loses children and the
+            // destination page gains them. The earlier "MoveBlock never alters
+            // page_id" assumption was false and left both pages'
+            // `child_block_count` stale until an unrelated op touched each one.
+            //
+            // The materializer's own MoveBlock projection
+            // (`apply_move_block_via_loro` → `project_move_block_to_sql`) only
+            // writes `parent_id`/`position`; it defers the `page_id` recompute
+            // to the background `RebuildPageIds` task. The page-wide count
+            // recompute below keys on `blocks.page_id`, so we mirror
+            // `move_ops.rs` and update the moved subtree's `page_id` HERE
+            // (bounded, depth-capped) before recomputing — that keeps the
+            // in-tx recompute correct without waiting for `RebuildPageIds`,
+            // and is idempotent with it.
+            if let Some(block_id) = &pre_state.move_block_id {
+                let dest_page = reparent_moved_subtree_page_id(conn, block_id).await?;
+                if let Some(src) = &pre_state.move_src_page {
+                    affected.insert(src.clone());
+                }
+                if let Some(dest) = dest_page {
+                    affected.insert(dest);
+                }
+            }
+        }
+        // No-ops for count maintenance: tag / property / attachment ops
+        // never affect either count (they don't change the
+        // `blocks.page_id`/`deleted_at` membership of any page).
+        OpType::AddTag
         | OpType::RemoveTag
         | OpType::SetProperty
         | OpType::DeleteProperty
@@ -862,6 +891,95 @@ async fn maintain_pages_cache_counts_after_op(
     let v: Vec<String> = affected.into_iter().collect();
     recompute_pages_cache_counts_for_pages(conn, &v).await?;
     Ok(())
+}
+
+/// E4: recompute `blocks.page_id` for a just-moved block and its
+/// descendants, mirroring `commands/blocks/move_ops.rs`, and return the
+/// block's new owning page id (the destination page) for count-refresh.
+///
+/// The materializer's MoveBlock projection only writes
+/// `parent_id`/`position`; the canonical full `page_id` rebuild is the
+/// background `RebuildPageIds` task. But the page-wide count recompute in
+/// `maintain_pages_cache_counts_after_op` keys on `blocks.page_id`, so we
+/// reproduce the bounded subtree update here (depth-capped per invariant
+/// #9) so the in-tx recompute reflects the new page membership without
+/// waiting for `RebuildPageIds`. Running both is idempotent — they
+/// converge on the same `page_id` for the subtree.
+///
+/// Returns the moved block's destination page (its own id when the moved
+/// block is itself a page; the parent's owning page otherwise; `None`
+/// when the block was moved to the top level / has no page ancestor).
+async fn reparent_moved_subtree_page_id(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Option<String>, AppError> {
+    // The block's current parent_id reflects the post-projection move.
+    let row: Option<(String, Option<String>)> =
+        sqlx::query_as("SELECT block_type, parent_id FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((block_type, parent_id)) = row else {
+        // Block vanished (e.g. concurrent purge); nothing to recompute.
+        return Ok(None);
+    };
+
+    // Destination page derived from the NEW parent: a page parent owns
+    // itself; any other parent contributes its own `page_id`. No parent
+    // → top-level → no owning page (page_id NULL). Mirrors `move_ops.rs`.
+    let new_page_id: Option<String> = if let Some(pid) = &parent_id {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+             FROM blocks WHERE id = ?",
+        )
+        .bind(pid)
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+
+    let is_page = block_type == "page";
+    // Pages always own themselves regardless of parent; content/other
+    // blocks inherit the destination page id.
+    let effective_page_id = if is_page {
+        Some(block_id.to_owned())
+    } else {
+        new_page_id.clone()
+    };
+
+    // Update the moved block itself (pages keep page_id = self).
+    if !is_page {
+        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            .bind(new_page_id.as_deref())
+            .bind(block_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    // Update all non-page descendants to inherit the moved block's page
+    // id. Recursive CTE bounds `depth < 100` (invariant #9) and filters
+    // `deleted_at IS NULL` in both members so soft-deleted conflict
+    // copies don't leak into the walk. Mirrors `move_ops.rs`.
+    sqlx::query(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET page_id = ?2 \
+         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+    )
+    .bind(block_id)
+    .bind(effective_page_id.as_deref())
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(effective_page_id)
 }
 
 /// Walk `blocks.parent_id` from `block_id` and return the page-typed
@@ -1044,6 +1162,14 @@ struct PreOpState {
     // FK CASCADE on `block_links` clears outbound/inbound edges before
     // the post-op recompute runs).
     pre_purge_affected_pages: Vec<String>,
+    // MoveBlock fields (E4). Captured BEFORE the projection reparents
+    // the block so the count hook can refresh BOTH the source page (the
+    // block's `page_id` at move time) and the destination page (derived
+    // post-move from the new parent chain). A cross-page reparent
+    // recomputes `page_id` for the moved subtree in `move_ops.rs`, so
+    // the two pages' `child_block_count` would otherwise drift.
+    move_block_id: Option<String>,
+    move_src_page: Option<String>,
 }
 
 /// Core apply-op logic operating on a bare [`SqliteConnection`].
@@ -1148,6 +1274,18 @@ async fn apply_op_tx(
         }
         OpType::MoveBlock => {
             let p: MoveBlockPayload = serde_json::from_str(&record.payload)?;
+            // E4: capture the moved block's owning page BEFORE the
+            // projection reparents it. A cross-page reparent recomputes
+            // `page_id` for the moved subtree, so the source page loses
+            // descendants and the destination page gains them — both
+            // `child_block_count`s must be refreshed post-projection.
+            pre_state.move_block_id = Some(p.block_id.as_str().to_owned());
+            pre_state.move_src_page =
+                sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+                    .bind(p.block_id.as_str())
+                    .fetch_optional(&mut *conn)
+                    .await?
+                    .flatten();
             apply_move_block_via_loro(conn, &record.device_id, &p).await?;
         }
         OpType::AddTag => {

@@ -156,6 +156,14 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
       const hasMetadata = first != null && Object.hasOwn(first, 'lastModifiedAt')
       const sorted = [...(input as readonly BlockRow[])]
       const alpha = (a: BlockRow, b: BlockRow) => (a.content ?? '').localeCompare(b.content ?? '')
+      // PEND-58e E14: the server keysets every sort by `(key, id ASC)`
+      // (see `SortKeyset::apply` in `commands/pages.rs`). When rows carry
+      // metadata (the server-derived path), break key ties by `id ASC` too
+      // so equal-key groups don't reshuffle as pages stream in. The
+      // metadata-less flag-off path (BlockRow) keeps the alphabetical
+      // fallback, since it can't reproduce the server order anyway.
+      const tiebreak = (a: BlockRow, b: BlockRow) =>
+        hasMetadata ? a.id.localeCompare(b.id) : alpha(a, b)
 
       const lookupMeta = (r: BlockRow): PageWithMetadataRow | null =>
         hasMetadata ? (r as unknown as PageWithMetadataRow) : null
@@ -183,21 +191,21 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
         sorted.sort((a, b) => {
           const am = lookupMeta(a)?.lastModifiedAt ?? ''
           const bm = lookupMeta(b)?.lastModifiedAt ?? ''
-          if (am === bm) return alpha(a, b)
+          if (am === bm) return tiebreak(a, b)
           return bm.localeCompare(am)
         })
       } else if (sortOption === 'most-linked') {
         sorted.sort((a, b) => {
           const ac = lookupMeta(a)?.inboundLinkCount ?? 0
           const bc = lookupMeta(b)?.inboundLinkCount ?? 0
-          if (ac === bc) return alpha(a, b)
+          if (ac === bc) return tiebreak(a, b)
           return bc - ac
         })
       } else if (sortOption === 'most-content') {
         sorted.sort((a, b) => {
           const ac = lookupMeta(a)?.childBlockCount ?? 0
           const bc = lookupMeta(b)?.childBlockCount ?? 0
-          if (ac === bc) return alpha(a, b)
+          if (ac === bc) return tiebreak(a, b)
           return bc - ac
         })
       }

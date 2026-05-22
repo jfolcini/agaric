@@ -433,12 +433,19 @@ export function seedBlocks(): void {
       0,
     ),
   )
+  // BLOCK_QN_2 carries a SAME-PAGE link to its sibling BLOCK_QN_1 (both live
+  // on Quick Notes). This exercises the inbound same-page/self exclusion
+  // (migration 0070 + `recompute_pages_cache_counts_for_pages`): the edge
+  // targets a Quick Notes descendant but its SOURCE also belongs to Quick
+  // Notes, so it must NOT count toward Quick Notes' `inbound_link_count`.
+  // Quick Notes therefore stays at inbound = 1 (the cross-page edge from
+  // BLOCK_GS_2 only); if the exclusion regressed it would over-count to 2.
   blocks.set(
     SEED_IDS.BLOCK_QN_2,
     makeBlock(
       SEED_IDS.BLOCK_QN_2,
       'content',
-      'Jot down quick thoughts and *ideas* here.',
+      `Jot down quick thoughts and *ideas* here. Related: [[${SEED_IDS.BLOCK_QN_1}]].`,
       SEED_IDS.PAGE_QUICK_NOTES,
       1,
     ),

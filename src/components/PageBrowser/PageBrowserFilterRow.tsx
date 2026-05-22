@@ -86,8 +86,9 @@ function hasPropertySummary(
       return t('pageBrowser.filter.summaryNotHasProperty', { key })
     default:
       // Eq / Ne both carry a value; the operand is `predicate.value.value`
-      // for either Text or Ref (D26 — no Text/Ref ternary needed). `≠` is
-      // reserved for Search / saved-views (the Pages popover emits Eq/Ne).
+      // for either Text or Ref (D26 — no Text/Ref ternary needed). D24 ships
+      // the full op selector, so the Pages popover emits both Eq (`=`) and Ne
+      // (`≠`) — the `≠` glyph is no longer Search-only.
       return t('pageBrowser.filter.summaryProperty', {
         key,
         op: predicate.type === 'Ne' ? '≠' : '=',
@@ -126,9 +127,8 @@ export function pageFilterSummary(
         tag: tagResolver ? tagResolver(filter.tag) : filter.tag,
       })
     case 'PathGlob':
-      // The `exclude: true` ("not path") variant is reserved for Search /
-      // saved-views — the Pages popover only emits `exclude: false`. Kept
-      // renderable so deep-linked / saved filters still summarise.
+      // D24 ships the path-exclude toggle, so the Pages popover emits both the
+      // `exclude: false` ("path") and `exclude: true` ("not path") variants.
       return filter.exclude
         ? t('pageBrowser.filter.summaryPathExclude', { pattern: filter.pattern })
         : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })

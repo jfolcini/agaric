@@ -9,7 +9,8 @@
 use sqlx::SqlitePool;
 
 use crate::commands::pages::{
-    list_pages_with_metadata_inner, ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow,
+    compose_list_pages_with_metadata_sql, list_pages_with_metadata_inner,
+    ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow,
 };
 use crate::commands::tests::common::{
     assign_to_space, ensure_test_space, ensure_test_space_b, insert_block, test_pool,
@@ -873,45 +874,52 @@ async fn soft_deleted_pages_excluded_from_results() {
 // assert presence/absence of the table-name tokens that encode the
 // contract.
 
-/// Run `EXPLAIN QUERY PLAN` against the same SELECT the IPC emits for
-/// the given sort mode (first page, no cursor) and return the plan as
-/// a single newline-joined string.
-async fn explain_query_plan_for(pool: &SqlitePool, sort: PageSort) -> String {
-    // Mirror the SELECT shape from list_pages_with_metadata_inner —
-    // the SQL is private to the IPC but the contract under test is
-    // the JOIN-and-ORDER-BY-pages_cache shape, which we can reproduce
-    // here. If the IPC's SQL drifts away from this, the assert below
-    // (semantically: "uses pages_cache, not block_links") still
-    // catches the regression because the plan string for the IPC
-    // path will diverge.
-    let key_expr = match sort {
-        PageSort::MostLinked => "COALESCE(pc.inbound_link_count, 0)",
-        PageSort::MostContent => "COALESCE(pc.child_block_count, 0)",
-        _ => panic!("plan snapshot only meaningful for MostLinked / MostContent"),
-    };
-    let sql = format!(
-        "EXPLAIN QUERY PLAN \
-         SELECT b.id, COALESCE(pc.inbound_link_count, 0) AS ilc, \
-                COALESCE(pc.child_block_count, 0) AS cbc \
-         FROM blocks b \
-         LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-         WHERE b.block_type = 'page' AND b.deleted_at IS NULL \
-           AND b.page_id IN ( \
-               SELECT bp.block_id FROM block_properties bp \
-               WHERE bp.key = 'space' AND bp.value_ref = ? \
-           ) \
-         ORDER BY {key_expr} DESC, b.id ASC \
-         LIMIT 50"
-    );
-    let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(&sql)
-        .bind(TEST_SPACE_ID)
-        .fetch_all(pool)
-        .await
-        .unwrap();
+/// PEND-58e E9 — run `EXPLAIN QUERY PLAN` against the **real** SQL the IPC
+/// emits for `(sort, filters)` (first page, no cursor) and return the plan
+/// as a single newline-joined string.
+///
+/// Previously this ran EXPLAIN on a hand-rebuilt copy of the SELECT, so a plan
+/// regression in the IPC's actual query would NOT be caught. We now compose
+/// the IPC's real statement via [`compose_list_pages_with_metadata_sql`]
+/// (the same `const PAGES_METADATA_BASE_SELECT` + `compile_pages_filters` +
+/// keyset path the IPC runs) and EXPLAIN that — so any drift in the live
+/// query plan trips the asserts.
+///
+/// The composed SQL uses named placeholders: `?1` = space_id, then the
+/// compiled filter binds (`?2 ..`), then a trailing `?N` for the LIMIT. We
+/// bind the supplied `filter_binds_text` (in compiled order) for the filter
+/// placeholders and the limit last.
+async fn explain_query_plan_for_filter(
+    pool: &SqlitePool,
+    filter: &ListPagesWithMetadataFilter,
+    filter_binds_text: &[&str],
+) -> String {
+    let composed = compose_list_pages_with_metadata_sql(filter, 51)
+        .expect("compose real IPC SQL must succeed");
+    let sql = format!("EXPLAIN QUERY PLAN {composed}");
+    // Bind ?1 = space_id, then each compiled filter bind in order, then the
+    // trailing LIMIT placeholder — matching the IPC's bind order.
+    let mut query = sqlx::query_as::<_, (i64, i64, i64, String)>(&sql).bind(&filter.space_id);
+    for b in filter_binds_text {
+        query = query.bind(*b);
+    }
+    query = query.bind(51_i64);
+    let rows = query.fetch_all(pool).await.unwrap();
     rows.into_iter()
         .map(|(_, _, _, detail)| detail)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Convenience wrapper for the no-filter MostLinked / MostContent plan
+/// snapshots: composes the real IPC SQL for the given sort with an empty
+/// filter set and runs EXPLAIN on it.
+async fn explain_query_plan_for(pool: &SqlitePool, sort: PageSort) -> String {
+    assert!(
+        matches!(sort, PageSort::MostLinked | PageSort::MostContent),
+        "plan snapshot only meaningful for MostLinked / MostContent"
+    );
+    explain_query_plan_for_filter(pool, &filter(sort), &[]).await
 }
 
 #[tokio::test]
@@ -940,12 +948,178 @@ async fn most_linked_query_plan_uses_pages_cache_not_block_links() {
     );
 }
 
+// ── PEND-58e E11 — perf-gate bulk seeders ─────────────────────────────────
+//
+// The original gates seeded TRIVIAL data: `most_linked` seeded ZERO links
+// (so the `MostLinked` ORDER BY ran over an all-zero materialised column —
+// every row tied, no real skew to sort) and `recently_modified` seeded
+// exactly ONE op_log row per page (so the per-page `MAX(created_at)`
+// subquery short-circuited on a single index probe). Those numbers
+// flattered the gate. These bulk seeders build REALISTIC fixtures:
+//   - skewed inbound-link counts (a handful of "hub" pages with many
+//     inbound links, a long tail with few/none) so the `MostLinked` sort
+//     does real comparison work over a non-degenerate column, and
+//   - multiple op_log rows per page (deep history) so the per-page
+//     `MAX(created_at)` subquery actually aggregates over an index range
+//     instead of returning the only row.
+// Both are multi-row INSERTs (chunked under SQLite's ~999-param cap) so the
+// 20k-scale seed stays under a few seconds — the per-call
+// `refresh_page_cache_counts` subquery in `seed_link` would be O(n²) here.
+
+/// Bulk-seed realistic inbound-link skew across `page_ids`, then refresh
+/// every page's `pages_cache.inbound_link_count` in ONE pass.
+///
+/// For each page we add one "body" content block (the realistic authoring
+/// surface — links live in the body, not on the title row). Then we wire
+/// inbound links into a Zipf-ish skew: page `i` receives roughly
+/// `max(0, hubs - i)` inbound edges from *other* pages' body blocks (so the
+/// edges survive the same-page / self / deleted-source exclusion), giving a
+/// few hubs with hundreds of inbound links and a long sparse tail.
+async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
+    let n = page_ids.len();
+    // 1. One body block per page (multi-row INSERT, chunked).
+    //    block_type='content', page_id = its page.
+    let body_id = |i: usize| format!("01BODY{:020}", i);
+    {
+        // 6 columns/row → cap chunk at 150 rows (900 params < 999).
+        for chunk in (0..n).collect::<Vec<_>>().chunks(150) {
+            let mut sql = String::from(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES ",
+            );
+            let mut first = true;
+            for _ in chunk {
+                if !first {
+                    sql.push(',');
+                }
+                first = false;
+                sql.push_str("(?, 'content', 'body', ?, 0, ?)");
+            }
+            let mut q = sqlx::query(&sql);
+            for &i in chunk {
+                q = q.bind(body_id(i)).bind(&page_ids[i]).bind(&page_ids[i]);
+            }
+            q.execute(pool).await.unwrap();
+        }
+    }
+    // 2. Skewed inbound edges: target page `t` gets edges from the body
+    //    blocks of the first `deg(t)` *other* pages. `deg` is a steep ramp
+    //    so a small number of hub pages dominate.
+    let hubs = 50usize.min(n);
+    let mut edges: Vec<(usize, usize)> = Vec::new(); // (source_body_idx, target_page_idx)
+    for t in 0..n {
+        // Hub pages (low index) get many inbound; the tail gets 0–1.
+        let deg = if t < hubs {
+            hubs - t
+        } else {
+            usize::from(t % 7 == 0)
+        };
+        for s in 0..deg {
+            // Source is another page's body (skip same page).
+            let src = if s >= t { s + 1 } else { s };
+            if src < n {
+                edges.push((src, t));
+            }
+        }
+    }
+    // 2 columns/row → cap chunk at 400 rows (800 params).
+    for chunk in edges.chunks(400) {
+        let mut sql = String::from("INSERT INTO block_links (source_id, target_id) VALUES ");
+        let mut first = true;
+        for _ in chunk {
+            if !first {
+                sql.push(',');
+            }
+            first = false;
+            sql.push_str("(?, ?)");
+        }
+        let mut q = sqlx::query(&sql);
+        for &(s, t) in chunk {
+            // Edge: source body block → target page block (inbound to target).
+            q = q.bind(body_id(s)).bind(&page_ids[t]);
+        }
+        q.execute(pool).await.unwrap();
+    }
+    // 3. ONE bulk refresh of every page's materialised inbound count
+    //    (mirrors `refresh_page_cache_counts`' inbound SELECT, run set-wide
+    //    instead of per-page). Same-page / self / deleted-source / orphan
+    //    edges are excluded (PEND-58d D2 / migration 0070).
+    sqlx::query(
+        "UPDATE pages_cache \
+         SET inbound_link_count = ( \
+                 SELECT COUNT(DISTINCT bl.source_id) \
+                 FROM block_links AS bl \
+                 INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                 INNER JOIN blocks AS src ON src.id = bl.source_id \
+                 WHERE descendant.page_id = pages_cache.page_id \
+                   AND descendant.deleted_at IS NULL \
+                   AND src.deleted_at IS NULL \
+                   AND src.page_id IS NOT NULL \
+                   AND src.page_id != pages_cache.page_id \
+             )",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Bulk-seed `depth` op_log rows per page (realistic history) via chunked
+/// multi-row INSERTs, so the per-page `MAX(op_log.created_at)` subquery
+/// aggregates over a real index range instead of short-circuiting on the
+/// single row the old gate seeded.
+async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: usize) {
+    // Determine the starting seq once, then assign sequential seqs locally
+    // (a per-row `(SELECT MAX(seq)+1 …)` subquery would be O(n²)).
+    let mut seq: i64 = sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(seq), 0) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    // 7 columns/row → cap chunk at 120 rows (840 params).
+    let mut batch: Vec<(i64, String, String)> = Vec::new(); // (seq, created_at, block_id)
+    for (i, pid) in page_ids.iter().enumerate() {
+        for d in 0..depth {
+            seq += 1;
+            // Spread timestamps so the MAX picks a non-trivial latest row.
+            let created_at = format!(
+                "2026-{:02}-{:02}T{:02}:00:00Z",
+                (d % 12) + 1,
+                (i % 28) + 1,
+                d % 24
+            );
+            batch.push((seq, created_at, pid.clone()));
+        }
+    }
+    for chunk in batch.chunks(120) {
+        let mut sql = String::from(
+            "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) VALUES ",
+        );
+        let mut first = true;
+        for _ in chunk {
+            if !first {
+                sql.push(',');
+            }
+            first = false;
+            sql.push_str("(?, 'test-device', 'CreateBlock', '{}', ?, 'deadbeef', ?)");
+        }
+        let mut q = sqlx::query(&sql);
+        for (s, ts, bid) in chunk {
+            q = q.bind(*s).bind(ts).bind(bid);
+        }
+        q.execute(pool).await.unwrap();
+    }
+}
+
 /// PEND-56b — perf gate. Seeds a 20k-page fixture and times the
 /// `MostLinked` first-page query. The plan-snapshot tests above
 /// assert the *shape* of the query plan; this test asserts the
 /// *latency* delivered by that shape on the actual SQLite engine
 /// at the size that motivated the migration (Round 2 review
 /// measured the prior implementation at **335 ms @ 20k pages**).
+///
+/// PEND-58e E11 — the fixture now seeds REALISTIC inbound-link skew (a few
+/// hub pages with hundreds of inbound links, a long sparse tail) via
+/// [`bulk_seed_link_skew`] instead of the original all-zero column, so the
+/// `MostLinked` ORDER BY does genuine comparison work over a non-degenerate
+/// materialised column rather than sorting an all-tied set.
 ///
 /// Recorded in the SESSION-LOG as the "after" number. `#[ignore]`'d
 /// so CI doesn't pay for 20k-row seeding on every run — invoke via
@@ -957,12 +1131,17 @@ async fn most_linked_perf_gate_20k_pages() {
     ensure_test_space(&pool).await;
     let n = 20_000;
     let seed_start = std::time::Instant::now();
+    let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
         let pid = format!("01PAGE{:020}", i);
         seed_page(&pool, &pid, &format!("p{i}")).await;
+        page_ids.push(pid);
     }
+    // Realistic inbound-link skew (PEND-58e E11) — multiple links per hub
+    // page, refreshed into the materialised count in one pass.
+    bulk_seed_link_skew(&pool, &page_ids).await;
     let seed_ms = seed_start.elapsed().as_millis();
-    eprintln!("[PEND-56b PERF] seeded {n} pages in {seed_ms} ms");
+    eprintln!("[PEND-56b PERF] seeded {n} pages (+skewed links) in {seed_ms} ms");
 
     // Warm up (3×).
     for _ in 0..3 {
@@ -997,9 +1176,15 @@ async fn most_linked_perf_gate_20k_pages() {
 /// `RecentlyModified` computes `MAX(op_log.created_at)` per page across
 /// the space (correlated subquery, served by `idx_op_log_block_id`)
 /// *before* the LIMIT, so it is the sort most exposed to per-row aggregate
-/// cost. This seeds the same 20k-page fixture (plus one op_log row per
-/// page so the subquery has a real index probe to do) and times the
-/// first-page query.
+/// cost. This seeds the same 20k-page fixture with REALISTIC op-log depth
+/// (multiple rows per page) and times the first-page query.
+///
+/// PEND-58e E11 — the original gate seeded exactly ONE op_log row per page,
+/// so the per-page `MAX(created_at)` subquery short-circuited on a single
+/// index probe (no real aggregation). This now seeds several op_log rows
+/// per page via [`bulk_seed_op_log_depth`] so the subquery aggregates over
+/// a genuine index range — the cost the deferred `pages_cache.last_edited_at`
+/// materialisation would remove.
 ///
 /// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
 /// invoke via
@@ -1014,20 +1199,21 @@ async fn recently_modified_perf_gate_20k_pages() {
     ensure_test_space(&pool).await;
     let n = 20_000;
     let seed_start = std::time::Instant::now();
+    let mut page_ids: Vec<String> = Vec::with_capacity(n);
     for i in 0..n {
         let pid = format!("01PAGE{:020}", i);
         seed_page(&pool, &pid, &format!("p{i}")).await;
-        // One op_log row per page so the per-page MAX(created_at) subquery
-        // does real index work (not just an empty-table short-circuit).
-        seed_op_log(
-            &pool,
-            &pid,
-            &format!("2026-01-{:02}T00:00:00Z", (i % 28) + 1),
-        )
-        .await;
+        page_ids.push(pid);
     }
+    // Realistic op-log depth (PEND-58e E11): several rows per page so the
+    // per-page MAX(created_at) subquery aggregates over an index range
+    // rather than short-circuiting on a single row.
+    let op_log_depth = 8;
+    bulk_seed_op_log_depth(&pool, &page_ids, op_log_depth).await;
     let seed_ms = seed_start.elapsed().as_millis();
-    eprintln!("[PEND-58d PERF] seeded {n} pages (+op_log) in {seed_ms} ms");
+    eprintln!(
+        "[PEND-58d PERF] seeded {n} pages (+{op_log_depth} op_log rows each) in {seed_ms} ms"
+    );
 
     // Warm up (3×).
     for _ in 0..3 {
@@ -1071,6 +1257,94 @@ async fn recently_modified_perf_gate_20k_pages() {
     );
 }
 
+/// PEND-58e E11 — perf gate for a FILTERED query at scale. The existing
+/// gates time the *unfiltered* sort paths; none exercised the compound-filter
+/// fragment (`compile_pages_filters`) at 20k pages. This one does, and it
+/// deliberately combines the now-expensive `Orphan` primitive (cost tier 3 —
+/// its outbound half is a 3-table correlated `NOT EXISTS`, the costliest
+/// Pages clause) with a cheap index-backed `Tag` clause (cost tier 0). The
+/// cost-ordering reorders `[Orphan, Tag]` → `[Tag, Orphan]` so SQLite narrows
+/// the row set with the indexed Tag clause BEFORE running the correlated
+/// outbound subquery — exactly the win the re-rank buys. The fixture seeds
+/// realistic link skew so `Orphan`'s inbound/outbound terms have real edges
+/// to test, plus a tag on a subset of pages so the Tag clause pre-narrows.
+///
+/// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
+/// invoke via
+/// `cargo nextest run --run-ignored=only filtered_query_perf_gate_20k_pages`.
+#[ignore]
+#[tokio::test]
+async fn filtered_query_perf_gate_20k_pages() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let n = 20_000;
+    let tag = "01TAG0000000000000000PERF1";
+    let seed_start = std::time::Instant::now();
+    let mut page_ids: Vec<String> = Vec::with_capacity(n);
+    for i in 0..n {
+        let pid = format!("01PAGE{:020}", i);
+        seed_page(&pool, &pid, &format!("p{i}")).await;
+        page_ids.push(pid);
+    }
+    // Realistic inbound/outbound link skew so Orphan's NOT-EXISTS / inbound
+    // terms have genuine edges to evaluate (not an all-empty short-circuit).
+    bulk_seed_link_skew(&pool, &page_ids).await;
+    // Tag roughly 1-in-10 pages so the index-backed Tag clause pre-narrows
+    // the set the correlated Orphan subquery then runs over.
+    for (i, pid) in page_ids.iter().enumerate() {
+        if i % 10 == 0 {
+            seed_tag(&pool, pid, tag).await;
+        }
+    }
+    let seed_ms = seed_start.elapsed().as_millis();
+    eprintln!("[PEND-58e PERF] seeded {n} pages (+skewed links, +tags) in {seed_ms} ms");
+
+    let make_filter = || {
+        // Request order is Orphan-first to prove the cost-reorder floats the
+        // cheap Tag clause ahead of the expensive correlated Orphan term.
+        filter_with(
+            PageSort::Alphabetical,
+            vec![
+                FilterPrimitive::Orphan,
+                FilterPrimitive::Tag {
+                    tag: tag.to_string(),
+                },
+            ],
+        )
+    };
+
+    // Warm up (3×).
+    for _ in 0..3 {
+        let _ = list_pages_with_metadata_inner(&pool, make_filter(), None, Some(50))
+            .await
+            .unwrap();
+    }
+    // Measure (median of 5 samples).
+    let mut samples: Vec<u128> = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = std::time::Instant::now();
+        let _ = list_pages_with_metadata_inner(&pool, make_filter(), None, Some(50))
+            .await
+            .unwrap();
+        samples.push(start.elapsed().as_millis());
+    }
+    samples.sort();
+    let median_ms = samples[samples.len() / 2];
+    eprintln!(
+        "[PEND-58e PERF] Orphan+Tag filtered @ 20k pages: samples={samples:?} median={median_ms} ms"
+    );
+    // Soft assertion — the filtered path also computes a `total_count` COUNT
+    // over the same predicates on the first page (PEND-58d D6), so the budget
+    // covers both the fetch and the count. With the Tag clause pre-narrowing,
+    // the correlated Orphan subquery runs over a small subset; 250 ms allows
+    // CI noise. If a future change pushes past it, the cost ordering or an
+    // `outbound_link_count` materialisation should be revisited.
+    assert!(
+        median_ms < 250,
+        "Orphan+Tag filtered @ 20k pages exceeded 250 ms budget: median={median_ms} ms (samples={samples:?})"
+    );
+}
+
 #[tokio::test]
 async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
     let (pool, _dir) = test_pool().await;
@@ -1088,14 +1362,69 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
         plan.to_lowercase().contains("pages_cache"),
         "MostContent plan must reference pages_cache; got:\n{plan}"
     );
-    // Note: `blocks` will appear in the plan (we JOIN against `blocks
-    // b`) — what we want to check is that there's no per-row aggregate
-    // subquery. A canonical correlated-aggregate plan contains
-    // "CORRELATED SCALAR SUBQUERY"; the materialised path does not.
+    // PEND-58e E9 — this now plans the IPC's REAL SQL, which legitimately
+    // carries correlated scalar subqueries for the per-row METADATA columns
+    // (`last_modified_at` over op_log, plus the four `has_*` EXISTS flags
+    // over block_tags / blocks). What the materialised-count contract forbids
+    // is the *sort key* `child_block_count` being recomputed via a
+    // correlated `COUNT(*) FROM blocks` aggregate (the pre-PEND-56b shape).
+    // So we pin the correlated-subquery COUNT to exactly the known metadata
+    // aggregates (5): last_modified_at + has_tags + has_todo + has_scheduled
+    // + has_due. If a regression reverts the sort key to a per-row count, a
+    // 6th correlated subquery appears and this assert fires. The materialised
+    // path also means `block_links` is never scanned for the count.
+    let correlated = plan
+        .to_uppercase()
+        .matches("CORRELATED SCALAR SUBQUERY")
+        .count();
+    assert_eq!(
+        correlated, 5,
+        "MostContent plan must carry ONLY the 5 metadata correlated subqueries \
+         (last_modified_at + 4 has_* flags) — a 6th means the child_block_count \
+         sort key regressed to a per-row COUNT (PEND-56b); got:\n{plan}"
+    );
     assert!(
-        !plan.to_uppercase().contains("CORRELATED SCALAR SUBQUERY"),
-        "MostContent plan must NOT contain a correlated scalar subquery \
-         (PEND-56b regression); got:\n{plan}"
+        !plan.to_lowercase().contains("block_links"),
+        "MostContent plan must NOT scan block_links; got:\n{plan}"
+    );
+}
+
+#[tokio::test]
+async fn filtered_query_plan_explains_real_composed_ipc_sql() {
+    // PEND-58e E9 — assert the EXPLAIN harness now plans the IPC's REAL
+    // composed SQL (base SELECT + compiled compound-filter fragment +
+    // keyset), not a hand-rebuilt copy. We compose a Tag-filtered query and
+    // EXPLAIN it; the plan must reference `block_tags` (proving the compiled
+    // `compile_tag` fragment was actually spliced into the planned statement)
+    // and still ride `pages_cache` via the LEFT JOIN. If the IPC's real SQL
+    // ever stops emitting the filter fragment, this plan loses the
+    // `block_tags` token and the assert fires.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let tag = "01TAG000000000000000000T1";
+    for i in 0..10 {
+        let pid = format!("01PAGE0000000000000000T{i:02}");
+        seed_page(&pool, &pid, &format!("t{i}")).await;
+        if i % 2 == 0 {
+            seed_tag(&pool, &pid, tag).await;
+        }
+    }
+    let f = filter_with(
+        PageSort::MostLinked,
+        vec![FilterPrimitive::Tag {
+            tag: tag.to_string(),
+        }],
+    );
+    // ?1 = space_id, ?2 = tag id (the single compiled filter bind), ?3 = LIMIT.
+    let plan = explain_query_plan_for_filter(&pool, &f, &[tag]).await;
+    assert!(
+        plan.to_lowercase().contains("block_tags"),
+        "filtered plan must reference block_tags (the spliced compile_tag \
+         fragment); got:\n{plan}"
+    );
+    assert!(
+        plan.to_lowercase().contains("pages_cache"),
+        "filtered plan must still reference pages_cache via the LEFT JOIN; got:\n{plan}"
     );
 }
 
@@ -2236,6 +2565,74 @@ async fn last_edited_range_accepts_bare_calendar_date() {
         .filter_map(|p| p.content.as_deref())
         .collect();
     assert_eq!(contents, vec!["InRange"]);
+}
+
+#[tokio::test]
+async fn last_edited_range_bare_end_date_includes_whole_end_day() {
+    // PEND-58e E3 — a bare `YYYY-MM-DD` `end` bound must include edits made
+    // during the DAYTIME of the end day, not just at its midnight boundary.
+    // Before the fix, a non-midnight edit on the end day
+    // (`2026-03-01T09:00:00.123Z`) was bound against a verbatim
+    // `'2026-03-01'` upper bound and lexically EXCLUDED (`'…T09:…' > '…01'`),
+    // silently dropping the page. The fix extends a bare end bound to the
+    // end of that calendar day (`T23:59:59.999Z`).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // Edited at 09:00 on the END day — must be INCLUDED.
+    seed_page(&pool, "01PAGE0000000000000000EDY", "EndDayDaytime").await;
+    seed_op_log(
+        &pool,
+        "01PAGE0000000000000000EDY",
+        "2026-03-01T09:00:00.123Z",
+    )
+    .await;
+    // Edited just after the end day — must be EXCLUDED (proves the bound is
+    // not over-extended past the end day).
+    seed_page(&pool, "01PAGE0000000000000000NXT", "NextDay").await;
+    seed_op_log(
+        &pool,
+        "01PAGE0000000000000000NXT",
+        "2026-03-02T00:00:00.000Z",
+    )
+    .await;
+    // Edited at 09:00 on the START day — must be INCLUDED (start lower bound
+    // is already correct; this guards against a regression there).
+    seed_page(&pool, "01PAGE0000000000000000STD", "StartDayDaytime").await;
+    seed_op_log(
+        &pool,
+        "01PAGE0000000000000000STD",
+        "2026-02-01T09:00:00.000Z",
+    )
+    .await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "2026-02-01".to_string(),
+                    end: "2026-03-01".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("bare end-date range must compile and execute");
+    let mut contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    contents.sort_unstable();
+    assert_eq!(
+        contents,
+        vec!["EndDayDaytime", "StartDayDaytime"],
+        "a bare end-date range must include daytime edits on BOTH the start \
+         and end day, while excluding edits on the following day"
+    );
 }
 
 // ── PEND-58d T-B3 — Space + Priority IPC narrowing ────────────────────────

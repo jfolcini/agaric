@@ -98,6 +98,48 @@ describe('FilterPill', () => {
     expect(onRemove).not.toHaveBeenCalled()
   })
 
+  // -- E6: long-value truncation ----------------------------------------------
+
+  it('E6: caps the pill width and truncates a long label', () => {
+    const longLabel = `path: ${'Projects/Sub'.repeat(20)}`
+    const { container } = render(<FilterPill {...defaultProps} label={longLabel} />)
+
+    // The badge wrapper is width-capped and can shrink inside a flex-wrap row.
+    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
+    expect(badge.className).toContain('max-w-[16rem]')
+    expect(badge.className).toContain('min-w-0')
+
+    // The label text lives in a truncating span (not raw badge text), so the
+    // long value clips with an ellipsis instead of stretching the pill.
+    const labelSpan = screen.getByText(longLabel)
+    expect(labelSpan.tagName).toBe('SPAN')
+    expect(labelSpan.className).toContain('truncate')
+  })
+
+  it('E6: falls back the title tooltip to the label so the truncated value is recoverable', () => {
+    const longLabel = `tag: ${'verylongtag'.repeat(8)}`
+    const { container } = render(<FilterPill {...defaultProps} label={longLabel} />)
+
+    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
+    expect(badge).toHaveAttribute('title', longLabel)
+  })
+
+  it('E6: an explicit title overrides the label fallback', () => {
+    const { container } = render(
+      <FilterPill {...defaultProps} label="Orphan" title="Fully isolated page" />,
+    )
+
+    const badge = container.querySelector('[data-slot="filter-pill"]') as HTMLElement
+    expect(badge).toHaveAttribute('title', 'Fully isolated page')
+  })
+
+  it('E6: the remove button stays shrink-0 so only the label clips', () => {
+    render(<FilterPill {...defaultProps} />)
+
+    const removeBtn = screen.getByRole('button', { name: 'Remove filter status = TODO' })
+    expect(removeBtn.className).toContain('shrink-0')
+  })
+
   // -- Touch-target sizing (44 px coarse-pointer minimum) ---------------------
 
   it('remove button declares 44 px coarse-pointer minimum on both axes', () => {

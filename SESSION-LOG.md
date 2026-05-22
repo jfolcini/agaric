@@ -2,10 +2,44 @@
 
 ## Quick Reference
 
-- **This file:** sessions 401 – 812 (latest entry 2026-05-22).
+- **This file:** sessions 401 – 813 (latest entry 2026-05-22).
 - **Older sessions** (1 – 400, through 2026-04-17) archived in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md).
-- **Previously-resolved counter:** 1260+ REVIEW-LATER items across 812 sessions.
+- **Previously-resolved counter:** 1281+ REVIEW-LATER items across 813 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 813 — PEND-58e: Pages-view deep-review findings, fully actioned (E1–E21) (2026-05-22)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-22 |
+| **Subagents** | 5 build (Rust-filters · Rust-materializer · filter-UI · PageBrowser-logic · tauri-mock), parallel by file-ownership + orchestrator-direct (docs, E14 sibling, prek fixups). Verification: full-suite + diff review by orchestrator (no separate review subagents). |
+| **Items closed** | PEND-58e E1–E21 (all 21 post-verification findings) |
+| **Items modified** | PEND-58d (deep-review-findings note cleared; only deferred D23a remains) |
+| **Tests added** | +28 frontend unit (vitest 10497→10525) + e2e cursor-contract/same-page (F3) / +4 backend non-ignored (nextest 3908→3912) + 1 `#[ignore]` perf gate |
+| **Files touched** | 25 (+ the PEND-58e plan file removed) |
+
+**Summary:** Actioned every confirmed finding from the second whole-feature deep review (E1–E21) across SQL, backend Rust, frontend React, the tauri-mock, and docs, in five parallel file-disjoint subagents plus orchestrator-direct docs. **P1:** the Priority facet now drives its offered values from `usePriorityLevels()` (was a hardcoded `A/B/C` against `1/2/3` data → zero matches out of the box) (E1); `docs/PAGES.md`'s limitations note rewritten so it no longer contradicts the shipped D24 exclude / not-equals / not-exists controls (E2). **P2:** `LastEdited` custom Range extends a bare `YYYY-MM-DD` `end` to the last instant of the day (`T23:59:59.999Z`), fixing silent loss of end-day edits (E3); cross-page `MoveBlock` recomputes `child_block_count` for both source and destination pages in-tx and enqueues `RebuildPagesCache` after `RebuildPageIds`, fixing latent count drift (E4); the `tag:` placeholder corrected to "Tag id" and a `tagResolver` wired so the chip shows the tag name (E5); filter pills truncate with `max-w` + title tooltip (E6); the count chip + SR announcement use a distinct matched-**page** count instead of the grouped-row array, fixing namespaced/starred mis-counts (E7); `docs/architecture/filters.md` updated to the D8 `HasProperty { predicate: PropertyPredicate }` shape (E8). **P3:** EXPLAIN tests now plan the IPC's REAL composed SQL via a `#[cfg(test)]` accessor (E9); the materializer parity helper derives counts from first principles (breaks the shared-shape blind spot) + a cross-page-move parity test (E10); `Orphan` reranked to cost tier 3 (its outbound half is a correlated subquery) with realistic perf-gate seeds (link skew, op-log depth) + a filtered-query gate (E11); the tauri-mock mirrors the backend — null `total_count` on cursor pages, emits `RequiresRefresh:`, same-page inbound exclusion — with e2e coverage (E12); count-chip basis shares one "loaded" denominator under a text query (E13); client re-sort tiebreaks by `id ASC` to match the server keyset, in both `usePageBrowserGrouping` and `usePageBrowserSort` (E14); the delete decrement moved out of the `setPages` updater (StrictMode double-fire) (E15); clear-all announces a single dedicated SR message (E16); `sortTopLevelUnits` decorates-once instead of allocating per comparison (E17); the `InvalidFilter:` error prefix is recognised with a specific toast (E18); popover descriptions for the five value facets + clear-all documented (E19); dead `pageBrowser.export*` i18n keys removed (E20); stale recompute comment anchors corrected to cite migration 0070 + `recompute_pages_cache_counts_for_pages` (E21).
+
+- **Parallelization.** Five subagents on disjoint file sets — two Rust by module (filters/validation vs materializer), three frontend by ownership (filter-UI vs PageBrowser+grouping vs tauri-mock). `src/lib/i18n/pages.ts` was shared by two frontend agents but only via surgical, non-overlapping edits (placeholder/descriptions/removals vs two new keys) and reconciled clean. Docs and the E14 `usePageBrowserSort` sibling were orchestrator-direct.
+- **No migrations; no IPC type change** — Priority levels were already on the wire as strings, so `src/lib/bindings.ts` is unchanged.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-58e fully resolved and its plan file removed; PEND-58d now lists only the deferred D23a.
+- **Previously resolved:** 1260+ → 1281+ across 812 → 813 sessions.
+
+**Files touched (this session):**
+- backend: `src-tauri/src/filters/primitive.rs`, `commands/pages.rs`, `commands/tests/list_pages_with_metadata_tests.rs`, `materializer/handlers.rs`, `materializer/dispatch.rs`, `materializer/tests.rs`
+- frontend: `src/components/PageBrowser.tsx`, `PageBrowser/AddFilterPopover.tsx`, `PageBrowser/PageBrowserFilterRow.tsx`, `src/components/ui/filter-pill.tsx`, `src/hooks/usePageBrowserGrouping.ts`, `src/hooks/usePageBrowserSort.ts`, `src/lib/i18n/pages.ts`, `src/lib/tauri-mock/handlers.ts`, `src/lib/tauri-mock/seed.ts`, + tests (`__tests__/PageBrowser.test.tsx`, `PageBrowser/__tests__/{AddFilterPopover,PageBrowserFilterRow}.test.tsx`, `ui/__tests__/filter-pill.test.tsx`, `hooks/__tests__/{usePageBrowserGrouping,usePageBrowserSort}.test.ts`, `src/lib/__tests__/tauri-mock.test.ts`, `e2e/pages-view.spec.ts`)
+- docs/meta: `docs/PAGES.md`, `docs/architecture/filters.md`, `pending/README.md`, `pending/PEND-58e-pages-view-deep-review-findings.md` (removed)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3912 passed, 6 skipped.
+- `npx vitest run` — 10525 passed; `npx tsc -b` — clean.
+- `prek run --all-files` — all hooks pass.
+
+**Commit plan:** single commit onto `pend-58-phase2-pages-primitives` (PR #48), pushed.
+
+---
 
 ## Session 812 — PEND-58d: comprehensive Pages-view e2e suite + deep review kickoff (2026-05-22)
 

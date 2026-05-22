@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { PropertyPredicate } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/tauri'
 
@@ -51,13 +52,17 @@ const LAST_EDITED_BUCKETS: ReadonlyArray<{ key: string; spec: FilterPrimitive }>
   { key: 'older', spec: { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } } },
 ]
 
-const PRIORITIES = ['A', 'B', 'C'] as const
-
 export function AddFilterPopover({
   onAddFilter,
   warnManyFilters,
 }: AddFilterPopoverProps): React.ReactElement {
   const { t } = useTranslation()
+  // E1 — the offered Priority values must mirror the user-configured priority
+  // levels (default `1/2/3`), NOT a hardcoded `A/B/C`. The backend matches
+  // `b.priority = ?` against the stored level strings, so an `A/B/C` popover
+  // returned zero pages out of the box. Subscribe like `GraphFilterBar` so the
+  // list reflects live edits in the Properties tab without a reload.
+  const priorityLevels = usePriorityLevels()
   const [open, setOpen] = useState(false)
   const [editor, setEditor] = useState<EditorKey>(null)
   const [tagValue, setTagValue] = useState('')
@@ -160,48 +165,67 @@ export function AddFilterPopover({
         {editor === null && (
           <div className="flex flex-col gap-2">
             <FilterCategoryGroup label={t('pageBrowser.filter.sharedGroup')}>
-              <FilterMenuItem onClick={() => setEditor('tag')}>
+              <FilterMenuItem
+                onClick={() => setEditor('tag')}
+                description={t('pageBrowser.filter.facetTagDesc')}
+              >
                 {t('pageBrowser.filter.facetTag')}
               </FilterMenuItem>
-              <FilterMenuItem onClick={() => setEditor('path')}>
+              <FilterMenuItem
+                onClick={() => setEditor('path')}
+                description={t('pageBrowser.filter.facetPathDesc')}
+              >
                 {t('pageBrowser.filter.facetPath')}
               </FilterMenuItem>
-              <FilterMenuItem onClick={() => setEditor('property')}>
+              <FilterMenuItem
+                onClick={() => setEditor('property')}
+                description={t('pageBrowser.filter.facetHasPropertyDesc')}
+              >
                 {t('pageBrowser.filter.facetHasProperty')}
               </FilterMenuItem>
-              <div className="flex flex-wrap gap-1 px-1">
-                <span className="self-center text-xs text-muted-foreground">
-                  {t('pageBrowser.filter.lastEditedGroup')}
+              <div className="flex flex-col gap-0.5 px-1">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="self-center text-xs text-muted-foreground">
+                    {t('pageBrowser.filter.lastEditedGroup')}
+                  </span>
+                  {LAST_EDITED_BUCKETS.map((bucket) => (
+                    <Button
+                      key={bucket.key}
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      className="text-xs"
+                      onClick={() => emit(bucket.spec)}
+                    >
+                      {t(`pageBrowser.filter.lastEdited.${bucket.key}`)}
+                    </Button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {t('pageBrowser.filter.facetLastEditedDesc')}
                 </span>
-                {LAST_EDITED_BUCKETS.map((bucket) => (
-                  <Button
-                    key={bucket.key}
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="text-xs"
-                    onClick={() => emit(bucket.spec)}
-                  >
-                    {t(`pageBrowser.filter.lastEdited.${bucket.key}`)}
-                  </Button>
-                ))}
               </div>
-              <div className="flex flex-wrap gap-1 px-1">
-                <span className="self-center text-xs text-muted-foreground">
-                  {t('pageBrowser.filter.facetPriority')}
+              <div className="flex flex-col gap-0.5 px-1">
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="self-center text-xs text-muted-foreground">
+                    {t('pageBrowser.filter.facetPriority')}
+                  </span>
+                  {priorityLevels.map((p) => (
+                    <Button
+                      key={p}
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      className="text-xs"
+                      onClick={() => emit({ type: 'Priority', priority: p })}
+                    >
+                      {p}
+                    </Button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {t('pageBrowser.filter.facetPriorityDesc')}
                 </span>
-                {PRIORITIES.map((p) => (
-                  <Button
-                    key={p}
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="text-xs"
-                    onClick={() => emit({ type: 'Priority', priority: p })}
-                  >
-                    {p}
-                  </Button>
-                ))}
               </div>
             </FilterCategoryGroup>
 

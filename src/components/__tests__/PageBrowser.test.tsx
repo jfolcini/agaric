@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
+import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
 
@@ -2746,7 +2747,7 @@ describe('PageBrowser', () => {
       expect(chip.textContent).toMatch(/312 pages/)
     })
 
-    it('renders "X of Y matching" when a filter is active', async () => {
+    it('renders "X of Y matching" when a text query is active (E13: loaded basis)', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce({
         items: [
@@ -2765,10 +2766,15 @@ describe('PageBrowser', () => {
       const search = screen.getByPlaceholderText('Search pages...')
       await user.type(search, 'an')
 
-      // "Banana" matches; Apple/Cherry don't. The chip should switch
-      // to "X of Y matching" form.
+      // "Banana" matches; Apple/Cherry don't. The chip switches to the
+      // "X of Y matching" form. PEND-58e E13 — the text box narrows only
+      // the LOADED set (3 pages here), so the denominator is the loaded
+      // count (3), NOT the server filtered total (312). Pairing a loaded
+      // numerator with a server-total denominator was the basis skew E13
+      // fixes.
       const chip = await screen.findByTestId('page-browser-count')
-      await waitFor(() => expect(chip.textContent).toMatch(/1 of 312 matching/))
+      await waitFor(() => expect(chip.textContent).toMatch(/1 of 3 matching/))
+      expect(chip.textContent).not.toMatch(/1 of 312 matching/)
     })
 
     it('omits the count chip when backend does not supply total_count', async () => {
@@ -4203,6 +4209,377 @@ describe('PageBrowser', () => {
       })
       expect(cursoredAttempts).toBeGreaterThanOrEqual(1)
       expect(cursorlessRetries).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  // ── PEND-58e — deep-review fixes (E5 / E7 / E13 / E15 / E16 / E18) ───
+  describe('PEND-58e — deep-review fixes', () => {
+    beforeEach(() => {
+      localStorage.setItem('pageBrowser.densityV1', 'true')
+      // Reset the global resolve cache so E5's tag-name fixture doesn't
+      // leak across tests.
+      useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+    })
+    afterEach(() => {
+      localStorage.removeItem('pageBrowser.densityV1')
+    })
+
+    function metaPage(id: string, content: string) {
+      return {
+        id,
+        blockType: 'page',
+        content,
+        parentId: null,
+        position: null,
+        deletedAt: null,
+        todoState: null,
+        priority: null,
+        dueDate: null,
+        scheduledDate: null,
+        pageId: id,
+        lastModifiedAt: null,
+        inboundLinkCount: 0,
+        childBlockCount: 0,
+        flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+      }
+    }
+
+    // ── E5 — tag chip resolves the id to a tag name ─────────────────────
+    it('E5: a tag chip shows the resolved tag name, not the raw id', async () => {
+      const user = userEvent.setup()
+      // Seed the global resolve cache with a tag id → name mapping (tags
+      // are preloaded into this cache on boot in production).
+      useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Add a Tag chip carrying the seeded tag id.
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
+      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
+      await user.type(input, '01TAGURGENT')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+
+      // The chip label uses the resolved name ("tag: urgent"), not the id.
+      await waitFor(() => {
+        expect(
+          screen.getByText(t('pageBrowser.filter.summaryTag', { tag: 'urgent' })),
+        ).toBeInTheDocument()
+      })
+      expect(
+        screen.queryByText(t('pageBrowser.filter.summaryTag', { tag: '01TAGURGENT' })),
+      ).not.toBeInTheDocument()
+    })
+
+    it('E5: an unresolved tag id falls back to the raw id (no broken placeholder)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
+      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
+      await user.type(input, '01UNKNOWNTAG')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+
+      // Unresolved → raw id, not the resolve store's `[[…]]` placeholder.
+      await waitFor(() => {
+        expect(
+          screen.getByText(t('pageBrowser.filter.summaryTag', { tag: '01UNKNOWNTAG' })),
+        ).toBeInTheDocument()
+      })
+    })
+
+    // ── E7 — count chip + SR count use the DISTINCT matched-page count ──
+    it('E7: count chip counts distinct pages, not grouped rows, in a namespaced vault', async () => {
+      // A 3-page namespace subtree collapses to one tree-page row; the
+      // count chip numerator must report 3 (distinct pages), not 1 (rows).
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'work/a'), metaPage('P2', 'work/b'), metaPage('P3', 'work/c')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 3,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      const chip = await screen.findByTestId('page-browser-count')
+      // Unfiltered total form: "3 pages" (countAll). Driven by total_count,
+      // unaffected by the grouped-row collapse — kept here as a guardrail.
+      expect(chip).toHaveTextContent(t('pageBrowser.countAll', { count: 3 }))
+    })
+
+    it('E7: SR result announcement counts distinct pages under a text query', async () => {
+      // Three pages in one namespace subtree (collapses to one tree-page
+      // row). A free-text query matching all three must announce "3
+      // results", not the grouped-row count.
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [
+              metaPage('P1', 'work/alpha'),
+              metaPage('P2', 'work/beta'),
+              metaPage('P3', 'work/gamma'),
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 3,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText(t('pageBrowser.countAll', { count: 3 }))
+
+      // Add a Stub chip so the SR announcement effect arms + appends a
+      // result count once the (settled) refetch completes. The text query
+      // "work" matches all three loaded pages.
+      const searchInput = screen.getByLabelText(t('pageBrowser.searchPlaceholder'))
+      await user.type(searchInput, 'work')
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+
+      const liveRegion = screen.getByTestId('filter-announcement')
+      // The settled count appended to the announcement is the DISTINCT
+      // matched-page count (3), never the collapsed grouped-row count.
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceResults', { count: 3 }))
+      })
+    })
+
+    // ── E13 — text-query count chip shares a basis (loaded / loaded) ────
+    it('E13: text-query count chip uses the loaded count as the denominator', async () => {
+      // Server filtered total is 10, but only 2 pages are loaded; a text
+      // query narrows the loaded set to 1. The chip must read "1 of 2"
+      // (loaded basis), NOT "1 of 10" (mixing loaded numerator with the
+      // server total denominator).
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')],
+            next_cursor: null,
+            has_more: true,
+            // Server says there are 10 matching in total (only 2 loaded).
+            total_count: 10,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const searchInput = screen.getByLabelText(t('pageBrowser.searchPlaceholder'))
+      await user.type(searchInput, 'Apple')
+
+      await waitFor(() => {
+        // 1 matched (Apple) of 2 loaded — both loaded basis.
+        expect(screen.getByTestId('page-browser-count')).toHaveTextContent(
+          t('pageBrowser.countFiltered', { loaded: 1, total: 2 }),
+        )
+      })
+      // It must NOT pair the loaded numerator with the server total (10).
+      expect(screen.getByTestId('page-browser-count')).not.toHaveTextContent(
+        t('pageBrowser.countFiltered', { loaded: 1, total: 10 }),
+      )
+    })
+
+    // ── E15 — delete decrements the count chip exactly once ─────────────
+    it('E15: deleting a page decrements the count chip by exactly one', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 2,
+          })
+        }
+        if (cmd === 'delete_block') return Promise.resolve(undefined)
+        return Promise.resolve(undefined)
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+      expect(screen.getByTestId('page-browser-count')).toHaveTextContent(
+        t('pageBrowser.countAll', { count: 2 }),
+      )
+
+      // Delete "Apple" via its row delete control (scoped to the Apple row,
+      // since each row carries its own "Delete page" button) + confirm.
+      const appleRow = container.querySelector('#page-row-P1') as HTMLElement
+      await user.click(
+        within(appleRow).getByRole('button', { name: t('pageBrowser.deleteButton') }),
+      )
+      await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+
+      // Count drops from 2 → 1 (a single decrement, not two). A
+      // double-decrement (the pre-E15 in-updater bug under StrictMode)
+      // would land on 0.
+      await waitFor(() => {
+        expect(screen.getByTestId('page-browser-count')).toHaveTextContent(
+          t('pageBrowser.countAll', { count: 1 }),
+        )
+      })
+    })
+
+    // ── E16 — clear-all announces a dedicated message ───────────────────
+    it('E16: clearing all chips announces a single clear-all message', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Add two chips (Stub + Orphan).
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Orphan'))
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'Filter: Orphan' })).toBeInTheDocument()
+      })
+
+      const liveRegion = screen.getByTestId('filter-announcement')
+      // Clear all → a single dedicated message, NOT a per-chip removal.
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.clearAllLabel') }))
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceCleared'))
+      })
+      // It must not announce only the first removed chip.
+      expect(liveRegion).not.toHaveTextContent(
+        t('pageBrowser.filter.announceRemoved', { label: 'Stub' }),
+      )
+    })
+
+    // ── E18 — InvalidFilter: prefix surfaces a specific toast ───────────
+    it('E18: an InvalidFilter: rejection shows a specific toast, not the generic load-failed one', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          const filters =
+            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
+              ?.filters ?? []
+          // An active filter triggers the backend's InvalidFilter rejection.
+          if (filters.length > 0) {
+            return Promise.reject({
+              kind: 'validation',
+              message: 'InvalidFilter: disallowed primitive for this surface',
+            })
+          }
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Add a chip → the metadata refetch rejects with InvalidFilter.
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+
+      // The specific invalid-filter toast fires.
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('pageBrowser.filter.invalidFilter'))
+      })
+      // And NOT the generic load-failed toast (no double-toast).
+      expect(mockedToastError).not.toHaveBeenCalledWith(
+        expect.stringContaining(t('pageBrowser.loadFailed')),
+      )
+    })
+
+    // ── a11y — chip row with a resolved tag chip ────────────────────────
+    it('E5: has no a11y violations with a resolved tag chip present', async () => {
+      const user = userEvent.setup()
+      useResolveStore.getState().set('01TAGURGENT', 'urgent', false)
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText(t('pageBrowser.filter.facetTag')))
+      const input = await screen.findByPlaceholderText(t('pageBrowser.filter.tagPlaceholder'))
+      await user.type(input, '01TAGURGENT')
+      await user.click(screen.getByRole('button', { name: t('pageBrowser.filter.apply') }))
+      await screen.findByText(t('pageBrowser.filter.summaryTag', { tag: 'urgent' }))
+
+      await waitFor(
+        async () => {
+          expect(await axe(container)).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
     })
   })
 })

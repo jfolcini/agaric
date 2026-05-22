@@ -400,7 +400,18 @@ fn invalidations_for_op(
         }
         "move_block" => {
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            // E4: a cross-page move reparents the block's `page_id`
+            // (`commands/blocks/move_ops.rs`). `RebuildPageIds` is the
+            // canonical full recompute of that column; it MUST run before
+            // `RebuildPagesCache` so the page-cache rebuild observes the
+            // corrected membership. The per-op `pages_cache` count refresh
+            // happens synchronously in `apply_op_tx`
+            // (`maintain_pages_cache_counts_after_op`), but enqueue the page
+            // cache rebuild too so the invalidation matrix is honest that a
+            // move can touch `pages_cache` — the prior arm omitted it,
+            // leaving page-cache state unwired for cross-page reparents.
             tasks.push(MaterializeTask::RebuildPageIds);
+            tasks.push(MaterializeTask::RebuildPagesCache);
         }
         "add_attachment" | "delete_attachment" => {}
         other => {
@@ -739,16 +750,24 @@ mod tests {
     // ── move_block ───────────────────────────────────────────────────
 
     #[test]
-    fn invalidations_for_op_move_block_includes_inheritance_and_page_ids() {
+    fn invalidations_for_op_move_block_includes_inheritance_page_ids_and_pages_cache() {
         let r = make_record(
             "move_block",
             r#"{"block_id":"BLK1","new_position":0}"#,
             Some("BLK1"),
         );
         let tasks = invalidations_for_op(&r, None).unwrap();
+        // E4: a cross-page move reparents `page_id`, so the page-id rebuild
+        // and the page-cache rebuild are both enqueued — `RebuildPageIds`
+        // strictly before `RebuildPagesCache` so the latter observes the
+        // corrected membership.
         assert_eq!(
             labels(&tasks),
-            vec!["RebuildTagInheritanceCache", "RebuildPageIds"],
+            vec![
+                "RebuildTagInheritanceCache",
+                "RebuildPageIds",
+                "RebuildPagesCache",
+            ],
         );
     }
 

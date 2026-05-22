@@ -131,7 +131,9 @@ describe('usePageBrowserSort', () => {
     expect(sorted.map((p) => p.id)).toEqual(['P2', 'P3', 'P1'])
   })
 
-  it('sortPages with "most-linked" reads inboundLinkCount DESC, alphabetical tiebreaker', () => {
+  // PEND-58e E14: count ties break by `id ASC` (server keyset parity),
+  // not by title — so equal-count groups don't reshuffle as pages stream.
+  it('sortPages with "most-linked" reads inboundLinkCount DESC, id-ASC tiebreaker', () => {
     localStorage.setItem('page-browser-sort', 'most-linked')
     const { result } = renderHook(() => usePageBrowserSort())
     const pages = [
@@ -140,10 +142,11 @@ describe('usePageBrowserSort', () => {
       makeMetaRow('P3', 'Delta', { inboundLinkCount: 10 }),
     ]
     const sorted = result.current.sortPages(pages)
-    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P2', 'P1'])
+    // Delta (10) first; the 5-tie breaks by id ASC: P1 before P2.
+    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P1', 'P2'])
   })
 
-  it('sortPages with "most-content" reads childBlockCount DESC, alphabetical tiebreaker', () => {
+  it('sortPages with "most-content" reads childBlockCount DESC, id-ASC tiebreaker', () => {
     localStorage.setItem('page-browser-sort', 'most-content')
     const { result } = renderHook(() => usePageBrowserSort())
     const pages = [
@@ -152,7 +155,8 @@ describe('usePageBrowserSort', () => {
       makeMetaRow('P3', 'Delta', { childBlockCount: 100 }),
     ]
     const sorted = result.current.sortPages(pages)
-    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P2', 'P1'])
+    // Delta (100) first; the 50-tie breaks by id ASC: P1 before P2.
+    expect(sorted.map((p) => p.id)).toEqual(['P3', 'P1', 'P2'])
   })
 
   it('metadata sort falls back to alphabetical when rows are BlockRow (no metadata)', () => {

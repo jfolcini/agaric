@@ -61,7 +61,8 @@ describe('pageFilterSummary', () => {
     ['Tag', { type: 'Tag', tag: 'urgent' }, 'tag: urgent'],
     ['Priority', { type: 'Priority', priority: 'A' }, 'priority A'],
     ['Space', { type: 'Space', space_id: 's-1' }, 'this space'],
-    // PathGlob — both exclude values (exclude=true is reserved for Search).
+    // PathGlob — both exclude values (D24 ships the path-exclude toggle, so the
+    // Pages popover emits exclude=true too).
     [
       'PathGlob exclude=false',
       { type: 'PathGlob', pattern: 'Projects/*', exclude: false },

@@ -1486,8 +1486,8 @@ pub async fn load_page_subtree(
 // Sort modes:
 //   - Alphabetical: keyset (`COALESCE(content,'')` COLLATE NOCASE, id)
 //   - RecentlyModified: keyset (`last_modified_at`, id) DESC NULLS LAST
-//   - MostLinked: keyset (`inbound_link_count`, id) DESC, alpha tiebreaker
-//   - MostContent: keyset (`child_block_count`, id) DESC, alpha tiebreaker
+//   - MostLinked: keyset (`inbound_link_count` DESC, id ASC)
+//   - MostContent: keyset (`child_block_count` DESC, id ASC)
 //   - Default: keyset (id) ASC — power-user / debug
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -2069,6 +2069,74 @@ fn compile_pages_filters(
     Ok((fragment, binds))
 }
 
+/// The base SELECT for `list_pages_with_metadata_inner` (everything up to
+/// but NOT including the compound-filter fragment, the keyset, the ORDER BY,
+/// and the LIMIT). Hoisted to a `const` so the test-only
+/// [`compose_list_pages_with_metadata_sql`] accessor (PEND-58e E9) composes
+/// the SAME real SQL the IPC emits rather than a hand-rebuilt copy — a plan
+/// regression in the IPC's actual query is then caught by the EXPLAIN tests.
+///
+/// `?1` is the space_id bind. The compound-filter fragment (its `?` binds
+/// renumbered from `?2`) is appended after this, then the keyset / ORDER BY
+/// / LIMIT.
+const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
+               b.id, b.block_type, b.content, b.parent_id, b.position,
+               b.deleted_at, b.todo_state, b.priority, b.due_date,
+               b.scheduled_date, b.page_id,
+               (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
+                   AS last_modified_at,
+               COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
+               COALESCE(pc.child_block_count, 0) AS child_block_count,
+               EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.todo_state IS NOT NULL) AS has_todo,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.scheduled_date IS NOT NULL) AS has_scheduled,
+               EXISTS(SELECT 1 FROM blocks descendant
+                       WHERE descendant.page_id = b.id
+                         AND descendant.deleted_at IS NULL
+                         AND descendant.due_date IS NOT NULL) AS has_due
+           FROM blocks b
+           LEFT JOIN pages_cache pc ON pc.page_id = b.id
+           WHERE b.block_type = 'page'
+             AND b.deleted_at IS NULL
+             AND b.page_id IN (
+                 SELECT bp.block_id FROM block_properties bp
+                 WHERE bp.key = 'space' AND bp.value_ref = ?1
+             )
+        "#;
+
+/// PEND-58e E9 — test-only accessor that composes the **real** first-page
+/// (no cursor) SQL `list_pages_with_metadata_inner` emits for the given
+/// `filter`, so EXPLAIN-plan tests run against the IPC's actual statement
+/// instead of a hand-rebuilt copy that could silently drift from it.
+///
+/// Mirrors the compose sequence in `list_pages_with_metadata_inner`:
+/// base SELECT (`?1` = space_id) → compiled compound-filter fragment
+/// (`?2 ..`) → keyset / ORDER BY / LIMIT (first page, `cursor = None`).
+/// The error path (invalid filter / date) surfaces verbatim so a test can
+/// also assert rejection. The space_id, filter binds, and `limit` are
+/// supplied by the caller via the bound `?N` placeholders at execution.
+#[cfg(test)]
+pub(crate) fn compose_list_pages_with_metadata_sql(
+    filter: &ListPagesWithMetadataFilter,
+    limit_plus_one: i64,
+) -> Result<String, AppError> {
+    let mut sql = String::from(PAGES_METADATA_BASE_SELECT);
+    let (filter_sql, filter_binds) = compile_pages_filters(&filter.filters)?;
+    sql.push_str(&filter_sql);
+    let base = 1 + filter_binds.len();
+    let keyset = keyset_for(filter.sort);
+    // First page: no cursor. The returned binds are discarded — the test
+    // only needs the SQL string for EXPLAIN QUERY PLAN.
+    let _ = keyset.apply(&mut sql, None, limit_plus_one, base);
+    Ok(sql)
+}
+
 /// Inner implementation of `list_pages_with_metadata`. Cursor-paginated
 /// page enumeration with metadata columns; sort mode chosen via
 /// [`PageSort`].
@@ -2136,38 +2204,7 @@ pub async fn list_pages_with_metadata_inner(
     // the ORDER BY / WHERE keyset depends on the runtime sort mode;
     // the compile-time macro would force four near-identical query
     // bodies.
-    let mut sql = String::from(
-        r#"SELECT
-               b.id, b.block_type, b.content, b.parent_id, b.position,
-               b.deleted_at, b.todo_state, b.priority, b.due_date,
-               b.scheduled_date, b.page_id,
-               (SELECT MAX(created_at) FROM op_log WHERE block_id = b.id)
-                   AS last_modified_at,
-               COALESCE(pc.inbound_link_count, 0) AS inbound_link_count,
-               COALESCE(pc.child_block_count, 0) AS child_block_count,
-               EXISTS(SELECT 1 FROM block_tags WHERE block_id = b.id) AS has_tags,
-               EXISTS(SELECT 1 FROM blocks descendant
-                       WHERE descendant.page_id = b.id
-                         AND descendant.deleted_at IS NULL
-                         AND descendant.todo_state IS NOT NULL) AS has_todo,
-               EXISTS(SELECT 1 FROM blocks descendant
-                       WHERE descendant.page_id = b.id
-                         AND descendant.deleted_at IS NULL
-                         AND descendant.scheduled_date IS NOT NULL) AS has_scheduled,
-               EXISTS(SELECT 1 FROM blocks descendant
-                       WHERE descendant.page_id = b.id
-                         AND descendant.deleted_at IS NULL
-                         AND descendant.due_date IS NOT NULL) AS has_due
-           FROM blocks b
-           LEFT JOIN pages_cache pc ON pc.page_id = b.id
-           WHERE b.block_type = 'page'
-             AND b.deleted_at IS NULL
-             AND b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?1
-             )
-        "#,
-    );
+    let mut sql = String::from(PAGES_METADATA_BASE_SELECT);
 
     // PEND-58 — splice the compound-filter WHERE clauses BEFORE the
     // keyset/ORDER BY/LIMIT. Their `?` placeholders land at positions

@@ -134,10 +134,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.deleteFailed': 'Failed to delete page: {{error}}',
   'pageBrowser.spaceNotReady': 'Loading spaces\u2026 try again in a moment',
   'pageBrowser.retry': 'Retry',
-  'pageBrowser.exportAll': 'Export all pages',
-  'pageBrowser.exporting': 'Exporting...',
-  'pageBrowser.exportSuccess': 'Pages exported as ZIP',
-  'pageBrowser.exportFailed': 'Failed to export pages',
   'pageBrowser.searchPlaceholder': 'Search pages...',
   'pageBrowser.noMatches': 'No matching pages',
   'pageBrowser.countAll_one': '{{count}} page',
@@ -282,7 +278,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.lastEdited.older': 'Edited long ago',
   'pageBrowser.filter.apply': 'Apply',
   'pageBrowser.filter.back': 'Back',
-  'pageBrowser.filter.tagPlaceholder': 'Tag name or id',
+  'pageBrowser.filter.tagPlaceholder': 'Tag id',
   'pageBrowser.filter.pathPlaceholder': 'e.g. Projects/*',
   'pageBrowser.filter.propertyKeyPlaceholder': 'Property key',
   'pageBrowser.filter.propertyValuePlaceholder': 'Value',
@@ -309,6 +305,13 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.announceRemoved': 'Filter removed: {{label}}.',
   'pageBrowser.filter.announceResults_one': '{{count}} result.',
   'pageBrowser.filter.announceResults_other': '{{count}} results.',
+  // PEND-58e E16 — clear-all of N chips announces a single dedicated
+  // message (a per-chip `.find()` would announce only the first removed).
+  'pageBrowser.filter.announceCleared': 'Cleared all filters.',
+  // PEND-58e E18 — the backend rejects a malformed/disallowed compound
+  // filter with `Validation("InvalidFilter: …")`; surface a specific
+  // toast instead of the generic "Failed to load pages".
+  'pageBrowser.filter.invalidFilter': 'That filter is invalid and was not applied.',
   // PEND-58d D24 — tightened so Orphan and "No inbound links" read as clearly
   // distinct: Orphan is fully isolated (no links either way), whereas "No
   // inbound links" is the looser inbound-only sibling (the page may still link
@@ -317,5 +320,12 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.facetStubDesc': 'A titled page with no content blocks.',
   'pageBrowser.filter.facetHasNoInboundLinksDesc':
     'Nothing links to this page (it may still link out).',
+  // PEND-58e E19 — short descriptions for the value-bearing facets so they read
+  // as clearly as the boolean ones in the Add-Filter popover.
+  'pageBrowser.filter.facetTagDesc': 'Pages tagged with a specific tag id.',
+  'pageBrowser.filter.facetPathDesc': 'Pages whose path matches a glob pattern.',
+  'pageBrowser.filter.facetHasPropertyDesc': 'Pages with a property matching a condition.',
+  'pageBrowser.filter.facetLastEditedDesc': 'Pages edited within the chosen window.',
+  'pageBrowser.filter.facetPriorityDesc': 'Pages set to a priority level.',
   'pageBrowser.filter.lastEditedGroup': 'Last edited',
 }

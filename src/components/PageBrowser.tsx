@@ -23,6 +23,10 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+// E18 — standalone `t` for a toast fired inside the (identity-stable)
+// `queryFn`; aliased so it doesn't shadow the component's `useTranslation`
+// `t`, and used so the toast string doesn't pull `t` into the queryFn deps.
+import { t as i18nT } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -37,7 +41,7 @@ import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
-import { isAppError } from '../lib/app-error'
+import { isAppError, type TypedAppError } from '../lib/app-error'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
 import {
   createPageInSpace,
@@ -46,6 +50,7 @@ import {
   resolvePageByAlias,
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
@@ -125,6 +130,22 @@ async function withCursorRecovery<T>(
   }
 }
 
+/**
+ * E18 — the backend can reject a malformed / disallowed compound filter
+ * with `AppError::Validation("InvalidFilter: …")` (mirroring the existing
+ * `RequiresRefresh:` / `InvalidDateFilter:` prefixes). Without explicit
+ * recognition this falls through to the generic
+ * `t('pageBrowser.loadFailed')` toast, which misleads the user into
+ * thinking the list itself failed to load rather than that a filter chip
+ * is invalid. Detect the prefix here.
+ */
+const INVALID_FILTER_PREFIX = 'InvalidFilter:'
+function isInvalidFilterError(err: unknown): err is TypedAppError {
+  return (
+    isAppError(err) && err.kind === 'validation' && err.message.startsWith(INVALID_FILTER_PREFIX)
+  )
+}
+
 interface PageBrowserProps {
   /** Called when a page is selected. */
   onPageSelect?: (pageId: string, title?: string) => void
@@ -186,6 +207,28 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const handleClearAllFilters = useCallback(() => {
     setFilters((prev) => (prev.length === 0 ? prev : []))
   }, [])
+  // PEND-58e E5 — resolve a `tag:` chip's tag id to its human-readable
+  // name. The tags are preloaded into the global resolve cache on boot
+  // (and re-fetched per space), the same source the editor uses to render
+  // `#[ULID]` tag refs. Subscribe to `version` so the chip re-renders when
+  // the cache fills in. `resolveTitle` returns a `[[xxxx…]]` placeholder
+  // for an id it can't resolve; fall back to the raw id in that case so an
+  // unknown tag chip renders the id (the prior behaviour) rather than the
+  // block-style placeholder.
+  const resolveTitle = useResolveStore((s) => s.resolveTitle)
+  const resolveVersion = useResolveStore((s) => s.version)
+  // `resolveVersion` is load-bearing: `resolveTitle` reads a mutable store
+  // cache, so the version bump is the trigger that re-derives the resolver
+  // (and re-renders the chips) when tags finish loading — biome flags it as
+  // an "extra" dep because the callback body never names it directly.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion drives re-resolution of the mutable cache
+  const tagResolver = useCallback(
+    (id: string): string => {
+      const title = resolveTitle(id)
+      return title.startsWith('[[') ? id : title
+    },
+    [resolveTitle, resolveVersion],
+  )
   // Wire-shaped primitives (the `_addId` React key is dropped). A stable
   // JSON serialisation is the queryFn dep so a chip add/remove refetches
   // without making the callback identity churn on unrelated renders.
@@ -223,7 +266,21 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
               limit: PAGINATION_LIMIT,
             }),
           cursor,
-        )
+        ).catch((err: unknown) => {
+          // E18 — a malformed/disallowed compound filter rejects with
+          // `InvalidFilter:`. Surface a specific toast (the offending
+          // filter, not the list, is the problem) and re-throw a
+          // cancellation-shaped error so `usePaginatedQuery` swallows it
+          // silently instead of also firing the generic `loadFailed`
+          // toast (double-toast). The `error` state stays clean — the
+          // specific toast already told the user what's wrong.
+          if (isInvalidFilterError(err)) {
+            notify.error(i18nT('pageBrowser.filter.invalidFilter'))
+            const suppressed: TypedAppError = { kind: 'cancelled', message: err.message }
+            throw suppressed
+          }
+          throw err
+        })
       }
       return listBlocks({
         blockType: 'page',
@@ -297,19 +354,30 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // decrement to the actual array shrink (rather than the confirm click)
   // means a failed delete, which leaves `pages` unchanged, also leaves
   // the count unchanged.
+  //
+  // E15 — a render-synced snapshot of `pages` so `setPagesForDelete` can
+  // compute the array delta WITHOUT reading `prev` from inside a
+  // `setPages` updater. Keeping the delta math (and the dependent
+  // `setDisplayTotalCount`) outside the updater makes the path idempotent
+  // under React StrictMode's double-invoke.
+  const setPagesSnapshotRef = useRef(pages)
+  setPagesSnapshotRef.current = pages
   const setPagesForDelete = useCallback(
     (updater: (prev: BlockRow[]) => BlockRow[]) => {
-      setPages((prev) => {
-        const prevRows = prev as BlockRow[]
-        const next = updater(prevRows)
-        if (next.length < prevRows.length) {
-          const removed = prevRows.length - next.length
-          setDisplayTotalCount((cur) =>
-            typeof cur === 'number' ? Math.max(0, cur - removed) : cur,
-          )
-        }
-        return next as (BlockRow | PageWithMetadataRow)[]
-      })
+      // E15 — the count decrement must NOT live inside the `setPages`
+      // updater: React StrictMode (dev) double-invokes a `useState`
+      // updater to surface impurity, and a nested `setDisplayTotalCount`
+      // is a side effect, so it would fire — and decrement — twice.
+      // Compute the delta against the *current* pages snapshot, apply the
+      // page mutation idempotently, then fire the count decrement exactly
+      // once outside the updater.
+      const prevRows = setPagesSnapshotRef.current as BlockRow[]
+      const next = updater(prevRows)
+      setPages(next as (BlockRow | PageWithMetadataRow)[])
+      if (next.length < prevRows.length) {
+        const removed = prevRows.length - next.length
+        setDisplayTotalCount((cur) => (typeof cur === 'number' ? Math.max(0, cur - removed) : cur))
+      }
     },
     [setPages],
   )
@@ -513,14 +581,20 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Cast to `BlockRow[]` at the grouping boundary so the existing
   // `usePageBrowserGrouping` / `sortPages` signatures stay unchanged.
   const filteredPagesUnsortedAsBlockRows = filteredPagesUnsorted as unknown as BlockRow[]
-  const { filteredPages, groupedRows, pageIndexToRowIndex, hasStarred, hasPages } =
-    usePageBrowserGrouping({
-      filteredPagesUnsorted: filteredPagesUnsortedAsBlockRows,
-      sortPages,
-      sortOption,
-      starredIds,
-      isSinglePageVault,
-    })
+  const {
+    filteredPages,
+    groupedRows,
+    pageIndexToRowIndex,
+    hasStarred,
+    hasPages,
+    matchedPageCount,
+  } = usePageBrowserGrouping({
+    filteredPagesUnsorted: filteredPagesUnsortedAsBlockRows,
+    sortPages,
+    sortOption,
+    starredIds,
+    isSinglePageVault,
+  })
 
   const virtualItemCount = groupedRows.length
 
@@ -570,6 +644,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           label: pageFilterSummary(added, t),
         })
       }
+    } else if (filters.length === 0 && prev.length > 1) {
+      // E16 — clear-all removed every chip in one shot. A single
+      // `.find()` (the per-chip remove branch below) would announce only
+      // the FIRST removed chip and silently drop the rest, so screen
+      // readers would hear "Filter removed: Orphan." after clearing five
+      // filters. Announce a dedicated clear-all message instead.
+      prefix = t('pageBrowser.filter.announceCleared')
     } else if (filters.length < prev.length) {
       const curIds = new Set(filters.map((f) => f._addId))
       const removed = prev.find((f) => !curIds.has(f._addId))
@@ -598,10 +679,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     if (!filterAnnouncePendingRef.current) return
     if (!settled) return
     filterAnnouncePendingRef.current = false
-    const count = t('pageBrowser.filter.announceResults', { count: filteredPages.length })
+    // E7 — announce the DISTINCT matched-page count, not the grouped-row
+    // count (`filteredPages` collapses namespaces and double-counts
+    // starred+namespaced pages).
+    const count = t('pageBrowser.filter.announceResults', { count: matchedPageCount })
     const prefix = filterAnnouncePrefixRef.current
     setFilterAnnouncement(prefix === '' ? count : `${prefix} ${count}`)
-  }, [loading, filteredPages.length, t])
+  }, [loading, matchedPageCount, t])
 
   // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
   // stable across re-renders that don't change `groupedRows` or
@@ -878,6 +962,20 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // three server-side sorts are globally accurate, so they never trigger.
   const frontendSortAtScale = isFrontendOnlySort(sortOption) && hasMore
 
+  // E13 — keep the free-text count chip basis-consistent. The text box
+  // narrows only the LOADED set client-side, so its numerator
+  // (`matchedPageCount`) is loaded-basis. Pairing it with the server
+  // filtered total (`displayTotalCount`) would skew "X of Y matching"
+  // (a loaded numerator over a server denominator). When a text query is
+  // active, drive the denominator from the loaded distinct page count so
+  // both ends share the loaded basis — "23 of 50 matching" reads as "23
+  // of the 50 loaded pages match". With no text query the chip keeps the
+  // server total (forms (a) unfiltered and (c) chips-only in the header).
+  // Guard on the server total still being a number so the chip stays
+  // hidden when the backend never reported a total (unchanged behaviour).
+  const headerTotalCount =
+    hasTextQuery && typeof displayTotalCount === 'number' ? pages.length : displayTotalCount
+
   return (
     <div className="page-browser space-y-4">
       <ViewHeader>
@@ -895,8 +993,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onSortChange={setSortOption}
           density={density}
           onDensityChange={setDensity}
-          totalCount={displayTotalCount}
-          filteredCount={filteredPages.length}
+          // E13 — basis-consistent denominator: server total normally,
+          // loaded distinct count when a text query is active (the text
+          // box only narrows loaded pages, so a server total there skews).
+          totalCount={headerTotalCount}
+          // E7 — the count-chip numerator is the DISTINCT matched-page
+          // count, not the grouped-row count (`filteredPages` under-counts
+          // namespaced subtrees and double-counts starred+namespaced pages).
+          filteredCount={matchedPageCount}
           hasTextQuery={hasTextQuery}
           hasChipFilters={hasChipFilters}
           frontendSortAtScale={frontendSortAtScale}
@@ -915,6 +1019,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onAddFilter={handleAddFilter}
           onRemoveFilter={handleRemoveFilter}
           onClearAll={handleClearAllFilters}
+          // PEND-58e E5 — resolve `tag:` chips to tag names (the chip
+          // previously showed the raw ULID because no resolver was passed).
+          tagResolver={tagResolver}
         />
       )}
 

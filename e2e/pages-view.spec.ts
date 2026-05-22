@@ -746,6 +746,18 @@ test.describe('PEND-58d — metadata badges', () => {
     await expect(row.locator('[data-metadata-inbound]')).toHaveCount(0)
     await expect(row.locator('[data-metadata-children]')).toBeVisible()
   })
+
+  test('same-page links are excluded from the inbound badge (E12)', async ({ page }) => {
+    await bootPages(page)
+    // Quick Notes carries BOTH a cross-page inbound edge (from BLOCK_GS_2 on
+    // Getting Started) AND a same-page edge (BLOCK_QN_2 → BLOCK_QN_1, both on
+    // Quick Notes). The same-page edge must NOT count — so the inbound badge
+    // reads "1 ↗", not "2 ↗" (migration 0070 exclusion mirrored in the mock).
+    const row = grid(page).locator('[data-page-item]:has-text("Quick Notes")')
+    await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
+    await expect(row.locator('[data-metadata-inbound]')).toContainText('1 ↗')
+    await expect(row.locator('[data-metadata-inbound]')).not.toContainText('2 ↗')
+  })
 })
 
 // ===========================================================================
@@ -782,6 +794,119 @@ test.describe('PEND-58d — cursor robustness', () => {
       )
       .toBeGreaterThan(0)
     await expect(grid(page).getByText('Meeting Notes Template', { exact: true })).toHaveCount(1)
+  })
+})
+
+// ===========================================================================
+// 13b. Cursor IPC contract (PEND-58e E12) — drive the D6 null-retention,
+// cross-sort RequiresRefresh, and same-page inbound exclusion paths through
+// the mock at the IPC boundary, the same surface the Pages view consumes in
+// e2e. The browser-mock activates whenever `window.__TAURI_INTERNALS__` is
+// present without the real Tauri runtime, so `invoke(...)` here hits exactly
+// the handler that backs the live grid.
+// ===========================================================================
+
+/** Minimal `list_pages_with_metadata` response shape for IPC-boundary reads. */
+interface MetaResp {
+  items: Array<Record<string, unknown>>
+  next_cursor: string | null
+  has_more: boolean
+  total_count: number | null
+}
+
+/**
+ * Call `list_pages_with_metadata` directly through the mock IPC, returning the
+ * raw response (or, on rejection, the thrown AppError-shaped value as
+ * `{ __error: ... }` so the cross-sort rejection is assertable without the
+ * `page.evaluate` boundary swallowing it).
+ */
+function invokePages(
+  page: Page,
+  args: { sort: string; cursor: string | null; limit: number },
+): Promise<MetaResp | { __error: { kind?: string; message?: string } }> {
+  return page.evaluate(async (a) => {
+    const invoke = (
+      window as unknown as {
+        __TAURI_INTERNALS__: {
+          invoke: (c: string, args?: Record<string, unknown>) => Promise<unknown>
+        }
+      }
+    ).__TAURI_INTERNALS__.invoke
+    try {
+      return (await invoke('list_pages_with_metadata', {
+        filter: { spaceId: 'SPACE_PERSONAL', sort: a.sort, filters: [] },
+        cursor: a.cursor,
+        limit: a.limit,
+      })) as MetaResp
+    } catch (err) {
+      // Surface the AppError wire shape verbatim ({ kind, message }) so the
+      // RequiresRefresh assertion can read it; a thrown value crossing the
+      // page.evaluate boundary otherwise arrives as an opaque Error string.
+      const e = err as { kind?: string; message?: string }
+      return { __error: { kind: e?.kind, message: e?.message } }
+    }
+  }, args)
+}
+
+test.describe('PEND-58e — cursor IPC contract (E12)', () => {
+  test('first page carries total_count; cursor pages return null (D6)', async ({ page }) => {
+    await bootPages(page, { extraPages: 80 })
+    const first = (await invokePages(page, {
+      sort: 'default',
+      cursor: null,
+      limit: 50,
+    })) as MetaResp
+    // First page: a real total over the full 86-page set (6 seed + 80 bulk).
+    expect(first.total_count).toBe(86)
+    expect(first.has_more).toBe(true)
+    expect(first.next_cursor).not.toBeNull()
+
+    const second = (await invokePages(page, {
+      sort: 'default',
+      cursor: first.next_cursor,
+      limit: 50,
+    })) as MetaResp
+    // Cursor page: total_count is null (the mock does not recompute it); the
+    // page still returns rows.
+    expect(second.total_count).toBeNull()
+    expect(second.items.length).toBeGreaterThan(0)
+  })
+
+  test('a cursor reused across a sort change is rejected with RequiresRefresh', async ({
+    page,
+  }) => {
+    await bootPages(page, { extraPages: 80 })
+    const first = (await invokePages(page, {
+      sort: 'default',
+      cursor: null,
+      limit: 50,
+    })) as MetaResp
+    expect(first.next_cursor).not.toBeNull()
+
+    // Replay the default-sort cursor under `most-linked` → discriminator
+    // mismatch → the mock throws the AppError wire shape with the
+    // `RequiresRefresh:` prefix that `withCursorRecovery` keys on.
+    const rejected = (await invokePages(page, {
+      sort: 'most-linked',
+      cursor: first.next_cursor,
+      limit: 50,
+    })) as { __error: { kind?: string; message?: string } }
+    expect(rejected.__error.kind).toBe('validation')
+    expect(rejected.__error.message ?? '').toMatch(/^RequiresRefresh:/)
+  })
+
+  test('count chip survives load-more (D6 retention, end-to-end)', async ({ page }) => {
+    // The UI half of D6: page 1 sets the count, the load-more cursor page
+    // returns null total_count, and `PageBrowser`'s `displayTotalCount`
+    // retains the page-1 value — so the chip never blanks or resets.
+    await bootPages(page, { extraPages: 80 })
+    await expect(countChip(page)).toHaveText('86 pages')
+
+    await page.getByRole('button', { name: /load more/i }).click()
+    // Even though the cursor page reported total_count = null, the chip holds
+    // the retained first-page total (it does not vanish or change).
+    await expect(page.getByRole('button', { name: /load more/i })).toHaveCount(0)
+    await expect(countChip(page)).toHaveText('86 pages')
   })
 })
 

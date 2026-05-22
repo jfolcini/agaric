@@ -309,7 +309,7 @@ impl FilterPrimitive {
     ///
     /// The mapping mirrors the plan's "SARGable?" / "Index hit" table:
     ///
-    /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`, `Orphan`,
+    /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`,
     ///   `Stub`, `HasNoInboundLinks` — each hits an existing index
     ///   (`idx_block_props_key`, `idx_block_links_target/source`,
     ///   `idx_blocks_page_id`) or reads a materialised `pages_cache`
@@ -332,18 +332,29 @@ impl FilterPrimitive {
     ///   range (Unicode-fiddly to build by hand) isn't worth it; `PathGlob`
     ///   is simply ranked last among the SQL primitives so it never runs
     ///   before a SARGable clause.
-    /// - **3 (post-filter / non-SQL):** the Search-only toggles
-    ///   (`Regex`, `CaseSensitive`, `WholeWord`, `Snippet`) — never seen
-    ///   on the Pages surface (allowed-keys gate rejects them), but
-    ///   ranked last so they never precede a SARGable clause if a future
-    ///   surface admits them.
+    /// - **3 (post-filter / correlated-subquery / non-SQL):** `Orphan`
+    ///   plus the Search-only toggles (`Regex`, `CaseSensitive`,
+    ///   `WholeWord`, `Snippet`). `Orphan`'s *inbound* half reads the
+    ///   materialised `pc.inbound_link_count` (cheap), but its *outbound*
+    ///   half is a page-wide `NOT EXISTS` over a **3-table correlated
+    ///   subquery** (`block_links` ⋈ `blocks src` ⋈ `blocks tgt`,
+    ///   correlated on `src.page_id = b.id`) with **no materialised
+    ///   counterpart yet** — see `compile_orphan`. That outbound term
+    ///   dominates the clause, so `Orphan` ranks in the expensive tier and
+    ///   is emitted *after* any genuinely index-backed clause that can
+    ///   pre-narrow the page set (PEND-58e E11; matches the cost-ordering
+    ///   rationale in `docs/architecture/filters.md`). The Search-only
+    ///   toggles are never seen on the Pages surface (allowed-keys gate
+    ///   rejects them) but rank here too so they never precede a SARGable
+    ///   clause if a future surface admits them. When an
+    ///   `outbound_link_count` column is eventually materialised, `Orphan`
+    ///   becomes a pure index read and can drop back to `0`.
     #[must_use]
     pub fn cost_hint(&self) -> u8 {
         match self {
             FilterPrimitive::Tag { .. }
             | FilterPrimitive::HasProperty { .. }
             | FilterPrimitive::Space { .. }
-            | FilterPrimitive::Orphan
             | FilterPrimitive::Stub
             | FilterPrimitive::HasNoInboundLinks => 0,
             // `Priority` is a per-row equality; `LastEdited` is a
@@ -355,7 +366,11 @@ impl FilterPrimitive {
             // an explicit NOCASE range would), so anchoring buys nothing.
             // Ranked highest among the SQL primitives.
             FilterPrimitive::PathGlob { .. } => 2,
-            FilterPrimitive::Regex { .. }
+            // `Orphan`'s outbound half is a 3-table correlated subquery with
+            // no materialised counterpart (PEND-58e E11) — expensive tier,
+            // emitted after any index-backed clause that can pre-narrow.
+            FilterPrimitive::Orphan
+            | FilterPrimitive::Regex { .. }
             | FilterPrimitive::CaseSensitive { .. }
             | FilterPrimitive::WholeWord { .. }
             | FilterPrimitive::Snippet { .. } => 3,
@@ -574,6 +589,21 @@ impl Projection for PagesProjection {
         // a `'0001-01-01'` COALESCE — an asymmetry. The dates Range binds
         // are validated upstream (PEND-58d D15) in
         // `commands::pages::compile_pages_filters`.
+        //
+        // **End-of-day inclusivity (PEND-58e E3):** the Range `end` bound is
+        // a *user-facing calendar window* — selecting `… AND 2026-03-01`
+        // means "up to and including all of March 1st". But `op_log.created_at`
+        // holds full RFC 3339 timestamps, so binding a bare `'2026-03-01'`
+        // verbatim into `<= ?` lexically excludes every same-day edit with a
+        // wall-clock component (`'2026-03-01T09:00:00.123Z' <= '2026-03-01'`
+        // is FALSE — `'T'` > end-of-string). We therefore extend a *bare*
+        // (`YYYY-MM-DD`, no `T`) end bound to the last instant of that day
+        // (`T23:59:59.999Z`) so the whole end day is included. A `start`
+        // bound needs no such treatment: a bare `'2026-02-01'` already sorts
+        // *before* any same-day timestamp, so `>= start` correctly admits
+        // the entire start day. An `end` that already carries a `T`
+        // (full RFC 3339, also accepted by `validate_last_edited_date`) is
+        // bound verbatim — the caller asked for an exact instant.
         const EPOCH: &str = "'1970-01-01T00:00:00Z'";
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
@@ -590,13 +620,24 @@ impl Projection for PagesProjection {
                 ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
-            LastEditedSpec::Range { start, end } => WhereClause::new(
-                format!(
-                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
-                     BETWEEN ? AND ?"
-                ),
-                vec![Bind::Text(start.clone()), Bind::Text(end.clone())],
-            ),
+            LastEditedSpec::Range { start, end } => {
+                // A bare-date `end` (no `T`) is extended to the end of that
+                // calendar day so daytime edits on the end day are INCLUDED
+                // (PEND-58e E3). A full RFC 3339 `end` is bound verbatim.
+                let end_inclusive = if end.contains('T') {
+                    end.clone()
+                } else {
+                    format!("{end}T23:59:59.999Z")
+                };
+                WhereClause::new(
+                    format!(
+                        "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                         >= ? AND COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                         <= ?"
+                    ),
+                    vec![Bind::Text(start.clone()), Bind::Text(end_inclusive)],
+                )
+            }
         }
     }
     /// D17 — **intentionally redundant on the Pages surface.** The Pages
@@ -1154,6 +1195,52 @@ mod tests {
     }
 
     #[test]
+    fn last_edited_range_extends_bare_end_date_to_end_of_day() {
+        // PEND-58e E3 — a bare `YYYY-MM-DD` `end` is extended to the last
+        // instant of that day so daytime edits on the end day are INCLUDED
+        // (the bound is compared against full RFC 3339 timestamps). The
+        // `start` is bound verbatim (a bare start already sorts before any
+        // same-day timestamp). The clause is `>= start AND <= end`.
+        let p = PagesProjection;
+        let bare = p.compile(&FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Range {
+                start: "2026-02-01".into(),
+                end: "2026-03-01".into(),
+            },
+        });
+        assert!(
+            bare.sql.contains(">= ?") && bare.sql.contains("<= ?"),
+            "Range must compile to `>= ? AND <= ?` (not a verbatim BETWEEN); got: {}",
+            bare.sql
+        );
+        assert_eq!(
+            bare.binds,
+            vec![
+                Bind::Text("2026-02-01".to_string()),
+                Bind::Text("2026-03-01T23:59:59.999Z".to_string()),
+            ],
+            "a bare-date end must be extended to end-of-day; start bound verbatim"
+        );
+
+        // A full RFC 3339 `end` is bound verbatim — the caller asked for an
+        // exact instant, no end-of-day extension.
+        let rfc = p.compile(&FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Range {
+                start: "2026-02-01T00:00:00Z".into(),
+                end: "2026-03-01T12:00:00Z".into(),
+            },
+        });
+        assert_eq!(
+            rfc.binds,
+            vec![
+                Bind::Text("2026-02-01T00:00:00Z".to_string()),
+                Bind::Text("2026-03-01T12:00:00Z".to_string()),
+            ],
+            "an RFC 3339 end must be bound verbatim (no extension)"
+        );
+    }
+
+    #[test]
     fn last_edited_all_variants_coalesce_no_op_log_to_common_epoch() {
         // PEND-58d D7 — the "no op-log ⇒ epoch" rule must be uniform: ALL
         // three variants COALESCE the page's last-edited expression to the
@@ -1211,7 +1298,6 @@ mod tests {
     fn cost_hint_orders_index_backed_before_full_scan() {
         // Index-backed primitives are cheapest (0).
         assert_eq!(FilterPrimitive::Tag { tag: "t".into() }.cost_hint(), 0);
-        assert_eq!(FilterPrimitive::Orphan.cost_hint(), 0);
         assert_eq!(FilterPrimitive::Stub.cost_hint(), 0);
         assert_eq!(FilterPrimitive::HasNoInboundLinks.cost_hint(), 0);
         assert_eq!(
@@ -1267,6 +1353,11 @@ mod tests {
             .cost_hint(),
             2
         );
+        // `Orphan` ranks in the expensive tier (3): its outbound half is a
+        // 3-table correlated subquery with no materialised counterpart yet
+        // (PEND-58e E11; matches docs/architecture/filters.md). It must
+        // sort AFTER the genuinely index-backed clauses so they pre-narrow.
+        assert_eq!(FilterPrimitive::Orphan.cost_hint(), 3);
         // Search-only post-filters are ranked last (3).
         assert_eq!(
             FilterPrimitive::Regex {

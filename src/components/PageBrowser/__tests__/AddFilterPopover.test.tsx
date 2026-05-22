@@ -12,8 +12,13 @@
 
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import {
+  __resetPriorityLevelsForTests,
+  DEFAULT_PRIORITY_LEVELS,
+  setPriorityLevels,
+} from '@/lib/priority-levels'
 import type { FilterPrimitive } from '@/lib/tauri'
 import { AddFilterPopover } from '../AddFilterPopover'
 
@@ -26,6 +31,16 @@ async function openPopover(user: ReturnType<typeof userEvent.setup>): Promise<HT
 }
 
 describe('AddFilterPopover', () => {
+  // E1 — Priority values are driven by the user-configurable priority levels;
+  // reset the module-level store before/after each test so a custom-level test
+  // can't leak into the default-level assertions.
+  beforeEach(() => {
+    __resetPriorityLevelsForTests()
+  })
+  afterEach(() => {
+    __resetPriorityLevelsForTests()
+  })
+
   it('renders both filter category groups when opened', async () => {
     const user = userEvent.setup()
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
@@ -52,6 +67,20 @@ describe('AddFilterPopover', () => {
     expect(
       screen.getByText('Nothing links to this page (it may still link out).'),
     ).toBeInTheDocument()
+  })
+
+  // E19 — the value-bearing facets (Tag / Page path / Has property /
+  // Last-edited / Priority) carry short descriptions too, not just the three
+  // boolean facets.
+  it('renders the helper descriptions for the value-bearing facets', async () => {
+    const user = userEvent.setup()
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    await openPopover(user)
+    expect(screen.getByText('Pages tagged with a specific tag id.')).toBeInTheDocument()
+    expect(screen.getByText('Pages whose path matches a glob pattern.')).toBeInTheDocument()
+    expect(screen.getByText('Pages with a property matching a condition.')).toBeInTheDocument()
+    expect(screen.getByText('Pages edited within the chosen window.')).toBeInTheDocument()
+    expect(screen.getByText('Pages set to a priority level.')).toBeInTheDocument()
   })
 
   it('renders the "Last edited" group label before the bucket buttons', async () => {
@@ -97,14 +126,41 @@ describe('AddFilterPopover', () => {
     })
   })
 
-  it('emits a Priority primitive from the priority buttons', async () => {
+  // E1 — the offered Priority values are driven by `usePriorityLevels()` (the
+  // user-configurable levels), NOT a hardcoded `A/B/C`. Out of the box the
+  // levels are `1/2/3` (`DEFAULT_PRIORITY_LEVELS`); a level button emits that
+  // exact string so the backend `b.priority = ?` match succeeds.
+  it('offers exactly the configured priority levels (default 1/2/3)', async () => {
+    const user = userEvent.setup()
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    await openPopover(user)
+
+    for (const level of DEFAULT_PRIORITY_LEVELS) {
+      expect(screen.getByRole('button', { name: level })).toBeInTheDocument()
+    }
+    // The legacy hardcoded A/B/C must no longer be offered.
+    expect(screen.queryByRole('button', { name: 'A' })).not.toBeInTheDocument()
+  })
+
+  it('reflects custom priority levels when reconfigured', async () => {
+    setPriorityLevels(['P0', 'P1'])
+    const user = userEvent.setup()
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    await openPopover(user)
+
+    expect(screen.getByRole('button', { name: 'P0' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'P1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '3' })).not.toBeInTheDocument()
+  })
+
+  it('emits a Priority primitive carrying the configured level value', async () => {
     const user = userEvent.setup()
     const onAddFilter = vi.fn<(f: FilterPrimitive) => void>()
     render(<AddFilterPopover onAddFilter={onAddFilter} />)
     await openPopover(user)
 
-    await user.click(screen.getByRole('button', { name: 'A' }))
-    expect(onAddFilter).toHaveBeenCalledWith({ type: 'Priority', priority: 'A' })
+    await user.click(screen.getByRole('button', { name: '1' }))
+    expect(onAddFilter).toHaveBeenCalledWith({ type: 'Priority', priority: '1' })
   })
 
   it('emits a Tag primitive through the inline editor', async () => {
@@ -114,7 +170,7 @@ describe('AddFilterPopover', () => {
     await openPopover(user)
 
     await user.click(screen.getByText('Tag'))
-    const input = screen.getByLabelText('Tag name or id')
+    const input = screen.getByLabelText('Tag id')
     await user.type(input, 'urgent')
     await user.click(screen.getByRole('button', { name: 'Apply' }))
 
@@ -283,14 +339,14 @@ describe('AddFilterPopover', () => {
     const trigger = await openPopover(user)
 
     await user.click(screen.getByText('Tag'))
-    await user.type(screen.getByLabelText('Tag name or id'), 'urgent')
+    await user.type(screen.getByLabelText('Tag id'), 'urgent')
 
     // Close (onOpenChange(false)) then reopen — the editor + value must reset.
     await user.keyboard('{Escape}')
     await user.click(trigger)
     await screen.findByRole('dialog', { name: 'Add a filter' })
 
-    expect(screen.queryByLabelText('Tag name or id')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Tag id')).not.toBeInTheDocument()
     expect(screen.getByText('Filters')).toBeInTheDocument()
   })
 
@@ -305,7 +361,7 @@ describe('AddFilterPopover', () => {
     expect(apply).toBeDisabled()
     expect(apply).toHaveAttribute('aria-disabled', 'true')
 
-    await user.type(screen.getByLabelText('Tag name or id'), 'urgent')
+    await user.type(screen.getByLabelText('Tag id'), 'urgent')
     expect(apply).toBeEnabled()
     expect(apply).toHaveAttribute('aria-disabled', 'false')
   })
@@ -317,7 +373,7 @@ describe('AddFilterPopover', () => {
     await openPopover(user)
 
     await user.click(screen.getByText('Tag'))
-    const input = screen.getByLabelText('Tag name or id')
+    const input = screen.getByLabelText('Tag id')
     input.focus()
     await user.keyboard('{Enter}')
     expect(onAddFilter).not.toHaveBeenCalled()

@@ -45,10 +45,17 @@ const returnEmptyPage: Handler = () => ({
   total_count: null,
 })
 
-/** A `[[ULID]]`-derived block-link edge — mock stand-in for `block_links`. */
+/**
+ * A `[[ULID]]`-derived block-link edge — mock stand-in for `block_links`.
+ * `sourcePageId` is the owning page of the source block (a page block owns
+ * itself, a descendant carries its ancestor `page_id`, an orphan is `null`).
+ * It is what the same-page/self/orphan-source exclusion (migration 0070)
+ * reads to decide whether an edge counts toward a target page's inbound total.
+ */
 interface MockLinkEdge {
   sourceId: string
   targetId: string
+  sourcePageId: string | null
 }
 
 /**
@@ -56,7 +63,9 @@ interface MockLinkEdge {
  * implied block-link edges. The faithful mock stand-in for the backend's
  * `block_links` table — used to evaluate the link facets (`Orphan` /
  * `HasNoInboundLinks`) and the `MostLinked` sort. Mirrors the `get_backlinks`
- * scan.
+ * scan. Each edge captures the source block's `page_id` so `pageLinkStats`
+ * can apply the same-page/self/orphan-source inbound exclusion (migration
+ * 0070 + `recompute_pages_cache_counts_for_pages`).
  */
 function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockLinkEdge[] {
   const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
@@ -65,8 +74,9 @@ function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockL
     if (blk['deleted_at']) continue
     const content = (blk['content'] as string | null) ?? ''
     if (!content.includes('[[')) continue
+    const sourcePageId = (blk['page_id'] as string | null) ?? null
     for (const m of content.matchAll(LINK_RE)) {
-      edges.push({ sourceId: blk['id'] as string, targetId: m[1] as string })
+      edges.push({ sourceId: blk['id'] as string, targetId: m[1] as string, sourcePageId })
     }
   }
   return edges
@@ -78,15 +88,27 @@ function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockL
  * outbound term, PEND-58b P0-A). `inbound` = distinct sources linking in
  * (`COUNT(DISTINCT source_id)`); `hasOutbound` = the page or a descendant
  * authors an outbound link.
+ *
+ * `inbound` applies the same-page/self/orphan-source exclusion that the live
+ * IPC reads off `pages_cache.inbound_link_count` (migration 0070 +
+ * `recompute_pages_cache_counts_for_pages`): an edge counts only when its
+ * source belongs to a DIFFERENT page (`src.page_id != target page` and
+ * `src.page_id IS NOT NULL`). A block linking to another block on the same
+ * page, a page-block self-link, or a link from an orphan/page-block source
+ * (no resolvable `page_id`) is NOT inbound. `hasOutbound` is unaffected by
+ * the exclusion — it answers "does this page author any outbound link".
  */
 function pageLinkStats(
+  pageId: string,
   pageScopeIds: Set<string>,
   edges: ReadonlyArray<MockLinkEdge>,
 ): { inbound: number; hasOutbound: boolean } {
   const inboundSources = new Set<string>()
   let hasOutbound = false
   for (const e of edges) {
-    if (pageScopeIds.has(e.targetId)) inboundSources.add(e.sourceId)
+    if (pageScopeIds.has(e.targetId) && e.sourcePageId !== null && e.sourcePageId !== pageId) {
+      inboundSources.add(e.sourceId)
+    }
     if (pageScopeIds.has(e.sourceId)) hasOutbound = true
   }
   return { inbound: inboundSources.size, hasOutbound }
@@ -281,21 +303,36 @@ function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
 }
 
 /**
+ * Map a sort mode to the cursor `position` discriminator the backend stamps
+ * into the keyset cursor (mirrors `sort_discriminator` in
+ * `src-tauri/src/commands/pages.rs`). The frontend ships the wire sort enum
+ * (`default` / `recently-modified` / `most-linked` / `most-content`); the
+ * frontend-only `alphabetical` value resolves to the same discriminator as
+ * `default` because both ride the `default` wire keyset. The discriminator is
+ * what `validate_pages_metadata_cursor` compares to reject a cursor reused
+ * across a sort change (the `RequiresRefresh:` recovery path).
+ */
+function sortDiscriminator(sort: string): number {
+  switch (sort) {
+    case 'recently-modified':
+      return 2
+    case 'most-linked':
+      return 3
+    case 'most-content':
+      return 4
+    // `alphabetical` and `default` both ride the default-wire keyset.
+    default:
+      return 5
+  }
+}
+
+/**
  * Encode a next-page cursor matching the backend's per-sort shape so cursor
  * round-trips hit the same validation path. The `position` slot carries the
- * sort discriminator (1=alphabetical … 5=default).
+ * sort discriminator (see `sortDiscriminator`).
  */
 function encodeNextCursor(last: PageMetaRow, sort: string): string {
-  const disc =
-    sort === 'alphabetical'
-      ? 1
-      : sort === 'recently-modified'
-        ? 2
-        : sort === 'most-linked'
-          ? 3
-          : sort === 'most-content'
-            ? 4
-            : 5
+  const disc = sortDiscriminator(sort)
   const cursorObj: Record<string, unknown> = { id: last.id, version: 1, position: disc }
   switch (sort) {
     case 'alphabetical':
@@ -345,11 +382,9 @@ function buildPageMetaRow(
   descendants: Array<Record<string, unknown>>,
   edges: ReadonlyArray<MockLinkEdge>,
 ): PageMetaRow {
-  const pageScopeIds = new Set<string>([
-    b['id'] as string,
-    ...descendants.map((d) => d['id'] as string),
-  ])
-  const { inbound, hasOutbound } = pageLinkStats(pageScopeIds, edges)
+  const pageId = b['id'] as string
+  const pageScopeIds = new Set<string>([pageId, ...descendants.map((d) => d['id'] as string)])
+  const { inbound, hasOutbound } = pageLinkStats(pageId, pageScopeIds, edges)
   return {
     id: b['id'] as string,
     blockType: 'page',
@@ -594,12 +629,33 @@ export const HANDLERS: Record<string, Handler> = {
     // Cursor: skip rows up to AND INCLUDING the cursor's anchor.
     let startIdx = 0
     if (cursor) {
+      let decoded: Record<string, unknown> | null = null
       try {
-        const decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
+        decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
+      } catch {
+        // Malformed cursor: start from the top (mirrors a cursorless fetch).
+        decoded = null
+      }
+      if (decoded) {
+        // Cross-sort cursor rejection — mirror the backend's
+        // `validate_pages_metadata_cursor`: a cursor minted under one sort
+        // carries that sort's `position` discriminator; reusing it after a
+        // sort change is rejected with a `Validation` error whose message
+        // carries the `RequiresRefresh:` prefix the frontend's
+        // `withCursorRecovery` recognises (drop cursor → refetch page 1).
+        // The thrown value carries the `{ kind, message }` AppError wire
+        // shape (an `Error` instance augmented with `kind`, so it satisfies
+        // both `isAppError` — `'kind' in err && 'message' in err` — and the
+        // `useThrowOnlyError` lint) so `err.kind === 'validation'` narrows.
+        const cursorDisc = decoded['position'] as number | undefined
+        if (cursorDisc !== sortDiscriminator(sort)) {
+          throw Object.assign(
+            new Error(`RequiresRefresh: cursor sort mismatch (expected ${sort})`),
+            { kind: 'validation' },
+          )
+        }
         const idx = matched.findIndex((r) => r.id === (decoded['id'] as string))
         if (idx >= 0) startIdx = idx + 1
-      } catch {
-        // Malformed cursor: start from the top.
       }
     }
     const slice = matched.slice(startIdx, startIdx + limit + 1)
@@ -607,10 +663,16 @@ export const HANDLERS: Record<string, Handler> = {
     const items = hasMore ? slice.slice(0, limit) : slice
     const last = items.at(-1)
     const nextCursor = hasMore && last ? encodeNextCursor(last, sort) : null
-    // Real total_count = the full filtered set size (independent of
-    // pagination), so the count chip and e2e count assertions reflect the
-    // active filters. Stable across cursor fetches (same filter → same count).
-    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: matched.length }
+    // PEND-58d D6 (null-retention) — mirror the backend: the `total_count`
+    // COUNT runs ONLY on the first page (`cursor == null`). The filtered-set
+    // total does not change as the user pages with the same filters, so
+    // recomputing it on every cursor page is wasted work. Subsequent (cursor)
+    // pages return `total_count: null`; the frontend (`PageBrowser`'s
+    // `displayTotalCount`) retains the first page's value. Returning the full
+    // filtered-set size (not the page slice) on page 1 keeps the count chip
+    // and e2e count assertions reflecting the active filters.
+    const totalCount = cursor ? null : matched.length
+    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: totalCount }
   },
 
   // Every page in the space whose `template` property is set to 'true'.

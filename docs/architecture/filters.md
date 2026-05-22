@@ -29,13 +29,17 @@ see [`docs/PAGES.md`](../PAGES.md). For the Pages view data flow, see
 
 | Group | Variants |
 |-------|----------|
-| **Shared** | `Tag`, `PathGlob { pattern, exclude }`, `HasProperty { key, op, value }`, `LastEdited(LastEditedSpec)`, `Space`, `Priority` |
+| **Shared** | `Tag`, `PathGlob { pattern, exclude }`, `HasProperty { key, predicate: PropertyPredicate }`, `LastEdited(LastEditedSpec)`, `Space`, `Priority` |
 | **Pages-only** | `Orphan`, `Stub`, `HasNoInboundLinks` |
 | **Search-only** | `Regex`, `CaseSensitive`, `WholeWord`, `Snippet(SnippetSpec)` |
 
-Value sub-types: `PropertyOp` (`eq` / `ne` / `exists` / `notExists`),
-`PropertyValue` (`Text` / `Ref`), `LastEditedSpec` (`Rolling { days }` /
-`Range { start, end }` / `OlderThan { days }`), `SnippetSpec`.
+Value sub-types: `PropertyPredicate` — an internally-tagged enum that fuses
+the operator with its operand (`Exists` / `NotExists` / `Eq { value:
+PropertyValue }` / `Ne { value: PropertyValue }`), so an `Eq`-without-value or
+`Exists`-with-value state is unrepresentable (PEND-58d D8);
+`PropertyValue` (`Text { value }` / `Ref { value }`), `LastEditedSpec`
+(`Rolling { days }` / `Range { start, end }` / `OlderThan { days }`),
+`SnippetSpec`.
 
 ### Wire format
 
@@ -97,7 +101,10 @@ the `compile_pages_filters` helper:
 
 1. **Cost ordering.** Each primitive carries a `cost_hint(&self) -> u8`
    (index-backed primitives `0`, per-row cheap `1` (`Priority`, `LastEdited`),
-   `PathGlob` `2`, post-filter / non-SQL `3`). Clauses are emitted cheapest-first
+   `PathGlob` `2`, post-filter / correlated-subquery `3`). `Orphan` ranks `3`
+   even though its inbound half reads a materialised count, because its outbound
+   half is a 3-table correlated subquery with no materialised counterpart yet
+   (see *Performance*). Clauses are emitted cheapest-first
    so SQLite can narrow the row set with an index before applying a scan.
    `PathGlob` is always `2` (full scan): it compiles to `title COLLATE NOCASE
    LIKE ? ESCAPE '\'` (PEND-58d D1), and SQLite does not apply its LIKE-index

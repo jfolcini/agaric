@@ -3266,7 +3266,10 @@ describe('list_pages_with_metadata — compound filters', () => {
     expect(titlesOf(combo).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
   })
 
-  it('total_count is stable across cursor pages (full filtered set)', () => {
+  it('reports total_count on the first page and null on cursor pages (D6 null-retention)', () => {
+    // PEND-58d D6 — the backend computes `total_count` only on the first
+    // page (cursor == null); subsequent cursor pages return null and the
+    // frontend (`PageBrowser`'s `displayTotalCount`) retains the first value.
     const first = invoke('list_pages_with_metadata', {
       filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
       cursor: null,
@@ -3274,13 +3277,112 @@ describe('list_pages_with_metadata — compound filters', () => {
     }) as MetaPageResp
     expect(first.has_more).toBe(true)
     expect(first.items.length).toBe(2)
-    // total_count reflects the full set, not the page slice.
+    // First page: total_count reflects the FULL filtered set, not the slice.
     expect(first.total_count).toBeGreaterThan(2)
+    const fullTotal = first.total_count
+
     const second = invoke('list_pages_with_metadata', {
       filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
       cursor: first.next_cursor,
       limit: 2,
     }) as MetaPageResp
-    expect(second.total_count).toBe(first.total_count)
+    // Cursor page: total_count is null (not recomputed). The page itself
+    // still returns rows, just no fresh count.
+    expect(second.total_count).toBeNull()
+    expect(second.items.length).toBeGreaterThan(0)
+    // Sanity: the full first-page total spans more than a single slice, so
+    // the retention behaviour is load-bearing (not a degenerate 1-page set).
+    expect(fullTotal).toBeGreaterThan(first.items.length)
+  })
+
+  it('rejects a cursor reused across a sort change with a RequiresRefresh validation error', () => {
+    // The cursor encodes the sort it was minted under (the `position`
+    // discriminator). Reusing an alphabetical-sort cursor under a
+    // `most-linked` request mirrors the backend's
+    // `validate_pages_metadata_cursor` rejection: an AppError-shaped
+    // `{ kind: 'validation', message: 'RequiresRefresh: …' }` that the
+    // frontend's `withCursorRecovery` recognises (drop cursor → refetch).
+    const first = invoke('list_pages_with_metadata', {
+      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      cursor: null,
+      limit: 2,
+    }) as MetaPageResp
+    expect(first.next_cursor).not.toBeNull()
+
+    let thrown: unknown
+    try {
+      invoke('list_pages_with_metadata', {
+        // Same cursor, DIFFERENT sort → discriminator mismatch.
+        filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-linked', filters: [] },
+        cursor: first.next_cursor,
+        limit: 2,
+      })
+    } catch (err) {
+      thrown = err
+    }
+    expect(thrown).toMatchObject({ kind: 'validation' })
+    expect((thrown as { message: string }).message).toMatch(/^RequiresRefresh:/)
+  })
+
+  it('accepts a cursor reused under the SAME sort (no false RequiresRefresh)', () => {
+    // The complement of the cross-sort rejection: a cursor reused under the
+    // identical sort must page cleanly (the discriminator matches).
+    const first = invoke('list_pages_with_metadata', {
+      filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-content', filters: [] },
+      cursor: null,
+      limit: 2,
+    }) as MetaPageResp
+    expect(first.next_cursor).not.toBeNull()
+    const second = invoke('list_pages_with_metadata', {
+      filter: { spaceId: 'SPACE_PERSONAL', sort: 'most-content', filters: [] },
+      cursor: first.next_cursor,
+      limit: 2,
+    }) as MetaPageResp
+    // Pages cleanly: fresh rows, none duplicated from the first slice.
+    const firstIds = new Set(first.items.map((r) => r['id'] as string))
+    for (const r of second.items) expect(firstIds.has(r['id'] as string)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_pages_with_metadata — inbound link count + same-page exclusion
+// (PEND-58e E12). The mock's `pageLinkStats` mirrors the backend's
+// `pages_cache.inbound_link_count` (migration 0070): an edge counts toward a
+// page's inbound total ONLY when its source belongs to a DIFFERENT page.
+// ---------------------------------------------------------------------------
+
+describe('list_pages_with_metadata — inbound same-page exclusion', () => {
+  const inboundOf = (title: string): number => {
+    const resp = listPages([])
+    const row = resp.items.find((r) => r['content'] === title)
+    if (!row) throw new Error(`page not found: ${title}`)
+    return row['inboundLinkCount'] as number
+  }
+
+  it('counts cross-page inbound links', () => {
+    // Quick Notes is linked from BLOCK_GS_2 (a Getting Started descendant) →
+    // one cross-page inbound source.
+    expect(inboundOf('Quick Notes')).toBe(1)
+    // Getting Started is linked from BLOCK_QN_1 (a Quick Notes descendant).
+    expect(inboundOf('Getting Started')).toBe(1)
+  })
+
+  it('excludes the same-page seed edge (BLOCK_QN_2 → BLOCK_QN_1)', () => {
+    // BLOCK_QN_2 links to its sibling BLOCK_QN_1 (both on Quick Notes). That
+    // same-page edge must NOT be counted: Quick Notes stays at inbound = 1
+    // (the cross-page BLOCK_GS_2 edge only). A regressed exclusion would
+    // over-count it to 2.
+    expect(inboundOf('Quick Notes')).toBe(1)
+  })
+
+  it('a fresh same-page link does not bump the inbound count', () => {
+    // Add a second same-page edge dynamically (BLOCK_QN_1 → BLOCK_QN_2) and
+    // confirm Quick Notes' inbound count is still unaffected by same-page
+    // edges in either direction.
+    invoke('edit_block', {
+      blockId: SEED_IDS.BLOCK_QN_1,
+      toText: `Linking sibling [[${SEED_IDS.BLOCK_QN_2}]] on the same page.`,
+    })
+    expect(inboundOf('Quick Notes')).toBe(1)
   })
 })
