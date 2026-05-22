@@ -278,13 +278,16 @@ impl FilterPrimitive {
     ///
     /// The mapping mirrors the plan's "SARGable?" / "Index hit" table:
     ///
-    /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`,
-    ///   `LastEdited`, `Orphan`, `Stub`, `HasNoInboundLinks` — each hits
-    ///   an existing index (`idx_block_props_key`, `idx_op_log_created`,
-    ///   `idx_block_links_target/source`, `idx_blocks_page_id`).
-    /// - **1 (full scan, cheap):** `Priority` — no dedicated index, but a
-    ///   single equality scan over `blocks.priority`; cheap at vault
-    ///   scale.
+    /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`, `Orphan`,
+    ///   `Stub`, `HasNoInboundLinks` — each hits an existing index
+    ///   (`idx_block_props_key`, `idx_block_links_target/source`,
+    ///   `idx_blocks_page_id`) or reads a materialised `pages_cache`
+    ///   column.
+    /// - **1 (per-row, cheap):** `Priority` (a single equality scan over
+    ///   `blocks.priority`, no dedicated index) and `LastEdited` (a
+    ///   correlated `MAX(created_at)` subquery over `op_log`, served
+    ///   per-row via `idx_op_log_block_id` — not an index anti-join, so it
+    ///   ranks below the genuine index-backed primitives).
     /// - **2 (full scan, GLOB):** `PathGlob` when the pattern has no
     ///   leading anchor (a true table scan of `pages_cache.title`). An
     ///   anchored prefix glob (`foo*`) is range-scannable, so it ranks as
@@ -300,11 +303,14 @@ impl FilterPrimitive {
             FilterPrimitive::Tag { .. }
             | FilterPrimitive::HasProperty { .. }
             | FilterPrimitive::Space { .. }
-            | FilterPrimitive::LastEdited { .. }
             | FilterPrimitive::Orphan
             | FilterPrimitive::Stub
             | FilterPrimitive::HasNoInboundLinks => 0,
-            FilterPrimitive::Priority { .. } => 1,
+            // `Priority` is a per-row equality; `LastEdited` is a
+            // per-row correlated `MAX()` subquery (served via
+            // `idx_op_log_block_id`) — both rank above the true index
+            // anti-joins but below a full GLOB scan.
+            FilterPrimitive::Priority { .. } | FilterPrimitive::LastEdited { .. } => 1,
             // Anchored prefix globs (`foo*`, no leading `*`/`?`/`[`) are
             // range-scannable → index-backed cost. A leading wildcard
             // forces a full scan → ranked highest among SQL primitives.
@@ -466,38 +472,24 @@ impl Projection for PagesProjection {
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
     }
-    // ── Pages-only grooming primitives ─────────────────────────────
-    //
-    // PEND-58 Phase 2 — the three fragments below reference the
-    // materialised columns shipped by PEND-56b
-    // (`pages_cache.inbound_link_count`, `pages_cache.child_block_count`)
-    // rather than the pre-PEND-56b correlated subqueries that hit the
-    // 20k-page latency cliff measured during the materialisation review.
-    //
-    // Composition contract: the caller MUST splice these fragments into
-    // a SELECT that already `LEFT JOIN pages_cache pc ON pc.page_id = b.id`.
-    // The canonical example is the live IPC SELECT in
-    // `commands::pages::list_pages_with_metadata_inner`
-    // (`src-tauri/src/commands/pages.rs:1941-1942`). PEND-58 Phase 3 will
-    // wire the Pages IPC to consume `Vec<FilterPrimitive>` and reuse that
-    // exact JOIN; until then these fragments are SQL-level snapshots
-    // that compile but only execute against a `pc`-bearing context.
-    //
-    // `COALESCE(pc.<col>, 0)` defends against the no-`pages_cache`-row
-    // case the materializer's contract guarantees won't happen (every
-    // page gets a row on create per the materializer's lifecycle
-    // handlers + the migration 0069 backfill). If a future Pages-only
-    // primitive needs a count, materialise it on `pages_cache` via the
-    // PEND-56b pattern rather than introducing a new correlated
-    // subquery on the read path.
     fn compile_orphan(&self) -> WhereClause {
         // Orphan := no inbound block-link edges AND no outbound block-link
-        // edges. The inbound side is index-served via the materialised
-        // `pc.inbound_link_count`. The outbound side has no materialised
-        // counterpart yet (the materializer maintains the page-level
-        // inbound aggregate only) — keep the `NOT EXISTS` here, and
-        // file a follow-up to materialise an `outbound_link_count` if
-        // measurement shows this term dominating.
+        // edges, both scoped page-wide. The inbound side is index-served
+        // via the materialised `pc.inbound_link_count`. The outbound side
+        // has no materialised counterpart yet (the materializer maintains
+        // the page-level inbound aggregate only) — keep the `NOT EXISTS`
+        // here, and file a follow-up to materialise an
+        // `outbound_link_count` if measurement shows this term dominating.
+        //
+        // **Page-wide outbound semantic** (PEND-58 Phase-2 / PEND-56b
+        // alignment): `block_links.source_id` is the *content* block that
+        // authored the link, not the page block. Links normally live in the
+        // body, so the outbound `NOT EXISTS` MUST cover every non-deleted
+        // block on the page (`src.page_id = b.id`), mirroring the page-wide
+        // inbound semantic below — not just edges typed on the page's title
+        // row (`source_id = b.id`). Spec
+        // `pending/PEND-58-pages-view-compound-filters.md:141` requires
+        // `source_id IN (SELECT id FROM blocks WHERE page_id = …)`.
         //
         // **Inbound semantic** (PEND-58 Phase-2 alignment with PEND-56b):
         // `pc.inbound_link_count` aggregates `block_links` edges whose
@@ -512,7 +504,11 @@ impl Projection for PagesProjection {
         // seeing "0 ↗" on a row always agrees with the surfaced count.
         WhereClause::new(
             "COALESCE(pc.inbound_link_count, 0) = 0 \
-             AND NOT EXISTS (SELECT 1 FROM block_links WHERE source_id = b.id)",
+             AND NOT EXISTS ( \
+               SELECT 1 FROM block_links bl \
+               JOIN blocks src ON bl.source_id = src.id \
+               WHERE src.page_id = b.id AND src.deleted_at IS NULL \
+             )",
             Vec::new(),
         )
     }
@@ -645,6 +641,83 @@ mod tests {
         }
     }
 
+    /// PEND-58b P2-C — exhaustive consistency check across the three
+    /// hand-written allowed-key sites (`allowed_key()`,
+    /// `PAGES_ALLOWED_KEYS`, `SEARCH_ALLOWED_KEYS`). Every
+    /// `FilterPrimitive` variant's `allowed_key()` token MUST appear in at
+    /// least one surface's static set — otherwise a typo would permanently
+    /// mis-gate that primitive on every surface. The match below is
+    /// exhaustive, so adding a variant without an `allowed_key()` arm (and
+    /// a slot in this list) fails to compile.
+    #[test]
+    fn every_primitive_allowed_key_belongs_to_a_surface_set() {
+        let all = [
+            FilterPrimitive::Tag { tag: "t".into() },
+            FilterPrimitive::PathGlob {
+                pattern: "p".into(),
+                exclude: false,
+            },
+            FilterPrimitive::HasProperty {
+                key: "k".into(),
+                op: PropertyOp::Exists,
+                value: None,
+            },
+            FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Rolling { days: 7 },
+            },
+            FilterPrimitive::Space {
+                space_id: "s".into(),
+            },
+            FilterPrimitive::Priority {
+                priority: "A".into(),
+            },
+            FilterPrimitive::Orphan,
+            FilterPrimitive::Stub,
+            FilterPrimitive::HasNoInboundLinks,
+            FilterPrimitive::Regex {
+                pattern: "x".into(),
+            },
+            FilterPrimitive::CaseSensitive { enabled: true },
+            FilterPrimitive::WholeWord { enabled: true },
+            FilterPrimitive::Snippet {
+                spec: SnippetSpec {
+                    max_tokens: 5,
+                    left_marker: "<".into(),
+                    right_marker: ">".into(),
+                },
+            },
+        ];
+        // Compile-time exhaustiveness guard — if a variant is added,
+        // this match must gain an arm, forcing the author to extend
+        // `all` above too.
+        for prim in &all {
+            #[allow(clippy::match_same_arms)]
+            match prim {
+                FilterPrimitive::Tag { .. }
+                | FilterPrimitive::PathGlob { .. }
+                | FilterPrimitive::HasProperty { .. }
+                | FilterPrimitive::LastEdited { .. }
+                | FilterPrimitive::Space { .. }
+                | FilterPrimitive::Priority { .. }
+                | FilterPrimitive::Orphan
+                | FilterPrimitive::Stub
+                | FilterPrimitive::HasNoInboundLinks
+                | FilterPrimitive::Regex { .. }
+                | FilterPrimitive::CaseSensitive { .. }
+                | FilterPrimitive::WholeWord { .. }
+                | FilterPrimitive::Snippet { .. } => {}
+            }
+        }
+        for prim in &all {
+            let key = prim.allowed_key();
+            assert!(
+                PAGES_ALLOWED_KEYS.contains(key) || SEARCH_ALLOWED_KEYS.contains(key),
+                "`{key}` (allowed_key of {prim:?}) is in neither \
+                 PAGES_ALLOWED_KEYS nor SEARCH_ALLOWED_KEYS"
+            );
+        }
+    }
+
     #[test]
     fn pages_projection_compiles_shared_primitives() {
         let p = PagesProjection;
@@ -694,8 +767,13 @@ mod tests {
         assert_eq!(
             orphan.sql,
             "COALESCE(pc.inbound_link_count, 0) = 0 \
-             AND NOT EXISTS (SELECT 1 FROM block_links WHERE source_id = b.id)",
-            "Orphan must read the materialised inbound count from pages_cache"
+             AND NOT EXISTS ( \
+               SELECT 1 FROM block_links bl \
+               JOIN blocks src ON bl.source_id = src.id \
+               WHERE src.page_id = b.id AND src.deleted_at IS NULL \
+             )",
+            "Orphan must read the materialised inbound count from pages_cache \
+             and scope its outbound NOT EXISTS page-wide (every non-deleted block)"
         );
         assert!(orphan.binds.is_empty(), "Orphan takes no binds");
 
@@ -899,17 +977,20 @@ mod tests {
             .cost_hint(),
             0
         );
-        assert_eq!(
-            FilterPrimitive::LastEdited {
-                spec: LastEditedSpec::Rolling { days: 7 }
-            }
-            .cost_hint(),
-            0
-        );
-        // Priority — full scan but cheap (1).
+        // Priority — per-row equality, cheap (1).
         assert_eq!(
             FilterPrimitive::Priority {
                 priority: "A".into()
+            }
+            .cost_hint(),
+            1
+        );
+        // LastEdited — per-row correlated MAX() subquery (served via
+        // idx_op_log_block_id), ranks with Priority above the true
+        // index anti-joins (1), not at 0.
+        assert_eq!(
+            FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Rolling { days: 7 }
             }
             .cost_hint(),
             1
@@ -1093,8 +1174,9 @@ mod explain_query_plan_tests {
             plan.to_lowercase().contains("pages_cache"),
             "Orphan plan must reference pages_cache; got:\n{plan}"
         );
-        // Orphan's outbound term is `NOT EXISTS (SELECT 1 FROM block_links
-        // WHERE source_id = b.id)` — that subquery IS allowed to touch
+        // Orphan's outbound term is a page-wide `NOT EXISTS` over
+        // `block_links bl JOIN blocks src ON bl.source_id = src.id WHERE
+        // src.page_id = b.id` — that subquery IS allowed to touch
         // block_links (idx_block_links_source serves it). The previous
         // *inbound* `target_id` scan must NOT appear.
         assert!(
@@ -1171,9 +1253,9 @@ mod explain_query_plan_tests {
             plan.to_lowercase().contains("pages_cache"),
             "composite plan must reference pages_cache; got:\n{plan}"
         );
-        // Orphan's outbound `NOT EXISTS (... source_id = b.id)` is the
-        // only allowed block_links access. The plan must not regress
-        // to an inbound `target_id` scan.
+        // Orphan's page-wide outbound `NOT EXISTS (... src.page_id =
+        // b.id)` is the only allowed block_links access. The plan must
+        // not regress to an inbound `target_id` scan.
         assert!(
             !plan.to_lowercase().contains("target_id"),
             "composite plan must not scan block_links by target_id; got:\n{plan}"

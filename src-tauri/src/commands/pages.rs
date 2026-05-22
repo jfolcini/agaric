@@ -1632,6 +1632,7 @@ const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
 /// per sort mode and binds parameters in order; this enum exists so
 /// the per-mode bind list can mix `&str` (space_id, content cursor)
 /// and `i64` (counts, limits) without per-arm `.bind()` chains.
+#[derive(Clone)]
 enum SqlBind<'a> {
     Str(&'a str),
     OwnedStr(String),
@@ -1646,6 +1647,24 @@ impl<'a> SqlBind<'a> {
         self,
         q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
     ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>
+    where
+        'a: 'q,
+    {
+        match self {
+            SqlBind::Str(s) => q.bind(s),
+            SqlBind::OwnedStr(s) => q.bind(s),
+            SqlBind::I64(i) => q.bind(i),
+        }
+    }
+
+    /// Bind this value onto a `sqlx::query_scalar::<…>` chain. The
+    /// `total_count` COUNT query (PEND-58b P1-D) reuses the same compiled
+    /// filter binds as the fetch but returns a single scalar, so it needs
+    /// a `QueryScalar`-shaped sibling of [`Self::bind_to`].
+    fn bind_to_scalar<'q, O>(
+        self,
+        q: sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
+    ) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>
     where
         'a: 'q,
     {
@@ -1941,13 +1960,19 @@ fn compile_pages_filters(
     let mut next_pos = 2; // ?1 is space_id
     for prim in ordered {
         let wc = proj.compile(prim);
-        // The allowed-keys gate above admits only Pages-surface tokens, so
-        // a compiled `unsupported()` clause here means the projection has a
-        // hole the gate did not catch — a programmer error, not user input.
-        debug_assert!(
-            !wc.is_unsupported(),
-            "Pages-admitted primitive compiled to UNSUPPORTED: {prim:?}"
-        );
+        // The allowed-keys gate above admits only Pages-surface tokens, but
+        // some admitted shapes still compile to `unsupported()` (e.g.
+        // `HasProperty { op: Eq, value: Some(Ref…) }` — see
+        // `compile_has_property`). In release builds a bare
+        // `debug_assert!` would be compiled out and the splice would emit a
+        // silent `1=0`, returning zero rows for what is really an invalid
+        // filter shape. Reject it loudly in **all** build profiles instead
+        // (PEND-58b P2-A).
+        if wc.is_unsupported() {
+            return Err(AppError::Validation(format!(
+                "InvalidFilter: filter shape is not supported on the Pages surface: {prim:?}"
+            )));
+        }
         // Substitute each anonymous `?` left-to-right with `?{next_pos}`.
         let mut sql = String::with_capacity(wc.sql.len());
         for ch in wc.sql.chars() {
@@ -2082,6 +2107,32 @@ pub async fn list_pages_with_metadata_inner(
     sql.push_str(&filter_sql);
     let base = 1 + filter_binds.len();
 
+    // PEND-58b P1-D — compute a real `total_count` so the "X of Y"
+    // header chip survives the `densityV1` default-on flip (the prior
+    // `total_count: None` silently dropped it for every user). The COUNT
+    // reuses the SAME space-membership predicate + compiled compound-filter
+    // WHERE clause as the fetch, but DROPS the keyset/cursor terms and the
+    // per-row metadata aggregate subqueries (last_modified_at, has_*) — so
+    // the count stays index-served and behind the same predicates, keeping
+    // the 20k-page perf gate (`most_linked_perf_gate_20k_pages`) green.
+    // The `LEFT JOIN pages_cache pc` is retained because the Pages-only
+    // filter fragments (Orphan / Stub / HasNoInboundLinks) read `pc.*`.
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM blocks b \
+         LEFT JOIN pages_cache pc ON pc.page_id = b.id \
+         WHERE b.block_type = 'page' \
+           AND b.deleted_at IS NULL \
+           AND b.page_id IN ( \
+               SELECT bp.block_id FROM block_properties bp \
+               WHERE bp.key = 'space' AND bp.value_ref = ?1 \
+           ){filter_sql}"
+    );
+    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(&filter.space_id);
+    for bind in filter_binds.clone() {
+        count_query = bind.bind_to_scalar(count_query);
+    }
+    let total_count = count_query.fetch_one(pool).await?;
+
     // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
     // the SQL fragment, ORDER BY, and the per-mode bind list so the
     // composition stays in one place rather than the 5 inline arms
@@ -2101,7 +2152,7 @@ pub async fn list_pages_with_metadata_inner(
         query = bind.bind_to(query);
     }
     let rows = query.fetch_all(pool).await?;
-    build_metadata_response(rows, req.limit, filter.sort)
+    build_metadata_response(rows, req.limit, filter.sort, total_count)
 }
 
 /// Pack the fetched rows into a `PageResponse` with `has_more` + the
@@ -2111,6 +2162,7 @@ fn build_metadata_response(
     mut rows: Vec<PageWithMetadataRow>,
     limit: i64,
     sort: PageSort,
+    total_count: i64,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
     let limit_us = usize::try_from(limit).unwrap_or(0);
     let has_more = rows.len() > limit_us;
@@ -2177,7 +2229,10 @@ fn build_metadata_response(
         items: rows,
         next_cursor,
         has_more,
-        total_count: None,
+        // PEND-58b P1-D — the COUNT over the same space + compiled filter
+        // predicates (computed in `list_pages_with_metadata_inner`), so the
+        // FE "X of Y" header chip renders on the metadata path.
+        total_count: Some(total_count),
     })
 }
 

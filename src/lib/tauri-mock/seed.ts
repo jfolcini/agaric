@@ -527,6 +527,43 @@ export function seedBlocks(): void {
     value_date: null,
     value_ref: null,
   })
+
+  seedBulkPages()
+}
+
+/**
+ * Opt-in bulk pages for pagination / virtualization e2e. Driven by
+ * `localStorage['__mockExtraPages']` (default 0 → the canonical fixture and
+ * every other spec are unaffected). Each page is space-stamped, carries one
+ * child content block (so it is NOT a `Stub`), and has no `[[links]]` (so it
+ * IS an `Orphan` / `HasNoInboundLinks`). Titles are zero-padded for stable
+ * alphabetical ordering: "Bulk Page 001", "Bulk Page 002", …
+ */
+function seedBulkPages(): void {
+  let count = 0
+  try {
+    count = Number(globalThis.localStorage?.getItem('__mockExtraPages') ?? '0') || 0
+  } catch {
+    count = 0
+  }
+  count = Math.min(Math.max(count, 0), 500)
+  for (let i = 1; i <= count; i++) {
+    const pageId = fakeId()
+    const title = `Bulk Page ${String(i).padStart(3, '0')}`
+    blocks.set(pageId, makeBlock(pageId, 'page', title, null, 100 + i))
+    if (!properties.has(pageId)) properties.set(pageId, new Map())
+    properties.get(pageId)?.set('space', {
+      block_id: pageId,
+      key: 'space',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: 'SPACE_PERSONAL',
+      value_bool: null,
+    })
+    const childId = fakeId()
+    blocks.set(childId, makeBlock(childId, 'content', `${title} body`, pageId, 0))
+  }
 }
 
 // ---------------------------------------------------------------------------

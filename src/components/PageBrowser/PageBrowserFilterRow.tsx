@@ -44,7 +44,15 @@ function lastEditedSummary(
   spec: Extract<FilterPrimitive, { type: 'LastEdited' }>['spec'],
   t: TFunction,
 ): string {
-  if (spec.type === 'OlderThan') return t('pageBrowser.filter.lastEdited.older')
+  if (spec.type === 'OlderThan') {
+    // The Pages UI only emits `OlderThan{30}`, for which the canonical bucket
+    // label reads best. A deep-linked / saved-view filter could carry any
+    // `days`, so fall back to the value-aware rolling label rather than always
+    // showing the fixed bucket text (which would mislabel non-30 values).
+    return spec.days === 30
+      ? t('pageBrowser.filter.lastEdited.older')
+      : t('pageBrowser.filter.summaryLastEditedRolling', { days: spec.days })
+  }
   if (spec.type === 'Range')
     return t('pageBrowser.filter.summaryLastEditedRange', { start: spec.start, end: spec.end })
   const buckets: Record<number, string> = {
@@ -62,8 +70,13 @@ function hasPropertySummary(
   t: TFunction,
 ): string {
   if (filter.op === 'exists') return t('pageBrowser.filter.summaryHasProperty', { key: filter.key })
+  // `notExists` is reserved for Search / saved-views — no Pages UI control
+  // emits it (the popover only builds `op: 'eq' | 'exists'`). Kept renderable
+  // so deep-linked / saved filters still summarise.
   if (filter.op === 'notExists')
     return t('pageBrowser.filter.summaryNotHasProperty', { key: filter.key })
+  // The `≠` glyph (op === 'ne') is likewise reserved for Search / saved-views;
+  // the Pages popover only emits `op: 'eq'`.
   return t('pageBrowser.filter.summaryProperty', {
     key: filter.key,
     op: filter.op === 'ne' ? '≠' : '=',
@@ -82,6 +95,9 @@ export function pageFilterSummary(
         tag: tagResolver ? tagResolver(filter.tag) : filter.tag,
       })
     case 'PathGlob':
+      // The `exclude: true` ("not path") variant is reserved for Search /
+      // saved-views — the Pages popover only emits `exclude: false`. Kept
+      // renderable so deep-linked / saved filters still summarise.
       return filter.exclude
         ? t('pageBrowser.filter.summaryPathExclude', { pattern: filter.pattern })
         : t('pageBrowser.filter.summaryPath', { pattern: filter.pattern })

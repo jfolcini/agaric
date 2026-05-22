@@ -286,4 +286,13 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.summarySpace': 'this space',
   'pageBrowser.filter.summaryPriority': 'priority {{priority}}',
   'pageBrowser.filter.summaryUnknown': 'filter',
+  // PEND-58b — a11y: live-region announcements + facet descriptions
+  'pageBrowser.filter.announceAdded': 'Filter added: {{label}}.',
+  'pageBrowser.filter.announceRemoved': 'Filter removed: {{label}}.',
+  'pageBrowser.filter.announceResults_one': '{{count}} result.',
+  'pageBrowser.filter.announceResults_other': '{{count}} results.',
+  'pageBrowser.filter.facetOrphanDesc': 'Nothing links to it and it links to nothing.',
+  'pageBrowser.filter.facetStubDesc': 'A named page with no content.',
+  'pageBrowser.filter.facetHasNoInboundLinksDesc': 'Nothing links to it yet.',
+  'pageBrowser.filter.lastEditedGroup': 'Last edited',
 }

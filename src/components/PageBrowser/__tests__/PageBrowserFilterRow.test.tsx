@@ -31,7 +31,7 @@ vi.mock('@/components/ui/popover', () => ({
     children: React.ReactNode
     asChild?: boolean
     [key: string]: unknown
-  }) => (asChild ? <>{children}</> : <button {...props}>{children}</button>),
+  }) => (asChild ? children : <button {...props}>{children}</button>),
   PopoverContent: ({
     children,
     ...props
@@ -51,18 +51,92 @@ function withKey(f: FilterPrimitive): PageFilterWithKey {
 }
 
 describe('pageFilterSummary', () => {
-  it('formats each Pages primitive', () => {
-    expect(pageFilterSummary({ type: 'Orphan' }, t)).toBe('Orphan')
-    expect(pageFilterSummary({ type: 'Stub' }, t)).toBe('Stub')
-    expect(pageFilterSummary({ type: 'HasNoInboundLinks' }, t)).toBe('No inbound links')
-    expect(pageFilterSummary({ type: 'Tag', tag: 'urgent' }, t)).toBe('tag: urgent')
-    expect(pageFilterSummary({ type: 'Priority', priority: 'A' }, t)).toBe('priority A')
-    expect(pageFilterSummary({ type: 'LastEdited', spec: { type: 'Rolling', days: 7 } }, t)).toBe(
+  // One row per discriminated-union arm. A swapped i18n key or a flipped
+  // `=`/`≠` glyph would otherwise ship silently (P1-G).
+  const cases: ReadonlyArray<[string, FilterPrimitive, string]> = [
+    ['Orphan', { type: 'Orphan' }, 'Orphan'],
+    ['Stub', { type: 'Stub' }, 'Stub'],
+    ['HasNoInboundLinks', { type: 'HasNoInboundLinks' }, 'No inbound links'],
+    ['Tag', { type: 'Tag', tag: 'urgent' }, 'tag: urgent'],
+    ['Priority', { type: 'Priority', priority: 'A' }, 'priority A'],
+    ['Space', { type: 'Space', space_id: 's-1' }, 'this space'],
+    // PathGlob — both exclude values (exclude=true is reserved for Search).
+    [
+      'PathGlob exclude=false',
+      { type: 'PathGlob', pattern: 'Projects/*', exclude: false },
+      'path: Projects/*',
+    ],
+    [
+      'PathGlob exclude=true',
+      { type: 'PathGlob', pattern: 'Projects/*', exclude: true },
+      'not path: Projects/*',
+    ],
+    // HasProperty — every op, incl. the `=`/`≠` glyph distinction.
+    [
+      'HasProperty exists',
+      { type: 'HasProperty', key: 'status', op: 'exists', value: null },
+      'has: status',
+    ],
+    [
+      'HasProperty notExists',
+      { type: 'HasProperty', key: 'status', op: 'notExists', value: null },
+      'no: status',
+    ],
+    [
+      'HasProperty eq',
+      { type: 'HasProperty', key: 'status', op: 'eq', value: { type: 'Text', value: 'done' } },
+      'status = done',
+    ],
+    [
+      'HasProperty ne',
+      { type: 'HasProperty', key: 'status', op: 'ne', value: { type: 'Text', value: 'done' } },
+      'status ≠ done',
+    ],
+    // LastEdited — Range, every Rolling bucket, OlderThan.
+    [
+      'LastEdited Range',
+      { type: 'LastEdited', spec: { type: 'Range', start: '2026-01-01', end: '2026-02-01' } },
+      'edited 2026-01-01…2026-02-01',
+    ],
+    [
+      'LastEdited Rolling{1}',
+      { type: 'LastEdited', spec: { type: 'Rolling', days: 1 } },
+      'Edited today',
+    ],
+    [
+      'LastEdited Rolling{7}',
+      { type: 'LastEdited', spec: { type: 'Rolling', days: 7 } },
       'Edited this week',
-    )
+    ],
+    [
+      'LastEdited Rolling{30}',
+      { type: 'LastEdited', spec: { type: 'Rolling', days: 30 } },
+      'Edited this month',
+    ],
+    [
+      'LastEdited OlderThan{30}',
+      { type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } },
+      'Edited long ago',
+    ],
+    // summaryUnknown default — a Search-only primitive that never reaches the
+    // Pages surface (allow-list gated) but must still summarise safely.
+    ['Search-only (Regex) → unknown', { type: 'Regex', pattern: 'foo' }, 'filter'],
+  ]
+
+  it.each(cases)('formats %s', (_name, filter, expected) => {
+    expect(pageFilterSummary(filter, t)).toBe(expected)
+  })
+
+  it('formats a non-bucket OlderThan via the value-aware rolling fallback (P2-G)', () => {
     expect(
-      pageFilterSummary({ type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } }, t),
-    ).toBe('Edited long ago')
+      pageFilterSummary({ type: 'LastEdited', spec: { type: 'OlderThan', days: 90 } }, t),
+    ).toBe('edited ≤ 90d')
+  })
+
+  it('formats a non-bucket Rolling via the value-aware fallback', () => {
+    expect(pageFilterSummary({ type: 'LastEdited', spec: { type: 'Rolling', days: 14 } }, t)).toBe(
+      'edited ≤ 14d',
+    )
   })
 
   it('resolves tag ids through the resolver when provided', () => {

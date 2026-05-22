@@ -15,7 +15,7 @@ use crate::commands::tests::common::{
     assign_to_space, ensure_test_space, ensure_test_space_b, insert_block, test_pool,
     TEST_SPACE_B_ID, TEST_SPACE_ID,
 };
-use crate::filters::FilterPrimitive;
+use crate::filters::{FilterPrimitive, PropertyOp, PropertyValue};
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 
@@ -168,6 +168,20 @@ async fn seed_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
         .bind(block_id)
         .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// PEND-58b — seed a `block_properties(key, value_text)` row directly so a
+/// `HasProperty { op: Eq, value: Text }` filter can match. Mirrors the
+/// direct-write approach used by `assign_to_space` (the read layer reads
+/// `block_properties` regardless of how the row landed).
+async fn seed_prop_text(pool: &SqlitePool, block_id: &str, key: &str, value: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value)
         .execute(pool)
         .await
         .unwrap();
@@ -971,7 +985,8 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
 
 #[tokio::test]
 async fn filter_stub_returns_only_pages_under_threshold() {
-    // `Stub` = page has < 3 non-deleted descendants. Seed a page with 0
+    // `Stub` = page has = 0 non-deleted descendants
+    // (`COALESCE(pc.child_block_count, 0) = 0`). Seed a page with 0
     // children (stub) and one with 4 children (not a stub).
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
@@ -1003,7 +1018,7 @@ async fn filter_stub_returns_only_pages_under_threshold() {
     assert_eq!(
         contents,
         vec!["StubPage"],
-        "only the under-threshold page must pass the Stub filter"
+        "only the page with 0 non-deleted descendants must pass the Stub filter"
     );
 }
 
@@ -1181,4 +1196,347 @@ async fn empty_filters_vec_matches_unfiltered_behaviour() {
         .collect();
     assert_eq!(a, b, "empty filters must equal the unfiltered result set");
     assert_eq!(a, vec!["Alpha", "Beta"]);
+}
+
+// ── PEND-58b — review-remediation backend tests ───────────────────────────
+
+#[tokio::test]
+async fn filter_stub_excludes_pages_with_one_or_two_children() {
+    // PEND-58b P2-E — boundary coverage. `Stub` is `child_block_count = 0`
+    // (NOT the Phase-1 `< 3` threshold), so a page with exactly 1 or 2
+    // non-deleted children must be EXCLUDED. Seed a 0-child stub, a
+    // 1-child page, and a 2-child page; only the 0-child page passes.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000ST0", "ZeroChild").await;
+    seed_page(&pool, "01PAGE0000000000000000ST1", "OneChild").await;
+    seed_child(
+        &pool,
+        "01CHILD000000000000000ST10",
+        "01PAGE0000000000000000ST1",
+        "x",
+    )
+    .await;
+    seed_page(&pool, "01PAGE0000000000000000ST2", "TwoChild").await;
+    for i in 0..2 {
+        seed_child(
+            &pool,
+            &format!("01CHILD000000000000000T2{i}"),
+            "01PAGE0000000000000000ST2",
+            "x",
+        )
+        .await;
+    }
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Stub]),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("stub filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["ZeroChild"],
+        "Stub (= 0 non-deleted descendants) must exclude the 1- and 2-child pages"
+    );
+}
+
+#[tokio::test]
+async fn filter_orphan_excludes_pages_whose_descendant_links_out() {
+    // PEND-58b P0-A — `Orphan`'s outbound `NOT EXISTS` must be scoped
+    // page-wide (every non-deleted block authored a link), not just the
+    // page-block (title) row. Seed:
+    //   (a) a true orphan — no links either direction;
+    //   (b) a page whose DESCENDANT block authors an outbound edge.
+    // (b) must be EXCLUDED by `Orphan` (it links out) but still INCLUDED
+    // by `HasNoInboundLinks` (the looser sibling, which ignores outbound).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    // (a) true orphan.
+    seed_page(&pool, "01PAGE000000000000000ORPH", "TrueOrphan").await;
+
+    // (b) page with a descendant that links out to an unrelated target.
+    seed_page(&pool, "01PAGE000000000000000LNKR", "BodyLinker").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000LNKR01",
+        "01PAGE000000000000000LNKR",
+        "links elsewhere",
+    )
+    .await;
+    // A standalone target page elsewhere (also keeps the FK happy). The
+    // outbound edge is FROM the descendant body block.
+    seed_page(&pool, "01PAGE000000000000000TGTX", "Target").await;
+    seed_link(
+        &pool,
+        "01CHILD0000000000000LNKR01",
+        "01PAGE000000000000000TGTX",
+    )
+    .await;
+
+    // Orphan: must return ONLY the true orphan (BodyLinker links out).
+    let orphan_resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Orphan]),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("orphan filter must succeed");
+    let orphan_contents: Vec<&str> = orphan_resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        orphan_contents,
+        vec!["TrueOrphan"],
+        "Orphan must EXCLUDE a page whose descendant authors an outbound link"
+    );
+
+    // HasNoInboundLinks: looser — ignores outbound, so BOTH the orphan
+    // and the body-linker pass (neither has inbound links). Target has an
+    // inbound link, so it is excluded.
+    let hnil_resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasNoInboundLinks],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("has-no-inbound-links filter must succeed");
+    let mut hnil_contents: Vec<&str> = hnil_resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    hnil_contents.sort_unstable();
+    assert_eq!(
+        hnil_contents,
+        vec!["BodyLinker", "TrueOrphan"],
+        "HasNoInboundLinks must INCLUDE the body-linker (it has no inbound links)"
+    );
+}
+
+#[tokio::test]
+async fn total_count_reflects_full_space_unfiltered_and_reduces_under_filter() {
+    // PEND-58b P1-D — the metadata path must return a real `total_count`
+    // (was `None`, silently dropping the "X of Y" header chip). Unfiltered
+    // it counts the whole space; with an active filter it reduces to the
+    // matching subset, mirroring the count-alongside-fetch contract.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // 3 stubs + 1 non-stub (4 children) = 4 pages in the space.
+    seed_page(&pool, "01PAGE0000000000000000C01", "Aaa").await;
+    seed_page(&pool, "01PAGE0000000000000000C02", "Bbb").await;
+    seed_page(&pool, "01PAGE0000000000000000C03", "Ccc").await;
+    seed_page(&pool, "01PAGE0000000000000000C04", "Ddd").await;
+    for i in 0..4 {
+        seed_child(
+            &pool,
+            &format!("01CHILD000000000000000D{i:02}"),
+            "01PAGE0000000000000000C04",
+            "x",
+        )
+        .await;
+    }
+
+    // Unfiltered: total_count == 4 (the whole space), even with a small
+    // page limit that truncates `items`.
+    let unfiltered = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::Alphabetical),
+        None,
+        Some(2), // smaller than the space so items != total
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        unfiltered.total_count,
+        Some(4),
+        "unfiltered total_count must count the whole space (not the page slice)"
+    );
+    assert_eq!(unfiltered.items.len(), 2, "the page limit truncates items");
+
+    // Filtered: Stub reduces the count to the 3 zero-child pages.
+    let filtered = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Stub]),
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        filtered.total_count,
+        Some(3),
+        "filtered total_count must reduce to the matching subset"
+    );
+    assert_eq!(filtered.items.len(), 3);
+}
+
+#[tokio::test]
+async fn unsupported_has_property_shape_returns_validation_error() {
+    // PEND-58b P2-A — `HasProperty { op: Eq, value: Some(Ref…) }` compiles
+    // to an UNSUPPORTED `1=0` clause (see `compile_has_property`). The
+    // backend must reject it with `AppError::Validation` in ALL build
+    // profiles, NOT silently return an empty Ok (the old `debug_assert!`
+    // was compiled out in release).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+
+    let result = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasProperty {
+                key: "space".to_string(),
+                op: PropertyOp::Eq,
+                value: Some(PropertyValue::Ref {
+                    value: "01REF0000000000000000000X".to_string(),
+                }),
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await;
+    let err = result.expect_err("unsupported filter shape must be rejected, not an empty Ok");
+    assert!(
+        matches!(err, crate::error::AppError::Validation(_)),
+        "unsupported filter shape must be AppError::Validation; got: {err:?}"
+    );
+    assert!(
+        format!("{err}").contains("InvalidFilter"),
+        "rejection must carry the InvalidFilter prefix; got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn all_search_only_primitives_rejected_on_pages_surface() {
+    // PEND-58b P2-C — parameterized over ALL FOUR search-only primitives
+    // (the prior test covered only `Regex`). Each must be rejected by the
+    // Pages allowed-keys gate with the `InvalidFilter` prefix.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+
+    let search_only = [
+        FilterPrimitive::Regex {
+            pattern: "foo".to_string(),
+        },
+        FilterPrimitive::CaseSensitive { enabled: true },
+        FilterPrimitive::WholeWord { enabled: true },
+        FilterPrimitive::Snippet {
+            spec: crate::filters::primitive::SnippetSpec {
+                max_tokens: 5,
+                left_marker: "<".to_string(),
+                right_marker: ">".to_string(),
+            },
+        },
+    ];
+
+    for prim in search_only {
+        let label = prim.allowed_key();
+        let result = list_pages_with_metadata_inner(
+            &pool,
+            filter_with(PageSort::Alphabetical, vec![prim]),
+            None,
+            Some(50),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "search-only primitive `{label}` must be rejected on the Pages surface"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, crate::error::AppError::Validation(_)),
+            "`{label}` rejection must be AppError::Validation; got: {err:?}"
+        );
+        assert!(
+            format!("{err}").contains("InvalidFilter"),
+            "`{label}` rejection must carry the InvalidFilter prefix; got: {err}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn filter_tag_plus_cursor_paginates_without_dupes_or_drops() {
+    // PEND-58b P1-E — the only filter+cursor test used `Stub` (zero binds,
+    // so `base = 1` and the offset arithmetic was never exercised). This
+    // pages a BIND-CARRYING filter (`Tag`, 1 bind ⇒ `base = 2`) across a
+    // cursor at limit = 2, asserting no dupes/drops over the keyset
+    // boundary. Strengthened by combining a 2-bind `HasProperty { op: Eq }`
+    // with `RecentlyModified` (the keyset with the most placeholders + the
+    // null sentinel), covering the highest-offset bind path.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let tag = "01TAG000000000000000000T1";
+    // 4 tagged pages that ALSO carry prop `kind = note` (2-bind filter).
+    let names = ["Aa", "Bb", "Cc", "Dd"];
+    for (i, name) in names.iter().enumerate() {
+        let pid = format!("01PAGE0000000000000000TC{i}");
+        seed_page(&pool, &pid, name).await;
+        seed_tag(&pool, &pid, tag).await;
+        seed_prop_text(&pool, &pid, "kind", "note").await;
+        // Distinct op_log timestamps so RecentlyModified is deterministic.
+        seed_op_log(&pool, &pid, &format!("2026-0{}-01T00:00:00Z", i + 1)).await;
+    }
+    // An untagged page that must NEVER appear in the filtered result set.
+    seed_page(&pool, "01PAGE0000000000000000TCX", "Excluded").await;
+    seed_prop_text(&pool, "01PAGE0000000000000000TCX", "kind", "note").await;
+
+    let filters = vec![
+        FilterPrimitive::Tag {
+            tag: tag.to_string(),
+        },
+        FilterPrimitive::HasProperty {
+            key: "kind".to_string(),
+            op: PropertyOp::Eq,
+            value: Some(PropertyValue::Text {
+                value: "note".to_string(),
+            }),
+        },
+    ];
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = list_pages_with_metadata_inner(
+            &pool,
+            filter_with(PageSort::RecentlyModified, filters.clone()),
+            cursor.clone(),
+            Some(2),
+        )
+        .await
+        .expect("bind-carrying filtered cursor page must succeed");
+        for item in &page.items {
+            seen.push(item.content.clone().unwrap_or_default());
+        }
+        if !page.has_more {
+            break;
+        }
+        cursor = page.next_cursor;
+        assert!(cursor.is_some(), "has_more pages must carry a cursor");
+    }
+
+    seen.sort_unstable();
+    assert_eq!(
+        seen,
+        vec!["Aa", "Bb", "Cc", "Dd"],
+        "bind-carrying filtered pagination must return each tagged page once, Excluded never"
+    );
 }

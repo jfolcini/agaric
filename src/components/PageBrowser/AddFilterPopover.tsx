@@ -104,6 +104,9 @@ export function AddFilterPopover({
         </Button>
       </PopoverTrigger>
       <PopoverContent
+        // Radix Popover.Content does not auto-apply a role; the trigger
+        // advertises `aria-haspopup="dialog"`, so name the role here to match.
+        role="dialog"
         align="start"
         className="w-72 p-2"
         aria-label={t('pageBrowser.filter.addFilterDialogLabel')}
@@ -127,6 +130,9 @@ export function AddFilterPopover({
                 {t('pageBrowser.filter.facetHasProperty')}
               </FilterMenuItem>
               <div className="flex flex-wrap gap-1 px-1">
+                <span className="self-center text-xs text-muted-foreground">
+                  {t('pageBrowser.filter.lastEditedGroup')}
+                </span>
                 {LAST_EDITED_BUCKETS.map((bucket) => (
                   <Button
                     key={bucket.key}
@@ -160,13 +166,22 @@ export function AddFilterPopover({
             </FilterCategoryGroup>
 
             <FilterCategoryGroup label={t('pageBrowser.filter.pagesGroup')}>
-              <FilterMenuItem onClick={() => emit({ type: 'Orphan' })}>
+              <FilterMenuItem
+                onClick={() => emit({ type: 'Orphan' })}
+                description={t('pageBrowser.filter.facetOrphanDesc')}
+              >
                 {t('pageBrowser.filter.facetOrphan')}
               </FilterMenuItem>
-              <FilterMenuItem onClick={() => emit({ type: 'Stub' })}>
+              <FilterMenuItem
+                onClick={() => emit({ type: 'Stub' })}
+                description={t('pageBrowser.filter.facetStubDesc')}
+              >
                 {t('pageBrowser.filter.facetStub')}
               </FilterMenuItem>
-              <FilterMenuItem onClick={() => emit({ type: 'HasNoInboundLinks' })}>
+              <FilterMenuItem
+                onClick={() => emit({ type: 'HasNoInboundLinks' })}
+                description={t('pageBrowser.filter.facetHasNoInboundLinksDesc')}
+              >
                 {t('pageBrowser.filter.facetHasNoInboundLinks')}
               </FilterMenuItem>
             </FilterCategoryGroup>
@@ -272,9 +287,12 @@ function FilterCategoryGroup({
 function FilterMenuItem({
   onClick,
   children,
+  description,
 }: {
   onClick: () => void
   children: React.ReactNode
+  /** Optional muted helper text rendered under the label (facet disambiguation). */
+  description?: string
 }): React.ReactElement {
   return (
     <button
@@ -283,6 +301,9 @@ function FilterMenuItem({
       className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent focus-ring-visible"
     >
       {children}
+      {description && (
+        <span className="block text-xs font-normal text-muted-foreground">{description}</span>
+      )}
     </button>
   )
 }

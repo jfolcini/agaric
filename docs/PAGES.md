@@ -14,22 +14,22 @@ The chip set is split into two groups, mirroring the popover:
 - **Filters** (shared with Search): Tag, Page path, Has property, the Last-edited buckets, and Priority. A `tag:` chip applied here returns the same pages whose blocks the Search surface returns for the same tag — the two surfaces share one filter engine and never drift.
 - **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, and No inbound links.
 
-### Enabling the chip row
+### The chip row (and how to opt out)
 
-The compound-filter chip row ships behind a localStorage flag and is **off by default** today. It rides the same `list_pages_with_metadata` code path as density rows, so it is gated by the same flag:
+The compound-filter chip row is **on by default**. It rides the same `list_pages_with_metadata` code path as density rows, so a single localStorage flag gates both:
 
 - **Flag key:** `pageBrowser.densityV1`
-- **Value:** the bare string `'true'` (anything else, or a missing key, falls back to off — the value is *not* JSON-wrapped).
+- **Default:** on. A missing key — or any value other than the bare string `'false'` — means the chip row is shown (the value is *not* JSON-wrapped). Only the exact string `'false'` opts out.
 
-A power user flips it from the devtools console:
+To opt out, set the flag from the devtools console:
 
 ```js
-localStorage.setItem('pageBrowser.densityV1', 'true')
+localStorage.setItem('pageBrowser.densityV1', 'false')
 ```
 
-then reloads. The flag is read once when the Pages view mounts (it is not reactive), so a reload is required after flipping it. To turn it back off, `localStorage.removeItem('pageBrowser.densityV1')` and reload. The flag-read lives in `src/components/PageBrowser.tsx`; the chip row itself is `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
+then reload. The flag is read once when the Pages view mounts (it is not reactive), so a reload is required after changing it. To turn the chip row back on, `localStorage.removeItem('pageBrowser.densityV1')` (or set it to anything other than `'false'`) and reload. The flag-read lives in `src/components/PageBrowser.tsx`; the chip row itself is `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
 
-With the flag off, the Pages view behaves exactly as it always has: the name-substring box filters the loaded list and there is no chip row.
+With the chip row opted out, the Pages view behaves exactly as it always has: the name-substring box filters the loaded list and there is no chip row.
 
 ## Filter facets
 
@@ -52,16 +52,16 @@ Two notes on the link counting, so the results aren't surprising:
 
 ### Last-edited buckets
 
-The Last-edited facet adds one of four recency buckets. The buckets are **rolling** windows measured back from now (not calendar-aligned weeks/months), driven by each page's most recent edit:
+The Last-edited facet adds one of four recency buckets. The buckets are **rolling** windows measured back from now (not calendar-aligned weeks/months), driven by each page's most recent edit. The exact window behind each bucket is defined with the filter primitives in `src-tauri/src/filters/primitive.rs`:
 
 | Chip label | What it matches |
 |---|---|
-| **Edited today** | Edited within the last day (a rolling 1-day window). |
-| **Edited this week** | Edited within the last 7 days (rolling). |
-| **Edited this month** | Edited within the last 30 days (rolling). |
-| **Edited long ago** | *Not* edited in the last 30 days — the stale tail. |
+| **Edited today** | Edited within the most recent rolling day. |
+| **Edited this week** | Edited within the rolling week. |
+| **Edited this month** | Edited within the rolling month. |
+| **Edited long ago** | *Not* edited within the rolling month — the stale tail. |
 
-Because the buckets are rolling, "this week" is the last seven days, not "since Monday." A page that crosses a bucket boundary between two views moves to the correct bucket on the next load with no manual refresh — the boundary is computed at query time.
+Because the buckets are rolling, "this week" is a window ending right now, not "since Monday." A page that crosses a bucket boundary between two views moves to the correct bucket on the next load with no manual refresh — the boundary is computed at query time.
 
 ### Shared facets
 
@@ -99,12 +99,13 @@ The list collapses to pages edited in the last seven days. Pair it with the **Re
 
 - **Chips AND together.** Every applied chip must be satisfied. There is no OR between chips — to widen a set, remove a chip rather than add one.
 - **Filters compose with sort and the search box.** The chip set, the sort order, and the name-substring box are orthogonal axes. You can apply **Orphan**, sort by **Most linked**, and type a substring in the search box all at once; each narrows or orders independently.
-- **Soft cap of 8 chips.** Most grooming flows use two to four chips. The Add-filter popover starts warning at eight ("Many filters can slow the view") because each extra clause adds query cost. This is a *soft* warning, not a hard limit — you can keep adding chips past eight; the UI just stops being confident the view will stay fast. The cap constant is `MAX_PAGE_FILTERS` in `src/components/PageBrowser/PageBrowserFilterRow.tsx`.
+- **Soft cap (`MAX_PAGE_FILTERS`).** Most grooming flows use a handful of chips. Once the active chip count reaches the soft cap (`MAX_PAGE_FILTERS`, defined in `src/components/PageBrowser/PageBrowserFilterRow.tsx`), the Add-filter popover shows "Many filters can slow the view." because each extra clause adds query cost. This is a *soft* warning, not a hard limit — you can keep adding chips past the cap; the UI just stops being confident the view will stay fast.
 - **Remove a chip** with its `×`; the result set widens and the list refetches from the top.
 
 ## Notes and limitations
 
 - **The search box is separate from the chips.** The name-substring box at the top of the Pages view filters by page title only — it is *not* a query input. Typing `tag:urgent` into it searches for a page literally titled "tag:urgent" (almost always zero results), because the Pages input does **not** parse inline filter syntax. Structured filters live exclusively in chips. This is a deliberate split: the Pages box is a "jump to the page I half-remember the name of" affordance, and mixing prefix syntax into it would force users to memorise prefixes for a view that should be obvious at first paint. (The Search surface *does* parse inline `tag:` / `path:` syntax, because Search has a real query that composes naturally with filters — see [Search](SEARCH.md).)
 - **An invalid filter returns zero results, not an error.** A Tag chip pointing at a tag that no longer exists simply matches nothing; the chip still renders with the value you gave it, so you can remove it. The backend does not round-trip every chip for validation.
+- **Negation and exclusion are Search-side.** The Pages **Add filter** popover builds the affirmative forms only: a **Page path** is always an *include* glob, and **Has property** matches *has-key* or *key = value*. The negated forms (path **exclude**, property *not-equals* / *not-exists*) exist in the filter engine and render correctly if one arrives from a saved view, but the Pages popover does not create them — they are reserved for the Search surface and saved views.
 - **Empty state.** With no chips applied, the Pages view shows every page in the active space, sorted by your current sort and paginated normally — identical to the no-filter view. An empty chip row renders just the **Add filter** button.
 - **Pages-only facets vs Search.** The Orphan / Stub / No-inbound-links facets are never offered on the Search surface; conversely, Search-only facets (regex, case-sensitive, whole-word, snippet) are never offered here. The per-surface allow-list that enforces this is documented alongside the filter primitives in `src-tauri/src/filters/primitive.rs`.

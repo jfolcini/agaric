@@ -3646,21 +3646,35 @@ describe('PageBrowser', () => {
 
     it('threads a Stub chip into the metadata IPC and clears it on remove', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockImplementation((cmd: string) => {
+      // P2-D — vary the mock return on the `filters` arg so this exercises
+      // one real narrowing case at the React level (not just IPC wiring):
+      // unfiltered returns both pages; with a Stub chip the server reply
+      // narrows to the stub page only. (The full filter→SQL semantics are
+      // covered backend-side in the Rust suite.)
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_pages_with_metadata') {
+          const filters =
+            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
+              ?.filters ?? []
+          const hasStub = filters.some((f) => f.type === 'Stub')
+          const items = hasStub
+            ? [metaPage('P1', 'Apple')]
+            : [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')]
           return Promise.resolve({
-            items: [metaPage('P1', 'Apple')],
+            items,
             next_cursor: null,
             has_more: false,
-            total_count: 1,
+            total_count: items.length,
           })
         }
         return Promise.resolve(undefined)
       })
 
       render(<PageBrowser />)
+      // Unfiltered: both pages are present.
       await screen.findByText('Apple')
+      expect(screen.getByText('Banana')).toBeInTheDocument()
 
       // Open the Add-Filter popover and pick the Pages-only "Stub" facet.
       await user.click(screen.getByRole('button', { name: 'Add filter' }))
@@ -3671,13 +3685,123 @@ describe('PageBrowser', () => {
         expect(lastMetadataFilters()).toContainEqual({ type: 'Stub' })
       })
 
+      // The varied mock narrows the result: Banana drops, Apple stays.
+      await waitFor(() => {
+        expect(screen.queryByText('Banana')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText('Apple')).toBeInTheDocument()
+
       // A chip renders for the active filter.
       expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
 
-      // Remove the chip → the next IPC call carries no filters.
+      // Remove the chip → the next IPC call carries no filters and the
+      // narrowed-out page returns.
       await user.click(screen.getByRole('button', { name: 'Remove filter Stub' }))
       await waitFor(() => {
         expect(lastMetadataFilters()).toEqual([])
+      })
+      await screen.findByText('Banana')
+    })
+
+    it('renders the no-match state (not the empty-space state) when a chip narrows to zero', async () => {
+      // P0-B — with an empty text box but an active chip, a zero-row
+      // server reply must render the "No matching pages" no-match state,
+      // NOT the "No pages yet / Create your first page" empty-space state
+      // (which falsely tells a user with a full graph it's empty).
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          const filters =
+            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
+              ?.filters ?? []
+          // Unfiltered shows one page so the chip-row (and Add-filter
+          // button) are reachable; the Stub chip narrows to zero rows.
+          const items = filters.length > 0 ? [] : [metaPage('P1', 'Apple')]
+          return Promise.resolve({
+            items,
+            next_cursor: null,
+            has_more: false,
+            total_count: items.length,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      const { container } = render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Add a Stub chip → server returns zero rows.
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+
+      // The no-match message renders.
+      await screen.findByText(t('pageBrowser.noMatches'))
+
+      // The empty-space state is NOT shown.
+      expect(screen.queryByText(t('pageBrowser.noPages'))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('pageBrowser.createFirst'))).not.toBeInTheDocument()
+
+      // The remove-filter control is present so the user can widen again.
+      expect(screen.getByRole('button', { name: 'Remove filter Stub' })).toBeInTheDocument()
+
+      // a11y audit of the chip-only zero-result view.
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
+
+    it('announces filter add and remove in a polite live region (P1-F1)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string, args?: unknown) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          const filters =
+            (args as { filter?: { filters?: Array<{ type?: string }> } } | undefined)?.filter
+              ?.filters ?? []
+          const hasStub = filters.some((f) => f.type === 'Stub')
+          const items = hasStub
+            ? [metaPage('P1', 'Apple')]
+            : [metaPage('P1', 'Apple'), metaPage('P2', 'Banana')]
+          return Promise.resolve({
+            items,
+            next_cursor: null,
+            has_more: false,
+            total_count: items.length,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      const liveRegion = screen.getByTestId('filter-announcement')
+      // Nothing announced before any chip interaction.
+      expect(liveRegion).toHaveTextContent('')
+
+      // Add a Stub chip → "Filter added: Stub. 1 result."
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(
+          t('pageBrowser.filter.announceAdded', { label: 'Stub' }),
+        )
+      })
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceResults', { count: 1 }))
+      })
+
+      // Remove the chip → "Filter removed: Stub. 2 results."
+      await user.click(screen.getByRole('button', { name: 'Remove filter Stub' }))
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(
+          t('pageBrowser.filter.announceRemoved', { label: 'Stub' }),
+        )
+      })
+      await waitFor(() => {
+        expect(liveRegion).toHaveTextContent(t('pageBrowser.filter.announceResults', { count: 2 }))
       })
     })
 

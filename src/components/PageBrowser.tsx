@@ -45,7 +45,11 @@ import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
-import { PageBrowserFilterRow, type PageFilterWithKey } from './PageBrowser/PageBrowserFilterRow'
+import {
+  PageBrowserFilterRow,
+  type PageFilterWithKey,
+  pageFilterSummary,
+} from './PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 import { ViewHeader } from './ViewHeader'
@@ -165,6 +169,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // JSON serialisation is the queryFn dep so a chip add/remove refetches
   // without making the callback identity churn on unrelated renders.
   const wireFilters = useMemo<FilterPrimitive[]>(
+    // The `as FilterPrimitive` cast is sound: `_addId` is a React-key-only
+    // field that no `FilterPrimitive` variant declares, and it is stripped
+    // here before the cast, so `rest` is structurally a wire primitive.
     () => filters.map(({ _addId, ...rest }) => rest as FilterPrimitive),
     [filters],
   )
@@ -249,6 +256,15 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   }, [pendingFilter, setPendingPageBrowserFilter])
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
+  // P1-F1 — polite live-region copy for compound-filter changes. The
+  // prefix (e.g. "Filter added: Orphan.") is set synchronously when a
+  // chip is added/removed; the result count ("23 results.") is appended
+  // once the refetch settles, producing "Filter added: Orphan. 23
+  // results." for screen-reader users.
+  const [filterAnnouncement, setFilterAnnouncement] = useState('')
+  const filterAnnouncePrefixRef = useRef('')
+  const filterAnnouncePendingRef = useRef(false)
+  const prevFiltersRef = useRef<PageFilterWithKey[]>([])
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   // Stable id base for section header `aria-labelledby` wiring. Two
   // headers (`starred` and `other`) share the same prefix.
@@ -438,6 +454,61 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   useEffect(() => {
     setFocusedIndex(0)
   }, [filterText, sortOption, density, wireFiltersKey, setFocusedIndex])
+
+  // P1-F1 — announce compound-filter add/remove to screen readers. Diff
+  // the current chip set against the previous one (chips carry a unique
+  // `_addId`, so add vs remove and the affected label are unambiguous),
+  // emit the polite prefix immediately, and arm a flag so the result
+  // count gets appended once the refetch settles (effect below). Keyed on
+  // `wireFiltersKey` so it only fires on a real chip add/remove.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the compound-filter set drives this; `filters`/`t` are read but `wireFiltersKey` is the change trigger
+  useEffect(() => {
+    const prev = prevFiltersRef.current
+    prevFiltersRef.current = filters
+    // Skip the initial mount (no prior set, no chips) so we don't
+    // announce an empty change.
+    if (prev.length === 0 && filters.length === 0) return
+    let prefix = ''
+    if (filters.length > prev.length) {
+      const prevIds = new Set(prev.map((f) => f._addId))
+      const added = filters.find((f) => !prevIds.has(f._addId))
+      if (added) {
+        prefix = t('pageBrowser.filter.announceAdded', {
+          label: pageFilterSummary(added, t),
+        })
+      }
+    } else if (filters.length < prev.length) {
+      const curIds = new Set(filters.map((f) => f._addId))
+      const removed = prev.find((f) => !curIds.has(f._addId))
+      if (removed) {
+        prefix = t('pageBrowser.filter.announceRemoved', {
+          label: pageFilterSummary(removed, t),
+        })
+      }
+    }
+    if (prefix === '') return
+    filterAnnouncePrefixRef.current = prefix
+    filterAnnouncePendingRef.current = true
+    setFilterAnnouncement(prefix)
+  }, [wireFiltersKey, filters, t])
+
+  // P1-F1 — append the settled result count to the pending filter
+  // announcement once the refetch finishes (loading falls back to
+  // false). We require a true→false transition rather than a bare
+  // `!loading` so we don't compose against a stale count in the brief
+  // window before the refetch flips `loading` on. Composes
+  // "Filter added: Orphan. 23 results."
+  const filterLoadingPrevRef = useRef(loading)
+  useEffect(() => {
+    const settled = filterLoadingPrevRef.current && !loading
+    filterLoadingPrevRef.current = loading
+    if (!filterAnnouncePendingRef.current) return
+    if (!settled) return
+    filterAnnouncePendingRef.current = false
+    const count = t('pageBrowser.filter.announceResults', { count: filteredPages.length })
+    const prefix = filterAnnouncePrefixRef.current
+    setFilterAnnouncement(prefix === '' ? count : `${prefix} ${count}`)
+  }, [loading, filteredPages.length, t])
 
   // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
   // stable across re-renders that don't change `groupedRows` or
@@ -643,11 +714,19 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Scroll focused item into view. `focusedIndex` indexes into the
   // page-only `filteredPages` array; sentinel headers shift the row
   // index in the virtualizer, so map through `pageIndexToRowIndex`.
+  //
+  // This must fire ONLY when the user moves focus (arrow keys), never when
+  // `pageIndexToRowIndex`'s identity changes as more pages stream in — else
+  // every load-more re-runs `scrollToIndex(focusedIndex)` and yanks the
+  // viewport back to the focused row (index 0 by default), defeating infinite
+  // scroll. The mapping is read from a ref so data growth doesn't re-trigger.
+  const pageIndexToRowIndexRef = useRef(pageIndexToRowIndex)
+  pageIndexToRowIndexRef.current = pageIndexToRowIndex
   useEffect(() => {
     if (focusedIndex < 0) return
-    const rowIndex = pageIndexToRowIndex[focusedIndex] ?? focusedIndex
+    const rowIndex = pageIndexToRowIndexRef.current[focusedIndex] ?? focusedIndex
     virtualizer.scrollToIndex(rowIndex, { align: 'auto' })
-  }, [focusedIndex, virtualizer, pageIndexToRowIndex])
+  }, [focusedIndex, virtualizer])
 
   // UX-331 — wire `aria-activedescendant` so screen readers can track
   // arrow-key focus moves. The id pattern mirrors the row renderer:
@@ -664,7 +743,15 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     return undefined
   }, [focusedIndex, pageIndexToRowIndex, groupedRows])
 
-  const isFiltering = filterText.trim().length > 0
+  // P0-B — a chip-only narrowing (empty text box, ≥1 active filter) that
+  // returns zero rows must render the "no matches" state, not the
+  // "No pages yet / Create your first page" empty-space state. Derive
+  // `isFiltering` from the compound `filters` as well as the text input.
+  const isFiltering = filterText.trim().length > 0 || filters.length > 0
+  // The list viewport shows the "No matching pages" status (instead of
+  // the virtualized rows) whenever an active filter resolves to zero
+  // rows. Drives both the body branch and the grid-role suppression.
+  const showNoMatch = isFiltering && filteredPages.length === 0
 
   return (
     <div className="page-browser space-y-4">
@@ -707,7 +794,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
       )}
 
-      {spaceIsReady && !loading && pages.length === 0 && (
+      {/* P0-B — the empty-space "No pages yet / Create your first page"
+          state is only correct when the view is genuinely unfiltered. When
+          a chip (or text) narrows the server result to zero, `isFiltering`
+          is true and we yield to the `noMatches` branch inside the
+          ScrollArea instead, so a user with a full graph isn't told it's
+          empty and offered an irrelevant create-first action. */}
+      {spaceIsReady && !loading && pages.length === 0 && !isFiltering && (
         <EmptyState
           icon={FileText}
           message={t('pageBrowser.noPages')}
@@ -728,20 +821,40 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <ScrollArea
         viewportRef={listRef}
-        className="page-browser-list max-h-[calc(100dvh-200px)]"
+        className="page-browser-list"
+        // The height cap must live on the viewport (the actual scroller), not
+        // the Root: a `max-height`-only Root has computed `height: auto`, so
+        // the viewport's `h-full` can't resolve and grows to full content —
+        // defeating virtualization and cascading load-more through every page.
+        // Capping the viewport keeps shrink-to-content for short lists while
+        // capping + scrolling (and virtualizing) for long ones.
+        viewportClassName="max-h-[calc(100dvh-200px)]"
         viewportProps={{
           // MAINT-162 — ARIA grid pattern for the page list. The
           // viewport mixes flat-page rows, section headers, and
           // namespace-tree rows under one container; `role="grid"`
           // permits this heterogeneous mix where `role="listbox"`
           // would have required every child to be `role="option"`.
-          role: 'grid',
+          //
+          // P0-B / a11y — in the no-match state the only child is the
+          // `EmptyState` status `<section>`, which is not a valid grid
+          // child (`aria-required-children`). Drop the grid role (and its
+          // grid-only ARIA attrs) in that state so the container is a
+          // plain region holding the "No matching pages" message.
+          ...(showNoMatch
+            ? {}
+            : {
+                role: 'grid',
+                'aria-label': hasStarred
+                  ? t('pageBrowser.pageListGrouped')
+                  : t('pageBrowser.pageList'),
+                // UX-331 — bind `aria-activedescendant` to the focused
+                // row's stable id so screen readers track arrow-key
+                // focus moves without the inner buttons receiving DOM
+                // focus.
+                ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
+              }),
           tabIndex: 0,
-          'aria-label': hasStarred ? t('pageBrowser.pageListGrouped') : t('pageBrowser.pageList'),
-          // UX-331 — bind `aria-activedescendant` to the focused row's
-          // stable id so screen readers track arrow-key focus moves
-          // without the inner buttons having to receive DOM focus.
-          ...(activeDescendantId ? { 'aria-activedescendant': activeDescendantId } : {}),
           // Section presence flags exposed for tests / styling hooks.
           // FEAT-14 — the unified model means either or both can be
           // present independently; consumers that want section-aware
@@ -750,7 +863,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           'data-has-pages': hasPages ? 'true' : 'false',
         }}
       >
-        {isFiltering && filteredPages.length === 0 ? (
+        {showNoMatch ? (
           <EmptyState icon={Search} message={t('pageBrowser.noMatches')} />
         ) : (
           <>
@@ -810,6 +923,13 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
 
       <output className="sr-only" aria-live="polite">
         {loadMoreAnnouncement}
+      </output>
+
+      {/* P1-F1 — polite announcement of compound-filter add/remove plus the
+          settled result count, so screen-reader users hear the central
+          chip interaction (which silently refetches the list). */}
+      <output className="sr-only" aria-live="polite" data-testid="filter-announcement">
+        {filterAnnouncement}
       </output>
 
       {/* Delete confirmation dialog */}

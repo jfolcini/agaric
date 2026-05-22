@@ -26,7 +26,7 @@ vi.mock('@/components/ui/popover', () => ({
     children: React.ReactNode
     asChild?: boolean
     [key: string]: unknown
-  }) => (asChild ? <>{children}</> : <button {...props}>{children}</button>),
+  }) => (asChild ? children : <button {...props}>{children}</button>),
   PopoverContent: ({
     children,
     ...props
@@ -45,6 +45,23 @@ describe('AddFilterPopover', () => {
     render(<AddFilterPopover onAddFilter={vi.fn()} />)
     expect(screen.getByText('Filters')).toBeInTheDocument()
     expect(screen.getByText('Pages')).toBeInTheDocument()
+  })
+
+  it('exposes role="dialog" on the popover content (matches aria-haspopup)', () => {
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    expect(screen.getByRole('dialog', { name: 'Add a filter' })).toBeInTheDocument()
+  })
+
+  it('renders the muted helper descriptions for the pages-only facets', () => {
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    expect(screen.getByText('Nothing links to it and it links to nothing.')).toBeInTheDocument()
+    expect(screen.getByText('A named page with no content.')).toBeInTheDocument()
+    expect(screen.getByText('Nothing links to it yet.')).toBeInTheDocument()
+  })
+
+  it('renders the "Last edited" group label before the bucket buttons', () => {
+    render(<AddFilterPopover onAddFilter={vi.fn()} />)
+    expect(screen.getByText('Last edited')).toBeInTheDocument()
   })
 
   it('adds a boolean Pages primitive immediately on click', async () => {
