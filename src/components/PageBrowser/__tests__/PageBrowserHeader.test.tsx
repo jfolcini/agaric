@@ -130,4 +130,92 @@ describe('PageBrowserHeader (PEND-56)', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // ── PEND-58d D11 / T-F1 — count-label branches ──────────────────────
+  //
+  // The chip pairs a numerator and denominator that must share a basis:
+  //  (a) no chips, no text → `countAll`     ("312 pages")
+  //  (b) free-text query   → `countFiltered`("23 of 312 matching")
+  //  (c) chips, no text    → `countMatching`("312 matching pages")
+  //  (·) null total        → no chip at all
+  describe('count-label branches (T-F1)', () => {
+    it('renders no count chip when totalCount is undefined', () => {
+      render(<PageBrowserHeader {...makeProps({ totalCount: undefined })} />)
+      expect(screen.queryByTestId('page-browser-count')).not.toBeInTheDocument()
+    })
+
+    it('renders the countAll form when no text and no chip filters are active', () => {
+      render(
+        <PageBrowserHeader
+          {...makeProps({
+            totalCount: 312,
+            hasTextQuery: false,
+            hasChipFilters: false,
+          })}
+        />,
+      )
+      const chip = screen.getByTestId('page-browser-count')
+      expect(chip).toHaveTextContent(t('pageBrowser.countAll', { count: 312 }))
+    })
+
+    it('renders the countFiltered form when a free-text query is active', () => {
+      render(
+        <PageBrowserHeader
+          {...makeProps({
+            totalCount: 312,
+            filteredCount: 23,
+            hasTextQuery: true,
+            hasChipFilters: false,
+          })}
+        />,
+      )
+      const chip = screen.getByTestId('page-browser-count')
+      expect(chip).toHaveTextContent(t('pageBrowser.countFiltered', { loaded: 23, total: 312 }))
+    })
+
+    it('renders the countMatching form when chips are active without a text query', () => {
+      render(
+        <PageBrowserHeader
+          {...makeProps({
+            totalCount: 312,
+            filteredCount: 312,
+            hasTextQuery: false,
+            hasChipFilters: true,
+          })}
+        />,
+      )
+      const chip = screen.getByTestId('page-browser-count')
+      expect(chip).toHaveTextContent(t('pageBrowser.countMatching', { count: 312 }))
+    })
+
+    it('text query takes precedence over chips (countFiltered, not countMatching)', () => {
+      // Both axes active: the free-text box is the inner narrowing, so the
+      // chip shows "X of Y matching" (the loaded-narrowed numerator) rather
+      // than the chip-only single-number form.
+      render(
+        <PageBrowserHeader
+          {...makeProps({
+            totalCount: 312,
+            filteredCount: 5,
+            hasTextQuery: true,
+            hasChipFilters: true,
+          })}
+        />,
+      )
+      const chip = screen.getByTestId('page-browser-count')
+      expect(chip).toHaveTextContent(t('pageBrowser.countFiltered', { loaded: 5, total: 312 }))
+      expect(chip).not.toHaveTextContent(t('pageBrowser.countMatching', { count: 312 }))
+    })
+  })
+
+  // ── PEND-58d D13 — header row wraps on narrow viewports ──────────────
+  it('the search/sort/density row carries flex-wrap so it can wrap on mobile', () => {
+    const { container } = render(<PageBrowserHeader {...makeProps()} />)
+    // The controls row is the second child of `.page-browser-header` (the
+    // create form is first). It must opt into wrapping rather than
+    // overflowing horizontally on a narrow viewport.
+    const controlsRow = container.querySelector('.page-browser-header > div.flex-wrap')
+    expect(controlsRow).not.toBeNull()
+    expect(controlsRow).toHaveClass('flex-wrap')
+  })
 })

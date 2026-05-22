@@ -37,6 +37,14 @@ export const pageAliases: Map<string, string[]> = new Map()
 // Attachment store: attachment_id → AttachmentRow-like object
 export const attachments: Map<string, Record<string, unknown>> = new Map()
 
+// Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
+// computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
+// (it is NOT a `blocks` column), so the mock keeps it in a dedicated store
+// rather than on the BlockRow. Seeded with deterministic values below and
+// read by the `list_pages_with_metadata` handler for the `last-edited:`
+// compound filter and the recently-modified sort.
+export const pageLastModified: Map<string, string> = new Map()
+
 // Op log for undo/redo/history
 export interface MockOpLogEntry {
   [key: string]: unknown
@@ -76,6 +84,19 @@ export function offsetDate(days: number): string {
   const d = new Date()
   d.setDate(d.getDate() + days)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Full ISO-8601 timestamp at `now + days` (negative = past). Used to stamp
+ * a deterministic `last_modified_at` on seeded page blocks so the
+ * `last-edited:` compound filter (Rolling / OlderThan / Range buckets) and
+ * the `recently-modified` sort have real, comparable timestamps to work
+ * against. Mirrors the backend's `MAX(op_log.created_at)` value shape.
+ */
+export function offsetIso(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  return d.toISOString()
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +175,7 @@ export function seedBlocks(): void {
   propertyDefs.clear()
   pageAliases.clear()
   attachments.clear()
+  pageLastModified.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
@@ -528,6 +550,23 @@ export function seedBlocks(): void {
     value_ref: null,
   })
 
+  // Stamp a deterministic `last_modified_at` on every canonical seed page.
+  // These are intentionally OLD (≈90 days ago) so that (a) under the
+  // `recently-modified` sort the canonical pages rank LAST (the bulk pages
+  // seeded below are recent), and (b) the `last-edited:older` /
+  // `last-edited:` rolling-window buckets can narrow the set — canonical
+  // pages match `OlderThan`, bulk pages match `Rolling`.
+  for (const pageId of [
+    SEED_IDS.PAGE_GETTING_STARTED,
+    SEED_IDS.PAGE_QUICK_NOTES,
+    SEED_IDS.PAGE_DAILY,
+    SEED_IDS.PAGE_PROJECTS,
+    SEED_IDS.PAGE_MEETINGS,
+    SEED_IDS.PAGE_TMPL_MEETING,
+  ]) {
+    pageLastModified.set(pageId, offsetIso(-90))
+  }
+
   seedBulkPages()
 }
 
@@ -551,6 +590,14 @@ function seedBulkPages(): void {
     const pageId = fakeId()
     const title = `Bulk Page ${String(i).padStart(3, '0')}`
     blocks.set(pageId, makeBlock(pageId, 'page', title, null, 100 + i))
+    // Recent, monotonically-decreasing-by-index timestamps: bulk pages are
+    // newer than the canonical seed pages (≈90 days old) so they sort FIRST
+    // under `recently-modified` and match the `last-edited:` rolling-window
+    // buckets (today / this-week). Index 1 is the newest (now), each
+    // subsequent page one hour older — all still within the last few days.
+    const bulkTs = new Date()
+    bulkTs.setHours(bulkTs.getHours() - (i - 1))
+    pageLastModified.set(pageId, bulkTs.toISOString())
     if (!properties.has(pageId)) properties.set(pageId, new Map())
     properties.get(pageId)?.set('space', {
       block_id: pageId,

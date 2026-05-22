@@ -3103,3 +3103,184 @@ describe('MAINT-226 — scope-filter parity', () => {
     void foreignBlockId
   })
 })
+
+// ---------------------------------------------------------------------------
+// list_pages_with_metadata — compound-filter narrowing + real total_count
+// (PEND-58d T-M1). Each filter primitive mirrors the REAL backend semantics
+// in src-tauri/src/filters/primitive.rs; these assert the mock narrows the
+// seeded page set and reports a paginatable-independent total_count.
+// ---------------------------------------------------------------------------
+
+interface MetaPageResp {
+  items: Array<Record<string, unknown>>
+  next_cursor: string | null
+  has_more: boolean
+  total_count: number | null
+}
+
+function listPages(filters: Array<Record<string, unknown>>, sort = 'alphabetical'): MetaPageResp {
+  return invoke('list_pages_with_metadata', {
+    filter: { spaceId: 'SPACE_PERSONAL', sort, filters },
+    cursor: null,
+    limit: 100,
+  }) as MetaPageResp
+}
+
+const titlesOf = (resp: MetaPageResp): string[] =>
+  resp.items.map((r) => (r['content'] as string | null) ?? '')
+
+describe('list_pages_with_metadata — compound filters', () => {
+  it('reports a real total_count equal to the unfiltered page count', () => {
+    const all = listPages([])
+    expect(all.total_count).toBe(all.items.length)
+    expect(all.total_count).toBeGreaterThanOrEqual(5)
+  })
+
+  it('PathGlob narrows by case-insensitive glob over the title', () => {
+    const meet = listPages([{ type: 'PathGlob', pattern: 'meet*', exclude: false }])
+    expect(titlesOf(meet).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+    expect(meet.total_count).toBe(2)
+  })
+
+  it('PathGlob bare word matches as a substring', () => {
+    const sub = listPages([{ type: 'PathGlob', pattern: 'eeting', exclude: false }])
+    expect(titlesOf(sub).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+  })
+
+  it('PathGlob ? matches exactly one character', () => {
+    // "Meetings" (8 chars) matches `Meeting?`; "Meeting Notes Template" does not.
+    const q = listPages([{ type: 'PathGlob', pattern: 'Meeting?', exclude: false }])
+    expect(titlesOf(q)).toEqual(['Meetings'])
+  })
+
+  it('PathGlob exclude:true inverts the match', () => {
+    const all = listPages([])
+    const excluded = listPages([{ type: 'PathGlob', pattern: 'meet*', exclude: true }])
+    expect(excluded.total_count).toBe((all.total_count ?? 0) - 2)
+    expect(titlesOf(excluded)).not.toContain('Meetings')
+    expect(titlesOf(excluded)).not.toContain('Meeting Notes Template')
+  })
+
+  it('HasProperty Exists narrows to pages carrying the key', () => {
+    const tmpl = listPages([
+      { type: 'HasProperty', key: 'template', predicate: { type: 'Exists' } },
+    ])
+    expect(titlesOf(tmpl)).toEqual(['Meeting Notes Template'])
+  })
+
+  it('HasProperty NotExists is the inverse of Exists', () => {
+    const all = listPages([])
+    const without = listPages([
+      { type: 'HasProperty', key: 'template', predicate: { type: 'NotExists' } },
+    ])
+    expect(without.total_count).toBe((all.total_count ?? 0) - 1)
+    expect(titlesOf(without)).not.toContain('Meeting Notes Template')
+  })
+
+  it('HasProperty Eq matches the stored value_text', () => {
+    const hit = listPages([
+      {
+        type: 'HasProperty',
+        key: 'template',
+        predicate: { type: 'Eq', value: { type: 'Text', value: 'true' } },
+      },
+    ])
+    expect(titlesOf(hit)).toEqual(['Meeting Notes Template'])
+    const miss = listPages([
+      {
+        type: 'HasProperty',
+        key: 'template',
+        predicate: { type: 'Eq', value: { type: 'Text', value: 'false' } },
+      },
+    ])
+    expect(miss.total_count).toBe(0)
+  })
+
+  it('HasProperty Eq with a Ref value compares against value_ref', () => {
+    // Every seed page carries `space = SPACE_PERSONAL` as a ref property, so an
+    // Eq Ref predicate over `space` matches the whole space.
+    const all = listPages([])
+    const refHit = listPages([
+      {
+        type: 'HasProperty',
+        key: 'space',
+        predicate: { type: 'Eq', value: { type: 'Ref', value: 'SPACE_PERSONAL' } },
+      },
+    ])
+    expect(refHit.total_count).toBe(all.total_count)
+    // A non-matching ref selects nothing.
+    const refMiss = listPages([
+      {
+        type: 'HasProperty',
+        key: 'space',
+        predicate: { type: 'Eq', value: { type: 'Ref', value: 'SPACE_OTHER' } },
+      },
+    ])
+    expect(refMiss.total_count).toBe(0)
+  })
+
+  it('HasProperty Ne excludes the matching value (and keeps key-absent pages)', () => {
+    const all = listPages([])
+    const ne = listPages([
+      {
+        type: 'HasProperty',
+        key: 'template',
+        predicate: { type: 'Ne', value: { type: 'Text', value: 'true' } },
+      },
+    ])
+    // Ne = NOT EXISTS(key='template' AND value='true') → every page except
+    // the template page.
+    expect(ne.total_count).toBe((all.total_count ?? 0) - 1)
+    expect(titlesOf(ne)).not.toContain('Meeting Notes Template')
+  })
+
+  it('LastEdited OlderThan matches the (≈90-day-old) canonical seed pages', () => {
+    const older = listPages([{ type: 'LastEdited', spec: { type: 'OlderThan', days: 30 } }])
+    const all = listPages([])
+    // Every canonical seed page is stamped ~90 days old → all match OlderThan{30}.
+    expect(older.total_count).toBe(all.total_count)
+    expect(older.total_count).toBeGreaterThanOrEqual(5)
+  })
+
+  it('LastEdited Rolling excludes the old canonical seed pages', () => {
+    const recent = listPages([{ type: 'LastEdited', spec: { type: 'Rolling', days: 7 } }])
+    // Canonical pages are ~90 days old → none fall in the last-7-days window.
+    expect(recent.total_count).toBe(0)
+  })
+
+  it('LastEdited Range matches a window covering the seed timestamp', () => {
+    const start = '2000-01-01T00:00:00.000Z'
+    const end = '2100-01-01T00:00:00.000Z'
+    const inRange = listPages([{ type: 'LastEdited', spec: { type: 'Range', start, end } }])
+    const all = listPages([])
+    expect(inRange.total_count).toBe(all.total_count)
+  })
+
+  it('AND-composes multiple primitives', () => {
+    // Orphan AND PathGlob(meet*) → "Meetings" + "Meeting Notes Template"
+    // (both are orphans with no links).
+    const combo = listPages([
+      { type: 'Orphan' },
+      { type: 'PathGlob', pattern: 'meet*', exclude: false },
+    ])
+    expect(titlesOf(combo).sort()).toEqual(['Meeting Notes Template', 'Meetings'])
+  })
+
+  it('total_count is stable across cursor pages (full filtered set)', () => {
+    const first = invoke('list_pages_with_metadata', {
+      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      cursor: null,
+      limit: 2,
+    }) as MetaPageResp
+    expect(first.has_more).toBe(true)
+    expect(first.items.length).toBe(2)
+    // total_count reflects the full set, not the page slice.
+    expect(first.total_count).toBeGreaterThan(2)
+    const second = invoke('list_pages_with_metadata', {
+      filter: { spaceId: 'SPACE_PERSONAL', sort: 'alphabetical', filters: [] },
+      cursor: first.next_cursor,
+      limit: 2,
+    }) as MetaPageResp
+    expect(second.total_count).toBe(first.total_count)
+  })
+})

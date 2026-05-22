@@ -164,10 +164,27 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [filters, setFilters] = useState<PageFilterWithKey[]>([])
   const filterAddIdRef = useRef(0)
   const handleAddFilter = useCallback((f: FilterPrimitive) => {
-    setFilters((prev) => [...prev, { ...f, _addId: ++filterAddIdRef.current }])
+    setFilters((prev) => {
+      // PEND-58d D22 — dedupe identical chips. Compare the incoming
+      // primitive against the existing set with the React-key-only
+      // `_addId` stripped (a structural compare via stable JSON). A
+      // structurally-identical chip is a no-op: re-applying it would
+      // ship a duplicate `FilterPrimitive` to the IPC (an AND of a
+      // condition with itself — pure noise) and add a redundant pill.
+      const incoming = JSON.stringify(f)
+      const isDuplicate = prev.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)
+      if (isDuplicate) return prev
+      return [...prev, { ...f, _addId: ++filterAddIdRef.current }]
+    })
   }, [])
   const handleRemoveFilter = useCallback((index: number) => {
     setFilters((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+  // PEND-58d D12 — clear every active chip in one shot. Wired to the
+  // chip row's `onClearAll` prop (the FilterRow renders the control;
+  // this provides the behaviour). No-op when already empty.
+  const handleClearAllFilters = useCallback(() => {
+    setFilters((prev) => (prev.length === 0 ? prev : []))
   }, [])
   // Wire-shaped primitives (the `_addId` React key is dropped). A stable
   // JSON serialisation is the queryFn dep so a chip add/remove refetches
@@ -229,6 +246,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     loading,
     hasMore,
     loadMore,
+    reload,
     setItems: setPages,
     totalCount,
   } = usePaginatedQuery<BlockRow | PageWithMetadataRow>(queryFn, {
@@ -236,13 +254,67 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     enabled: spaceIsReady,
   })
 
+  // PEND-58d D6 + D20 — locally-retained total for the count chip.
+  //
+  // D6 (FE half): the backend now computes `total_count` only on the
+  // first page (`req.after.is_none()`) and returns `null` on cursor
+  // pages. `usePaginatedQuery` is last-write-wins, so a cursor page would
+  // blank the hook's `totalCount`. We retain the first-page value here
+  // and only overwrite it when the hook reports a fresh number, so the
+  // chip keeps showing the total across load-more.
+  //
+  // D20: the chip must also drop by one on an optimistic delete (the
+  // delete path mutates `pages` directly, never re-running the COUNT), so
+  // this is local mutable state rather than a pure mirror of the hook.
+  const [displayTotalCount, setDisplayTotalCount] = useState<number | undefined>(undefined)
+  // Adopt the hook's total only when it is a real number. A cursor page
+  // returning `null` (D6) leaves `totalCount` `undefined`; ignoring that
+  // keeps the retained first-page value on screen.
+  useEffect(() => {
+    if (typeof totalCount === 'number') setDisplayTotalCount(totalCount)
+  }, [totalCount])
+  // Reset the retained total when the query basis changes (space / sort /
+  // chip set) so a stale count never lingers against a fresh result set
+  // before the new first page resolves.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the query-basis tuple drives the reset; `wireFiltersKey` is the chip-set trigger
+  useEffect(() => {
+    setDisplayTotalCount(undefined)
+  }, [currentSpaceId, sortOption, wireFiltersKey])
+
   // `usePageDelete` predates the metadata-rich union type; its
   // updater is typed against `BlockRow[]`. The two row shapes share
   // every field the deletion path reads (`id`), so we narrow at the
   // boundary with a typed cast instead of widening `usePageDelete`.
-  const setPagesAsBlockRows = setPages as (updater: (prev: BlockRow[]) => BlockRow[]) => void
+  //
+  // PEND-58d D20 — the delete path mutates `pages` directly (optimistic
+  // filter-out on a successful `delete_block`) and never re-runs the
+  // backend COUNT, so the count chip would over-report by one. We
+  // intercept the delete-only setter here: when the hook's updater
+  // produces a strictly shorter array (the success path filters one row
+  // out), decrement the retained total by the same delta. We only ever
+  // *decrease* here — the create path has its own setter / count handling
+  // — so a no-op or growth leaves the total untouched. Tying the
+  // decrement to the actual array shrink (rather than the confirm click)
+  // means a failed delete, which leaves `pages` unchanged, also leaves
+  // the count unchanged.
+  const setPagesForDelete = useCallback(
+    (updater: (prev: BlockRow[]) => BlockRow[]) => {
+      setPages((prev) => {
+        const prevRows = prev as BlockRow[]
+        const next = updater(prevRows)
+        if (next.length < prevRows.length) {
+          const removed = prevRows.length - next.length
+          setDisplayTotalCount((cur) =>
+            typeof cur === 'number' ? Math.max(0, cur - removed) : cur,
+          )
+        }
+        return next as (BlockRow | PageWithMetadataRow)[]
+      })
+    },
+    [setPages],
+  )
   const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } =
-    usePageDelete(setPagesAsBlockRows)
+    usePageDelete(setPagesForDelete)
 
   const [isCreating, setIsCreating] = useState(false)
   const [newPageName, setNewPageName] = useState('')
@@ -353,21 +425,38 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setIsCreating(true)
     try {
       const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
-      const newPage: BlockRow = {
-        id: newId,
-        block_type: 'page',
-        content: name,
-        parent_id: null,
-        position: null,
-        deleted_at: null,
-        todo_state: null,
-        priority: null,
-        due_date: null,
-        scheduled_date: null,
-        page_id: newId,
-      }
-      setPages((prev) => [newPage, ...prev])
       setNewPageName('')
+      // PEND-58d D10 — the optimistic prepend assumes the new page belongs
+      // at the top of the *current* result set. That only holds when no
+      // compound-filter chips are active: with chips the server decides
+      // membership (the new page may or may not match), and the prepended
+      // row also lacks the metadata the density rows read. When chips are
+      // active we refetch from page 1 instead, so the new page surfaces
+      // only if it actually matches — and with full metadata. The fast
+      // optimistic path is kept for the unfiltered case (the common one).
+      if (wireFilters.length > 0) {
+        reload()
+      } else {
+        const newPage: BlockRow = {
+          id: newId,
+          block_type: 'page',
+          content: name,
+          parent_id: null,
+          position: null,
+          deleted_at: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: newId,
+        }
+        setPages((prev) => [newPage, ...prev])
+        // Keep the count chip in step with the optimistic prepend (mirror
+        // of the D20 delete decrement). The chip-active branch above
+        // refetches, which re-runs the backend COUNT, so no manual bump
+        // is needed there.
+        setDisplayTotalCount((cur) => (typeof cur === 'number' ? cur + 1 : cur))
+      }
       onPageSelect?.(newId, name)
     } catch (error) {
       notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
@@ -375,7 +464,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       })
     }
     setIsCreating(false)
-  }, [newPageName, setPages, t, onPageSelect])
+  }, [newPageName, setPages, t, onPageSelect, wireFilters, reload])
 
   const handleCreateUnder = useCallback((namespacePath: string) => {
     setNewPageName(`${namespacePath}/`)
@@ -736,22 +825,46 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // arrow-key focus moves. The id pattern mirrors the row renderer:
   // flat rows expose `page-row-${page.id}`; namespace-tree wrappers
   // expose `page-row-${node.fullPath}` (see `PageBrowserRowRenderer`).
+  //
+  // PEND-58d D23b (a11y) — `aria-activedescendant` MUST reference an
+  // element that is actually in the DOM. The list is virtualized, so a
+  // focused row whose virtual index falls outside the current render
+  // window has no rendered element, and pointing the attribute at its id
+  // would dangle (ARIA violation; screen readers announce nothing or
+  // error). Guard by confirming the focused row's virtual index is within
+  // the rendered window (`virtualItems`) before emitting the id;
+  // otherwise skip it. The `scrollToIndex` effect above keeps the focused
+  // row in view on arrow-key moves, so under normal navigation the id is
+  // present — this guard only suppresses the brief window before the
+  // virtualizer re-renders around a programmatic jump.
+  const renderedRowIndices = useMemo(
+    () => new Set(virtualItems.map((vi) => vi.index)),
+    [virtualItems],
+  )
   const activeDescendantId = useMemo<string | undefined>(() => {
     if (focusedIndex < 0) return undefined
     const rowIdx = pageIndexToRowIndex[focusedIndex]
     if (rowIdx == null) return undefined
+    // Skip when the focused row isn't in the current virtual window —
+    // its element isn't rendered, so the id would dangle.
+    if (!renderedRowIndices.has(rowIdx)) return undefined
     const row = groupedRows[rowIdx]
     if (!row) return undefined
     if (row.kind === 'page') return `page-row-${row.page.id}`
     if (row.kind === 'tree-page') return `page-row-${row.node.fullPath}`
     return undefined
-  }, [focusedIndex, pageIndexToRowIndex, groupedRows])
+  }, [focusedIndex, pageIndexToRowIndex, groupedRows, renderedRowIndices])
 
   // P0-B — a chip-only narrowing (empty text box, ≥1 active filter) that
   // returns zero rows must render the "no matches" state, not the
   // "No pages yet / Create your first page" empty-space state. Derive
   // `isFiltering` from the compound `filters` as well as the text input.
-  const isFiltering = filterText.trim().length > 0 || filters.length > 0
+  // PEND-58d D11 — the count chip needs to tell the two narrowing axes
+  // apart (free-text narrows the loaded set; chips narrow server-side), so
+  // expose both booleans separately rather than the combined `isFiltering`.
+  const hasTextQuery = filterText.trim().length > 0
+  const hasChipFilters = filters.length > 0
+  const isFiltering = hasTextQuery || hasChipFilters
   // The list viewport shows the "No matching pages" status (instead of
   // the virtualized rows) whenever an active filter resolves to zero
   // rows. Drives both the body branch and the grid-role suppression.
@@ -782,9 +895,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           onSortChange={setSortOption}
           density={density}
           onDensityChange={setDensity}
-          totalCount={totalCount}
+          totalCount={displayTotalCount}
           filteredCount={filteredPages.length}
-          isFiltering={isFiltering}
+          hasTextQuery={hasTextQuery}
+          hasChipFilters={hasChipFilters}
           frontendSortAtScale={frontendSortAtScale}
         />
       </ViewHeader>
@@ -800,6 +914,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           filters={filters}
           onAddFilter={handleAddFilter}
           onRemoveFilter={handleRemoveFilter}
+          onClearAll={handleClearAllFilters}
         />
       )}
 
@@ -919,17 +1034,35 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 positioned past the inner viewport's lower edge). Fixes
                 the case where the inner ScrollArea's `max-h` consumed
                 the outer viewport and a button rendered below it was
-                effectively off-screen. */}
-            <LoadMoreButton
-              hasMore={hasMore}
-              loading={loading}
-              onLoadMore={loadMore}
-              className="page-browser-load-more mt-2"
-              label={t('pageBrowser.loadMore')}
-              loadingLabel={t('pageBrowser.loading')}
-              loadedCount={pages.length}
-              totalCount={totalCount}
-            />
+                effectively off-screen.
+
+                PEND-58d D9 (a11y) — the button is a direct child of the
+                `role="grid"` viewport, which `aria-required-children`
+                forbids (a grid's children must be rows). Wrap it in a
+                `role="row"` > `role="gridcell"` footer so it's a valid
+                grid descendant. Rendered only when `hasMore` so the grid
+                never carries an empty trailing row once everything is
+                loaded (`LoadMoreButton` itself also returns null then). */}
+            {hasMore && (
+              // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for the load-more footer in this list grid
+              // biome-ignore lint/a11y/useFocusableInteractive: row focus is delegated to the inner load-more button
+              <div role="row" className="page-browser-load-more-row">
+                {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+                {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner load-more button */}
+                <div role="gridcell">
+                  <LoadMoreButton
+                    hasMore={hasMore}
+                    loading={loading}
+                    onLoadMore={loadMore}
+                    className="page-browser-load-more mt-2"
+                    label={t('pageBrowser.loadMore')}
+                    loadingLabel={t('pageBrowser.loading')}
+                    loadedCount={pages.length}
+                    totalCount={displayTotalCount}
+                  />
+                </div>
+              </div>
+            )}
           </>
         )}
       </ScrollArea>

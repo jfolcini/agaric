@@ -1154,8 +1154,18 @@ export type FilterPrimitive =
  *  becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
  */
 { type: "PathGlob"; pattern: string; exclude: boolean } |
-/**  Shared — block carries a property matching this predicate. */
-{ type: "HasProperty"; key: string; op: PropertyOp; value: PropertyValue | null } |
+/**
+ *  Shared — block carries a property matching this predicate.
+ *
+ *  D8 (make invalid states unrepresentable): the predicate is a
+ *  single nested [`PropertyPredicate`] enum rather than a separate
+ *  `op` + `Option<value>` pair. This guarantees by construction that
+ *  `Eq`/`Ne` ALWAYS carry a value and `Exists`/`NotExists` NEVER do —
+ *  the "partial" states (`Eq` with no value, `Exists` with a value)
+ *  are simply not expressible, so `compile_has_property` no longer
+ *  needs an `unsupported()` fallback.
+ */
+{ type: "HasProperty"; key: string; predicate: PropertyPredicate } |
 /**  Shared — block's `last_modified_at` falls in this window. */
 { type: "LastEdited"; spec: LastEditedSpec } |
 /**  Shared — block's owning page lives in this space. */
@@ -1688,16 +1698,38 @@ export type PropertyFilter = {
 	operator?: string,
 };
 
-/**  Predicate operator on a `has-property:` primitive. */
-export type PropertyOp =
-/**  `block_properties.value_text = ?`. */
-"eq" |
-/**  `block_properties.value_text != ?`. */
-"ne" |
+/**
+ *  Predicate on a `has-property:` primitive.
+ *
+ *  D8 (make invalid states unrepresentable): a single internally-tagged
+ *  enum that fuses the operator with its operand. `Eq`/`Ne` carry a
+ *  mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. The
+ *  previous shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
+ *  — admitted two nonsensical combinations (`Eq` with no value, `Exists`
+ *  with a value) that had to be rejected at compile time with an
+ *  `unsupported()` sentinel. Folding the operand into the operator
+ *  variant removes those states from the type entirely.
+ *
+ *  **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
+ *  union reads `{ type: "Exists" } | { type: "NotExists" }
+ *  | { type: "Eq", value: PropertyValue } | { type: "Ne", value: PropertyValue }`.
+ */
+export type PropertyPredicate =
 /**  Property key exists (no value comparison). */
-"exists" |
+{ type: "Exists" } |
 /**  Property key does NOT exist. */
-"notExists";
+{ type: "NotExists" } |
+/**
+ *  Property value equals the given operand. `Text` compares
+ *  `value_text`; `Ref` compares `value_ref`.
+ */
+{ type: "Eq"; value: PropertyValue } |
+/**
+ *  Property value does NOT equal the given operand (the block has no
+ *  matching `(key, value)` row). `Text` compares `value_text`; `Ref`
+ *  compares `value_ref`.
+ */
+{ type: "Ne"; value: PropertyValue };
 
 export type PropertyRow = {
 	key: string,

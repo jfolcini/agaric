@@ -22,8 +22,10 @@ import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { PropertyPredicate } from '@/lib/bindings'
 import type { FilterPrimitive } from '@/lib/tauri'
 
 export interface AddFilterPopoverProps {
@@ -35,6 +37,12 @@ export interface AddFilterPopoverProps {
 
 /** Which inline value-editor is open inside the popover (null = category menu). */
 type EditorKey = 'tag' | 'path' | 'property' | null
+
+/** D24 — the four property predicate kinds the popover can emit. */
+type PropertyOpKind = PropertyPredicate['type']
+
+/** Predicate kinds that compare a value (the value input is required for these). */
+const VALUE_BEARING_OPS: ReadonlySet<PropertyOpKind> = new Set<PropertyOpKind>(['Eq', 'Ne'])
 
 const LAST_EDITED_BUCKETS: ReadonlyArray<{ key: string; spec: FilterPrimitive }> = [
   { key: 'today', spec: { type: 'LastEdited', spec: { type: 'Rolling', days: 1 } } },
@@ -54,16 +62,20 @@ export function AddFilterPopover({
   const [editor, setEditor] = useState<EditorKey>(null)
   const [tagValue, setTagValue] = useState('')
   const [pathValue, setPathValue] = useState('')
+  const [pathExclude, setPathExclude] = useState(false)
   const [propKey, setPropKey] = useState('')
   const [propValue, setPropValue] = useState('')
+  const [propOp, setPropOp] = useState<PropertyOpKind>('Eq')
   const triggerRef = useRef<HTMLButtonElement>(null)
 
   const reset = useCallback(() => {
     setEditor(null)
     setTagValue('')
     setPathValue('')
+    setPathExclude(false)
     setPropKey('')
     setPropValue('')
+    setPropOp('Eq')
   }, [])
 
   const close = useCallback(() => {
@@ -80,6 +92,25 @@ export function AddFilterPopover({
     },
     [onAddFilter, close],
   )
+
+  // D14/D24: the property editor's key is always required. For Eq/Ne the value
+  // is required too; for Exists/NotExists there is no value. Centralise the
+  // emit so both the Apply button and Enter-to-apply share one guard, and so
+  // the predicate shape (D8) is built in one place.
+  const applyProperty = useCallback(() => {
+    const k = propKey.trim()
+    if (!k) return
+    let predicate: PropertyPredicate
+    if (VALUE_BEARING_OPS.has(propOp)) {
+      const v = propValue.trim()
+      if (!v) return
+      // The Pages UI only emits Text values; Ref is reserved for saved-views.
+      predicate = { type: propOp as 'Eq' | 'Ne', value: { type: 'Text', value: v } }
+    } else {
+      predicate = { type: propOp as 'Exists' | 'NotExists' }
+    }
+    emit({ type: 'HasProperty', key: k, predicate })
+  }, [propKey, propValue, propOp, emit])
 
   return (
     <Popover
@@ -106,6 +137,15 @@ export function AddFilterPopover({
       <PopoverContent
         // Radix Popover.Content does not auto-apply a role; the trigger
         // advertises `aria-haspopup="dialog"`, so name the role here to match.
+        //
+        // D25 — interaction model: we KEEP `role="dialog"` (the lighter fix)
+        // rather than converting the category list to a roving-tabindex
+        // `role="menu"`. The items are plain buttons; Radix's dialog focus
+        // scope handles Tab/Shift+Tab traversal in DOM order, Esc dismisses,
+        // and each item carries a visible focus ring (`focus-ring-visible` on
+        // FilterMenuItem; the Button base ring on the bucket/priority/Apply
+        // controls). This keeps the markup honest — a non-menu container of
+        // buttons should not advertise menu semantics it doesn't implement.
         role="dialog"
         align="start"
         className="w-72 p-2"
@@ -205,62 +245,30 @@ export function AddFilterPopover({
         )}
 
         {editor === 'path' && (
-          <InlineValueEditor
-            label={t('pageBrowser.filter.facetPath')}
+          <PathEditor
             value={pathValue}
+            exclude={pathExclude}
             onChange={setPathValue}
+            onExcludeChange={setPathExclude}
             onBack={() => setEditor(null)}
             onApply={() => {
               const v = pathValue.trim()
-              if (v) emit({ type: 'PathGlob', pattern: v, exclude: false })
+              if (v) emit({ type: 'PathGlob', pattern: v, exclude: pathExclude })
             }}
-            applyLabel={t('pageBrowser.filter.apply')}
-            backLabel={t('pageBrowser.filter.back')}
-            placeholder={t('pageBrowser.filter.pathPlaceholder')}
           />
         )}
 
         {editor === 'property' && (
-          <div className="flex flex-col gap-2">
-            <span className="px-1 text-xs font-medium">
-              {t('pageBrowser.filter.facetHasProperty')}
-            </span>
-            <Input
-              value={propKey}
-              onChange={(e) => setPropKey(e.target.value)}
-              placeholder={t('pageBrowser.filter.propertyKeyPlaceholder')}
-              aria-label={t('pageBrowser.filter.propertyKeyPlaceholder')}
-            />
-            <Input
-              value={propValue}
-              onChange={(e) => setPropValue(e.target.value)}
-              placeholder={t('pageBrowser.filter.propertyValuePlaceholder')}
-              aria-label={t('pageBrowser.filter.propertyValuePlaceholder')}
-            />
-            <div className="flex justify-between gap-2">
-              <Button type="button" variant="ghost" size="xs" onClick={() => setEditor(null)}>
-                {t('pageBrowser.filter.back')}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="xs"
-                onClick={() => {
-                  const k = propKey.trim()
-                  if (!k) return
-                  const v = propValue.trim()
-                  emit({
-                    type: 'HasProperty',
-                    key: k,
-                    op: v ? 'eq' : 'exists',
-                    value: v ? { type: 'Text', value: v } : null,
-                  })
-                }}
-              >
-                {t('pageBrowser.filter.apply')}
-              </Button>
-            </div>
-          </div>
+          <PropertyEditor
+            propKey={propKey}
+            propValue={propValue}
+            propOp={propOp}
+            onKeyChange={setPropKey}
+            onValueChange={setPropValue}
+            onOpChange={setPropOp}
+            onBack={() => setEditor(null)}
+            onApply={applyProperty}
+          />
         )}
       </PopoverContent>
     </Popover>
@@ -327,6 +335,10 @@ function InlineValueEditor({
   backLabel: string
   placeholder: string
 }): React.ReactElement {
+  // D14: a required-input editor is a dead-end when Apply silently no-ops on
+  // empty input. Gate both Apply (click) and Enter-to-apply on a non-blank
+  // value so the affordance can't fail silently.
+  const canApply = value.trim().length > 0
   return (
     <div className="flex flex-col gap-2">
       <span className="px-1 text-xs font-medium">{label}</span>
@@ -337,7 +349,7 @@ function InlineValueEditor({
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault()
-            onApply()
+            if (canApply) onApply()
           }
         }}
         placeholder={placeholder}
@@ -347,8 +359,184 @@ function InlineValueEditor({
         <Button type="button" variant="ghost" size="xs" onClick={onBack}>
           {backLabel}
         </Button>
-        <Button type="button" variant="outline" size="xs" onClick={onApply}>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={onApply}
+          disabled={!canApply}
+          aria-disabled={!canApply}
+        >
           {applyLabel}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Editor for the `PathGlob` facet. Mirrors `InlineValueEditor`'s UX (D21 —
+ * autoFocus + Enter-to-apply, D14 — Apply gated on a non-blank pattern) but
+ * adds the D24 "Exclude" toggle so the user can emit `PathGlob{exclude:true}`
+ * ("not path:"); previously only `exclude:false` was reachable.
+ */
+function PathEditor({
+  value,
+  exclude,
+  onChange,
+  onExcludeChange,
+  onBack,
+  onApply,
+}: {
+  value: string
+  exclude: boolean
+  onChange: (v: string) => void
+  onExcludeChange: (v: boolean) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const canApply = value.trim().length > 0
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetPath')}</span>
+      <Input
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            if (canApply) onApply()
+          }
+        }}
+        placeholder={t('pageBrowser.filter.pathPlaceholder')}
+        aria-label={t('pageBrowser.filter.pathPlaceholder')}
+      />
+      {/* biome-ignore lint/a11y/noLabelWithoutControl: the Radix Checkbox (a button) is the control and carries its own aria-label; biome can't see it through the component boundary */}
+      <label className="flex items-center gap-2 px-1 text-xs">
+        <Checkbox
+          checked={exclude}
+          onCheckedChange={(next) => onExcludeChange(next === true)}
+          aria-label={t('pageBrowser.filter.pathExcludeLabel')}
+        />
+        {t('pageBrowser.filter.pathExcludeLabel')}
+      </label>
+      <div className="flex justify-between gap-2">
+        <Button type="button" variant="ghost" size="xs" onClick={onBack}>
+          {t('pageBrowser.filter.back')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={onApply}
+          disabled={!canApply}
+          aria-disabled={!canApply}
+        >
+          {t('pageBrowser.filter.apply')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** The four predicate kinds the property op selector offers, in display order. */
+const PROPERTY_OPS: ReadonlyArray<{ value: PropertyOpKind; labelKey: string }> = [
+  { value: 'Eq', labelKey: 'pageBrowser.filter.propertyOpEq' },
+  { value: 'Ne', labelKey: 'pageBrowser.filter.propertyOpNe' },
+  { value: 'Exists', labelKey: 'pageBrowser.filter.propertyOpExists' },
+  { value: 'NotExists', labelKey: 'pageBrowser.filter.propertyOpNotExists' },
+]
+
+/**
+ * Editor for the `HasProperty` facet. Mirrors `InlineValueEditor`'s UX (D21):
+ * the key field `autoFocus`es and Enter applies from any input. The key is
+ * always required (D14).
+ *
+ * D24 — a predicate op selector offers `is` (Eq), `is not` (Ne), `exists`
+ * (Exists) and `doesn't exist` (NotExists). For Eq/Ne the value input is shown
+ * and required; for Exists/NotExists the value input is hidden and Apply is
+ * enabled on a non-empty key alone. The predicate shape is built by the
+ * parent's `applyProperty`.
+ */
+function PropertyEditor({
+  propKey,
+  propValue,
+  propOp,
+  onKeyChange,
+  onValueChange,
+  onOpChange,
+  onBack,
+  onApply,
+}: {
+  propKey: string
+  propValue: string
+  propOp: PropertyOpKind
+  onKeyChange: (v: string) => void
+  onValueChange: (v: string) => void
+  onOpChange: (v: PropertyOpKind) => void
+  onBack: () => void
+  onApply: () => void
+}): React.ReactElement {
+  const { t } = useTranslation()
+  const needsValue = VALUE_BEARING_OPS.has(propOp)
+  // D14/D24: key always required; value required only for Eq/Ne.
+  const canApply = propKey.trim().length > 0 && (!needsValue || propValue.trim().length > 0)
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (canApply) onApply()
+    }
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetHasProperty')}</span>
+      <Input
+        autoFocus
+        value={propKey}
+        onChange={(e) => onKeyChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={t('pageBrowser.filter.propertyKeyPlaceholder')}
+        aria-label={t('pageBrowser.filter.propertyKeyPlaceholder')}
+      />
+      {/* Native <select>: Radix Select portals + a focus-scope inside the
+          Popover dialog scope, which is brittle in jsdom and overkill for a
+          4-option control. The native element is fully accessible + testable. */}
+      <select
+        className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-hidden transition-[color,box-shadow] focus-visible:border-ring focus-ring-visible"
+        value={propOp}
+        onChange={(e) => onOpChange(e.target.value as PropertyOpKind)}
+        aria-label={t('pageBrowser.filter.propertyOpLabel')}
+      >
+        {PROPERTY_OPS.map((op) => (
+          <option key={op.value} value={op.value}>
+            {t(op.labelKey)}
+          </option>
+        ))}
+      </select>
+      {needsValue && (
+        <Input
+          value={propValue}
+          onChange={(e) => onValueChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder={t('pageBrowser.filter.propertyValuePlaceholder')}
+          aria-label={t('pageBrowser.filter.propertyValuePlaceholder')}
+        />
+      )}
+      <div className="flex justify-between gap-2">
+        <Button type="button" variant="ghost" size="xs" onClick={onBack}>
+          {t('pageBrowser.filter.back')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          onClick={onApply}
+          disabled={!canApply}
+          aria-disabled={!canApply}
+        >
+          {t('pageBrowser.filter.apply')}
         </Button>
       </div>
     </div>

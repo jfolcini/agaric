@@ -5,7 +5,7 @@
 //! `impl Projection for PagesProjection` / `SearchProjection` blocks.
 //!
 //! **Wire format:** Phase 3 exposes [`FilterPrimitive`] (and its value
-//! sub-types [`PropertyOp`], [`PropertyValue`], [`LastEditedSpec`],
+//! sub-types [`PropertyPredicate`], [`PropertyValue`], [`LastEditedSpec`],
 //! [`SnippetSpec`]) on the IPC boundary via `serde` + `specta::Type`.
 //! The enum is internally-tagged (`#[serde(tag = "type")]`, PascalCase
 //! variant names) so the regenerated TS renders a clean discriminated
@@ -38,10 +38,17 @@ pub enum FilterPrimitive {
     /// becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
     PathGlob { pattern: String, exclude: bool },
     /// Shared — block carries a property matching this predicate.
+    ///
+    /// D8 (make invalid states unrepresentable): the predicate is a
+    /// single nested [`PropertyPredicate`] enum rather than a separate
+    /// `op` + `Option<value>` pair. This guarantees by construction that
+    /// `Eq`/`Ne` ALWAYS carry a value and `Exists`/`NotExists` NEVER do —
+    /// the "partial" states (`Eq` with no value, `Exists` with a value)
+    /// are simply not expressible, so `compile_has_property` no longer
+    /// needs an `unsupported()` fallback.
     HasProperty {
         key: String,
-        op: PropertyOp,
-        value: Option<PropertyValue>,
+        predicate: PropertyPredicate,
     },
     /// Shared — block's `last_modified_at` falls in this window.
     LastEdited { spec: LastEditedSpec },
@@ -71,18 +78,34 @@ pub enum FilterPrimitive {
     Snippet { spec: SnippetSpec },
 }
 
-/// Predicate operator on a `has-property:` primitive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub enum PropertyOp {
-    /// `block_properties.value_text = ?`.
-    Eq,
-    /// `block_properties.value_text != ?`.
-    Ne,
+/// Predicate on a `has-property:` primitive.
+///
+/// D8 (make invalid states unrepresentable): a single internally-tagged
+/// enum that fuses the operator with its operand. `Eq`/`Ne` carry a
+/// mandatory [`PropertyValue`]; `Exists`/`NotExists` carry none. The
+/// previous shape — `op: PropertyOp` plus `value: Option<PropertyValue>`
+/// — admitted two nonsensical combinations (`Eq` with no value, `Exists`
+/// with a value) that had to be rejected at compile time with an
+/// `unsupported()` sentinel. Folding the operand into the operator
+/// variant removes those states from the type entirely.
+///
+/// **Wire shape:** internally-tagged on `"type"` (PascalCase) so the TS
+/// union reads `{ type: "Exists" } | { type: "NotExists" }
+/// | { type: "Eq", value: PropertyValue } | { type: "Ne", value: PropertyValue }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
+pub enum PropertyPredicate {
     /// Property key exists (no value comparison).
     Exists,
     /// Property key does NOT exist.
     NotExists,
+    /// Property value equals the given operand. `Text` compares
+    /// `value_text`; `Ref` compares `value_ref`.
+    Eq { value: PropertyValue },
+    /// Property value does NOT equal the given operand (the block has no
+    /// matching `(key, value)` row). `Text` compares `value_text`; `Ref`
+    /// compares `value_ref`.
+    Ne { value: PropertyValue },
 }
 
 /// The right-hand-side value type for `HasProperty`.
@@ -158,6 +181,13 @@ pub struct SnippetSpec {
 pub struct WhereClause {
     pub sql: String,
     pub binds: Vec<Bind>,
+    /// D18 — explicit "this projection does not support this primitive"
+    /// flag. Replaces the previous substring sentinel (`is_unsupported`
+    /// used to grep the `sql` string for a `/* UNSUPPORTED */` comment,
+    /// which was brittle: any normal fragment containing that exact text
+    /// would have been misread). `false` for every real fragment; only
+    /// [`WhereClause::unsupported`] sets it `true`.
+    pub unsupported: bool,
 }
 
 impl WhereClause {
@@ -165,22 +195,28 @@ impl WhereClause {
         Self {
             sql: sql.into(),
             binds,
+            unsupported: false,
         }
     }
 
     /// Sentinel value for "this projection does not support this
     /// primitive". Distinct from a true `WHERE 1=0` because callers
     /// should never emit this to SQL — the allow-list gate is the
-    /// production-side protection.
+    /// production-side protection. The cross-surface default `compile_*`
+    /// methods (Pages-only on Search, Search-only on Pages) return this;
+    /// after D8 + D26, `HasProperty` itself never does.
     pub fn unsupported() -> Self {
         Self {
             sql: String::from("1=0 /* UNSUPPORTED */"),
             binds: Vec::new(),
+            unsupported: true,
         }
     }
 
+    /// D18 — reads the explicit boolean flag instead of substring-matching
+    /// the SQL text.
     pub fn is_unsupported(&self) -> bool {
-        self.sql.contains("/* UNSUPPORTED */")
+        self.unsupported
     }
 }
 
@@ -207,12 +243,7 @@ pub trait Projection {
 
     fn compile_tag(&self, tag: &str) -> WhereClause;
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause;
-    fn compile_has_property(
-        &self,
-        key: &str,
-        op: PropertyOp,
-        value: Option<&PropertyValue>,
-    ) -> WhereClause;
+    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause;
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause;
     fn compile_space(&self, space_id: &str) -> WhereClause;
     fn compile_priority(&self, priority: &str) -> WhereClause;
@@ -253,8 +284,8 @@ pub trait Projection {
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude)
             }
-            FilterPrimitive::HasProperty { key, op, value } => {
-                self.compile_has_property(key, *op, value.as_ref())
+            FilterPrimitive::HasProperty { key, predicate } => {
+                self.compile_has_property(key, predicate)
             }
             FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec),
             FilterPrimitive::Space { space_id } => self.compile_space(space_id),
@@ -396,6 +427,19 @@ fn glob_to_like(pattern: &str) -> String {
     }
 }
 
+// ── Property-value column mapping ─────────────────────────────────────────
+
+/// D26 — map a [`PropertyValue`] to the `block_properties` column it
+/// compares against (`value_text` for `Text`, `value_ref` for `Ref`) plus
+/// the bound operand. Both `Eq` and `Ne` share this mapping; only the
+/// `EXISTS` vs `NOT EXISTS` wrapper differs.
+fn property_value_column(value: &PropertyValue) -> (&'static str, String) {
+    match value {
+        PropertyValue::Text { value } => ("value_text", value.clone()),
+        PropertyValue::Ref { value } => ("value_ref", value.clone()),
+    }
+}
+
 // ── Allowed-keys constants ───────────────────────────────────────────────
 
 /// Pages-surface allowed tokens. Shared + Pages-only.
@@ -467,57 +511,111 @@ impl Projection for PagesProjection {
             vec![Bind::Text(glob_to_like(pattern))],
         )
     }
-    fn compile_has_property(
-        &self,
-        key: &str,
-        op: PropertyOp,
-        value: Option<&PropertyValue>,
-    ) -> WhereClause {
-        // Phase 1 stub — Phase 2 fills in the EXISTS shape per (op, value).
-        match (op, value) {
-            (PropertyOp::Exists, _) => WhereClause::new(
+    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
+        // D26 — every valid predicate × value combo compiles; there is no
+        // `unsupported()` fallback. Invalid states (Eq/Ne without a value,
+        // Exists/NotExists with one) are unrepresentable after D8.
+        //
+        // - Exists / NotExists test the key alone.
+        // - Eq / Ne over `Text` compare `block_properties.value_text`.
+        // - Eq / Ne over `Ref` compare `block_properties.value_ref`
+        //   (previously rejected — D26 wires it up; the `value_ref`
+        //   column has existed since migration 0001 and is used by the
+        //   `space` property).
+        match predicate {
+            PropertyPredicate::Exists => WhereClause::new(
                 "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
                 vec![Bind::Text(key.to_string())],
             ),
-            (PropertyOp::NotExists, _) => WhereClause::new(
+            PropertyPredicate::NotExists => WhereClause::new(
                 "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
                 vec![Bind::Text(key.to_string())],
             ),
-            (PropertyOp::Eq, Some(PropertyValue::Text { value: v })) => WhereClause::new(
-                "EXISTS (SELECT 1 FROM block_properties \
-                 WHERE block_id = b.id AND key = ? AND value_text = ?)",
-                vec![Bind::Text(key.to_string()), Bind::Text(v.clone())],
-            ),
-            (PropertyOp::Ne, Some(PropertyValue::Text { value: v })) => WhereClause::new(
-                "NOT EXISTS (SELECT 1 FROM block_properties \
-                 WHERE block_id = b.id AND key = ? AND value_text = ?)",
-                vec![Bind::Text(key.to_string()), Bind::Text(v.clone())],
-            ),
-            // Other shapes (Ref, no-value-on-eq) — Phase 2 work.
-            _ => WhereClause::unsupported(),
+            PropertyPredicate::Eq { value } => {
+                let (col, v) = property_value_column(value);
+                WhereClause::new(
+                    format!(
+                        "EXISTS (SELECT 1 FROM block_properties \
+                         WHERE block_id = b.id AND key = ? AND {col} = ?)"
+                    ),
+                    vec![Bind::Text(key.to_string()), Bind::Text(v)],
+                )
+            }
+            PropertyPredicate::Ne { value } => {
+                let (col, v) = property_value_column(value);
+                WhereClause::new(
+                    format!(
+                        "NOT EXISTS (SELECT 1 FROM block_properties \
+                         WHERE block_id = b.id AND key = ? AND {col} = ?)"
+                    ),
+                    vec![Bind::Text(key.to_string()), Bind::Text(v)],
+                )
+            }
         }
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause {
-        // Phase 1 stub uses op_log's last-modified-at expression for the
-        // page itself. Phase 2 may swap to a materialised
-        // `pages_cache.last_edited_at` column.
+        // Uses op_log's last-modified-at expression for the page itself
+        // (`MAX(op_log.created_at)`). A future phase may swap to a
+        // materialised `pages_cache.last_edited_at` column.
+        //
+        // **No-op-log ⇒ epoch rule (PEND-58d D7):** a page with no `op_log`
+        // row has a NULL `MAX(created_at)`. All three variants COALESCE that
+        // NULL to a common epoch sentinel (`'1970-01-01T00:00:00Z'`) so the
+        // "no op-log ⇒ treated as edited at the epoch" rule is uniform:
+        //   - Rolling{N}   — epoch is far in the past, so it is `< now-N`
+        //                    and the page is EXCLUDED (it wasn't edited
+        //                    recently).
+        //   - OlderThan{N} — epoch is `< now-N`, so the page is INCLUDED
+        //                    (it counts as "old").
+        //   - Range{a,b}   — epoch is below any plausible `start`, so the
+        //                    page is EXCLUDED (it falls outside the window).
+        // Before this fix Rolling/Range silently dropped the no-op-log page
+        // (NULL comparisons → NULL → false) while OlderThan included it via
+        // a `'0001-01-01'` COALESCE — an asymmetry. The dates Range binds
+        // are validated upstream (PEND-58d D15) in
+        // `commands::pages::compile_pages_filters`.
+        const EPOCH: &str = "'1970-01-01T00:00:00Z'";
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
-                "(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) \
-                 >= datetime('now', ?)",
+                format!(
+                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                     >= datetime('now', ?)"
+                ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::OlderThan { days } => WhereClause::new(
-                "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), '0001-01-01') \
-                 < datetime('now', ?)",
+                format!(
+                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                     < datetime('now', ?)"
+                ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::Range { start, end } => WhereClause::new(
-                "(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) BETWEEN ? AND ?",
+                format!(
+                    "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
+                     BETWEEN ? AND ?"
+                ),
                 vec![Bind::Text(start.clone()), Bind::Text(end.clone())],
             ),
         }
     }
+    /// D17 — **intentionally redundant on the Pages surface.** The Pages
+    /// IPC (`commands::pages::list_pages_with_metadata_inner`) is already
+    /// space-scoped: its base SELECT filters
+    /// `b.page_id IN (SELECT … WHERE key = 'space' AND value_ref = ?1)`
+    /// against the request's `space_id` before any compiled filter runs.
+    /// A `Space` primitive therefore re-applies the same predicate the
+    /// request already enforces — a no-op for the request's own space, and
+    /// (because a page lives in exactly one space) a guaranteed
+    /// empty-result if a *different* space is named.
+    ///
+    /// It is kept rather than removed for **cross-surface / saved-view
+    /// parity**: `Space` is a shared primitive that Search genuinely needs
+    /// (Search is not pre-scoped the way Pages is), and a saved view built
+    /// on one surface must round-trip to the other without dropping
+    /// primitives. Compiling it here keeps the Pages projection a total
+    /// implementation of the shared vocabulary. T-B3's `Space` test
+    /// asserts this fragment is emitted (not `unsupported()`).
     fn compile_space(&self, space_id: &str) -> WhereClause {
         WhereClause::new(
             "b.page_id IN (SELECT block_id FROM block_properties \
@@ -560,12 +658,26 @@ impl Projection for PagesProjection {
         // match the inbound-link count rendered in `<DensityRow>` and
         // the `MostLinked` sort, so a user clicking `orphan:` after
         // seeing "0 ↗" on a row always agrees with the surfaced count.
+        //
+        // **Outbound target filtering (PEND-58d D19):** the outbound `NOT
+        // EXISTS` also joins the link's *target* block and requires
+        // `tgt.deleted_at IS NULL` (a link into a soft-deleted target is
+        // moot — the edge no longer reaches a live block) and excludes
+        // same-page edges (`tgt.page_id != b.id` — a link from one block on
+        // the page to another block on the same page is internal navigation,
+        // not an outbound link to elsewhere). This mirrors the inbound D2
+        // fix, which already excludes same-page / deleted-source edges from
+        // `pc.inbound_link_count`. Purged targets need no handling: the
+        // `block_links` FK cascades on delete, so an edge to a purged block
+        // no longer exists.
         WhereClause::new(
             "COALESCE(pc.inbound_link_count, 0) = 0 \
              AND NOT EXISTS ( \
                SELECT 1 FROM block_links bl \
                JOIN blocks src ON bl.source_id = src.id \
+               JOIN blocks tgt ON bl.target_id = tgt.id \
                WHERE src.page_id = b.id AND src.deleted_at IS NULL \
+                 AND tgt.deleted_at IS NULL AND tgt.page_id != b.id \
              )",
             Vec::new(),
         )
@@ -621,15 +733,10 @@ impl Projection for SearchProjection {
             vec![Bind::Text(glob_to_like(pattern))],
         )
     }
-    fn compile_has_property(
-        &self,
-        key: &str,
-        op: PropertyOp,
-        value: Option<&PropertyValue>,
-    ) -> WhereClause {
+    fn compile_has_property(&self, key: &str, predicate: &PropertyPredicate) -> WhereClause {
         // Identical to PagesProjection for now — the value/op semantics
         // are shared. Per-surface column differences emerge later.
-        PagesProjection.compile_has_property(key, op, value)
+        PagesProjection.compile_has_property(key, predicate)
     }
     fn compile_last_edited(&self, spec: &LastEditedSpec) -> WhereClause {
         PagesProjection.compile_last_edited(spec)
@@ -726,8 +833,7 @@ mod tests {
             },
             FilterPrimitive::HasProperty {
                 key: "k".into(),
-                op: PropertyOp::Exists,
-                value: None,
+                predicate: PropertyPredicate::Exists,
             },
             FilterPrimitive::LastEdited {
                 spec: LastEditedSpec::Rolling { days: 7 },
@@ -837,10 +943,13 @@ mod tests {
              AND NOT EXISTS ( \
                SELECT 1 FROM block_links bl \
                JOIN blocks src ON bl.source_id = src.id \
+               JOIN blocks tgt ON bl.target_id = tgt.id \
                WHERE src.page_id = b.id AND src.deleted_at IS NULL \
+                 AND tgt.deleted_at IS NULL AND tgt.page_id != b.id \
              )",
-            "Orphan must read the materialised inbound count from pages_cache \
-             and scope its outbound NOT EXISTS page-wide (every non-deleted block)"
+            "Orphan must read the materialised inbound count from pages_cache, \
+             scope its outbound NOT EXISTS page-wide (every non-deleted block), \
+             and filter the target (PEND-58d D19): live target + not same-page"
         );
         assert!(orphan.binds.is_empty(), "Orphan takes no binds");
 
@@ -951,45 +1060,81 @@ mod tests {
     }
 
     #[test]
-    fn has_property_compiles_for_all_4_ops() {
+    fn has_property_compiles_for_all_predicate_value_combos() {
+        // D26 — every valid predicate × value combo compiles to real SQL;
+        // none falls through to `unsupported()`. Covers the Ref/Ne case
+        // that the pre-D8 shape rejected.
         let p = PagesProjection;
-        let prim = FilterPrimitive::HasProperty {
+
+        let eq_text = FilterPrimitive::HasProperty {
             key: "kind".into(),
-            op: PropertyOp::Eq,
-            value: Some(PropertyValue::Text {
-                value: "note".into(),
-            }),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: "note".into(),
+                },
+            },
         };
-        let w = p.compile(&prim);
-        assert!(w.sql.contains("EXISTS"));
+        let w = p.compile(&eq_text);
+        assert!(!w.is_unsupported());
+        assert!(w.sql.contains("EXISTS") && w.sql.contains("value_text = ?"));
         assert_eq!(w.binds.len(), 2);
 
         let exists = FilterPrimitive::HasProperty {
             key: "kind".into(),
-            op: PropertyOp::Exists,
-            value: None,
+            predicate: PropertyPredicate::Exists,
         };
         let w = p.compile(&exists);
+        assert!(!w.is_unsupported());
         assert!(w.sql.contains("EXISTS"));
         assert_eq!(w.binds.len(), 1);
 
         let not_exists = FilterPrimitive::HasProperty {
             key: "kind".into(),
-            op: PropertyOp::NotExists,
-            value: None,
+            predicate: PropertyPredicate::NotExists,
         };
         let w = p.compile(&not_exists);
+        assert!(!w.is_unsupported());
         assert!(w.sql.contains("NOT EXISTS"));
 
-        let ne = FilterPrimitive::HasProperty {
+        let ne_text = FilterPrimitive::HasProperty {
             key: "kind".into(),
-            op: PropertyOp::Ne,
-            value: Some(PropertyValue::Text {
-                value: "draft".into(),
-            }),
+            predicate: PropertyPredicate::Ne {
+                value: PropertyValue::Text {
+                    value: "draft".into(),
+                },
+            },
         };
-        let w = p.compile(&ne);
-        assert!(w.sql.contains("NOT EXISTS"));
+        let w = p.compile(&ne_text);
+        assert!(!w.is_unsupported());
+        assert!(w.sql.contains("NOT EXISTS") && w.sql.contains("value_text = ?"));
+
+        // D26 — Eq/Ne over a `Ref` value compare `value_ref` (the
+        // previously-rejected case).
+        let eq_ref = FilterPrimitive::HasProperty {
+            key: "parent".into(),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Ref {
+                    value: "01REF".into(),
+                },
+            },
+        };
+        let w = p.compile(&eq_ref);
+        assert!(!w.is_unsupported());
+        assert!(w.sql.contains("EXISTS") && w.sql.contains("value_ref = ?"));
+        assert_eq!(w.binds.len(), 2);
+
+        let ne_ref = FilterPrimitive::HasProperty {
+            key: "parent".into(),
+            predicate: PropertyPredicate::Ne {
+                value: PropertyValue::Ref {
+                    value: "01REF".into(),
+                },
+            },
+        };
+        let w = p.compile(&ne_ref);
+        assert!(!w.is_unsupported());
+        assert!(w.sql.contains("NOT EXISTS") && w.sql.contains("value_ref = ?"));
+        assert_eq!(w.binds.len(), 2);
     }
 
     #[test]
@@ -1006,6 +1151,38 @@ mod tests {
         // Both bind a "-7 days" sentinel.
         assert_eq!(rolling.binds, vec![Bind::Text("-7 days".to_string())]);
         assert_eq!(older.binds, vec![Bind::Text("-7 days".to_string())]);
+    }
+
+    #[test]
+    fn last_edited_all_variants_coalesce_no_op_log_to_common_epoch() {
+        // PEND-58d D7 — the "no op-log ⇒ epoch" rule must be uniform: ALL
+        // three variants COALESCE the page's last-edited expression to the
+        // SAME epoch sentinel so a no-op-log page is handled consistently
+        // (excluded by Rolling/Range, included by OlderThan). Before the fix
+        // Rolling/Range omitted the COALESCE (NULL → dropped) while OlderThan
+        // used a `'0001-01-01'` sentinel — the asymmetry D7 closes.
+        const EPOCH: &str = "'1970-01-01T00:00:00Z'";
+        let p = PagesProjection;
+        for spec in [
+            LastEditedSpec::Rolling { days: 7 },
+            LastEditedSpec::OlderThan { days: 7 },
+            LastEditedSpec::Range {
+                start: "2026-01-01".into(),
+                end: "2026-02-01".into(),
+            },
+        ] {
+            let wc = p.compile(&FilterPrimitive::LastEdited { spec: spec.clone() });
+            assert!(
+                wc.sql.contains("COALESCE"),
+                "{spec:?} must COALESCE the last-edited expression; got: {}",
+                wc.sql
+            );
+            assert!(
+                wc.sql.contains(EPOCH),
+                "{spec:?} must COALESCE to the common epoch sentinel {EPOCH}; got: {}",
+                wc.sql
+            );
+        }
     }
 
     #[test]
@@ -1273,13 +1450,19 @@ mod explain_query_plan_tests {
             "Orphan plan must reference pages_cache; got:\n{plan}"
         );
         // Orphan's outbound term is a page-wide `NOT EXISTS` over
-        // `block_links bl JOIN blocks src ON bl.source_id = src.id WHERE
-        // src.page_id = b.id` — that subquery IS allowed to touch
-        // block_links (idx_block_links_source serves it). The previous
-        // *inbound* `target_id` scan must NOT appear.
+        // `block_links bl JOIN blocks src ON bl.source_id = src.id JOIN
+        // blocks tgt ON bl.target_id = tgt.id WHERE src.page_id = b.id` —
+        // that subquery IS allowed to touch block_links (it drives from
+        // `source_id` via idx_block_links_source / autoindex, then joins the
+        // target block by integer PK). The PEND-58d D19 `tgt` join filters
+        // deleted / same-page targets. The previous *inbound* `target_id`
+        // index scan (driving the subquery from `block_links.target_id`)
+        // must NOT appear — inbound is served by the materialised
+        // `pc.inbound_link_count`, so the planner has no reason to drive
+        // from the target index.
         assert!(
             !plan.to_lowercase().contains("target_id"),
-            "Orphan plan must not scan block_links by target_id (use materialised inbound count); got:\n{plan}"
+            "Orphan plan must not scan block_links by target_id (inbound is the materialised count; the outbound tgt join drives from source_id + PK); got:\n{plan}"
         );
     }
 
@@ -1352,8 +1535,10 @@ mod explain_query_plan_tests {
             "composite plan must reference pages_cache; got:\n{plan}"
         );
         // Orphan's page-wide outbound `NOT EXISTS (... src.page_id =
-        // b.id)` is the only allowed block_links access. The plan must
-        // not regress to an inbound `target_id` scan.
+        // b.id)` is the only allowed block_links access; its PEND-58d D19
+        // `tgt` join reaches the target block by integer PK, not by driving
+        // from the `target_id` index. The plan must not regress to an
+        // inbound `target_id` index scan (inbound is the materialised count).
         assert!(
             !plan.to_lowercase().contains("target_id"),
             "composite plan must not scan block_links by target_id; got:\n{plan}"

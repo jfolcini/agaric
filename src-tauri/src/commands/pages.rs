@@ -1487,8 +1487,8 @@ pub async fn load_page_subtree(
 //   - Alphabetical: keyset (`COALESCE(content,'')` COLLATE NOCASE, id)
 //   - RecentlyModified: keyset (`last_modified_at`, id) DESC NULLS LAST
 //   - MostLinked: keyset (`inbound_link_count`, id) DESC, alpha tiebreaker
-//   - Biggest: keyset (`child_block_count`, id) DESC, alpha tiebreaker
-//   - Ulid: keyset (id) ASC — power-user / debug
+//   - MostContent: keyset (`child_block_count`, id) DESC, alpha tiebreaker
+//   - Default: keyset (id) ASC — power-user / debug
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Sort mode for [`list_pages_with_metadata_inner`].
@@ -1507,6 +1507,21 @@ pub enum PageSort {
     /// Title ascending, case-insensitive. Default for "browse my pages".
     #[default]
     Alphabetical,
+    // Perf ceiling (PEND-58d D5): unlike `MostLinked` / `MostContent`
+    // (which read materialised `pages_cache` columns), `RecentlyModified`
+    // computes `MAX(op_log.created_at)` per page via a correlated subquery
+    // across the space *before* the LIMIT — it is NOT materialised. The
+    // `idx_op_log_block_id` index (migration 0030) serves each subquery,
+    // but the per-row aggregate still dominates at scale. The
+    // `recently_modified_perf_gate_20k_pages` `#[ignore]`-d test gates the
+    // first-page latency at 20k pages. Materialising a
+    // `pages_cache.last_edited_at` column (kept fresh by the materializer on
+    // every op) is the heavier alternative — DEFERRED, not done here; it
+    // would let this sort read a column like the other count sorts. Revisit
+    // if the perf gate trips. (Intentionally a non-doc `//` comment: the
+    // doc comment below is specta-exposed, so keeping the ceiling text out
+    // of it avoids drifting the committed `src/lib/bindings.ts`.)
+    //
     /// Last-modified timestamp (max op_log.created_at) DESC.
     RecentlyModified,
     /// Inbound-link count DESC (page + descendant link targets).
@@ -1745,6 +1760,12 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         PageSort::Alphabetical => SortKeyset::StringAsc {
             key_expr: "COALESCE(b.content,'') COLLATE NOCASE",
         },
+        // PEND-58d D5 perf ceiling: this key is the UN-materialised
+        // `MAX(op_log.created_at)` correlated subquery (served by
+        // `idx_op_log_block_id`), evaluated per page before the LIMIT — the
+        // heaviest sort key. Gated by `recently_modified_perf_gate_20k_pages`
+        // (`#[ignore]`'d). Materialising `pages_cache.last_edited_at` is the
+        // deferred remedy (see the `PageSort::RecentlyModified` comment).
         PageSort::RecentlyModified => SortKeyset::StringDescNullCoalesced {
             key_expr_template:
                 "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
@@ -1905,6 +1926,33 @@ impl SortKeyset {
     }
 }
 
+/// PEND-58d D15 — validate a `LastEdited` `Range` date bound, matching the
+/// legacy Search date contract (`fts::metadata_filter::resolve_date_filter`,
+/// `InvalidDateFilter:` prefix the frontend keys on).
+///
+/// Pages compares the bound string against `op_log.created_at` (full ISO
+/// timestamps), so we accept either a bare calendar date (`YYYY-MM-DD`) OR
+/// a full RFC 3339 timestamp (`YYYY-MM-DDTHH:MM:SSZ`). An empty string or
+/// an otherwise-unparseable value is rejected — an unvalidated malformed
+/// date would otherwise compare-fail every row and silently return zero
+/// results (the bug D15 closes).
+fn validate_last_edited_date(label: &str, value: &str) -> Result<(), AppError> {
+    if value.trim().is_empty() {
+        return Err(AppError::Validation(format!(
+            "InvalidDateFilter: {label} must not be empty"
+        )));
+    }
+    // Accept a bare calendar date first, then a full RFC 3339 timestamp.
+    if chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
+        || chrono::DateTime::parse_from_rfc3339(value).is_ok()
+    {
+        return Ok(());
+    }
+    Err(AppError::Validation(format!(
+        "InvalidDateFilter: {label} expected YYYY-MM-DD or RFC 3339, got '{value}'"
+    )))
+}
+
 /// PEND-58 Phase 3 — compile the compound-filter primitives for the Pages
 /// surface into a single AND-joined SQL fragment plus its ordered binds.
 ///
@@ -1919,11 +1967,15 @@ impl SortKeyset {
 ///    [`PagesProjection::allowed_keys`] with [`AppError::Validation`]
 ///    (`InvalidFilter:` prefix). Defence-in-depth: the frontend never
 ///    sends Search-only primitives, but the backend must not trust that.
-/// 2. **Cost-order** — sort by [`FilterPrimitive::cost_hint`] (stable, so
+/// 2. **Date validation (PEND-58d D15)** — `LastEdited::Range` bounds are
+///    validated against the legacy Search date contract (`InvalidDateFilter:`
+///    prefix); empty or malformed dates are rejected here rather than
+///    silently returning zero rows.
+/// 3. **Cost-order** — sort by [`FilterPrimitive::cost_hint`] (stable, so
 ///    equal-cost primitives keep their request order) so index-backed
 ///    clauses run before full-scan ones, letting SQLite narrow the row
 ///    set with the cheap clause's index first.
-/// 3. **Compile + AND-join** — each clause is `PagesProjection.compile`d
+/// 4. **Compile + AND-join** — each clause is `PagesProjection.compile`d
 ///    into a `WhereClause`; the SQL fragments are AND-joined and the binds
 ///    concatenated in the same order.
 fn compile_pages_filters(
@@ -1941,6 +1993,19 @@ fn compile_pages_filters(
             return Err(AppError::Validation(format!(
                 "InvalidFilter: `{key}` is not a valid filter on the Pages surface"
             )));
+        }
+    }
+
+    // PEND-58d D15 — validate `LastEdited::Range` date bounds before they
+    // reach SQL. A malformed bound silently compare-fails every row
+    // (zero results); reject it loudly with the `InvalidDateFilter:` prefix.
+    for prim in filters {
+        if let FilterPrimitive::LastEdited {
+            spec: crate::filters::LastEditedSpec::Range { start, end },
+        } = prim
+        {
+            validate_last_edited_date("range start", start)?;
+            validate_last_edited_date("range end", end)?;
         }
     }
 
@@ -1964,13 +2029,17 @@ fn compile_pages_filters(
     for prim in ordered {
         let wc = proj.compile(prim);
         // The allowed-keys gate above admits only Pages-surface tokens, but
-        // some admitted shapes still compile to `unsupported()` (e.g.
-        // `HasProperty { op: Eq, value: Some(Ref…) }` — see
-        // `compile_has_property`). In release builds a bare
-        // `debug_assert!` would be compiled out and the splice would emit a
-        // silent `1=0`, returning zero rows for what is really an invalid
-        // filter shape. Reject it loudly in **all** build profiles instead
-        // (PEND-58b P2-A).
+        // a primitive could still compile to `unsupported()` via the
+        // cross-surface default trait methods if a future variant lands on
+        // the wrong surface (after PEND-58d D8 + D26, `HasProperty` itself
+        // never returns `unsupported()` — every predicate × value combo
+        // compiles, and invalid combos are unrepresentable). In release
+        // builds a bare `debug_assert!` would be compiled out and the
+        // splice would emit a silent `1=0`, returning zero rows for what is
+        // really an invalid filter shape. Reject it loudly in **all** build
+        // profiles instead (PEND-58b P2-A). `is_unsupported()` reads the
+        // explicit boolean flag on `WhereClause` (PEND-58d D18), not a SQL
+        // substring.
         if wc.is_unsupported() {
             return Err(AppError::Validation(format!(
                 "InvalidFilter: filter shape is not supported on the Pages surface: {prim:?}"
@@ -2120,21 +2189,32 @@ pub async fn list_pages_with_metadata_inner(
     // the 20k-page perf gate (`most_linked_perf_gate_20k_pages`) green.
     // The `LEFT JOIN pages_cache pc` is retained because the Pages-only
     // filter fragments (Orphan / Stub / HasNoInboundLinks) read `pc.*`.
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM blocks b \
-         LEFT JOIN pages_cache pc ON pc.page_id = b.id \
-         WHERE b.block_type = 'page' \
-           AND b.deleted_at IS NULL \
-           AND b.page_id IN ( \
-               SELECT bp.block_id FROM block_properties bp \
-               WHERE bp.key = 'space' AND bp.value_ref = ?1 \
-           ){filter_sql}"
-    );
-    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(&filter.space_id);
-    for bind in filter_binds.clone() {
-        count_query = bind.bind_to_scalar(count_query);
-    }
-    let total_count = count_query.fetch_one(pool).await?;
+    //
+    // PEND-58d D6 — the COUNT only runs on the FIRST page (`req.after`
+    // is None). The total of the filtered set does not change as the user
+    // loads more pages with the same filters, so recomputing it on every
+    // cursor page is wasted work (the COUNT scans the whole filtered set
+    // each time). Subsequent (cursor) pages return `total_count = None`;
+    // the frontend retains the first page's total.
+    let total_count: Option<i64> = if req.after.is_none() {
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM blocks b \
+             LEFT JOIN pages_cache pc ON pc.page_id = b.id \
+             WHERE b.block_type = 'page' \
+               AND b.deleted_at IS NULL \
+               AND b.page_id IN ( \
+                   SELECT bp.block_id FROM block_properties bp \
+                   WHERE bp.key = 'space' AND bp.value_ref = ?1 \
+               ){filter_sql}"
+        );
+        let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(&filter.space_id);
+        for bind in filter_binds.clone() {
+            count_query = bind.bind_to_scalar(count_query);
+        }
+        Some(count_query.fetch_one(pool).await?)
+    } else {
+        None
+    };
 
     // Per-sort keyset + ORDER BY. The `SortKeyset` descriptor encodes
     // the SQL fragment, ORDER BY, and the per-mode bind list so the
@@ -2165,7 +2245,7 @@ fn build_metadata_response(
     mut rows: Vec<PageWithMetadataRow>,
     limit: i64,
     sort: PageSort,
-    total_count: i64,
+    total_count: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
     let limit_us = usize::try_from(limit).unwrap_or(0);
     let has_more = rows.len() > limit_us;
@@ -2232,10 +2312,13 @@ fn build_metadata_response(
         items: rows,
         next_cursor,
         has_more,
-        // PEND-58b P1-D — the COUNT over the same space + compiled filter
-        // predicates (computed in `list_pages_with_metadata_inner`), so the
-        // FE "X of Y" header chip renders on the metadata path.
-        total_count: Some(total_count),
+        // PEND-58b P1-D / PEND-58d D6 — the COUNT over the same space +
+        // compiled filter predicates (computed in
+        // `list_pages_with_metadata_inner`) so the FE "X of Y" header chip
+        // renders on the metadata path. `Some(n)` on the first page;
+        // `None` on cursor (load-more) pages, where the COUNT is gated off
+        // and the FE retains the first page's total.
+        total_count,
     })
 }
 

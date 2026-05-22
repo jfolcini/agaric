@@ -15,7 +15,7 @@ use crate::commands::tests::common::{
     assign_to_space, ensure_test_space, ensure_test_space_b, insert_block, test_pool,
     TEST_SPACE_B_ID, TEST_SPACE_ID,
 };
-use crate::filters::{FilterPrimitive, PropertyOp, PropertyValue};
+use crate::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 
@@ -189,6 +189,31 @@ async fn seed_prop_text(pool: &SqlitePool, block_id: &str, key: &str, value: &st
         .bind(block_id)
         .bind(key)
         .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// PEND-58d T-B4 — seed a `block_properties(key, value_ref)` row so a
+/// `HasProperty { Eq/Ne { Ref } }` filter (compiled against `value_ref`)
+/// can match. The `value_ref → blocks(id)` FK is enforced (PRAGMA
+/// foreign_keys = ON in `init_pool`) and migration 0062's CHECK requires
+/// exactly one value column, so we first ensure the referenced target
+/// block exists, then insert a `value_ref`-only property row.
+async fn seed_prop_ref(pool: &SqlitePool, block_id: &str, key: &str, ref_id: &str) {
+    sqlx::query(
+        "INSERT OR IGNORE INTO blocks (id, block_type, content, parent_id, position, page_id) \
+         VALUES (?, 'page', 'RefTarget', NULL, NULL, ?)",
+    )
+    .bind(ref_id)
+    .bind(ref_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(ref_id)
         .execute(pool)
         .await
         .unwrap();
@@ -967,6 +992,85 @@ async fn most_linked_perf_gate_20k_pages() {
     );
 }
 
+/// PEND-58d D5 — perf gate for the `RecentlyModified` sort. Sibling of
+/// `most_linked_perf_gate_20k_pages`, but for the UN-materialised sort:
+/// `RecentlyModified` computes `MAX(op_log.created_at)` per page across
+/// the space (correlated subquery, served by `idx_op_log_block_id`)
+/// *before* the LIMIT, so it is the sort most exposed to per-row aggregate
+/// cost. This seeds the same 20k-page fixture (plus one op_log row per
+/// page so the subquery has a real index probe to do) and times the
+/// first-page query.
+///
+/// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
+/// invoke via
+/// `cargo nextest run --run-ignored=only recently_modified_perf_gate_20k_pages`.
+/// The ceiling is documented on `PageSort::RecentlyModified`; if a future
+/// change pushes this past the budget, materialising
+/// `pages_cache.last_edited_at` is the deferred remedy.
+#[ignore]
+#[tokio::test]
+async fn recently_modified_perf_gate_20k_pages() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let n = 20_000;
+    let seed_start = std::time::Instant::now();
+    for i in 0..n {
+        let pid = format!("01PAGE{:020}", i);
+        seed_page(&pool, &pid, &format!("p{i}")).await;
+        // One op_log row per page so the per-page MAX(created_at) subquery
+        // does real index work (not just an empty-table short-circuit).
+        seed_op_log(
+            &pool,
+            &pid,
+            &format!("2026-01-{:02}T00:00:00Z", (i % 28) + 1),
+        )
+        .await;
+    }
+    let seed_ms = seed_start.elapsed().as_millis();
+    eprintln!("[PEND-58d PERF] seeded {n} pages (+op_log) in {seed_ms} ms");
+
+    // Warm up (3×).
+    for _ in 0..3 {
+        let _ = list_pages_with_metadata_inner(
+            &pool,
+            filter(PageSort::RecentlyModified),
+            None,
+            Some(50),
+        )
+        .await
+        .unwrap();
+    }
+    // Measure (median of 5 samples).
+    let mut samples: Vec<u128> = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let start = std::time::Instant::now();
+        let _ = list_pages_with_metadata_inner(
+            &pool,
+            filter(PageSort::RecentlyModified),
+            None,
+            Some(50),
+        )
+        .await
+        .unwrap();
+        samples.push(start.elapsed().as_millis());
+    }
+    samples.sort();
+    let median_ms = samples[samples.len() / 2];
+    eprintln!(
+        "[PEND-58d PERF] RecentlyModified @ 20k pages: samples={samples:?} median={median_ms} ms"
+    );
+    // Soft assertion — the un-materialised correlated MAX subquery is the
+    // motivation for the deferred `pages_cache.last_edited_at` work. We
+    // allow 250 ms here (more headroom than MostLinked's materialised 100 ms
+    // budget, since this path pays the per-row aggregate); if a future
+    // change pushes past it, the assert fires as an early warning that the
+    // deferred materialisation should be revisited.
+    assert!(
+        median_ms < 250,
+        "RecentlyModified @ 20k pages exceeded 250 ms budget: median={median_ms} ms (samples={samples:?})"
+    );
+}
+
 #[tokio::test]
 async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
     let (pool, _dir) = test_pool().await;
@@ -1419,6 +1523,89 @@ async fn filter_orphan_excludes_pages_whose_descendant_links_out() {
 }
 
 #[tokio::test]
+async fn filter_orphan_ignores_same_page_and_deleted_target_outbound_edges() {
+    // PEND-58d D19 — the Orphan outbound `NOT EXISTS` now joins the link's
+    // TARGET block and excludes same-page edges (`tgt.page_id != b.id`) and
+    // deleted targets (`tgt.deleted_at IS NULL`), mirroring the inbound D2
+    // fix. So:
+    //   (a) a page whose only outbound edge points to ANOTHER block on the
+    //       SAME page (internal navigation) is STILL an orphan;
+    //   (b) a page whose only outbound edge points to a soft-DELETED target
+    //       is STILL an orphan (the edge no longer reaches a live block).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+
+    // (a) page with a same-page edge between two of its own descendants.
+    seed_page(&pool, "01PAGE000000000000000SAME", "SamePageLink").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000SAME01",
+        "01PAGE000000000000000SAME",
+        "src block",
+    )
+    .await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000SAME02",
+        "01PAGE000000000000000SAME",
+        "tgt block",
+    )
+    .await;
+    seed_link(
+        &pool,
+        "01CHILD0000000000000SAME01",
+        "01CHILD0000000000000SAME02",
+    )
+    .await;
+
+    // (b) page whose descendant links to a target that is then soft-deleted.
+    seed_page(&pool, "01PAGE000000000000000XDEL", "DeletedTargetLink").await;
+    seed_child(
+        &pool,
+        "01CHILD0000000000000XDEL01",
+        "01PAGE000000000000000XDEL",
+        "linker",
+    )
+    .await;
+    seed_page(&pool, "01PAGE000000000000000GONE", "GoneTarget").await;
+    seed_link(
+        &pool,
+        "01CHILD0000000000000XDEL01",
+        "01PAGE000000000000000GONE",
+    )
+    .await;
+    // Soft-delete the target page so the outbound edge no longer reaches a
+    // live block.
+    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = ?")
+        .bind("01PAGE000000000000000GONE")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Orphan]),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("orphan filter must succeed");
+    let mut contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    contents.sort_unstable();
+    // Both pages remain orphans; the soft-deleted GoneTarget is excluded
+    // because it has been deleted (the IPC drops deleted pages anyway).
+    assert_eq!(
+        contents,
+        vec!["DeletedTargetLink", "SamePageLink"],
+        "Orphan must ignore same-page and deleted-target outbound edges (D19)"
+    );
+}
+
+#[tokio::test]
 async fn total_count_reflects_full_space_unfiltered_and_reduces_under_filter() {
     // PEND-58b P1-D — the metadata path must return a real `total_count`
     // (was `None`, silently dropping the "X of Y" header chip). Unfiltered
@@ -1475,41 +1662,224 @@ async fn total_count_reflects_full_space_unfiltered_and_reduces_under_filter() {
     assert_eq!(filtered.items.len(), 3);
 }
 
+// ── PEND-58d T-B4 — HasProperty end-to-end (every predicate × value) ──────
+//
+// Before D8 + D26 only `Eq + Text` ran end-to-end; the Ref combos compiled
+// to `unsupported()` and were rejected. These tests exercise the full
+// predicate matrix through the IPC against seeded `block_properties` rows
+// (both `value_text` and `value_ref`), asserting each narrows correctly.
+
 #[tokio::test]
-async fn unsupported_has_property_shape_returns_validation_error() {
-    // PEND-58b P2-A — `HasProperty { op: Eq, value: Some(Ref…) }` compiles
-    // to an UNSUPPORTED `1=0` clause (see `compile_has_property`). The
-    // backend must reject it with `AppError::Validation` in ALL build
-    // profiles, NOT silently return an empty Ok (the old `debug_assert!`
-    // was compiled out in release).
+async fn has_property_exists_narrows_to_pages_carrying_the_key() {
+    // T-B4 — `HasProperty { Exists }` keeps only pages with a row for the
+    // key, regardless of value.
     let (pool, _dir) = test_pool().await;
     ensure_test_space(&pool).await;
-    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+    seed_page(&pool, "01PAGE0000000000000000HP01", "HasKind").await;
+    seed_prop_text(&pool, "01PAGE0000000000000000HP01", "kind", "note").await;
+    seed_page(&pool, "01PAGE0000000000000000HP02", "NoKind").await;
 
-    let result = list_pages_with_metadata_inner(
+    let resp = list_pages_with_metadata_inner(
         &pool,
         filter_with(
             PageSort::Alphabetical,
             vec![FilterPrimitive::HasProperty {
-                key: "space".to_string(),
-                op: PropertyOp::Eq,
-                value: Some(PropertyValue::Ref {
-                    value: "01REF0000000000000000000X".to_string(),
-                }),
+                key: "kind".to_string(),
+                predicate: PropertyPredicate::Exists,
             }],
         ),
         None,
         Some(50),
     )
-    .await;
-    let err = result.expect_err("unsupported filter shape must be rejected, not an empty Ok");
-    assert!(
-        matches!(err, crate::error::AppError::Validation(_)),
-        "unsupported filter shape must be AppError::Validation; got: {err:?}"
+    .await
+    .expect("Exists filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["HasKind"],
+        "Exists must keep only the page carrying the `kind` key"
     );
-    assert!(
-        format!("{err}").contains("InvalidFilter"),
-        "rejection must carry the InvalidFilter prefix; got: {err}"
+}
+
+#[tokio::test]
+async fn has_property_not_exists_narrows_to_pages_missing_the_key() {
+    // T-B4 — `HasProperty { NotExists }` keeps only pages with NO row for
+    // the key.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000NE01", "HasKind").await;
+    seed_prop_text(&pool, "01PAGE0000000000000000NE01", "kind", "note").await;
+    seed_page(&pool, "01PAGE0000000000000000NE02", "NoKind").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasProperty {
+                key: "kind".to_string(),
+                predicate: PropertyPredicate::NotExists,
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("NotExists filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["NoKind"],
+        "NotExists must keep only the page missing the `kind` key"
+    );
+}
+
+#[tokio::test]
+async fn has_property_ne_text_excludes_matching_value() {
+    // T-B4 — `HasProperty { Ne { Text } }` keeps pages that do NOT carry a
+    // `(key, value_text)` row matching the operand. A page with the key set
+    // to a different value (or no row at all) passes.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000NT01", "DraftPage").await;
+    seed_prop_text(&pool, "01PAGE0000000000000000NT01", "status", "draft").await;
+    seed_page(&pool, "01PAGE0000000000000000NT02", "DonePage").await;
+    seed_prop_text(&pool, "01PAGE0000000000000000NT02", "status", "done").await;
+    seed_page(&pool, "01PAGE0000000000000000NT03", "NoStatus").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasProperty {
+                key: "status".to_string(),
+                predicate: PropertyPredicate::Ne {
+                    value: PropertyValue::Text {
+                        value: "draft".to_string(),
+                    },
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("Ne+Text filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["DonePage", "NoStatus"],
+        "Ne(status=draft) must exclude the draft page, keep the rest"
+    );
+}
+
+#[tokio::test]
+async fn has_property_eq_ref_narrows_to_matching_value_ref() {
+    // T-B4 (D26) — `HasProperty { Eq { Ref } }` compares `value_ref` (the
+    // previously-rejected combo). Keeps only pages whose `(key, value_ref)`
+    // row matches the operand.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let target = "01REFTARGET00000000000001";
+    seed_page(&pool, "01PAGE0000000000000000ER01", "Linked").await;
+    seed_prop_ref(&pool, "01PAGE0000000000000000ER01", "parent", target).await;
+    seed_page(&pool, "01PAGE0000000000000000ER02", "OtherParent").await;
+    seed_prop_ref(
+        &pool,
+        "01PAGE0000000000000000ER02",
+        "parent",
+        "01REFTARGET00000000000002",
+    )
+    .await;
+    seed_page(&pool, "01PAGE0000000000000000ER03", "NoParent").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasProperty {
+                key: "parent".to_string(),
+                predicate: PropertyPredicate::Eq {
+                    value: PropertyValue::Ref {
+                        value: target.to_string(),
+                    },
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("Eq+Ref filter must succeed (D26)");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["Linked"],
+        "Eq(parent=ref) must keep only the page whose value_ref matches"
+    );
+}
+
+#[tokio::test]
+async fn has_property_ne_ref_excludes_matching_value_ref() {
+    // T-B4 (D26) — `HasProperty { Ne { Ref } }` keeps pages that do NOT
+    // carry a `(key, value_ref)` row matching the operand.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let target = "01REFTARGET00000000000001";
+    seed_page(&pool, "01PAGE0000000000000000NR01", "Linked").await;
+    seed_prop_ref(&pool, "01PAGE0000000000000000NR01", "parent", target).await;
+    seed_page(&pool, "01PAGE0000000000000000NR02", "OtherParent").await;
+    seed_prop_ref(
+        &pool,
+        "01PAGE0000000000000000NR02",
+        "parent",
+        "01REFTARGET00000000000002",
+    )
+    .await;
+    seed_page(&pool, "01PAGE0000000000000000NR03", "NoParent").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::HasProperty {
+                key: "parent".to_string(),
+                predicate: PropertyPredicate::Ne {
+                    value: PropertyValue::Ref {
+                        value: target.to_string(),
+                    },
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("Ne+Ref filter must succeed (D26)");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["NoParent", "OtherParent"],
+        "Ne(parent=ref) must exclude the page whose value_ref matches, keep the rest"
     );
 }
 
@@ -1594,10 +1964,11 @@ async fn filter_tag_plus_cursor_paginates_without_dupes_or_drops() {
         },
         FilterPrimitive::HasProperty {
             key: "kind".to_string(),
-            op: PropertyOp::Eq,
-            value: Some(PropertyValue::Text {
-                value: "note".to_string(),
-            }),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: "note".to_string(),
+                },
+            },
         },
     ];
 
@@ -1628,4 +1999,458 @@ async fn filter_tag_plus_cursor_paginates_without_dupes_or_drops() {
         vec!["Aa", "Bb", "Cc", "Dd"],
         "bind-carrying filtered pagination must return each tagged page once, Excluded never"
     );
+}
+
+// ── PEND-58d T-B2 — LastEdited end-to-end against seeded op_log ────────────
+//
+// Exercises all three `LastEditedSpec` variants against real `op_log`
+// rows, plus the PEND-58d D7 "no-op-log ⇒ epoch" rule. The dates are
+// pinned far enough apart (one "recent" page stamped ~now, one "old" page
+// stamped years ago) that the rolling-window comparisons are deterministic
+// regardless of when the suite runs.
+
+/// A timestamp for "recently edited" — `datetime('now', '-1 day')`, i.e.
+/// inside any rolling window of 2+ days. Computed in SQLite so it tracks
+/// the same clock the filter's `datetime('now', ?)` uses.
+async fn now_minus_days_iso(pool: &SqlitePool, days: i64) -> String {
+    sqlx::query_scalar::<_, String>("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', datetime('now', ?))")
+        .bind(format!("-{days} days"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn last_edited_rolling_includes_recent_excludes_old_and_no_op_log() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000RC1", "Recent").await;
+    seed_page(&pool, "01PAGE0000000000000000OLD", "Old").await;
+    seed_page(&pool, "01PAGE0000000000000000NOL", "NoOpLog").await;
+    // Recent: 1 day ago (inside a 7-day window).
+    let recent_ts = now_minus_days_iso(&pool, 1).await;
+    seed_op_log(&pool, "01PAGE0000000000000000RC1", &recent_ts).await;
+    // Old: 100 days ago (outside a 7-day window).
+    let old_ts = now_minus_days_iso(&pool, 100).await;
+    seed_op_log(&pool, "01PAGE0000000000000000OLD", &old_ts).await;
+    // NoOpLog: deliberately no op_log row.
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Rolling { days: 7 },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("rolling filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["Recent"],
+        "Rolling{{7}} must include only the recently-edited page; \
+         the old page AND the no-op-log page (epoch sentinel) are excluded"
+    );
+}
+
+#[tokio::test]
+async fn last_edited_older_than_is_the_inverse_of_rolling() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000RC1", "Recent").await;
+    seed_page(&pool, "01PAGE0000000000000000OLD", "Old").await;
+    seed_page(&pool, "01PAGE0000000000000000NOL", "NoOpLog").await;
+    let recent_ts = now_minus_days_iso(&pool, 1).await;
+    seed_op_log(&pool, "01PAGE0000000000000000RC1", &recent_ts).await;
+    let old_ts = now_minus_days_iso(&pool, 100).await;
+    seed_op_log(&pool, "01PAGE0000000000000000OLD", &old_ts).await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::OlderThan { days: 7 },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("older-than filter must succeed");
+    let mut contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    contents.sort_unstable();
+    // OlderThan{7} is the inverse of Rolling{7}: the old page AND the
+    // no-op-log page (epoch sentinel sorts before now-7d) are included; the
+    // recent page is excluded. This is the D7 symmetry — under the prior
+    // asymmetry the no-op-log page would have been (correctly) included by
+    // OlderThan but (incorrectly) excluded by Rolling.
+    assert_eq!(
+        contents,
+        vec!["NoOpLog", "Old"],
+        "OlderThan{{7}} must include the old + no-op-log pages, exclude the recent one"
+    );
+}
+
+#[tokio::test]
+async fn last_edited_range_bounds_inclusive() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000IN1", "InRange").await;
+    seed_page(&pool, "01PAGE0000000000000000BEF", "BeforeRange").await;
+    seed_page(&pool, "01PAGE0000000000000000AFT", "AfterRange").await;
+    seed_page(&pool, "01PAGE0000000000000000NOL", "NoOpLog").await;
+    seed_op_log(&pool, "01PAGE0000000000000000IN1", "2026-02-15T00:00:00Z").await;
+    seed_op_log(&pool, "01PAGE0000000000000000BEF", "2026-01-01T00:00:00Z").await;
+    seed_op_log(&pool, "01PAGE0000000000000000AFT", "2026-04-01T00:00:00Z").await;
+    // NoOpLog: epoch sentinel ⇒ below the range start ⇒ excluded.
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "2026-02-01T00:00:00Z".to_string(),
+                    end: "2026-03-01T00:00:00Z".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("range filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["InRange"],
+        "Range must include only the page inside [start, end]; \
+         before/after/no-op-log pages are excluded"
+    );
+}
+
+// ── PEND-58d D15 — LastEdited Range date validation ───────────────────────
+
+#[tokio::test]
+async fn last_edited_range_rejects_malformed_and_empty_dates() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+
+    // A malformed date must be rejected with the InvalidDateFilter prefix,
+    // NOT silently return zero rows (the D15 bug).
+    let bad = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "2026-13-99".to_string(),
+                    end: "2026-03-01".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect_err("malformed range date must be rejected");
+    assert!(
+        matches!(bad, crate::error::AppError::Validation(_)),
+        "malformed date must be AppError::Validation; got: {bad:?}"
+    );
+    assert!(
+        format!("{bad}").contains("InvalidDateFilter:"),
+        "rejection must carry the InvalidDateFilter prefix; got: {bad}"
+    );
+
+    // An empty bound must also be rejected.
+    let empty = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "".to_string(),
+                    end: "2026-03-01".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect_err("empty range start must be rejected");
+    assert!(
+        format!("{empty}").contains("InvalidDateFilter:"),
+        "empty start must carry the InvalidDateFilter prefix; got: {empty}"
+    );
+}
+
+#[tokio::test]
+async fn last_edited_range_accepts_bare_calendar_date() {
+    // The validator accepts a bare `YYYY-MM-DD` (the FE may emit a calendar
+    // date rather than a full RFC 3339 timestamp). A valid bare date must
+    // compile + execute (it compares lexically against the ISO timestamps).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE0000000000000000IN1", "InRange").await;
+    seed_op_log(&pool, "01PAGE0000000000000000IN1", "2026-02-15T00:00:00Z").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Range {
+                    start: "2026-02-01".to_string(),
+                    end: "2026-03-01".to_string(),
+                },
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("bare calendar-date range must compile and execute");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(contents, vec!["InRange"]);
+}
+
+// ── PEND-58d T-B3 — Space + Priority IPC narrowing ────────────────────────
+
+#[tokio::test]
+async fn filter_priority_narrows_to_matching_priority() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000HiP1", "HighPri").await;
+    seed_priority(&pool, "01PAGE000000000000000HiP1", "A").await;
+    seed_page(&pool, "01PAGE000000000000000LoP1", "LowPri").await;
+    seed_priority(&pool, "01PAGE000000000000000LoP1", "B").await;
+    seed_page(&pool, "01PAGE000000000000000NoP1", "NoPri").await;
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::Priority {
+                priority: "A".to_string(),
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("priority filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["HighPri"],
+        "Priority A must narrow to only the page with priority A"
+    );
+}
+
+#[tokio::test]
+async fn filter_space_matching_request_scope_is_a_noop_narrowing() {
+    // The IPC ALWAYS scopes to `filter.space_id` (the implicit space
+    // scope). A `Space` filter naming that SAME space is therefore a no-op
+    // narrowing — it composes (AND) with the implicit scope and returns
+    // the full in-space set; a `Space` filter naming a DIFFERENT space
+    // intersects to the empty set. This covers both compositions (T-B3).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "Alpha").await;
+    seed_page(&pool, "01PAGE000000000000000000B1", "Beta").await;
+
+    // Space filter == the request space ⇒ no-op narrowing, full set.
+    let same = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::Space {
+                space_id: TEST_SPACE_ID.to_string(),
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("space==request filter must succeed");
+    let same_contents: Vec<&str> = same
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        same_contents,
+        vec!["Alpha", "Beta"],
+        "Space filter naming the request space is a no-op; full in-space set returns"
+    );
+
+    // Space filter == a DIFFERENT space ⇒ intersect to empty.
+    let other = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::Space {
+                space_id: TEST_SPACE_B_ID.to_string(),
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("space==other filter must succeed");
+    assert!(
+        other.items.is_empty(),
+        "Space filter naming a different space must intersect the implicit scope to empty; got: {:?}",
+        other
+            .items
+            .iter()
+            .filter_map(|p| p.content.as_deref())
+            .collect::<Vec<_>>()
+    );
+}
+
+// ── PEND-58d D6 — total_count gated to the first page ─────────────────────
+
+#[tokio::test]
+async fn total_count_present_on_first_page_and_none_on_cursor_page() {
+    // D6 — the COUNT is recomputed on every load-more page in the prior
+    // shape. It must run only on the FIRST page (cursor None): `Some(n)`
+    // there, `None` on every subsequent cursor page (the FE retains the
+    // first total). The total does not change as the user pages through the
+    // same filtered set, so recomputing it is wasted work.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for (i, name) in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+        .iter()
+        .enumerate()
+    {
+        seed_page(&pool, &format!("01PAGE0000000000000000P{i:02}"), name).await;
+    }
+
+    // First page: limit 2 of 5 ⇒ total_count == Some(5), has_more.
+    let page1 =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(2))
+            .await
+            .unwrap();
+    assert_eq!(
+        page1.total_count,
+        Some(5),
+        "first page must carry the full filtered total"
+    );
+    assert!(page1.has_more, "5 pages at limit 2 must have more");
+    let cursor = page1.next_cursor.expect("first page must carry a cursor");
+
+    // Cursor (load-more) page: total_count must be None — the COUNT is gated
+    // off on cursor pages.
+    let page2 = list_pages_with_metadata_inner(
+        &pool,
+        filter(PageSort::Alphabetical),
+        Some(cursor),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        page2.total_count, None,
+        "cursor (load-more) page must NOT recompute total_count (D6 gate)"
+    );
+}
+
+// ── PEND-58d T-B7 — per-mode cursor discriminator round-trip ──────────────
+
+#[tokio::test]
+async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
+    // T-B7 — the prior coverage exercised only one pair (Alphabetical vs
+    // MostLinked) plus the legacy-None arm. This asserts that EACH sort
+    // mode's cursor (a) replays successfully against the same mode, and
+    // (b) is rejected with RequiresRefresh against a DIFFERENT mode. The
+    // discriminator is per-mode (`sort_discriminator`), so a mismatch must
+    // never silently succeed.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    // Seed enough pages (with op_log + a link + a child) that every mode
+    // has a real first page and can issue a cursor.
+    for (i, name) in ["Aa", "Bb", "Cc", "Dd", "Ee"].iter().enumerate() {
+        let pid = format!("01PAGE0000000000000000T{i:02}");
+        seed_page(&pool, &pid, name).await;
+        seed_op_log(&pool, &pid, &format!("2026-0{}-01T00:00:00Z", i + 1)).await;
+        seed_child(&pool, &format!("01CHILD000000000000000T{i:02}"), &pid, "x").await;
+    }
+    // Give one page an inbound link so MostLinked has a non-degenerate key.
+    seed_link(
+        &pool,
+        "01PAGE0000000000000000T01",
+        "01PAGE0000000000000000T00",
+    )
+    .await;
+
+    let all_modes = [
+        PageSort::Alphabetical,
+        PageSort::RecentlyModified,
+        PageSort::MostLinked,
+        PageSort::MostContent,
+        PageSort::Default,
+    ];
+
+    for sort in all_modes {
+        // First page at limit 2 of 5 ⇒ a real cursor.
+        let page1 = list_pages_with_metadata_inner(&pool, filter(sort), None, Some(2))
+            .await
+            .unwrap_or_else(|e| panic!("{sort:?} first page must succeed: {e}"));
+        let cursor = page1
+            .next_cursor
+            .unwrap_or_else(|| panic!("{sort:?} first page must carry a cursor"));
+
+        // (a) Same-mode replay must succeed.
+        list_pages_with_metadata_inner(&pool, filter(sort), Some(cursor.clone()), Some(2))
+            .await
+            .unwrap_or_else(|e| panic!("{sort:?} same-mode replay must succeed: {e}"));
+
+        // (b) Replay against EVERY other mode must reject with
+        // RequiresRefresh (the discriminator mismatch).
+        for other in all_modes {
+            if other == sort {
+                continue;
+            }
+            let err =
+                list_pages_with_metadata_inner(&pool, filter(other), Some(cursor.clone()), Some(2))
+                    .await
+                    .expect_err(&format!(
+                        "{sort:?} cursor replayed against {other:?} must reject, not succeed"
+                    ));
+            assert!(
+                format!("{err}").contains("RequiresRefresh"),
+                "{sort:?}→{other:?} mismatch must carry RequiresRefresh; got: {err}"
+            );
+        }
+    }
 }

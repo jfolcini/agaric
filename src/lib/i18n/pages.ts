@@ -143,6 +143,11 @@ export const pages: Record<string, string> = {
   'pageBrowser.countAll_one': '{{count}} page',
   'pageBrowser.countAll_other': '{{count}} pages',
   'pageBrowser.countFiltered': '{{loaded}} of {{total}} matching',
+  // PEND-58d D11 — chips active without a text query: numerator and
+  // denominator must share a basis, so show just the filtered total
+  // ("312 matching pages") instead of "loaded of total".
+  'pageBrowser.countMatching_one': '{{count}} matching page',
+  'pageBrowser.countMatching_other': '{{count}} matching pages',
   'pageBrowser.sortLabel': 'Sort order',
   'pageBrowser.sortRecent': 'Recent',
   'pageBrowser.sortAlphabetical': 'Alphabetical',
@@ -161,7 +166,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.densityCompact': 'Compact',
   'pageBrowser.densityRegular': 'Regular',
   'pageBrowser.densityExpanded': 'Expanded',
-  'pageBrowser.densityPersistedTooltip': 'Your density (persisted) is saved across sessions',
+  'pageBrowser.densityPersistedTooltip': 'Your density is saved across sessions',
   'pageBrowser.starPage': 'Star page',
   'pageBrowser.unstarPage': 'Unstar page',
   'pageBrowser.pageList': 'Page list',
@@ -248,8 +253,6 @@ export const pages: Record<string, string> = {
   'pageBrowser.metadata.children_other': '{{count}} child blocks',
   'pageBrowser.metadata.lastModified': 'Last modified {{relative}}',
   'pageBrowser.metadata.never': 'never',
-  'pageBrowser.metadata.summaryTooltip':
-    '{{title}} — {{inbound}}, {{children}}, modified {{relative}}',
   'pageBrowser.metadata.propertyTag': 'tags',
   'pageBrowser.metadata.propertyTodo': 'todos',
   'pageBrowser.metadata.propertyScheduled': 'scheduled',
@@ -261,6 +264,9 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.filterGroup': 'Filter: {{label}}',
   'pageBrowser.filter.removeFilter': 'Remove filter {{label}}',
   'pageBrowser.filter.manyFiltersWarning': 'Many filters can slow the view.',
+  // PEND-58d D12 — clear-all control on the chip row.
+  'pageBrowser.filter.clearAll': 'Clear all',
+  'pageBrowser.filter.clearAllLabel': 'Clear all filters',
   'pageBrowser.filter.sharedGroup': 'Filters',
   'pageBrowser.filter.pagesGroup': 'Pages',
   'pageBrowser.filter.facetTag': 'Tag',
@@ -279,7 +285,14 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.tagPlaceholder': 'Tag name or id',
   'pageBrowser.filter.pathPlaceholder': 'e.g. Projects/*',
   'pageBrowser.filter.propertyKeyPlaceholder': 'Property key',
-  'pageBrowser.filter.propertyValuePlaceholder': 'Value (optional)',
+  'pageBrowser.filter.propertyValuePlaceholder': 'Value',
+  // PEND-58d D24 — property predicate op selector + path exclude toggle.
+  'pageBrowser.filter.propertyOpLabel': 'Comparison',
+  'pageBrowser.filter.propertyOpEq': 'is',
+  'pageBrowser.filter.propertyOpNe': 'is not',
+  'pageBrowser.filter.propertyOpExists': 'exists',
+  'pageBrowser.filter.propertyOpNotExists': "doesn't exist",
+  'pageBrowser.filter.pathExcludeLabel': 'Exclude matching pages',
   'pageBrowser.filter.summaryTag': 'tag: {{tag}}',
   'pageBrowser.filter.summaryPath': 'path: {{pattern}}',
   'pageBrowser.filter.summaryPathExclude': 'not path: {{pattern}}',
@@ -296,8 +309,13 @@ export const pages: Record<string, string> = {
   'pageBrowser.filter.announceRemoved': 'Filter removed: {{label}}.',
   'pageBrowser.filter.announceResults_one': '{{count}} result.',
   'pageBrowser.filter.announceResults_other': '{{count}} results.',
-  'pageBrowser.filter.facetOrphanDesc': 'Nothing links to it and it links to nothing.',
-  'pageBrowser.filter.facetStubDesc': 'A named page with no content.',
-  'pageBrowser.filter.facetHasNoInboundLinksDesc': 'Nothing links to it yet.',
+  // PEND-58d D24 — tightened so Orphan and "No inbound links" read as clearly
+  // distinct: Orphan is fully isolated (no links either way), whereas "No
+  // inbound links" is the looser inbound-only sibling (the page may still link
+  // out). Stub is about content, not links.
+  'pageBrowser.filter.facetOrphanDesc': 'Fully isolated — no inbound links and no outbound links.',
+  'pageBrowser.filter.facetStubDesc': 'A titled page with no content blocks.',
+  'pageBrowser.filter.facetHasNoInboundLinksDesc':
+    'Nothing links to this page (it may still link out).',
   'pageBrowser.filter.lastEditedGroup': 'Last edited',
 }

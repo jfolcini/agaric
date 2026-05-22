@@ -36,104 +36,41 @@
   D3: a "Sorted within loaded pages" cue surfaces when a frontend-only sort
   (`alphabetical`/`recent`/`created`) is active with more pages unloaded. D4: a cost-reorder
   IPC test now exercises the `?`→`?N` bind-renumber path. Tests T-B1/T-B5/T-B6 landed.
-- **P2/P3/Testing/e2e — REMAIN** for future batches (see below).
+- **P2 (D5–D15) — SHIPPED (Session 811, 2026-05-22).** D5 `RecentlyModified` perf gate +
+  documented ceiling (materialisation deferred); D6 `total_count` gated on first page +
+  FE retains it; D7 `LastEdited` NULL symmetry (common epoch sentinel); D8 `HasProperty`
+  reshaped to a nested `PropertyPredicate` (invalid states unrepresentable; IPC type +
+  bindings regenerated); D9 load-more wrapped in `role="row"`/`gridcell`; D10 optimistic
+  create reloads when chips active; D11 count-chip basis (`countMatching` for chips-without-text);
+  D12 clear-all control; D13 header `flex-wrap`; D14 Apply disabled on empty; D15 `LastEdited`
+  date validation (`InvalidDateFilter:`).
+- **P3 (D16–D27) — SHIPPED (Session 811)** except **D23a** (fold-aware `<mark>` ß↔ss
+  bounding — deferred, low-impact, overlaps the search fold util). D16 doc fix; D17 `Space`
+  kept + documented; D18 `WhereClause.unsupported` boolean field; D19 `Orphan` outbound
+  target join (deleted/same-page excluded); D20 count decremented on delete; D21 HasProperty
+  editor autoFocus+Enter; D22 chip dedupe; D23b `aria-activedescendant` guarded to rendered
+  rows; D24 path-exclude toggle + property op selector (is/is-not/exists/doesn't-exist) +
+  facet copy/chip tooltips; D25 popover focus model + redundant/dead i18n cleanup; D26 Ref/Ne
+  `HasProperty` SQL (`value_ref`) + summary simplification; D27 docs reconciled to the
+  Pages-only reality.
+- **Backend/frontend unit + tauri-mock tests — DONE:** T-B2/B3/B4/B7, T-F1/F2/F3/F4, T-M1/M2.
+- **REMAINING:** the **comprehensive e2e suite** (below) and the deferred **D23a**.
 
 ## TL;DR
 
-- **P2 (~8-12 h):** `RecentlyModified` unmaterialised + ungated (D5); per-page
-  `total_count` recompute (D6); `LastEdited` NULL asymmetry (D7); `HasProperty` admits
-  invalid states (D8); load-more button is an invalid grid child (D9, a11y);
-  optimistic-create bypasses active filters (D10); count-chip basis skew (D11); no
-  clear-all (D12); header row no mobile wrap (D13); empty-value Apply dead-end (D14);
-  unvalidated `LastEdited` dates (D15).
-- **P3 (~4-6 h):** a basket of maintainability/robustness/UX nits (D16–D26).
-- **Testing & e2e (~10-16 h):** close every IPC execution gap, make the tauri-mock
-  actually filter, and build **comprehensive e2e for every Pages-view feature**
-  (the explicit ask). See the Testing section.
-- **No further migrations** for what remains (D2's backfill, migration 0070, already shipped).
-  One IPC behaviour change is possible (D8 type reshape) — gate it on whether we keep specta
-  parity.
+- Only the **comprehensive e2e coverage** for every Pages-view feature remains (the explicit
+  ask) — the tauri-mock now genuinely filters + reports a real `total_count` (T-M1), so e2e
+  can assert narrowing and the count chip. See the Testing section.
 
 ---
 
-## P2 — should-fix
+## Deferred (single remaining non-e2e item)
 
-- **D5 — `RecentlyModified` unmaterialised + ungated  `P2`  (SQL-3).** Correlated
-  `MAX(op_log.created_at)` per page across the space before LIMIT; the 20k perf gate
-  only covers `MostLinked`. Fix: materialise `pages_cache.last_edited_at` (preferred) or
-  add a `RecentlyModified` perf gate and document the ceiling.
-- **D6 — `total_count` recomputed every load-more page  `P2`  (SQL-4 = PEND-58c C1).**
-  Gate the COUNT on `req.after.is_none()`; have the FE retain the first total.
-- **D7 — `LastEdited` NULL asymmetry  `P2`  (SQL-5).** A page with no op_log row is
-  excluded by Rolling/Range but included by OlderThan (epoch COALESCE). Fix: COALESCE
-  all three to a common sentinel and document the "no op-log ⇒ epoch" rule.
-- **D8 — `HasProperty` admits invalid states  `P2`  (BE-1).** `{op, value: Option}`
-  lets `Eq/Ne+None` and `Eq/Ne+Ref` be constructed → runtime `unsupported()`. Fix:
-  model as a single enum (`Exists | NotExists | Eq(PropertyValue) | Ne(PropertyValue)`)
-  so invalid states are unrepresentable. **NB:** changes the IPC type — regenerate
-  bindings (`cargo test -- specta_tests --ignored`) and the popover emit. Sequence with
-  D24 (which adds the op selector) since they touch the same shape.
-- **D9 — `LoadMoreButton` is an invalid `role="grid"` child  `P2`  (FE-1, a11y).**
-  Wrap it in a `role="row"`/`role="gridcell"` footer or move it outside the grid
-  container (mirror the no-match grid-role drop). Add an axe assertion in the hasMore state.
-- **D10 — optimistic create bypasses active filters/sort  `P2`  (FE-3).** New page
-  prepends regardless of active chips and lacks metadata. Fix: when `wireFilters.length > 0`,
-  `reload()` instead of optimistic prepend (or suppress the optimistic row).
-- **D11 — count-chip basis skew  `P2`  (UX-3 + FE-4).** `countFiltered` pairs a
-  loaded+text-narrowed numerator with the filtered-total denominator. Fix: when chips
-  are active without text, show just the total ("312 pages"); reserve "X of Y" for the
-  text box narrowing the loaded set — or otherwise make numerator/denominator share a
-  basis.
-- **D12 — no "Clear all filters"  `P2`  (UX-4).** Add a clear-all control to the chip
-  row (mirror `GraphFilterBar`'s `clearAll`).
-- **D13 — header row no mobile wrap  `P2`  (UX-5).** The search/sort/density row is
-  `flex items-center gap-2` with no `flex-wrap`/`flex-col` fallback. Fix: add wrapping.
-- **D14 — empty-value Apply is a silent dead-end  `P2`  (UX-6).** Tag/Path/Property
-  editors no-op on empty input with no feedback. Fix: disable Apply when empty or show
-  inline validation.
-- **D15 — unvalidated `LastEdited` dates on Pages  `P2`  (BE-2, downgraded but real).**
-  `Range{start,end}` binds raw strings with no format check → malformed date silently
-  yields zero rows. Fix: validate dates (and reject empty start/end) returning
-  `AppError::Validation("InvalidDateFilter:")`, matching the legacy Search contract.
-
----
-
-## P3 — nits / latent / maintainability
-
-- **D16  (BE-4):** stale module doc names sort modes `Biggest`/`Ulid`; enum has
-  `MostContent`/`Default`. Fix the comment.
-- **D17  (BE-6):** `compile_space` is a redundant no-op on the always-space-scoped IPC
-  (no-op for the request space, zero rows otherwise). Decide whether `Space` should be
-  offered on Pages at all; if not, drop it from `PAGES_ALLOWED_KEYS`/popover.
-- **D18  (BE-7):** `is_unsupported()` detects via substring match on `/* UNSUPPORTED */`.
-  Replace with a boolean field on `WhereClause` (or a `Result`/enum return).
-- **D19  (SQL-6, downgraded):** `Orphan` outbound term ignores the target's
-  deleted/same-page state (purged targets are moot — FK cascade). Fix: join the target,
-  require `tgt.deleted_at IS NULL`, exclude same-page edges — to match D2's inbound fix.
-- **D20  (FE-5):** count chip not decremented on optimistic delete. Fix: decrement
-  `totalCount` on delete or recompute from loaded length.
-- **D21  (FE-6):** HasProperty editor lacks `autoFocus` + Enter-to-apply (inconsistent
-  with `InlineValueEditor`). Fix: add both or reuse the editor pattern.
-- **D22  (FE-7):** duplicate identical chips allowed (ship duplicate primitives). Fix:
-  dedupe on add by comparing the stripped primitive against existing `wireFilters`.
-- **D23  (FE-8 / FE-9):** fold-aware highlight can mis-bound the `<mark>` (ß↔ss);
-  `aria-activedescendant` may reference an unrendered virtual row. Low-impact; fix when
-  touching those files.
-- **D24  (UX-7 / PEND-58c C2):** Orphan vs No-inbound near-duplicate copy; chips drop
-  the facet descriptions. Plus add the missing UI controls for path **exclude** and
-  property `ne`/`notExists` (the engine + summary already support them — currently
-  "reserved for Search/saved-views"). Reconsider clearer facet labels and chip tooltips.
-- **D25  (UX-8 / UX-9 / UX-11 / UX-12):** redundant `densityPersistedTooltip` copy;
-  dead i18n key `metadata.summaryTooltip`; select tooltips likely unreachable on touch
-  (needs runtime check); popover is `role="dialog"` but items are plain buttons with no
-  roving-focus menu nav (pick one interaction model).
-- **D26  (PEND-58c C3 / BE-5 + PEND-58c C5):** implement the `Ref`-valued / `Ne`
-  `HasProperty` SQL (`value_ref`) so the admitted `has-property` key isn't partially
-  rejected; simplify the `summaryProperty` redundant ternary.
-- **D27  (strategic, from verification):** reconcile the "shared with Search / single
-  source of truth" framing — either migrate Search onto the `FilterPrimitive`/`Projection`
-  engine, or update AGENTS.md + `docs/architecture/filters.md` to describe the current
-  Pages-only reality.
+- **D23a — fold-aware highlight `<mark>` mis-bounding (ß↔ss).** Low-impact; the fold
+  offset-mapping in `src/lib/fold-for-search.ts` / `PageBrowserRowRenderer.tsx` can
+  mis-place the highlight when a folded character changes length. Deferred to avoid
+  churn in the shared search-fold util. (D23b — `aria-activedescendant` guarding —
+  shipped in Session 811.)
 
 ---
 
@@ -152,35 +89,24 @@
 - **T-B2** — `LastEdited` Range/Rolling/OlderThan against seeded `op_log` rows: assert
   Rolling{7} includes recent / excludes old, OlderThan{7} is the inverse, Range bounds,
   and the no-op-log-row behaviour (pairs with D7).
-- **T-B3** — `Space` and `Priority` IPC tests (narrowing + composition with the implicit
-  space scope).
-- **T-B4** — `HasProperty` `Exists`/`NotExists`/`Ne` executed end-to-end (only `Eq` runs
-  today); plus the validation-rejection for unsupported shapes (already present).
-- **T-B5** — ✅ DONE (Session 810). `filter_priority_and_tag_compose_correctly_despite_cost_reorder`
-  exercises the `[Priority(cost1), Tag(cost0)]` reorder + bind-renumber.
-- **T-B6** — ✅ DONE (Session 810). `same_page_edge_excluded_from_inbound_count` +
-  the updated parity helper assert materialised == canonical for same-page edges.
-- **T-B7** — per-mode cursor discriminator coverage in `validate_pages_metadata_cursor`
-  (all sort modes, not just the one pair + the legacy None arm).
+- **T-B2** — ✅ DONE (Session 811). `LastEdited` Rolling/OlderThan/Range + no-op-log behaviour.
+- **T-B3** — ✅ DONE (Session 811). `Space` + `Priority` IPC narrowing + implicit-scope composition.
+- **T-B4** — ✅ DONE (Session 811). `HasProperty` Exists/NotExists/Ne + Eq/Ne over `Ref` (value_ref) end-to-end.
+- **T-B5** — ✅ DONE (Session 810). `[Priority(cost1), Tag(cost0)]` reorder + bind-renumber.
+- **T-B6** — ✅ DONE (Session 810). same-page inbound parity.
+- **T-B7** — ✅ DONE (Session 811). every sort mode's cursor round-trips + cross-mode rejection.
 
-### Frontend unit  (TEST-9/11/12/13)
+### Frontend unit  (TEST-9/11/12/13) — ✅ ALL DONE (Session 811)
 
-- **T-F1** — `PageBrowserHeader` count-label branches driven directly (null / `countAll`
-  / `countFiltered`).
-- **T-F2** — `withCursorRecovery` retry-also-fails path (original error propagates).
-- **T-F3** — `AddFilterPopover` (un-mock the popover or test via the real component):
-  focus-restore on close, reset on `onOpenChange(false)`, and the `op:'eq'` emit path.
-- **T-F4** — a dedicated `PageBrowserRowRenderer.test.tsx` (flag-on/flag-off leaf dispatch,
-  header rows, tree-page rows).
+- **T-F1** — ✅ `PageBrowserHeader` count-label branches (null / `countAll` / `countFiltered` / `countMatching`).
+- **T-F2** — ✅ `withCursorRecovery` retry-also-fails path.
+- **T-F3** — ✅ `AddFilterPopover` via the real component (focus-restore, reset-on-close, emit paths, op selector, exclude toggle).
+- **T-F4** — ✅ `PageBrowserRowRenderer.test.tsx` (flag-on/off leaf dispatch, header rows, tree-page rows).
 
-### tauri-mock + e2e enablement  (TEST-6/7 / UX-10)
+### tauri-mock + e2e enablement  (TEST-6/7 / UX-10) — ✅ DONE (Session 811)
 
-- **T-M1** — extend `metaRowMatchesFilter` to actually filter `PathGlob` / `HasProperty`
-  / `LastEdited` (today they're pass-through no-ops), and compute a real `total_count`
-  (today `null`). This is the prerequisite that lets e2e assert *narrowing* and the
-  count chip rather than just chip-render.
-- **T-M2** — remove the stale `test.fixme('chip-only zero results …')` at
-  `e2e/pages-filter.spec.ts:401` (P0-B has shipped + is unit-covered).
+- **T-M1** — ✅ `metaRowMatchesFilter` now filters `PathGlob` / `HasProperty` / `LastEdited` and returns a real `total_count`.
+- **T-M2** — ✅ stale `test.fixme('chip-only zero results …')` removed.
 
 ### Comprehensive e2e for **all** Pages-view features (the explicit ask)
 

@@ -16,6 +16,7 @@ import {
   MAX_PAGE_FILTERS,
   PageBrowserFilterRow,
   type PageFilterWithKey,
+  pageFilterChipTitle,
   pageFilterSummary,
 } from '../PageBrowserFilterRow'
 
@@ -71,25 +72,44 @@ describe('pageFilterSummary', () => {
       { type: 'PathGlob', pattern: 'Projects/*', exclude: true },
       'not path: Projects/*',
     ],
-    // HasProperty — every op, incl. the `=`/`≠` glyph distinction.
+    // HasProperty — every predicate arm, incl. the `=`/`≠` glyph distinction
+    // and a Ref-valued Eq (the summary renders Ref values too, even though the
+    // Pages UI only emits Text — D26).
     [
-      'HasProperty exists',
-      { type: 'HasProperty', key: 'status', op: 'exists', value: null },
+      'HasProperty Exists',
+      { type: 'HasProperty', key: 'status', predicate: { type: 'Exists' } },
       'has: status',
     ],
     [
-      'HasProperty notExists',
-      { type: 'HasProperty', key: 'status', op: 'notExists', value: null },
+      'HasProperty NotExists',
+      { type: 'HasProperty', key: 'status', predicate: { type: 'NotExists' } },
       'no: status',
     ],
     [
-      'HasProperty eq',
-      { type: 'HasProperty', key: 'status', op: 'eq', value: { type: 'Text', value: 'done' } },
+      'HasProperty Eq (Text)',
+      {
+        type: 'HasProperty',
+        key: 'status',
+        predicate: { type: 'Eq', value: { type: 'Text', value: 'done' } },
+      },
       'status = done',
     ],
     [
-      'HasProperty ne',
-      { type: 'HasProperty', key: 'status', op: 'ne', value: { type: 'Text', value: 'done' } },
+      'HasProperty Eq (Ref)',
+      {
+        type: 'HasProperty',
+        key: 'space',
+        predicate: { type: 'Eq', value: { type: 'Ref', value: 'SPACE_1' } },
+      },
+      'space = SPACE_1',
+    ],
+    [
+      'HasProperty Ne (Text)',
+      {
+        type: 'HasProperty',
+        key: 'status',
+        predicate: { type: 'Ne', value: { type: 'Text', value: 'done' } },
+      },
       'status ≠ done',
     ],
     // LastEdited — Range, every Rolling bucket, OlderThan.
@@ -147,6 +167,27 @@ describe('pageFilterSummary', () => {
   })
 })
 
+describe('pageFilterChipTitle', () => {
+  // D24: the boolean Pages facets carry a long-form description surfaced as the
+  // chip's `title` tooltip; value-bearing facets have no extra title.
+  it('returns the long-form description for the boolean Pages facets', () => {
+    expect(pageFilterChipTitle({ type: 'Orphan' }, t)).toBe(
+      'Fully isolated — no inbound links and no outbound links.',
+    )
+    expect(pageFilterChipTitle({ type: 'Stub' }, t)).toBe('A titled page with no content blocks.')
+    expect(pageFilterChipTitle({ type: 'HasNoInboundLinks' }, t)).toBe(
+      'Nothing links to this page (it may still link out).',
+    )
+  })
+
+  it('returns undefined for value-bearing facets (label self-describes)', () => {
+    expect(pageFilterChipTitle({ type: 'Tag', tag: 'urgent' }, t)).toBeUndefined()
+    expect(
+      pageFilterChipTitle({ type: 'PathGlob', pattern: 'x', exclude: false }, t),
+    ).toBeUndefined()
+  })
+})
+
 describe('PageBrowserFilterRow', () => {
   it('renders a chip per active filter', () => {
     render(
@@ -160,6 +201,21 @@ describe('PageBrowserFilterRow', () => {
     // "Orphan" / "Stub" items, so a bare getByText would be ambiguous.
     expect(screen.getByRole('group', { name: 'Filter: Orphan' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
+  })
+
+  // D24: the boolean Pages facets surface their description as the chip title.
+  it('sets the per-facet description as the chip title tooltip', () => {
+    render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('group', { name: 'Filter: Orphan' })).toHaveAttribute(
+      'title',
+      'Fully isolated — no inbound links and no outbound links.',
+    )
   })
 
   it('fires onRemoveFilter with the chip index', async () => {
@@ -196,12 +252,63 @@ describe('PageBrowserFilterRow', () => {
     expect(screen.getByText('Many filters can slow the view.')).toBeInTheDocument()
   })
 
+  // --- D12: clear-all control ---
+  it('renders the clear-all control when filters are present and onClearAll is given', () => {
+    render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Clear all filters' })).toBeInTheDocument()
+  })
+
+  it('omits the clear-all control when no filters are active', () => {
+    render(
+      <PageBrowserFilterRow
+        filters={[]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
+  })
+
+  it('omits the clear-all control when onClearAll is not supplied', () => {
+    render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Clear all filters' })).not.toBeInTheDocument()
+  })
+
+  it('calls onClearAll when the clear-all control is clicked', async () => {
+    const onClearAll = vi.fn<() => void>()
+    render(
+      <PageBrowserFilterRow
+        filters={[withKey({ type: 'Orphan' }), withKey({ type: 'Stub' })]}
+        onAddFilter={vi.fn()}
+        onRemoveFilter={vi.fn()}
+        onClearAll={onClearAll}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Clear all filters' }))
+    expect(onClearAll).toHaveBeenCalledTimes(1)
+  })
+
   it('has no a11y violations', async () => {
     const { container } = render(
       <PageBrowserFilterRow
         filters={[withKey({ type: 'Tag', tag: 'urgent' })]}
         onAddFilter={vi.fn()}
         onRemoveFilter={vi.fn()}
+        onClearAll={vi.fn()}
       />,
     )
     expect(await axe(container)).toHaveNoViolations()

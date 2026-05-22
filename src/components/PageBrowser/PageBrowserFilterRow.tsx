@@ -14,8 +14,10 @@
  */
 
 import type { TFunction } from 'i18next'
+import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { FilterPrimitive } from '@/lib/tauri'
 import { AddFilterPopover } from './AddFilterPopover'
@@ -30,6 +32,13 @@ export interface PageBrowserFilterRowProps {
   filters: PageFilterWithKey[]
   onAddFilter: (filter: FilterPrimitive) => void
   onRemoveFilter: (index: number) => void
+  /**
+   * Clears every active chip in one shot. Supplied by the orchestrator
+   * (PageBrowser); when present, a "Clear all" control renders on the chip
+   * row whenever at least one filter is active. Mirrors `GraphFilterBar`'s
+   * clear-all affordance.
+   */
+  onClearAll?: (() => void) | undefined
   /** Resolves a tag id to a human-readable label for the `tag:` chip. */
   tagResolver?: ((id: string) => string) | undefined
 }
@@ -69,19 +78,41 @@ function hasPropertySummary(
   filter: Extract<FilterPrimitive, { type: 'HasProperty' }>,
   t: TFunction,
 ): string {
-  if (filter.op === 'exists') return t('pageBrowser.filter.summaryHasProperty', { key: filter.key })
-  // `notExists` is reserved for Search / saved-views — no Pages UI control
-  // emits it (the popover only builds `op: 'eq' | 'exists'`). Kept renderable
-  // so deep-linked / saved filters still summarise.
-  if (filter.op === 'notExists')
-    return t('pageBrowser.filter.summaryNotHasProperty', { key: filter.key })
-  // The `≠` glyph (op === 'ne') is likewise reserved for Search / saved-views;
-  // the Pages popover only emits `op: 'eq'`.
-  return t('pageBrowser.filter.summaryProperty', {
-    key: filter.key,
-    op: filter.op === 'ne' ? '≠' : '=',
-    value: filter.value?.type === 'Text' ? filter.value.value : (filter.value?.value ?? ''),
-  })
+  const { key, predicate } = filter
+  switch (predicate.type) {
+    case 'Exists':
+      return t('pageBrowser.filter.summaryHasProperty', { key })
+    case 'NotExists':
+      return t('pageBrowser.filter.summaryNotHasProperty', { key })
+    default:
+      // Eq / Ne both carry a value; the operand is `predicate.value.value`
+      // for either Text or Ref (D26 — no Text/Ref ternary needed). `≠` is
+      // reserved for Search / saved-views (the Pages popover emits Eq/Ne).
+      return t('pageBrowser.filter.summaryProperty', {
+        key,
+        op: predicate.type === 'Ne' ? '≠' : '=',
+        value: predicate.value.value,
+      })
+  }
+}
+
+/**
+ * Per-facet long-form description for the boolean Pages facets, surfaced as the
+ * chip's `title` tooltip so the (necessarily terse) chip label can be expanded
+ * on hover. Mirrors the descriptions shown in the Add-Filter popover. Returns
+ * `undefined` for value-bearing facets whose chip label already self-describes.
+ */
+export function pageFilterChipTitle(filter: FilterPrimitive, t: TFunction): string | undefined {
+  switch (filter.type) {
+    case 'Orphan':
+      return t('pageBrowser.filter.facetOrphanDesc')
+    case 'Stub':
+      return t('pageBrowser.filter.facetStubDesc')
+    case 'HasNoInboundLinks':
+      return t('pageBrowser.filter.facetHasNoInboundLinksDesc')
+    default:
+      return undefined
+  }
 }
 
 export function pageFilterSummary(
@@ -126,6 +157,7 @@ export function PageBrowserFilterRow({
   filters,
   onAddFilter,
   onRemoveFilter,
+  onClearAll,
   tagResolver,
 }: PageBrowserFilterRowProps): React.ReactElement {
   const { t } = useTranslation()
@@ -142,10 +174,14 @@ export function PageBrowserFilterRow({
         >
           {filters.map((filter, index) => {
             const label = pageFilterSummary(filter, t, tagResolver)
+            const title = pageFilterChipTitle(filter, t)
             return (
               <li key={filter._addId} className="contents">
                 <FilterPill
                   label={label}
+                  // `exactOptionalPropertyTypes`: only set `title` when present
+                  // so we don't pass `string | undefined` to a `title?: string`.
+                  {...(title !== undefined ? { title } : {})}
                   onRemove={() => onRemoveFilter(index)}
                   removeAriaLabel={t('pageBrowser.filter.removeFilter', { label })}
                   groupAriaLabel={t('pageBrowser.filter.filterGroup', { label })}
@@ -159,6 +195,18 @@ export function PageBrowserFilterRow({
         onAddFilter={onAddFilter}
         warnManyFilters={filters.length >= MAX_PAGE_FILTERS}
       />
+      {onClearAll && filters.length > 0 && (
+        <Button
+          variant="ghost"
+          size="xs"
+          className="h-7 text-xs"
+          onClick={onClearAll}
+          aria-label={t('pageBrowser.filter.clearAllLabel')}
+        >
+          <X className="h-3 w-3" aria-hidden="true" />
+          {t('pageBrowser.filter.clearAll')}
+        </Button>
+      )}
     </div>
   )
 }

@@ -23,6 +23,7 @@ import {
   makeBlock,
   opLog,
   pageAliases,
+  pageLastModified,
   properties,
   propertyDefs,
   pushOp,
@@ -115,10 +116,44 @@ interface PageMetaRow {
 }
 
 /**
+ * Match a page title against the documented Page-path glob mini-language,
+ * case-insensitively. Mirrors `src-tauri/src/filters/primitive.rs::glob_to_like`
+ * semantics:
+ *   - `*` → any run of characters (`%`),
+ *   - `?` → exactly one character (`_`),
+ *   - a bare word (no `*`/`?`) → substring match (`%word%`),
+ *   - any other char is a literal.
+ * The match is anchored (the whole title must satisfy the pattern), which is
+ * how SQLite `LIKE` evaluates — the substring wrap on bare words is what makes
+ * `Alpha` match `My Alpha Page`.
+ */
+function globMatchesTitle(pattern: string, title: string): boolean {
+  const hasWildcard = /[*?]/.test(pattern)
+  // Build an anchored, case-insensitive RegExp mirroring glob_to_like's
+  // translation. Bare words (no wildcard) become substring matches.
+  let body = ''
+  for (const ch of pattern) {
+    if (ch === '*') body += '.*'
+    else if (ch === '?') body += '.'
+    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  const source = hasWildcard ? `^${body}$` : `^.*${body}.*$`
+  let re: RegExp
+  try {
+    re = new RegExp(source, 'i')
+  } catch {
+    return false
+  }
+  return re.test(title)
+}
+
+/**
  * Does a page row satisfy one compound-filter primitive? The mock evaluates
- * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` faithfully; any
- * other primitive is a permissive no-op (the backend owns those, and FE tests
- * that need them mock at the IPC boundary directly).
+ * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
+ * `HasProperty` / `LastEdited` faithfully (mirroring the REAL backend
+ * semantics in `src-tauri/src/filters/primitive.rs`); any other primitive is
+ * a permissive no-op (the backend owns those, and FE tests that need them
+ * mock at the IPC boundary directly).
  */
 function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
   switch (f['type'] as string) {
@@ -132,6 +167,91 @@ function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boole
       return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
     case 'Priority':
       return r.priority === (f['priority'] as string)
+    case 'PathGlob': {
+      // Case-insensitive glob over the page title. `exclude:true` inverts.
+      const hit = globMatchesTitle((f['pattern'] as string) ?? '', r.content ?? '')
+      return (f['exclude'] as boolean) ? !hit : hit
+    }
+    case 'HasProperty':
+      return hasPropertyMatches(r, f)
+    case 'LastEdited':
+      return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined)
+    default:
+      return true
+  }
+}
+
+/**
+ * Evaluate a `HasProperty` primitive against a page's seeded `block_properties`
+ * (`properties` map, keyed on the page block id), mirroring the backend's
+ * `compile_has_property` predicate matrix. The wire shape is the nested
+ * `predicate: PropertyPredicate` (D8 — invalid op/value combos are
+ * unrepresentable):
+ *   - `Exists`     — key present,
+ *   - `NotExists`  — key absent,
+ *   - `Eq`         — `value_text` (or `value_ref` for a Ref value) equals,
+ *   - `Ne`         — no property row with that value (NOT EXISTS).
+ */
+function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean {
+  const key = f['key'] as string
+  const predicate = f['predicate'] as Record<string, unknown> | undefined
+  const ptype = predicate?.['type'] as string | undefined
+  const prop = properties.get(r.id)?.get(key)
+  switch (ptype) {
+    case 'Exists':
+      return prop != null
+    case 'NotExists':
+      return prop == null
+    case 'Eq':
+    case 'Ne': {
+      const value = predicate?.['value'] as Record<string, unknown> | undefined
+      // Ref values compare against `value_ref`; Text against `value_text`.
+      const isRef = value?.['type'] === 'Ref'
+      const wanted = (value?.['value'] as string | undefined) ?? null
+      const stored = prop
+        ? ((isRef ? prop['value_ref'] : prop['value_text']) as string | null)
+        : null
+      const hit = prop != null && wanted != null && stored === wanted
+      // `Ne` = NOT EXISTS a row with key=? AND value=? — true when the key is
+      // absent OR present-but-different.
+      return ptype === 'Ne' ? !hit : hit
+    }
+    default:
+      return true
+  }
+}
+
+/**
+ * Evaluate a `LastEdited` primitive against the page's `lastModifiedAt`,
+ * mirroring the backend's `compile_last_edited` buckets (rolling window
+ * ending "now"):
+ *   - `Rolling{days}`   — modified within the last N days,
+ *   - `OlderThan{days}` — modified before the last-N-days cutoff (NULL counts
+ *     as older, matching the backend's `COALESCE(..., '0001-01-01')`),
+ *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
+ */
+function lastEditedMatches(r: PageMetaRow, spec: Record<string, unknown> | undefined): boolean {
+  if (!spec) return true
+  const lm = r.lastModifiedAt
+  const cutoff = (days: number): string => {
+    const d = new Date()
+    d.setDate(d.getDate() - days)
+    return d.toISOString()
+  }
+  switch (spec['type'] as string) {
+    case 'Rolling': {
+      if (lm == null) return false
+      return lm >= cutoff(spec['days'] as number)
+    }
+    case 'OlderThan':
+      // NULL last-modified sorts as the oldest possible → counts as older.
+      return lm == null || lm < cutoff(spec['days'] as number)
+    case 'Range': {
+      if (lm == null) return false
+      const start = spec['start'] as string
+      const end = spec['end'] as string
+      return lm >= start && lm <= end
+    }
     default:
       return true
   }
@@ -194,6 +314,31 @@ function encodeNextCursor(last: PageMetaRow, sort: string): string {
   return btoa(JSON.stringify(cursorObj))
 }
 
+/**
+ * Resolve a page's `last_modified_at`, mirroring the backend's
+ * `MAX(op_log.created_at) WHERE block_id = b.id`: scan `opLog` for the latest
+ * entry whose payload `block_id` is this page, then fall back to the
+ * deterministic seeded `last_modified_at` stamp (set in `seed.ts`), and
+ * finally `null` for a page with neither.
+ */
+function pageLastModifiedAt(b: Record<string, unknown>): string | null {
+  const pageId = b['id'] as string
+  let maxOp: string | null = null
+  for (const o of opLog) {
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(o.payload) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (payload['block_id'] !== pageId) continue
+    if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
+  }
+  const seeded = pageLastModified.get(pageId) ?? null
+  if (maxOp !== null && seeded !== null) return maxOp > seeded ? maxOp : seeded
+  return maxOp ?? seeded
+}
+
 /** Assemble one `PageMetaRow` from a page block + its (already-filtered) descendants. */
 function buildPageMetaRow(
   b: Record<string, unknown>,
@@ -217,8 +362,12 @@ function buildPageMetaRow(
     dueDate: (b['due_date'] as string | null) ?? null,
     scheduledDate: (b['scheduled_date'] as string | null) ?? null,
     pageId: (b['page_id'] as string | null) ?? null,
-    // Mock doesn't model op_log; treat creation time as id-derived.
-    lastModifiedAt: (b['id'] as string).slice(0, 10),
+    // last_modified_at mirrors the backend's `MAX(op_log.created_at)` over
+    // the page block: take the latest op_log entry targeting this page,
+    // falling back to the deterministic seeded `last_modified_at` stamp (and
+    // finally null). This gives the `last-edited:` compound filter and the
+    // recently-modified sort real, comparable ISO timestamps.
+    lastModifiedAt: pageLastModifiedAt(b),
     inboundLinkCount: inbound,
     childBlockCount: descendants.length,
     hasOutboundLink: hasOutbound,
@@ -458,7 +607,10 @@ export const HANDLERS: Record<string, Handler> = {
     const items = hasMore ? slice.slice(0, limit) : slice
     const last = items.at(-1)
     const nextCursor = hasMore && last ? encodeNextCursor(last, sort) : null
-    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: null }
+    // Real total_count = the full filtered set size (independent of
+    // pagination), so the count chip and e2e count assertions reflect the
+    // active filters. Stable across cursor fetches (same filter → same count).
+    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: matched.length }
   },
 
   // Every page in the space whose `template` property is set to 'true'.

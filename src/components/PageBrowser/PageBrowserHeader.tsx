@@ -56,8 +56,21 @@ export interface PageBrowserHeaderProps {
    * Drives the "X of Y matching" form when a filter is active.
    */
   filteredCount?: number | undefined
-  /** True when a search filter is active (suppresses the "all pages" form). */
-  isFiltering?: boolean
+  /**
+   * PEND-58d D11 — true when the free-text search box is non-empty. The
+   * text box narrows the loaded set client-side, so its count chip is
+   * "X of Y matching" (loaded-narrowed numerator over the filtered
+   * total). Distinct from `hasChipFilters` so the count chip can pick a
+   * numerator/denominator that share a basis.
+   */
+  hasTextQuery?: boolean
+  /**
+   * PEND-58d D11 — true when ≥1 compound-filter chip is active. Chips
+   * narrow server-side, so their count chip is "{{count}} matching
+   * pages" using the filtered total (`totalCount`), avoiding the skew of
+   * pairing a loaded numerator with a filtered-total denominator.
+   */
+  hasChipFilters?: boolean
   /**
    * PEND-58d D3 — true when a frontend-only sort (`alphabetical`,
    * `recent`, `created`) is active AND more pages remain to load. The
@@ -84,24 +97,42 @@ export function PageBrowserHeader({
   onDensityChange,
   totalCount,
   filteredCount,
-  isFiltering,
+  hasTextQuery,
+  hasChipFilters,
   frontendSortAtScale,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
-  // PageBrowser pagination UX (2026-05-14) — small muted text near
+  // PageBrowser pagination UX + PEND-58d D11 — small muted text near
   // the search input so users always know roughly how many pages
-  // they're looking at. Two forms:
-  //  - "312 pages" when no filter is active.
-  //  - "23 of 312 matching" when filtering against an alpha set.
+  // they're looking at. Three forms, each with a basis-consistent
+  // numerator/denominator:
+  //  (a) no chips, no text → "312 pages"            (countAll, the total)
+  //  (b) free-text query   → "23 of 312 matching"   (countFiltered: the
+  //      loaded set narrowed by the text box over the filtered total)
+  //  (c) chips, no text    → "312 matching pages"    (countMatching: the
+  //      server-side filtered total — chips narrow server-side, so
+  //      pairing a loaded numerator with a filtered-total denominator
+  //      would skew; show just the total instead)
   // Hidden when `totalCount` is `undefined` (backend didn't report).
   const countLabel: string | null = (() => {
     if (typeof totalCount !== 'number') return null
-    if (isFiltering && typeof filteredCount === 'number') {
+    // (b) The free-text box narrows the loaded set client-side, so its
+    // numerator is the loaded-narrowed count over the filtered total.
+    // Takes precedence over chips because the text box always re-narrows
+    // whatever the chips already filtered.
+    if (hasTextQuery && typeof filteredCount === 'number') {
       return t('pageBrowser.countFiltered', {
         loaded: filteredCount,
         total: totalCount,
       })
     }
+    // (c) Chips active but the text box is empty → the filtered total IS
+    // the result count, so a single-number "matching pages" form keeps
+    // the basis consistent.
+    if (hasChipFilters) {
+      return t('pageBrowser.countMatching', { count: totalCount })
+    }
+    // (a) Unfiltered → the grand total.
     return t('pageBrowser.countAll', { count: totalCount })
   })()
   return (
@@ -133,9 +164,13 @@ export function PageBrowserHeader({
       </form>
 
       {/* Search/filter input + sort dropdown */}
+      {/* PEND-58d D13 — `flex-wrap` lets the search/sort/density controls
+          stack onto a second line on narrow viewports instead of
+          overflowing. The search field keeps a sensible min-width so it
+          never collapses to an unusable sliver before wrapping. */}
       {showSearchAndSort && (
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 min-w-[12rem]">
             <Search
               className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
               aria-hidden="true"

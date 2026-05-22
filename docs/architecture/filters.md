@@ -1,10 +1,18 @@
 # Filter primitives — shared cross-surface contract
 
-The Pages view and (in the future) Search share one filter vocabulary. The
-contract is one sentence:
+The Pages view filters through one shared vocabulary, designed so Search can
+adopt it later. The contract is one sentence:
 
 > A `FilterPrimitive` is a **value**; a `Projection` is **how that value
 > compiles to SQL** for a given surface.
+>
+> **Current reality (PEND-58d D27):** this engine is wired into the **Pages**
+> surface only. Search still runs on its own subsystem — the inline-query
+> parser at `src/lib/search-query/` plus `src-tauri/src/fts/` — and
+> `SearchProjection` below is a compiled-but-unwired stub (see *Extension points*). The
+> "single source of truth shared with Search" framing is therefore the design
+> intent, **not** a guarantee that holds today: a primitive added here does not
+> change Search behaviour, and the legacy Search filter path is still load-bearing.
 
 Everything below follows from that split. The types live in
 [`src-tauri/src/filters/primitive.rs`](../../src-tauri/src/filters/primitive.rs)
@@ -88,9 +96,15 @@ The Pages IPC composes filters in
 the `compile_pages_filters` helper:
 
 1. **Cost ordering.** Each primitive carries a `cost_hint(&self) -> u8`
-   (index-backed primitives `0`, cheap full-scan `1`, unanchored GLOB `2`,
-   post-filter / non-SQL `3`). Clauses are emitted cheapest-first so SQLite can
-   narrow the row set with an index before applying a scan.
+   (index-backed primitives `0`, per-row cheap `1` (`Priority`, `LastEdited`),
+   `PathGlob` `2`, post-filter / non-SQL `3`). Clauses are emitted cheapest-first
+   so SQLite can narrow the row set with an index before applying a scan.
+   `PathGlob` is always `2` (full scan): it compiles to `title COLLATE NOCASE
+   LIKE ? ESCAPE '\'` (PEND-58d D1), and SQLite does not apply its LIKE-index
+   optimization to a case-insensitive `LIKE` — neither a `COLLATE NOCASE` index
+   nor a `LOWER(title)` expression index is used; only an explicit `COLLATE
+   NOCASE >= p AND < p++` range would hit `idx_pages_cache_title_nocase`. The
+   scan is cheap because `pages_cache` is one row per page.
 2. **Bind renumbering.** Each `compile_*` fragment emits anonymous `?`
    placeholders. Because the fragments are spliced into a statement that also
    carries the keyset binds, `compile_pages_filters` renumbers every `?` to an
@@ -115,10 +129,18 @@ cost that the originally-computed approach hit at ~20k pages — they ride the
 same materialised counts the `most-linked` sort uses, so the filter result and
 the inbound-link badge agree by construction.
 
-`Orphan`'s outbound half (`NOT EXISTS (SELECT 1 FROM block_links WHERE
-source_id = b.id)`) has no materialised counterpart yet; it stays a `NOT EXISTS`
-and is a candidate for a future `outbound_link_count` column if measurement
-shows it dominating.
+`inbound_link_count` excludes **same-page / self / deleted-source** edges
+(PEND-58d D2,
+[`migration 0070`](../../src-tauri/migrations/0070_pages_cache_inbound_link_count_exclude_same_page.sql)),
+mirroring the canonical backlink query in `backlink/grouped.rs` — so a page whose
+only inbound edge comes from one of its own descendants correctly reads as an
+orphan / has-no-inbound.
+
+`Orphan`'s outbound half is a page-wide `NOT EXISTS` over `block_links` joined to
+the source's blocks; it joins the link **target** and excludes deleted and
+same-page targets (PEND-58d D19) to stay symmetric with the inbound side. It has
+no materialised counterpart yet and is a candidate for a future
+`outbound_link_count` column if measurement shows it dominating.
 
 ## Extension points
 

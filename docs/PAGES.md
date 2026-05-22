@@ -70,8 +70,8 @@ These behave identically here and on the Search surface. The same chip applied o
 | Chip label | What it matches | Example |
 |---|---|---|
 | **Tag** | Pages carrying the given tag. Enter a tag name or id in the inline editor. Multiple Tag chips AND together. | A **Tag** chip for `urgent` returns every page tagged urgent. |
-| **Page path** | Pages whose **title** matches a glob, case-insensitively. `*` is any run of characters, `?` is one. A bare word with no wildcard becomes a substring match. | `Projects/*` matches every page whose title starts with `Projects/`; `Alpha` matches any title containing "Alpha". |
-| **Has property** | Pages carrying a property key — optionally constrained to a value. Leave the value blank to match "has the key at all"; fill it in to match "key equals value." | **Has property** with key `status` matches any page with a `status` property; key `status`, value `draft` matches only `status = draft`. |
+| **Page path** | Pages whose **title** matches a glob, case-insensitively. `*` is any run of characters, `?` is one. A bare word with no wildcard becomes a substring match. Tick **Exclude** to invert the match (pages that do *not* match). | `Projects/*` matches every page whose title starts with `Projects/`; `Alpha` matches any title containing "Alpha"; `Projects/*` with **Exclude** returns everything outside `Projects/`. |
+| **Has property** | Pages constrained by a property key. The selector offers **is** / **is not** / **exists** / **doesn't exist**: **exists** / **doesn't exist** match on the key alone; **is** / **is not** compare against the value you type. | **Has property** key `status` + **exists** matches any page with a `status` property; key `status` + **is** + `draft` matches only `status = draft`; key `status` + **is not** + `draft` matches pages whose `status` is anything but draft. |
 | **Priority** | Pages with the given priority. The popover offers `A`, `B`, `C`. | **Priority** `A` returns the A-priority pages. |
 
 The popover also defines an implicit **Space** filter — you are always scoped to the active space — but it is never offered as a chip because it is always on.

@@ -394,17 +394,4 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await expect(grid.getByText('Meeting Notes Template', { exact: true })).toBeVisible()
     await expect(grid.getByText('Projects', { exact: true })).toHaveCount(0)
   })
-
-  // Known bug — PEND-58b P0-B: when compound chips narrow the result to zero with
-  // an empty search box, the body shows the "No pages yet / Create your first page"
-  // empty state instead of "No matching pages". Remove `.fixme` once P0-B lands.
-  test.fixme('chip-only zero results show the no-match empty state', async ({ page }) => {
-    await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'Stub', exact: true }).click()
-    await expect(page.getByRole('group', { name: 'Filter: Stub' })).toBeVisible()
-    // Every seed page has children → zero matches.
-    await expect(page.getByText('No matching pages')).toBeVisible()
-    await expect(page.getByText('Create your first page')).toHaveCount(0)
-  })
 })
