@@ -23,6 +23,7 @@ import {
   makeBlock,
   opLog,
   pageAliases,
+  pageLastModified,
   properties,
   propertyDefs,
   pushOp,
@@ -43,6 +44,376 @@ const returnEmptyPage: Handler = () => ({
   has_more: false,
   total_count: null,
 })
+
+/**
+ * A `[[ULID]]`-derived block-link edge — mock stand-in for `block_links`.
+ * `sourcePageId` is the owning page of the source block (a page block owns
+ * itself, a descendant carries its ancestor `page_id`, an orphan is `null`).
+ * It is what the same-page/self/orphan-source exclusion (migration 0070)
+ * reads to decide whether an edge counts toward a target page's inbound total.
+ */
+interface MockLinkEdge {
+  sourceId: string
+  targetId: string
+  sourcePageId: string | null
+}
+
+/**
+ * Scan every non-deleted block's content for `[[ULID]]` tokens and return the
+ * implied block-link edges. The faithful mock stand-in for the backend's
+ * `block_links` table — used to evaluate the link facets (`Orphan` /
+ * `HasNoInboundLinks`) and the `MostLinked` sort. Mirrors the `get_backlinks`
+ * scan. Each edge captures the source block's `page_id` so `pageLinkStats`
+ * can apply the same-page/self/orphan-source inbound exclusion (migration
+ * 0070 + `recompute_pages_cache_counts_for_pages`).
+ */
+function deriveLinkEdges(allBlocks: Map<string, Record<string, unknown>>): MockLinkEdge[] {
+  const LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
+  const edges: MockLinkEdge[] = []
+  for (const blk of allBlocks.values()) {
+    if (blk['deleted_at']) continue
+    const content = (blk['content'] as string | null) ?? ''
+    if (!content.includes('[[')) continue
+    const sourcePageId = (blk['page_id'] as string | null) ?? null
+    for (const m of content.matchAll(LINK_RE)) {
+      edges.push({ sourceId: blk['id'] as string, targetId: m[1] as string, sourcePageId })
+    }
+  }
+  return edges
+}
+
+/**
+ * Inbound/outbound link facts for a page, scoped to "page block OR any
+ * non-deleted descendant" (matching migration 0069 + the fixed `Orphan`
+ * outbound term, PEND-58b P0-A). `inbound` = distinct sources linking in
+ * (`COUNT(DISTINCT source_id)`); `hasOutbound` = the page or a descendant
+ * authors an outbound link.
+ *
+ * `inbound` applies the same-page/self/orphan-source exclusion that the live
+ * IPC reads off `pages_cache.inbound_link_count` (migration 0070 +
+ * `recompute_pages_cache_counts_for_pages`): an edge counts only when its
+ * source belongs to a DIFFERENT page (`src.page_id != target page` and
+ * `src.page_id IS NOT NULL`). A block linking to another block on the same
+ * page, a page-block self-link, or a link from an orphan/page-block source
+ * (no resolvable `page_id`) is NOT inbound. `hasOutbound` is unaffected by
+ * the exclusion — it answers "does this page author any outbound link".
+ */
+function pageLinkStats(
+  pageId: string,
+  pageScopeIds: Set<string>,
+  edges: ReadonlyArray<MockLinkEdge>,
+): { inbound: number; hasOutbound: boolean } {
+  const inboundSources = new Set<string>()
+  let hasOutbound = false
+  for (const e of edges) {
+    if (pageScopeIds.has(e.targetId) && e.sourcePageId !== null && e.sourcePageId !== pageId) {
+      inboundSources.add(e.sourceId)
+    }
+    if (pageScopeIds.has(e.sourceId)) hasOutbound = true
+  }
+  return { inbound: inboundSources.size, hasOutbound }
+}
+
+/**
+ * Metadata-rich page row mirroring the camelCase `PageWithMetadataRow` wire
+ * shape, plus the mock-internal `hasOutboundLink` used to evaluate `Orphan`.
+ */
+interface PageMetaRow {
+  id: string
+  blockType: string
+  content: string | null
+  parentId: string | null
+  position: number | null
+  deletedAt: string | null
+  todoState: string | null
+  priority: string | null
+  dueDate: string | null
+  scheduledDate: string | null
+  pageId: string | null
+  lastModifiedAt: string | null
+  inboundLinkCount: number
+  childBlockCount: number
+  hasOutboundLink: boolean
+  flags: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
+}
+
+/**
+ * Match a page title against the documented Page-path glob mini-language,
+ * case-insensitively. Mirrors `src-tauri/src/filters/primitive.rs::glob_to_like`
+ * semantics:
+ *   - `*` → any run of characters (`%`),
+ *   - `?` → exactly one character (`_`),
+ *   - a bare word (no `*`/`?`) → substring match (`%word%`),
+ *   - any other char is a literal.
+ * The match is anchored (the whole title must satisfy the pattern), which is
+ * how SQLite `LIKE` evaluates — the substring wrap on bare words is what makes
+ * `Alpha` match `My Alpha Page`.
+ */
+function globMatchesTitle(pattern: string, title: string): boolean {
+  const hasWildcard = /[*?]/.test(pattern)
+  // Build an anchored, case-insensitive RegExp mirroring glob_to_like's
+  // translation. Bare words (no wildcard) become substring matches.
+  let body = ''
+  for (const ch of pattern) {
+    if (ch === '*') body += '.*'
+    else if (ch === '?') body += '.'
+    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  const source = hasWildcard ? `^${body}$` : `^.*${body}.*$`
+  let re: RegExp
+  try {
+    re = new RegExp(source, 'i')
+  } catch {
+    return false
+  }
+  return re.test(title)
+}
+
+/**
+ * Does a page row satisfy one compound-filter primitive? The mock evaluates
+ * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
+ * `HasProperty` / `LastEdited` faithfully (mirroring the REAL backend
+ * semantics in `src-tauri/src/filters/primitive.rs`); any other primitive is
+ * a permissive no-op (the backend owns those, and FE tests that need them
+ * mock at the IPC boundary directly).
+ */
+function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>): boolean {
+  switch (f['type'] as string) {
+    case 'Stub':
+      return r.childBlockCount === 0
+    case 'HasNoInboundLinks':
+      return r.inboundLinkCount === 0
+    case 'Orphan':
+      return r.inboundLinkCount === 0 && !r.hasOutboundLink
+    case 'Tag':
+      return blockTags.get(r.id)?.has(f['tag'] as string) ?? false
+    case 'Priority':
+      return r.priority === (f['priority'] as string)
+    case 'PathGlob': {
+      // Case-insensitive glob over the page title. `exclude:true` inverts.
+      const hit = globMatchesTitle((f['pattern'] as string) ?? '', r.content ?? '')
+      return (f['exclude'] as boolean) ? !hit : hit
+    }
+    case 'HasProperty':
+      return hasPropertyMatches(r, f)
+    case 'LastEdited':
+      return lastEditedMatches(r, f['spec'] as Record<string, unknown> | undefined)
+    default:
+      return true
+  }
+}
+
+/**
+ * Evaluate a `HasProperty` primitive against a page's seeded `block_properties`
+ * (`properties` map, keyed on the page block id), mirroring the backend's
+ * `compile_has_property` predicate matrix. The wire shape is the nested
+ * `predicate: PropertyPredicate` (D8 — invalid op/value combos are
+ * unrepresentable):
+ *   - `Exists`     — key present,
+ *   - `NotExists`  — key absent,
+ *   - `Eq`         — `value_text` (or `value_ref` for a Ref value) equals,
+ *   - `Ne`         — no property row with that value (NOT EXISTS).
+ */
+function hasPropertyMatches(r: PageMetaRow, f: Record<string, unknown>): boolean {
+  const key = f['key'] as string
+  const predicate = f['predicate'] as Record<string, unknown> | undefined
+  const ptype = predicate?.['type'] as string | undefined
+  const prop = properties.get(r.id)?.get(key)
+  switch (ptype) {
+    case 'Exists':
+      return prop != null
+    case 'NotExists':
+      return prop == null
+    case 'Eq':
+    case 'Ne': {
+      const value = predicate?.['value'] as Record<string, unknown> | undefined
+      // Ref values compare against `value_ref`; Text against `value_text`.
+      const isRef = value?.['type'] === 'Ref'
+      const wanted = (value?.['value'] as string | undefined) ?? null
+      const stored = prop
+        ? ((isRef ? prop['value_ref'] : prop['value_text']) as string | null)
+        : null
+      const hit = prop != null && wanted != null && stored === wanted
+      // `Ne` = NOT EXISTS a row with key=? AND value=? — true when the key is
+      // absent OR present-but-different.
+      return ptype === 'Ne' ? !hit : hit
+    }
+    default:
+      return true
+  }
+}
+
+/**
+ * Evaluate a `LastEdited` primitive against the page's `lastModifiedAt`,
+ * mirroring the backend's `compile_last_edited` buckets (rolling window
+ * ending "now"):
+ *   - `Rolling{days}`   — modified within the last N days,
+ *   - `OlderThan{days}` — modified before the last-N-days cutoff (NULL counts
+ *     as older, matching the backend's `COALESCE(..., '0001-01-01')`),
+ *   - `Range{start,end}` — modified within `[start, end]` (inclusive).
+ */
+function lastEditedMatches(r: PageMetaRow, spec: Record<string, unknown> | undefined): boolean {
+  if (!spec) return true
+  const lm = r.lastModifiedAt
+  const cutoff = (days: number): string => {
+    const d = new Date()
+    d.setDate(d.getDate() - days)
+    return d.toISOString()
+  }
+  switch (spec['type'] as string) {
+    case 'Rolling': {
+      if (lm == null) return false
+      return lm >= cutoff(spec['days'] as number)
+    }
+    case 'OlderThan':
+      // NULL last-modified sorts as the oldest possible → counts as older.
+      return lm == null || lm < cutoff(spec['days'] as number)
+    case 'Range': {
+      if (lm == null) return false
+      const start = spec['start'] as string
+      const end = spec['end'] as string
+      return lm >= start && lm <= end
+    }
+    default:
+      return true
+  }
+}
+
+/** Comparator mirroring the backend's per-sort keyset (id is the tiebreaker). */
+function compareMetaRows(x: PageMetaRow, y: PageMetaRow, sort: string): number {
+  let primary = 0
+  switch (sort) {
+    case 'alphabetical':
+      primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
+      break
+    case 'recently-modified':
+      primary = (y.lastModifiedAt ?? '').localeCompare(x.lastModifiedAt ?? '')
+      break
+    case 'most-linked':
+      primary = y.inboundLinkCount - x.inboundLinkCount
+      break
+    case 'most-content':
+      primary = y.childBlockCount - x.childBlockCount
+      break
+    default:
+      primary = x.id.localeCompare(y.id)
+      break
+  }
+  return primary !== 0 ? primary : x.id.localeCompare(y.id)
+}
+
+/**
+ * Map a sort mode to the cursor `position` discriminator the backend stamps
+ * into the keyset cursor (mirrors `sort_discriminator` in
+ * `src-tauri/src/commands/pages.rs`). The frontend ships the wire sort enum
+ * (`default` / `recently-modified` / `most-linked` / `most-content`); the
+ * frontend-only `alphabetical` value resolves to the same discriminator as
+ * `default` because both ride the `default` wire keyset. The discriminator is
+ * what `validate_pages_metadata_cursor` compares to reject a cursor reused
+ * across a sort change (the `RequiresRefresh:` recovery path).
+ */
+function sortDiscriminator(sort: string): number {
+  switch (sort) {
+    case 'recently-modified':
+      return 2
+    case 'most-linked':
+      return 3
+    case 'most-content':
+      return 4
+    // `alphabetical` and `default` both ride the default-wire keyset.
+    default:
+      return 5
+  }
+}
+
+/**
+ * Encode a next-page cursor matching the backend's per-sort shape so cursor
+ * round-trips hit the same validation path. The `position` slot carries the
+ * sort discriminator (see `sortDiscriminator`).
+ */
+function encodeNextCursor(last: PageMetaRow, sort: string): string {
+  const disc = sortDiscriminator(sort)
+  const cursorObj: Record<string, unknown> = { id: last.id, version: 1, position: disc }
+  switch (sort) {
+    case 'alphabetical':
+      cursorObj['deleted_at'] = last.content
+      break
+    case 'recently-modified':
+      cursorObj['deleted_at'] = last.lastModifiedAt
+      break
+    case 'most-linked':
+      cursorObj['seq'] = last.inboundLinkCount
+      break
+    case 'most-content':
+      cursorObj['seq'] = last.childBlockCount
+      break
+  }
+  return btoa(JSON.stringify(cursorObj))
+}
+
+/**
+ * Resolve a page's `last_modified_at`, mirroring the backend's
+ * `MAX(op_log.created_at) WHERE block_id = b.id`: scan `opLog` for the latest
+ * entry whose payload `block_id` is this page, then fall back to the
+ * deterministic seeded `last_modified_at` stamp (set in `seed.ts`), and
+ * finally `null` for a page with neither.
+ */
+function pageLastModifiedAt(b: Record<string, unknown>): string | null {
+  const pageId = b['id'] as string
+  let maxOp: string | null = null
+  for (const o of opLog) {
+    let payload: Record<string, unknown>
+    try {
+      payload = JSON.parse(o.payload) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (payload['block_id'] !== pageId) continue
+    if (maxOp === null || o.created_at > maxOp) maxOp = o.created_at
+  }
+  const seeded = pageLastModified.get(pageId) ?? null
+  if (maxOp !== null && seeded !== null) return maxOp > seeded ? maxOp : seeded
+  return maxOp ?? seeded
+}
+
+/** Assemble one `PageMetaRow` from a page block + its (already-filtered) descendants. */
+function buildPageMetaRow(
+  b: Record<string, unknown>,
+  descendants: Array<Record<string, unknown>>,
+  edges: ReadonlyArray<MockLinkEdge>,
+): PageMetaRow {
+  const pageId = b['id'] as string
+  const pageScopeIds = new Set<string>([pageId, ...descendants.map((d) => d['id'] as string)])
+  const { inbound, hasOutbound } = pageLinkStats(pageId, pageScopeIds, edges)
+  return {
+    id: b['id'] as string,
+    blockType: 'page',
+    content: (b['content'] as string | null) ?? null,
+    parentId: (b['parent_id'] as string | null) ?? null,
+    position: (b['position'] as number | null) ?? null,
+    deletedAt: null,
+    todoState: (b['todo_state'] as string | null) ?? null,
+    priority: (b['priority'] as string | null) ?? null,
+    dueDate: (b['due_date'] as string | null) ?? null,
+    scheduledDate: (b['scheduled_date'] as string | null) ?? null,
+    pageId: (b['page_id'] as string | null) ?? null,
+    // last_modified_at mirrors the backend's `MAX(op_log.created_at)` over
+    // the page block: take the latest op_log entry targeting this page,
+    // falling back to the deterministic seeded `last_modified_at` stamp (and
+    // finally null). This gives the `last-edited:` compound filter and the
+    // recently-modified sort real, comparable ISO timestamps.
+    lastModifiedAt: pageLastModifiedAt(b),
+    inboundLinkCount: inbound,
+    childBlockCount: descendants.length,
+    hasOutboundLink: hasOutbound,
+    flags: {
+      hasTags: (blockTags.get(b['id'] as string)?.size ?? 0) > 0,
+      hasTodo: descendants.some((d) => d['todo_state'] != null),
+      hasScheduled: descendants.some((d) => d['scheduled_date'] != null),
+      hasDue: descendants.some((d) => d['due_date'] != null),
+    },
+  }
+}
 
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
@@ -234,154 +605,74 @@ export const HANDLERS: Record<string, Handler> = {
     const cursor = a['cursor'] as string | null
     const limit = Math.min(Number((a['limit'] as number | null) ?? 50), 100)
 
+    // Block-link edges derived from `[[ULID]]` tokens (mock stand-in for the
+    // backend's `block_links` table) so the link facets and `MostLinked` sort
+    // reflect the seed's real topology.
+    const edges = deriveLinkEdges(blocks)
+
     // Build the metadata-rich row for every page in the space.
-    // Review Round 1: shape mirrors the camelCase wire format from
-    // `PageWithMetadataRow` with the typed `flags` substructure
-    // replacing the prior `has_property_flags` bitmask.
-    interface MetaRow {
-      id: string
-      blockType: string
-      content: string | null
-      parentId: string | null
-      position: number | null
-      deletedAt: string | null
-      todoState: string | null
-      priority: string | null
-      dueDate: string | null
-      scheduledDate: string | null
-      pageId: string | null
-      lastModifiedAt: string | null
-      inboundLinkCount: number
-      childBlockCount: number
-      flags: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
-    }
-    const rows: MetaRow[] = []
+    const rows: PageMetaRow[] = []
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'page' || b['deleted_at']) continue
-      const blockProps = properties.get(b['id'] as string)
-      const spaceProp = blockProps?.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
-
-      // Descendants (page_id matches the page, id != page).
+      if (properties.get(b['id'] as string)?.get('space')?.['value_ref'] !== spaceId) continue
       const descendants = Array.from(blocks.values()).filter(
         (d) => d['page_id'] === b['id'] && !d['deleted_at'] && d['id'] !== b['id'],
       )
-      const childCount = descendants.length
-      // The mock doesn't model the `block_links` table (backend derives it
-      // from `[[ULID]]` tokens in content via the materializer). Keep the
-      // mock honest: report 0 inbound links — tests that depend on
-      // realistic link counts should mock at the IPC boundary directly.
-      const inboundLinks = 0
-
-      const hasTags = (blockTags.get(b['id'] as string)?.size ?? 0) > 0
-      const hasTodo = descendants.some((d) => d['todo_state'] != null)
-      const hasScheduled = descendants.some((d) => d['scheduled_date'] != null)
-      const hasDue = descendants.some((d) => d['due_date'] != null)
-
-      // Mock doesn't model op_log; treat creation time as id-derived.
-      const lastModifiedAt = (b['id'] as string).slice(0, 10)
-
-      rows.push({
-        id: b['id'] as string,
-        blockType: 'page',
-        content: (b['content'] as string | null) ?? null,
-        parentId: (b['parent_id'] as string | null) ?? null,
-        position: (b['position'] as number | null) ?? null,
-        deletedAt: null,
-        todoState: (b['todo_state'] as string | null) ?? null,
-        priority: (b['priority'] as string | null) ?? null,
-        dueDate: (b['due_date'] as string | null) ?? null,
-        scheduledDate: (b['scheduled_date'] as string | null) ?? null,
-        pageId: (b['page_id'] as string | null) ?? null,
-        lastModifiedAt,
-        inboundLinkCount: inboundLinks,
-        childBlockCount: childCount,
-        flags: { hasTags, hasTodo, hasScheduled, hasDue },
-      })
+      rows.push(buildPageMetaRow(b, descendants, edges))
     }
 
-    // Sort.
-    rows.sort((x, y) => {
-      let primary = 0
-      switch (sort) {
-        case 'alphabetical':
-          primary = (x.content ?? '').toLowerCase().localeCompare((y.content ?? '').toLowerCase())
-          break
-        case 'recently-modified':
-          primary = (y.lastModifiedAt ?? '').localeCompare(x.lastModifiedAt ?? '')
-          break
-        case 'most-linked':
-          primary = y.inboundLinkCount - x.inboundLinkCount
-          break
-        case 'most-content':
-          primary = y.childBlockCount - x.childBlockCount
-          break
-        case 'default':
-        default:
-          primary = x.id.localeCompare(y.id)
-          break
-      }
-      return primary !== 0 ? primary : x.id.localeCompare(y.id)
-    })
+    // PEND-58 Phase 3 — AND-compose the requested filter primitives, then sort.
+    const filters = (filter['filters'] as Array<Record<string, unknown>> | undefined) ?? []
+    const matched = rows.filter((r) => filters.every((f) => metaRowMatchesFilter(r, f)))
+    matched.sort((x, y) => compareMetaRows(x, y, sort))
 
     // Cursor: skip rows up to AND INCLUDING the cursor's anchor.
     let startIdx = 0
     if (cursor) {
-      // Cursors are opaque base64-encoded JSON; decode + locate.
+      let decoded: Record<string, unknown> | null = null
       try {
-        const decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
-        const anchorId = decoded['id'] as string
-        const idx = rows.findIndex((r) => r.id === anchorId)
-        if (idx >= 0) startIdx = idx + 1
+        decoded = JSON.parse(atob(cursor)) as Record<string, unknown>
       } catch {
-        // Malformed cursor: start from the top.
+        // Malformed cursor: start from the top (mirrors a cursorless fetch).
+        decoded = null
+      }
+      if (decoded) {
+        // Cross-sort cursor rejection — mirror the backend's
+        // `validate_pages_metadata_cursor`: a cursor minted under one sort
+        // carries that sort's `position` discriminator; reusing it after a
+        // sort change is rejected with a `Validation` error whose message
+        // carries the `RequiresRefresh:` prefix the frontend's
+        // `withCursorRecovery` recognises (drop cursor → refetch page 1).
+        // The thrown value carries the `{ kind, message }` AppError wire
+        // shape (an `Error` instance augmented with `kind`, so it satisfies
+        // both `isAppError` — `'kind' in err && 'message' in err` — and the
+        // `useThrowOnlyError` lint) so `err.kind === 'validation'` narrows.
+        const cursorDisc = decoded['position'] as number | undefined
+        if (cursorDisc !== sortDiscriminator(sort)) {
+          throw Object.assign(
+            new Error(`RequiresRefresh: cursor sort mismatch (expected ${sort})`),
+            { kind: 'validation' },
+          )
+        }
+        const idx = matched.findIndex((r) => r.id === (decoded['id'] as string))
+        if (idx >= 0) startIdx = idx + 1
       }
     }
-    const slice = rows.slice(startIdx, startIdx + limit + 1)
+    const slice = matched.slice(startIdx, startIdx + limit + 1)
     const hasMore = slice.length > limit
     const items = hasMore ? slice.slice(0, limit) : slice
-    let nextCursor: string | null = null
     const last = items.at(-1)
-    if (hasMore && last) {
-      // Build a cursor whose shape matches the backend's per-sort
-      // encoding so a round-trip survives the mock.
-      // Stamp the sort-mode discriminator into the `position` slot so
-      // the mock matches the backend's `sort_discriminator` mapping
-      // (1=alphabetical, 2=recently-modified, 3=most-linked,
-      // 4=most-content, 5=default). Frontend tests that round-trip
-      // cursors hit the same validation path as production.
-      const disc =
-        sort === 'alphabetical'
-          ? 1
-          : sort === 'recently-modified'
-            ? 2
-            : sort === 'most-linked'
-              ? 3
-              : sort === 'most-content'
-                ? 4
-                : 5
-      const cursorObj: Record<string, unknown> = {
-        id: last.id,
-        version: 1,
-        position: disc,
-      }
-      switch (sort) {
-        case 'alphabetical':
-          cursorObj['deleted_at'] = last.content
-          break
-        case 'recently-modified':
-          cursorObj['deleted_at'] = last.lastModifiedAt
-          break
-        case 'most-linked':
-          cursorObj['seq'] = last.inboundLinkCount
-          break
-        case 'most-content':
-          cursorObj['seq'] = last.childBlockCount
-          break
-      }
-      nextCursor = btoa(JSON.stringify(cursorObj))
-    }
-    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: null }
+    const nextCursor = hasMore && last ? encodeNextCursor(last, sort) : null
+    // PEND-58d D6 (null-retention) — mirror the backend: the `total_count`
+    // COUNT runs ONLY on the first page (`cursor == null`). The filtered-set
+    // total does not change as the user pages with the same filters, so
+    // recomputing it on every cursor page is wasted work. Subsequent (cursor)
+    // pages return `total_count: null`; the frontend (`PageBrowser`'s
+    // `displayTotalCount`) retains the first page's value. Returning the full
+    // filtered-set size (not the page slice) on page 1 keeps the count chip
+    // and e2e count assertions reflecting the active filters.
+    const totalCount = cursor ? null : matched.length
+    return { items, next_cursor: nextCursor, has_more: hasMore, total_count: totalCount }
   },
 
   // Every page in the space whose `template` property is set to 'true'.

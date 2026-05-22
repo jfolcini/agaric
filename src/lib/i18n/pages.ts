@@ -134,15 +134,16 @@ export const pages: Record<string, string> = {
   'pageBrowser.deleteFailed': 'Failed to delete page: {{error}}',
   'pageBrowser.spaceNotReady': 'Loading spaces\u2026 try again in a moment',
   'pageBrowser.retry': 'Retry',
-  'pageBrowser.exportAll': 'Export all pages',
-  'pageBrowser.exporting': 'Exporting...',
-  'pageBrowser.exportSuccess': 'Pages exported as ZIP',
-  'pageBrowser.exportFailed': 'Failed to export pages',
   'pageBrowser.searchPlaceholder': 'Search pages...',
   'pageBrowser.noMatches': 'No matching pages',
   'pageBrowser.countAll_one': '{{count}} page',
   'pageBrowser.countAll_other': '{{count}} pages',
   'pageBrowser.countFiltered': '{{loaded}} of {{total}} matching',
+  // PEND-58d D11 — chips active without a text query: numerator and
+  // denominator must share a basis, so show just the filtered total
+  // ("312 matching pages") instead of "loaded of total".
+  'pageBrowser.countMatching_one': '{{count}} matching page',
+  'pageBrowser.countMatching_other': '{{count}} matching pages',
   'pageBrowser.sortLabel': 'Sort order',
   'pageBrowser.sortRecent': 'Recent',
   'pageBrowser.sortAlphabetical': 'Alphabetical',
@@ -152,11 +153,16 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostContent': 'Most content',
   'pageBrowser.sortDefault': 'Default',
   'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
+  // PEND-58d D3 — cue for frontend-only sorts that reorder only the
+  // loaded pages while more remain to load.
+  'pageBrowser.frontendSortHint': 'Sorted within loaded pages',
+  'pageBrowser.frontendSortHintTooltip':
+    'This order covers the pages loaded so far. Scroll to load more pages for the full global order.',
   'pageBrowser.densityLabel': 'Row density',
   'pageBrowser.densityCompact': 'Compact',
   'pageBrowser.densityRegular': 'Regular',
   'pageBrowser.densityExpanded': 'Expanded',
-  'pageBrowser.densityPersistedTooltip': 'Your density (persisted) is saved across sessions',
+  'pageBrowser.densityPersistedTooltip': 'Your density is saved across sessions',
   'pageBrowser.starPage': 'Star page',
   'pageBrowser.unstarPage': 'Unstar page',
   'pageBrowser.pageList': 'Page list',
@@ -243,10 +249,83 @@ export const pages: Record<string, string> = {
   'pageBrowser.metadata.children_other': '{{count}} child blocks',
   'pageBrowser.metadata.lastModified': 'Last modified {{relative}}',
   'pageBrowser.metadata.never': 'never',
-  'pageBrowser.metadata.summaryTooltip':
-    '{{title}} — {{inbound}}, {{children}}, modified {{relative}}',
   'pageBrowser.metadata.propertyTag': 'tags',
   'pageBrowser.metadata.propertyTodo': 'todos',
   'pageBrowser.metadata.propertyScheduled': 'scheduled',
   'pageBrowser.metadata.propertyDue': 'due',
+  // PEND-58 Phase 3+4 — compound-filter chip-row + Add-Filter popover
+  'pageBrowser.filter.addFilter': 'Add filter',
+  'pageBrowser.filter.addFilterDialogLabel': 'Add a filter',
+  'pageBrowser.filter.appliedFiltersLabel': 'Active filters',
+  'pageBrowser.filter.filterGroup': 'Filter: {{label}}',
+  'pageBrowser.filter.removeFilter': 'Remove filter {{label}}',
+  'pageBrowser.filter.manyFiltersWarning': 'Many filters can slow the view.',
+  // PEND-58d D12 — clear-all control on the chip row.
+  'pageBrowser.filter.clearAll': 'Clear all',
+  'pageBrowser.filter.clearAllLabel': 'Clear all filters',
+  'pageBrowser.filter.sharedGroup': 'Filters',
+  'pageBrowser.filter.pagesGroup': 'Pages',
+  'pageBrowser.filter.facetTag': 'Tag',
+  'pageBrowser.filter.facetPath': 'Page path',
+  'pageBrowser.filter.facetHasProperty': 'Has property',
+  'pageBrowser.filter.facetPriority': 'Priority',
+  'pageBrowser.filter.facetOrphan': 'Orphan',
+  'pageBrowser.filter.facetStub': 'Stub',
+  'pageBrowser.filter.facetHasNoInboundLinks': 'No inbound links',
+  'pageBrowser.filter.lastEdited.today': 'Edited today',
+  'pageBrowser.filter.lastEdited.thisWeek': 'Edited this week',
+  'pageBrowser.filter.lastEdited.thisMonth': 'Edited this month',
+  'pageBrowser.filter.lastEdited.older': 'Edited long ago',
+  'pageBrowser.filter.apply': 'Apply',
+  'pageBrowser.filter.back': 'Back',
+  'pageBrowser.filter.tagPlaceholder': 'Tag id',
+  'pageBrowser.filter.pathPlaceholder': 'e.g. Projects/*',
+  'pageBrowser.filter.propertyKeyPlaceholder': 'Property key',
+  'pageBrowser.filter.propertyValuePlaceholder': 'Value',
+  // PEND-58d D24 — property predicate op selector + path exclude toggle.
+  'pageBrowser.filter.propertyOpLabel': 'Comparison',
+  'pageBrowser.filter.propertyOpEq': 'is',
+  'pageBrowser.filter.propertyOpNe': 'is not',
+  'pageBrowser.filter.propertyOpExists': 'exists',
+  'pageBrowser.filter.propertyOpNotExists': "doesn't exist",
+  'pageBrowser.filter.pathExcludeLabel': 'Exclude matching pages',
+  'pageBrowser.filter.summaryTag': 'tag: {{tag}}',
+  'pageBrowser.filter.summaryPath': 'path: {{pattern}}',
+  'pageBrowser.filter.summaryPathExclude': 'not path: {{pattern}}',
+  'pageBrowser.filter.summaryHasProperty': 'has: {{key}}',
+  'pageBrowser.filter.summaryNotHasProperty': 'no: {{key}}',
+  'pageBrowser.filter.summaryProperty': '{{key}} {{op}} {{value}}',
+  'pageBrowser.filter.summaryLastEditedRolling': 'edited ≤ {{days}}d',
+  'pageBrowser.filter.summaryLastEditedRange': 'edited {{start}}…{{end}}',
+  'pageBrowser.filter.summarySpace': 'this space',
+  'pageBrowser.filter.summaryPriority': 'priority {{priority}}',
+  'pageBrowser.filter.summaryUnknown': 'filter',
+  // PEND-58b — a11y: live-region announcements + facet descriptions
+  'pageBrowser.filter.announceAdded': 'Filter added: {{label}}.',
+  'pageBrowser.filter.announceRemoved': 'Filter removed: {{label}}.',
+  'pageBrowser.filter.announceResults_one': '{{count}} result.',
+  'pageBrowser.filter.announceResults_other': '{{count}} results.',
+  // PEND-58e E16 — clear-all of N chips announces a single dedicated
+  // message (a per-chip `.find()` would announce only the first removed).
+  'pageBrowser.filter.announceCleared': 'Cleared all filters.',
+  // PEND-58e E18 — the backend rejects a malformed/disallowed compound
+  // filter with `Validation("InvalidFilter: …")`; surface a specific
+  // toast instead of the generic "Failed to load pages".
+  'pageBrowser.filter.invalidFilter': 'That filter is invalid and was not applied.',
+  // PEND-58d D24 — tightened so Orphan and "No inbound links" read as clearly
+  // distinct: Orphan is fully isolated (no links either way), whereas "No
+  // inbound links" is the looser inbound-only sibling (the page may still link
+  // out). Stub is about content, not links.
+  'pageBrowser.filter.facetOrphanDesc': 'Fully isolated — no inbound links and no outbound links.',
+  'pageBrowser.filter.facetStubDesc': 'A titled page with no content blocks.',
+  'pageBrowser.filter.facetHasNoInboundLinksDesc':
+    'Nothing links to this page (it may still link out).',
+  // PEND-58e E19 — short descriptions for the value-bearing facets so they read
+  // as clearly as the boolean ones in the Add-Filter popover.
+  'pageBrowser.filter.facetTagDesc': 'Pages tagged with a specific tag id.',
+  'pageBrowser.filter.facetPathDesc': 'Pages whose path matches a glob pattern.',
+  'pageBrowser.filter.facetHasPropertyDesc': 'Pages with a property matching a condition.',
+  'pageBrowser.filter.facetLastEditedDesc': 'Pages edited within the chosen window.',
+  'pageBrowser.filter.facetPriorityDesc': 'Pages set to a priority level.',
+  'pageBrowser.filter.lastEditedGroup': 'Last edited',
 }

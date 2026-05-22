@@ -37,6 +37,14 @@ export const pageAliases: Map<string, string[]> = new Map()
 // Attachment store: attachment_id → AttachmentRow-like object
 export const attachments: Map<string, Record<string, unknown>> = new Map()
 
+// Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
+// computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
+// (it is NOT a `blocks` column), so the mock keeps it in a dedicated store
+// rather than on the BlockRow. Seeded with deterministic values below and
+// read by the `list_pages_with_metadata` handler for the `last-edited:`
+// compound filter and the recently-modified sort.
+export const pageLastModified: Map<string, string> = new Map()
+
 // Op log for undo/redo/history
 export interface MockOpLogEntry {
   [key: string]: unknown
@@ -76,6 +84,19 @@ export function offsetDate(days: number): string {
   const d = new Date()
   d.setDate(d.getDate() + days)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Full ISO-8601 timestamp at `now + days` (negative = past). Used to stamp
+ * a deterministic `last_modified_at` on seeded page blocks so the
+ * `last-edited:` compound filter (Rolling / OlderThan / Range buckets) and
+ * the `recently-modified` sort have real, comparable timestamps to work
+ * against. Mirrors the backend's `MAX(op_log.created_at)` value shape.
+ */
+export function offsetIso(days: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + days)
+  return d.toISOString()
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +175,7 @@ export function seedBlocks(): void {
   propertyDefs.clear()
   pageAliases.clear()
   attachments.clear()
+  pageLastModified.clear()
   counter = 0
   opLog.length = 0
   opSeqCounter = 0
@@ -411,6 +433,15 @@ export function seedBlocks(): void {
       0,
     ),
   )
+  // NOTE (PEND-58e E12): Quick Notes is a SHARED fixture that many e2e specs
+  // depend on (editor/keyboard block-nth indexing, inner-links `*ideas*` →
+  // `<em>`, import-export snapshots). Adding a same-page `[[…]]` link to either
+  // content block to exercise the inbound same-page exclusion broke those
+  // specs (a block-ref reorders the rendered `block-static` nodes; a page-ref
+  // perturbed static rendering). The same-page exclusion is instead covered by
+  // the *dynamic* mock unit test `a fresh same-page link does not bump the
+  // inbound count` (it adds the edge at runtime) plus the backend's Rust
+  // exclusion tests — neither of which has to mutate this shared seed.
   blocks.set(
     SEED_IDS.BLOCK_QN_2,
     makeBlock(
@@ -527,6 +558,118 @@ export function seedBlocks(): void {
     value_date: null,
     value_ref: null,
   })
+
+  // Stamp a deterministic `last_modified_at` on every canonical seed page.
+  // These are intentionally OLD (≈90 days ago) so that (a) under the
+  // `recently-modified` sort the canonical pages rank LAST (the bulk pages
+  // seeded below are recent), and (b) the `last-edited:older` /
+  // `last-edited:` rolling-window buckets can narrow the set — canonical
+  // pages match `OlderThan`, bulk pages match `Rolling`.
+  for (const pageId of [
+    SEED_IDS.PAGE_GETTING_STARTED,
+    SEED_IDS.PAGE_QUICK_NOTES,
+    SEED_IDS.PAGE_DAILY,
+    SEED_IDS.PAGE_PROJECTS,
+    SEED_IDS.PAGE_MEETINGS,
+    SEED_IDS.PAGE_TMPL_MEETING,
+  ]) {
+    pageLastModified.set(pageId, offsetIso(-90))
+  }
+
+  seedBulkPages()
+  seedFacetFixturePage()
+}
+
+/**
+ * Opt-in single fixture page exercising the *page-level* `Tag` and `Priority`
+ * facets, which the canonical seed never sets on a page block (its tags and
+ * priorities live on child blocks, and the `list_pages_with_metadata` filter
+ * evaluates `Tag` / `Priority` against the PAGE id). Gated behind
+ * `localStorage['__mockFacetFixture'] === 'true'` so the default seed stays at
+ * exactly 6 pages (the `tauri-mock.test.ts` count assertion and every other
+ * spec are unaffected). When enabled it adds ONE page:
+ *
+ *   "Facet Fixture" — tag `work` (`TAG_WORK`) + priority `1`, one child block
+ *   (not a `Stub`), no links (so it is also an `Orphan`).
+ *
+ * Behavioural e2e can then assert `Tag(work)` and `Priority(1)` each narrow to
+ * exactly this one page rather than to the (otherwise empty) page-level set.
+ */
+function seedFacetFixturePage(): void {
+  let enabled = false
+  try {
+    enabled = globalThis.localStorage?.getItem('__mockFacetFixture') === 'true'
+  } catch {
+    enabled = false
+  }
+  if (!enabled) return
+  const pageId = fakeId()
+  const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
+  // PEND-58e E1: the Priority facet now offers the configured levels
+  // (`DEFAULT_PRIORITY_LEVELS` = '1'/'2'/'3'), not the old 'A'/'B'/'C'. The
+  // canonical seed sets no page-level priority, so '1' here is unique and the
+  // facet narrows to exactly this page.
+  page['priority'] = '1'
+  blocks.set(pageId, page)
+  pageLastModified.set(pageId, offsetIso(-90))
+  if (!properties.has(pageId)) properties.set(pageId, new Map())
+  properties.get(pageId)?.set('space', {
+    block_id: pageId,
+    key: 'space',
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: 'SPACE_PERSONAL',
+    value_bool: null,
+  })
+  // Page-level tag so the `Tag` facet (which reads `blockTags.get(pageId)`)
+  // matches this page directly.
+  blockTags.set(pageId, new Set([SEED_IDS.TAG_WORK]))
+  const childId = fakeId()
+  blocks.set(childId, makeBlock(childId, 'content', 'Facet Fixture body', pageId, 0))
+}
+
+/**
+ * Opt-in bulk pages for pagination / virtualization e2e. Driven by
+ * `localStorage['__mockExtraPages']` (default 0 → the canonical fixture and
+ * every other spec are unaffected). Each page is space-stamped, carries one
+ * child content block (so it is NOT a `Stub`), and has no `[[links]]` (so it
+ * IS an `Orphan` / `HasNoInboundLinks`). Titles are zero-padded for stable
+ * alphabetical ordering: "Bulk Page 001", "Bulk Page 002", …
+ */
+function seedBulkPages(): void {
+  let count = 0
+  try {
+    count = Number(globalThis.localStorage?.getItem('__mockExtraPages') ?? '0') || 0
+  } catch {
+    count = 0
+  }
+  count = Math.min(Math.max(count, 0), 500)
+  for (let i = 1; i <= count; i++) {
+    const pageId = fakeId()
+    const title = `Bulk Page ${String(i).padStart(3, '0')}`
+    blocks.set(pageId, makeBlock(pageId, 'page', title, null, 100 + i))
+    // Recent, monotonically-decreasing-by-index timestamps: bulk pages are
+    // newer than the canonical seed pages (≈90 days old) so they sort FIRST
+    // under `recently-modified` and match the `last-edited:` rolling-window
+    // buckets (today / this-week). Index 1 is the newest (now), each
+    // subsequent page one hour older — all still within the last few days.
+    const bulkTs = new Date()
+    bulkTs.setHours(bulkTs.getHours() - (i - 1))
+    pageLastModified.set(pageId, bulkTs.toISOString())
+    if (!properties.has(pageId)) properties.set(pageId, new Map())
+    properties.get(pageId)?.set('space', {
+      block_id: pageId,
+      key: 'space',
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: 'SPACE_PERSONAL',
+      value_bool: null,
+    })
+    const childId = fakeId()
+    blocks.set(childId, makeBlock(childId, 'content', `${title} body`, pageId, 0))
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -351,6 +351,12 @@ Architectural contract for the Pages browser. Detail and rationale live in [`doc
 3. **`DensityRow` is Pages-specific.** Lives at `src/components/PageBrowser/DensityRow.tsx`. **Do not import it from outside `PageBrowser/`.** If a second consumer (TrashView, HistoryView, …) needs this shape, propose an extraction PR first — premature extraction couples three views to a single primitive that has to grow optional props for each one's metadata.
 4. **Sort comparators must not allocate per-comparison.** Any expensive lookup (the `getRecentPages()` `Map`, the metadata accessor) is materialised once before `Array.sort`; the comparator body reads scalars off rows and returns an integer. No `.map`, no `new Date()`, no closure-over-row inside the comparator. Adding a sort mode to `usePageBrowserSort` follows this pattern.
 
+## Filters
+
+Cross-surface filter contract. Detail and rationale live in [`docs/architecture/filters.md`](docs/architecture/filters.md); the invariant below is the load-bearing rule.
+
+1. **The `FilterPrimitive` / `Projection` engine governs the Pages surface; it is the *intended* (not yet realized) cross-surface contract.** A `FilterPrimitive` (`src-tauri/src/filters/primitive.rs`) is a *value*; a `Projection` impl is *how it compiles to SQL* for a surface. Per-surface behaviour lives **only** in two places: the `PAGES_ALLOWED_KEYS` / `SEARCH_ALLOWED_KEYS` static sets (which keys a surface admits) and that surface's `Projection` `compile_*` impl (how it compiles). Adding a primitive to a surface is a **deliberate diff in both** `ALLOWED_KEYS` and the `Projection` impl — never a silent two-codepath drift. Pages-only `compile_*` reads materialised `pages_cache` columns and requires the caller to `LEFT JOIN pages_cache pc ON pc.page_id = b.id`; compiled fragments are cost-ordered (`cost_hint`) and have their `?` placeholders renumbered to explicit `?N` positions before splicing. **Current reality (PEND-58d D27):** only `PagesProjection` is wired into an IPC. Search still filters through its own subsystem — the inline-query parser at `src/lib/search-query/` (see *Search & FTS* invariant 3) plus `src-tauri/src/fts/` — and `SearchProjection` is a compiled-but-unwired stub. So the "single source of truth shared with Search" guarantee is **aspirational**: do not assume a primitive added here changes Search behaviour, and do not delete the legacy Search filter path on the belief that this engine already backs it.
+
 ## Android
 
 - **Status:** Both debug and release APKs build, install, and launch successfully.

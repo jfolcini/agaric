@@ -69,6 +69,16 @@ export interface GroupedRowsResult {
   pageIndexToRowIndex: number[]
   hasStarred: boolean
   hasPages: boolean
+  /**
+   * E7 — the count of DISTINCT matched pages. `filteredPages` is the
+   * grouped-row array, not a flat page list: a namespace subtree
+   * collapses to a single `tree-page` row (under-count) and a
+   * starred+namespaced page appears once under `Starred` and again
+   * nested under `Pages` (double-count). Drive the "X of Y matching"
+   * count chip and the SR result count from THIS number, never
+   * `filteredPages.length`.
+   */
+  matchedPageCount: number
 }
 
 /**
@@ -97,6 +107,8 @@ export function buildSinglePageBranch(
     pageIndexToRowIndex: idMap,
     hasStarred: false,
     hasPages: sorted.length > 0,
+    // Single-page branch: every input row is a distinct flat page.
+    matchedPageCount: sorted.length,
   }
 }
 
@@ -199,6 +211,11 @@ export function buildMultiPageBranch(
     pageIndexToRowIndex: idMap,
     hasStarred: starredSorted.length > 0,
     hasPages: sortedTopLevel.length > 0,
+    // E7 — `filteredPagesUnsorted` is the distinct matched-page set the
+    // grouping consumed: one entry per page, before namespace collapse
+    // and before the starred+namespaced duplication. That is the
+    // honest "matching pages" count.
+    matchedPageCount: filteredPagesUnsorted.length,
   }
 }
 
@@ -208,8 +225,21 @@ export function buildMultiPageBranch(
  *
  *  - alphabetical → by page.content (flat) / node.name (tree).
  *  - created → by ULID (flat = own id; tree = newest descendant id).
- *  - recent → by visit time with name fallback (flat = own time;
- *    tree = newest descendant time across its subtree).
+ *  - recent → by visit time (flat = own time; tree = newest descendant
+ *    time across its subtree).
+ *
+ * E14 — equal-key ties break by `id ASC` (flat = own id; tree =
+ * lowest descendant page id), matching the server keyset's
+ * `id ASC` tiebreaker so equal-key units don't reshuffle as pages
+ * stream in. (Earlier the `recent` arm fell back to a title compare,
+ * which diverged from the server order on every visit-less page.)
+ *
+ * E17 — decorate-once (Schwartzian transform): each unit's sort key
+ * (`name` / `createdId` / `recentTime`) AND its `id`-tiebreak key are
+ * computed a single time into a decorated tuple, so the per-comparison
+ * comparator reads scalars only — no tree walk / allocation inside
+ * `.sort()`. Bounded to ≤50 loaded rows but the decorate-once form
+ * keeps the comparator allocation-free per the Pages-view invariant.
  *
  * Pulled to module scope so the memo dependency list stays clean.
  */
@@ -218,42 +248,80 @@ export function sortTopLevelUnits(
   sortOption: SortOption,
   recentMap: Map<string, string> | null,
 ): PagesTopLevelUnit[] {
-  const out = [...units]
-  const nameOf = (u: PagesTopLevelUnit): string =>
-    u.type === 'page' ? (u.page.content ?? '') : u.node.name
-  const createdIdOf = (u: PagesTopLevelUnit): string => {
-    if (u.type === 'page') return u.page.id
-    const ids: string[] = []
-    collectDescendantPageIds(u.node, ids)
-    return ids.length > 0 ? ids.reduce((a, b) => (a > b ? a : b)) : ''
+  // Decorate each unit once with its precomputed keys. `tieId` is the
+  // `id ASC` tiebreak key (own id for a flat page, lowest descendant
+  // page id for a tree).
+  type Decorated = {
+    unit: PagesTopLevelUnit
+    name: string
+    createdId: string
+    recentTime: string | null
+    tieId: string
   }
-  const recentTimeOf = (u: PagesTopLevelUnit): string | null => {
-    if (recentMap == null) return null
-    if (u.type === 'page') return recentMap.get(u.page.id) ?? null
-    const ids: string[] = []
-    collectDescendantPageIds(u.node, ids)
-    let best: string | null = null
-    for (const id of ids) {
-      const t = recentMap.get(id)
-      if (t && (best == null || t > best)) best = t
+  const decorated: Decorated[] = units.map((u) => {
+    if (u.type === 'page') {
+      const recentTime = recentMap?.get(u.page.id) ?? null
+      return {
+        unit: u,
+        name: u.page.content ?? '',
+        createdId: u.page.id,
+        recentTime,
+        tieId: u.page.id,
+      }
     }
-    return best
-  }
+    // Tree unit: walk descendants once for both the created-key (newest
+    // ULID) and the recent-key (newest visit time), and the id tiebreak
+    // (lowest ULID).
+    const ids: string[] = []
+    collectDescendantPageIds(u.node, ids)
+    let newestId = ''
+    let lowestId = ''
+    let newestTime: string | null = null
+    for (const id of ids) {
+      if (newestId === '' || id > newestId) newestId = id
+      if (lowestId === '' || id < lowestId) lowestId = id
+      if (recentMap != null) {
+        const t = recentMap.get(id)
+        if (t && (newestTime == null || t > newestTime)) newestTime = t
+      }
+    }
+    return {
+      unit: u,
+      name: u.node.name,
+      createdId: newestId,
+      recentTime: newestTime,
+      tieId: lowestId,
+    }
+  })
+
   if (sortOption === 'alphabetical') {
-    out.sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+    decorated.sort((a, b) => {
+      const byName = a.name.localeCompare(b.name)
+      return byName !== 0 ? byName : a.tieId.localeCompare(b.tieId)
+    })
   } else if (sortOption === 'created') {
-    out.sort((a, b) => createdIdOf(b).localeCompare(createdIdOf(a)))
+    decorated.sort((a, b) => {
+      const byCreated = b.createdId.localeCompare(a.createdId)
+      return byCreated !== 0 ? byCreated : a.tieId.localeCompare(b.tieId)
+    })
   } else if (sortOption === 'recent') {
-    out.sort((a, b) => {
-      const at = recentTimeOf(a)
-      const bt = recentTimeOf(b)
-      if (at && bt) return bt.localeCompare(at)
-      if (at) return -1
-      if (bt) return 1
-      return nameOf(a).localeCompare(nameOf(b))
+    decorated.sort((a, b) => {
+      const at = a.recentTime
+      const bt = b.recentTime
+      if (at && bt) {
+        const byTime = bt.localeCompare(at)
+        if (byTime !== 0) return byTime
+      } else if (at) {
+        return -1
+      } else if (bt) {
+        return 1
+      }
+      // Both visit-less (or equal visit time): tiebreak by id ASC to
+      // match the server keyset, not by title (E14).
+      return a.tieId.localeCompare(b.tieId)
     })
   }
-  return out
+  return decorated.map((d) => d.unit)
 }
 
 export interface UsePageBrowserGroupingArgs {

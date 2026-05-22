@@ -1,4 +1,4 @@
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach, expect, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import 'vitest-axe/extend-expect'
@@ -6,6 +6,18 @@ import * as matchers from 'vitest-axe/matchers'
 import './lib/i18n'
 
 expect.extend(matchers)
+
+// The a11y convention across the suite runs `axe(container)` inside a
+// `waitFor(async …)` block. `axe` is CPU-heavy, and the pre-push gate
+// (`scripts/verify-ci-equivalent.sh`, Phase 2a) runs vitest *concurrently*
+// with `cargo nextest`, which saturates every core. Under that starvation a
+// single `axe` pass can exceed Testing Library's default 1000ms `waitFor`
+// timeout, so the audit times out before completing even once — a pure
+// scheduling flake, not a real violation. Raise the async-util timeout to
+// give those passes head-room. It only affects how long a *failing* wait
+// retries; a passing `waitFor` still resolves as soon as its callback does,
+// so the green path is no slower.
+configure({ asyncUtilTimeout: 8000 })
 
 // RTL auto-cleanup relies on a global `afterEach`, which isn't available
 // without vitest globals. Register it explicitly.

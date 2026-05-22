@@ -34,19 +34,26 @@ export function FilterPill({
   title,
   groupAriaLabel,
 }: FilterPillProps): React.ReactElement {
+  // E6 — a long tag/path/property value must not stretch the pill to an
+  // unbounded width (which wraps the chip to its own line and can push
+  // Add-filter / Clear-all off-screen on narrow viewports). Cap the label and
+  // truncate; the full value lives on the `title` tooltip — fall back to the
+  // label itself when the caller didn't supply a longer-form description so the
+  // truncated text is always recoverable on hover.
+  const fullTitle = title ?? label
   return (
     <Badge
       data-slot="filter-pill"
       tone="secondary"
-      className={cn('filter-pill shrink-0 gap-1 text-xs', className)}
+      className={cn('filter-pill min-w-0 max-w-[16rem] shrink-0 gap-1 text-xs', className)}
       role="group"
       aria-label={groupAriaLabel ?? label}
-      title={title}
+      title={fullTitle}
     >
-      {label}
+      <span className="min-w-0 truncate">{label}</span>
       <button
         type="button"
-        className="ml-0.5 inline-flex items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
+        className="ml-0.5 inline-flex shrink-0 items-center justify-center rounded-full p-1 hover:bg-muted active:bg-muted active:scale-95 focus-ring-visible [@media(pointer:coarse)]:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] touch-target"
         onClick={onRemove}
         onKeyDown={(e: React.KeyboardEvent) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {

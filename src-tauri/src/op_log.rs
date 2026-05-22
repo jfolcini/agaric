@@ -1889,16 +1889,17 @@ mod tests {
         );
     }
 
-    /// PEND-56b / migration 0069: `pages_cache` must carry the
-    /// materialised `inbound_link_count` + `child_block_count` INTEGER
-    /// columns with `NOT NULL DEFAULT 0`. The backfill in the migration
-    /// uses the **exact SQL shape** of the live IPC aggregate in
-    /// `commands::pages::list_pages_with_metadata_inner`
-    /// (`src-tauri/src/commands/pages.rs:1666`) — this test seeds a
-    /// fixture and asserts that the same SQL applied to fresh rows
-    /// produces the expected counts, locking in the backfill contract
-    /// that the materializer hooks must thereafter maintain at O(1) per
-    /// op.
+    /// PEND-56b / migration 0069 (inbound shape refined by PEND-58d D2 /
+    /// migration 0070): `pages_cache` must carry the materialised
+    /// `inbound_link_count` + `child_block_count` INTEGER columns with
+    /// `NOT NULL DEFAULT 0`. The CURRENT inbound backfill (migration 0070)
+    /// uses the **exact SQL shape** of the live IPC aggregate maintained by
+    /// `recompute_pages_cache_counts_for_pages` and mirrored in
+    /// `backlink/grouped.rs` — JOINing the source block and excluding
+    /// same-page / self / deleted-source / orphan edges. This test seeds a
+    /// fixture and asserts that the same SQL applied to fresh rows produces
+    /// the expected counts, locking in the backfill contract that the
+    /// materializer hooks must thereafter maintain at O(1) per op.
     #[tokio::test]
     async fn pages_cache_link_and_content_counts_post_migration_0069() {
         let (pool, _dir) = test_pool().await;
@@ -1928,10 +1929,10 @@ mod tests {
         assert_eq!(child.2.as_deref(), Some("0"));
 
         // (b) Backfill contract: seed two pages with descendants + a
-        // soft-deleted descendant + cross-page links, then re-run the
-        // **same UPDATE SQL** the migration uses and assert the result
-        // matches what the live IPC SELECT in
-        // `list_pages_with_metadata_inner` would compute.
+        // soft-deleted descendant + cross-page links + a soft-deleted
+        // source, then re-run the **same UPDATE SQL** the current migration
+        // (0070) uses and assert the result matches what the live IPC /
+        // materializer aggregate would compute.
         //
         // Topology:
         //   PAGE_A (page) — children: A_C1 (live), A_C2 (live), A_C3 (deleted)
@@ -1940,17 +1941,17 @@ mod tests {
         //     A_C1 -> PAGE_B      (inbound to PAGE_B)
         //     A_C2 -> PAGE_B      (inbound to PAGE_B, dedup'd by DISTINCT — but
         //                          source is distinct so it does count)
-        //     A_C3 -> PAGE_B      (inbound source A_C3 is live; but A_C3 is
-        //                          a deleted DESCENDANT of A — DISTINCT applies
-        //                          to source_id without filtering on its
-        //                          live-ness, mirroring the live IPC shape)
+        //     A_C3 -> PAGE_B      (A_C3 is a soft-deleted SOURCE — excluded
+        //                          by `src.deleted_at IS NULL` per PEND-58d
+        //                          D2 / migration 0070, so it does NOT count)
         //     B_C1 -> PAGE_A      (inbound to PAGE_A)
         //     B_C1 -> A_C1        (inbound, but A_C1.page_id = PAGE_A so this
         //                          contributes one DISTINCT source to PAGE_A)
         //
-        // Expected (matching the live IPC `COUNT(DISTINCT bl.source_id)`):
+        // Expected (matching the live IPC `COUNT(DISTINCT bl.source_id)`
+        // with the PEND-58d D2 source-side exclusions):
         //   PAGE_A.inbound_link_count = 1  (only B_C1 across both edges)
-        //   PAGE_B.inbound_link_count = 3  (A_C1, A_C2, A_C3 — all distinct)
+        //   PAGE_B.inbound_link_count = 2  (A_C1, A_C2; A_C3 is a deleted source)
         //   PAGE_A.child_block_count  = 2  (A_C1, A_C2 — A_C3 is deleted)
         //   PAGE_B.child_block_count  = 1  (B_C1)
         for (id, page_id, deleted) in [
@@ -2007,15 +2008,22 @@ mod tests {
                 .unwrap();
         }
 
-        // Re-run the backfill from migration 0069 verbatim (the new rows
-        // were inserted after migrations applied, so their counts are
-        // still the DEFAULT 0).
+        // Re-run the corrected backfill (migration 0070 shape — the new
+        // rows were inserted after migrations applied, so their counts are
+        // still the DEFAULT 0). PEND-58d D2: the inbound side now JOINs the
+        // source block and excludes same-page / self / deleted-source /
+        // orphan edges, matching `recompute_pages_cache_counts_for_pages`
+        // and `backlink/grouped.rs`.
         sqlx::query(
             "UPDATE pages_cache SET inbound_link_count = ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links AS bl \
                  INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                 INNER JOIN blocks AS src ON src.id = bl.source_id \
                  WHERE descendant.page_id = pages_cache.page_id \
-                   AND descendant.deleted_at IS NULL)",
+                   AND descendant.deleted_at IS NULL \
+                   AND src.deleted_at IS NULL \
+                   AND src.page_id IS NOT NULL \
+                   AND src.page_id != pages_cache.page_id)",
         )
         .execute(&pool)
         .await
@@ -2055,8 +2063,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            row_b.i, 3,
-            "PAGE_B inbound count should be 3 (A_C1, A_C2, A_C3 distinct sources)"
+            row_b.i, 2,
+            "PAGE_B inbound count should be 2 (A_C1, A_C2 distinct sources; \
+             A_C3 is a soft-deleted source, excluded by `src.deleted_at IS NULL` \
+             per PEND-58d D2)"
         );
         assert_eq!(row_b.c, 1, "PAGE_B child count should be 1 (B_C1)");
 
@@ -2071,8 +2081,12 @@ mod tests {
                 pc.child_block_count AS \"mat_ch!: i64\", \
                 (SELECT COUNT(DISTINCT bl.source_id) FROM block_links AS bl \
                      INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                     INNER JOIN blocks AS src ON src.id = bl.source_id \
                      WHERE descendant.page_id = pc.page_id \
-                       AND descendant.deleted_at IS NULL) AS \"calc_in!: i64\", \
+                       AND descendant.deleted_at IS NULL \
+                       AND src.deleted_at IS NULL \
+                       AND src.page_id IS NOT NULL \
+                       AND src.page_id != pc.page_id) AS \"calc_in!: i64\", \
                 (SELECT COUNT(*) FROM blocks AS descendant \
                      WHERE descendant.page_id = pc.page_id \
                        AND descendant.deleted_at IS NULL \

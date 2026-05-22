@@ -8,6 +8,14 @@ export default defineConfig({
     // PEND-41 R25 — emit a warning when a single test exceeds 2 seconds.
     // Catches regressions cheaply without altering test outcomes.
     slowTestThreshold: 2000,
+    // The default 5s per-test timeout can be tripped by the longer
+    // `asyncUtilTimeout` (8s, set in `src/test-setup.ts`) when `axe()` audits
+    // run under the pre-push CPU contention (vitest + cargo nextest in
+    // parallel). Give the per-test and per-hook budgets head-room so a slow
+    // (but ultimately passing) async assertion isn't cut off mid-wait. This
+    // raises only the ceiling for slow paths; fast tests are unaffected.
+    testTimeout: 20000,
+    hookTimeout: 20000,
     coverage: {
       provider: 'v8',
       // `json-summary` writes `coverage/coverage-summary.json` (aggregated

@@ -170,6 +170,31 @@ export function activePopover(page: Page): Locator {
   return page.locator('[data-slot="popover-content"]').last()
 }
 
+/**
+ * Open the Pages-view "Add filter" popover and return its content locator,
+ * guaranteeing it is visible before the caller interacts with it.
+ *
+ * Why a helper: a bare `getByRole('Add filter').click()` is racy under the
+ * pre-push load — the click can land a frame before Radix wires the trigger,
+ * so the popover never opens and the *next* interaction times out with a
+ * misleading "element not found" deep inside the popover. Here we click,
+ * wait for the popover, and (only if it never appeared) click once more.
+ * The re-click fires solely on the not-opened path, so it can't toggle an
+ * already-open popover shut.
+ */
+export async function openAddFilter(page: Page): Promise<Locator> {
+  const trigger = page.getByRole('button', { name: 'Add filter' })
+  const pop = activePopover(page)
+  await trigger.click()
+  try {
+    await expect(pop).toBeVisible({ timeout: 5000 })
+  } catch {
+    await trigger.click()
+    await expect(pop).toBeVisible({ timeout: 10000 })
+  }
+  return pop
+}
+
 /** Active Radix Sheet content (data-slot="sheet-content"). */
 export function activeSheet(page: Page): Locator {
   return page.locator('[data-slot="sheet-content"]').last()
