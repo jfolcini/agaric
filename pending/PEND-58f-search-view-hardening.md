@@ -294,3 +294,35 @@ in the e2e audit (reproduce via the review fleet if needed).
 6. **Docs drift + metric tables:** DOC-1, DOC-4, DOC-2/3, DOC-6/7.
 7. **E2E suite** (after behaviour is settled): E2E-1..6 as the priority Playwright
    specs, then E2E-7..10.
+
+---
+
+## Remediation status (this branch)
+
+**Done — frontend / DSL / UX** (batches 1–2):
+
+- DSL-1, DSL-2, DSL-3, DSL-4, DSL-5, DSL-10 (+ tests). DSL-7/8/9 = no-action /
+  backend-owned (the 64 brace-cap lives in backend brace-expansion).
+- FE-1, FE-4, FE-5, FE-6, FE-8, FE-11, FE-12, FE-13, FE-14 (+ tests).
+- UX-1/3/12 (SearchHelpDialog wired: `?` button + `?` shortcut + render; headings
+  & description i18n'd; stale `prop:` text and hardcoded regex-cap table removed),
+  UX-2, UX-4, UX-7, UX-10, UX-11, UX-15 (+ tests).
+
+**Done — docs:** DOC-1, DOC-2, DOC-3, DOC-6, DOC-7, DOC-8, DOC-9, DOC-10, DOC-11.
+DOC-4 resolved by the dialog wire-up + content fix (the `?` help is now reachable
+and accurate). DOC-5 was FALSE.
+
+**Deferred (correctness unaffected; each warrants its own focused change):**
+
+- FE-2 (abort signal — cross-cutting IPC/hook/component plumbing), FE-3 (virtualize
+  the result list), FE-10 (move caret state out of the panel), FE-9 (SearchPanel
+  god-component split). The request-id guard already prevents stale results, so
+  these are pure performance/structure work.
+- UX-3 dense-body i18n (the section bodies are mostly monospace code identifiers;
+  headings + description are i18n'd). UX-5 (loading announcement — conflicts with
+  the deliberate "silent during load" live-region design), UX-8, UX-9.
+- E2E-1..10 Playwright suite — the action order puts this last ("after behaviour is
+  settled"); authoring ~50 real-backend specs is a dedicated effort and the new
+  behaviour is component-tested in the meantime.
+
+**Backend (SQL/BE):** see the `search(backend)` commit on this branch.
