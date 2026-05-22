@@ -3591,4 +3591,118 @@ describe('PageBrowser', () => {
       })
     })
   })
+
+  // ── PEND-58 Phase 3 — compound filters ────────────────────────────
+  //
+  // With the densityV1 flag on, the chip-row applies server-side
+  // filters by threading a `filters` array into the metadata IPC.
+  // These tests drive the real Add-Filter popover and assert the IPC
+  // receives the chosen primitive, then that removing it clears it.
+  describe('PEND-58 — compound filters', () => {
+    beforeEach(() => {
+      localStorage.setItem('pageBrowser.densityV1', 'true')
+    })
+    afterEach(() => {
+      localStorage.removeItem('pageBrowser.densityV1')
+    })
+
+    function metaPage(id: string, content: string) {
+      return {
+        id,
+        blockType: 'page',
+        content,
+        parentId: null,
+        position: null,
+        deletedAt: null,
+        todoState: null,
+        priority: null,
+        dueDate: null,
+        scheduledDate: null,
+        pageId: id,
+        lastModifiedAt: null,
+        inboundLinkCount: 0,
+        childBlockCount: 0,
+        flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },
+      }
+    }
+
+    /** Pull the `filter.filters` array from the most-recent metadata call. */
+    function lastMetadataFilters(): unknown[] {
+      const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_pages_with_metadata')
+      const last = calls.at(-1)
+      const arg = last?.[1] as { filter?: { filters?: unknown[] } } | undefined
+      return arg?.filter?.filters ?? []
+    }
+
+    it('threads a Stub chip into the metadata IPC and clears it on remove', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_pages_with_metadata') {
+          return Promise.resolve({
+            items: [metaPage('P1', 'Apple')],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+
+      // Open the Add-Filter popover and pick the Pages-only "Stub" facet.
+      await user.click(screen.getByRole('button', { name: 'Add filter' }))
+      await user.click(await screen.findByText('Stub'))
+
+      // The IPC should now be called with a Stub primitive.
+      await waitFor(() => {
+        expect(lastMetadataFilters()).toContainEqual({ type: 'Stub' })
+      })
+
+      // A chip renders for the active filter.
+      expect(screen.getByRole('group', { name: 'Filter: Stub' })).toBeInTheDocument()
+
+      // Remove the chip → the next IPC call carries no filters.
+      await user.click(screen.getByRole('button', { name: 'Remove filter Stub' }))
+      await waitFor(() => {
+        expect(lastMetadataFilters()).toEqual([])
+      })
+    })
+
+    it('does not render the filter row on the legacy (flag-off) path', async () => {
+      localStorage.removeItem('pageBrowser.densityV1')
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        if (cmd === 'list_blocks') {
+          return Promise.resolve({
+            items: [
+              {
+                id: 'P1',
+                block_type: 'page',
+                content: 'Apple',
+                parent_id: null,
+                position: null,
+                deleted_at: null,
+                todo_state: null,
+                priority: null,
+                due_date: null,
+                scheduled_date: null,
+                page_id: 'P1',
+              },
+            ],
+            next_cursor: null,
+            has_more: false,
+            total_count: 1,
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+
+      render(<PageBrowser />)
+      await screen.findByText('Apple')
+      expect(screen.queryByRole('button', { name: 'Add filter' })).not.toBeInTheDocument()
+    })
+  })
 })

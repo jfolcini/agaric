@@ -34,7 +34,7 @@ import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
 import { isAppError } from '../lib/app-error'
-import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
 import {
   createPageInSpace,
   listBlocks,
@@ -45,6 +45,7 @@ import { useNavigationStore } from '../stores/navigation'
 import { useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
+import { PageBrowserFilterRow, type PageFilterWithKey } from './PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
 import { ViewHeader } from './ViewHeader'
@@ -142,6 +143,29 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // local alias before the queryFn so the dep list stays tight.
   const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
 
+  // PEND-58 Phase 3 — compound filters. Chips live here as local state
+  // alongside `filterText` (the name-substring input). Each chip carries
+  // a monotonic `_addId` so structurally-identical chips keep distinct
+  // React keys; the id is stripped before the primitive crosses the IPC.
+  // Filters only apply on the metadata IPC path (`flagOn`); the legacy
+  // `listBlocks` path has no server-side filter support.
+  const [filters, setFilters] = useState<PageFilterWithKey[]>([])
+  const filterAddIdRef = useRef(0)
+  const handleAddFilter = useCallback((f: FilterPrimitive) => {
+    setFilters((prev) => [...prev, { ...f, _addId: ++filterAddIdRef.current }])
+  }, [])
+  const handleRemoveFilter = useCallback((index: number) => {
+    setFilters((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+  // Wire-shaped primitives (the `_addId` React key is dropped). A stable
+  // JSON serialisation is the queryFn dep so a chip add/remove refetches
+  // without making the callback identity churn on unrelated renders.
+  const wireFilters = useMemo<FilterPrimitive[]>(
+    () => filters.map(({ _addId, ...rest }) => rest as FilterPrimitive),
+    [filters],
+  )
+  const wireFiltersKey = useMemo(() => JSON.stringify(wireFilters), [wireFilters])
+
   const queryFn = useCallback(
     (cursor?: string) => {
       // FEAT-3 Phase 4 — both IPCs require a `spaceId`. The `?? ''`
@@ -162,6 +186,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
             listPagesWithMetadata({
               sort: pageSortWireFor(sortOption),
               spaceId,
+              ...(wireFilters.length > 0 && { filters: wireFilters }),
               ...(c != null && { cursor: c }),
               limit: PAGINATION_LIMIT,
             }),
@@ -175,7 +200,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         spaceId,
       })
     },
-    [currentSpaceId, flagOn, sortOption],
+    // `wireFilters` is `useMemo`'d on `[filters]`, so its identity only
+    // changes on a real chip add/remove — safe to depend on directly.
+    [currentSpaceId, flagOn, sortOption, wireFilters],
   )
   // `pages` is typed as the union — the grouping pipeline reads only
   // the shared `BlockRow` fields, so callers can treat the unified
@@ -403,10 +430,10 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // given scroll offset — keeping `focusedIndex` stable across the
   // toggle would land the focus ring on a row that's no longer where
   // the user is looking.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText, sortOption, and density intentionally trigger reset
+  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText, sortOption, density, and the compound-filter set intentionally trigger reset
   useEffect(() => {
     setFocusedIndex(0)
-  }, [filterText, sortOption, density, setFocusedIndex])
+  }, [filterText, sortOption, density, wireFiltersKey, setFocusedIndex])
 
   // PEND-30 L-5: wrap `estimateSize` in `useCallback` so its identity is
   // stable across re-renders that don't change `groupedRows` or
@@ -528,7 +555,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // points at the same row index. Allow restoration again on next
   // mount by leaving `restoredRef` intact within this mount but
   // dropping the stored value.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText, sortOption, and density are the explicit triggers
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
   useEffect(() => {
     if (scrollStorageKey == null) return
     // Skip the very first run (mount) — that's when we want to
@@ -537,7 +564,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // restoration completes, any subsequent change clears.
     if (!restoredRef.current) return
     sessionStorage.removeItem(scrollStorageKey)
-  }, [filterText, sortOption, density])
+  }, [filterText, sortOption, density, wireFiltersKey])
 
   // PageBrowser pagination UX (2026-05-14) — auto-load near the
   // bottom. The index-based trigger (last *visible* virtual item
@@ -657,6 +684,17 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           isFiltering={isFiltering}
         />
       </ViewHeader>
+
+      {/* PEND-58 Phase 3 — compound-filter chip-row. Only on the
+          metadata IPC path; the legacy `listBlocks` path has no
+          server-side filter support. */}
+      {flagOn && pages.length > 0 && (
+        <PageBrowserFilterRow
+          filters={filters}
+          onAddFilter={handleAddFilter}
+          onRemoveFilter={handleRemoveFilter}
+        />
+      )}
 
       {(!spaceIsReady || (loading && pages.length === 0)) && (
         <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
