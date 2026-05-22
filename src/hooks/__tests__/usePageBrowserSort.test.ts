@@ -7,7 +7,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makePage } from '../../__tests__/fixtures'
-import { usePageBrowserSort } from '../usePageBrowserSort'
+import { isFrontendOnlySort, usePageBrowserSort } from '../usePageBrowserSort'
 
 vi.mock('@/lib/recent-pages', () => ({
   getRecentPages: vi.fn(() => []),
@@ -166,6 +166,24 @@ describe('usePageBrowserSort', () => {
     ]
     const sorted = result.current.sortPages(pages)
     expect(sorted.map((p) => p.content)).toEqual(['Alpha', 'Bravo'])
+  })
+
+  // ── PEND-58d D3 — isFrontendOnlySort helper ─────────────────────────
+
+  it('isFrontendOnlySort is true for the three frontend-only sorts', () => {
+    expect(isFrontendOnlySort('alphabetical')).toBe(true)
+    expect(isFrontendOnlySort('recent')).toBe(true)
+    expect(isFrontendOnlySort('created')).toBe(true)
+  })
+
+  it('isFrontendOnlySort is false for "default" (raw server id-ASC order)', () => {
+    expect(isFrontendOnlySort('default')).toBe(false)
+  })
+
+  it('isFrontendOnlySort is false for the three server-side sorts', () => {
+    expect(isFrontendOnlySort('recently-modified')).toBe(false)
+    expect(isFrontendOnlySort('most-linked')).toBe(false)
+    expect(isFrontendOnlySort('most-content')).toBe(false)
   })
 
   it('parser accepts all 7 sort options', () => {

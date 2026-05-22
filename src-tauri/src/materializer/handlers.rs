@@ -537,12 +537,24 @@ pub(super) struct ApplyEffects {
 /// are silently skipped — the `WHERE page_id = ?` filter matches zero
 /// rows. Duplicate ids in the slice are deduplicated upfront.
 ///
-/// The two SELECT bodies are the **byte-identical** counterparts of the
-/// correlated subqueries in `commands::pages::list_pages_with_metadata_inner`
-/// (`src-tauri/src/commands/pages.rs:1666-1675`) and the backfill in
-/// `migrations/0069_pages_cache_link_and_content_counts.sql`. If you change
-/// the shape here, change it in those two places too — the parity test
-/// catches drift on every run.
+/// `child_block_count` is the byte-identical counterpart of the correlated
+/// subquery in `commands::pages::list_pages_with_metadata_inner`
+/// (`src-tauri/src/commands/pages.rs`) and the backfill in
+/// `migrations/0069_pages_cache_link_and_content_counts.sql`.
+///
+/// `inbound_link_count` mirrors the **canonical backlink count** in
+/// `backlink/grouped.rs::eval_backlink_query_grouped`: it counts distinct
+/// source blocks that link into the page or any of its descendants while
+/// EXCLUDING same-page/self links (a source whose own `page_id` is the
+/// target page) and deleted/orphan sources (`src.deleted_at IS NULL`,
+/// `src.page_id IS NOT NULL`). The original 0069 backfill omitted those
+/// exclusions and over-counted; migration 0070 re-backfills existing rows
+/// with this corrected shape, which is what makes `Orphan` /
+/// `HasNoInboundLinks` / `MostLinked` / the `↗N` badge agree with the live
+/// backlink panel. If you change either shape here, change it in
+/// `migrations/0070_pages_cache_inbound_link_count_exclude_same_page.sql`,
+/// `backlink/grouped.rs`, and the parity test too — the parity test catches
+/// drift on every run.
 async fn recompute_pages_cache_counts_for_pages(
     conn: &mut sqlx::SqliteConnection,
     page_ids: &[String],
@@ -555,8 +567,12 @@ async fn recompute_pages_cache_counts_for_pages(
                  inbound_link_count = ( \
                      SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                          JOIN blocks descendant ON bl.target_id = descendant.id \
+                         JOIN blocks src ON src.id = bl.source_id \
                          WHERE descendant.page_id = ?1 \
                            AND descendant.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != ?1 \
                  ), \
                  child_block_count = ( \
                      SELECT COUNT(*) FROM blocks descendant \

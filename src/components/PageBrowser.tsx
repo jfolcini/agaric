@@ -28,7 +28,11 @@ import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { DENSITY_ROW_HEIGHT, usePageBrowserDensity } from '../hooks/usePageBrowserDensity'
 import { usePageBrowserGrouping } from '../hooks/usePageBrowserGrouping'
-import { pageSortWireFor, usePageBrowserSort } from '../hooks/usePageBrowserSort'
+import {
+  isFrontendOnlySort,
+  pageSortWireFor,
+  usePageBrowserSort,
+} from '../hooks/usePageBrowserSort'
 import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
@@ -753,6 +757,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // rows. Drives both the body branch and the grid-role suppression.
   const showNoMatch = isFiltering && filteredPages.length === 0
 
+  // PEND-58d D3 — the frontend-only sorts (`alphabetical`, `recent`,
+  // `created`) reorder only the loaded ≤50 rows client-side; their
+  // visible order is globally accurate only once every page is loaded.
+  // When more pages remain (`hasMore`), surface a cue in the header so
+  // the user knows the order covers loaded pages only. `default` and the
+  // three server-side sorts are globally accurate, so they never trigger.
+  const frontendSortAtScale = isFrontendOnlySort(sortOption) && hasMore
+
   return (
     <div className="page-browser space-y-4">
       <ViewHeader>
@@ -773,6 +785,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           totalCount={totalCount}
           filteredCount={filteredPages.length}
           isFiltering={isFiltering}
+          frontendSortAtScale={frontendSortAtScale}
         />
       </ViewHeader>
 

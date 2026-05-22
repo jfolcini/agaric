@@ -103,4 +103,31 @@ describe('PageBrowserHeader (PEND-56)', () => {
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
+
+  // ── PEND-58d D3 — frontend-only-sort-at-scale cue ───────────────────
+
+  it('renders the frontend-sort cue when frontendSortAtScale is true', () => {
+    render(<PageBrowserHeader {...makeProps({ frontendSortAtScale: true })} />)
+    const cue = screen.getByTestId('page-browser-frontend-sort-cue')
+    expect(cue).toBeInTheDocument()
+    expect(cue).toHaveTextContent(t('pageBrowser.frontendSortHint'))
+  })
+
+  it('does not render the frontend-sort cue when frontendSortAtScale is false', () => {
+    render(<PageBrowserHeader {...makeProps({ frontendSortAtScale: false })} />)
+    expect(screen.queryByTestId('page-browser-frontend-sort-cue')).not.toBeInTheDocument()
+  })
+
+  it('does not render the frontend-sort cue when frontendSortAtScale is omitted', () => {
+    render(<PageBrowserHeader {...makeProps()} />)
+    expect(screen.queryByTestId('page-browser-frontend-sort-cue')).not.toBeInTheDocument()
+  })
+
+  it('has no axe violations with the frontend-sort cue present', async () => {
+    const { container } = render(
+      <PageBrowserHeader {...makeProps({ frontendSortAtScale: true })} />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
 })

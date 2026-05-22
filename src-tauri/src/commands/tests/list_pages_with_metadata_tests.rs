@@ -44,8 +44,10 @@ async fn seed_page(pool: &SqlitePool, id: &str, content: &str) {
 /// for the given page from the canonical SELECT, mirroring what the
 /// materializer maintains in production. Used by `seed_link` /
 /// `seed_child` so the test fixtures see the same materialised values
-/// the IPC reads after the refactor. Mirrors migration 0069's
-/// backfill SQL shape.
+/// the IPC reads after the refactor. Mirrors the CURRENT inbound shape
+/// (migration 0070 / `recompute_pages_cache_counts_for_pages`): the
+/// source block is joined and same-page / self / deleted-source / orphan
+/// edges are excluded (PEND-58d D2).
 async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
     sqlx::query(
         "UPDATE pages_cache \
@@ -53,8 +55,12 @@ async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
                  SELECT COUNT(DISTINCT bl.source_id) \
                  FROM block_links AS bl \
                  INNER JOIN blocks AS descendant ON bl.target_id = descendant.id \
+                 INNER JOIN blocks AS src ON src.id = bl.source_id \
                  WHERE descendant.page_id = ? \
                    AND descendant.deleted_at IS NULL \
+                   AND src.deleted_at IS NULL \
+                   AND src.page_id IS NOT NULL \
+                   AND src.page_id != ? \
              ), \
              child_block_count = ( \
                  SELECT COUNT(*) \
@@ -65,10 +71,11 @@ async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
              ) \
          WHERE page_id = ?",
     )
-    .bind(page_id)
-    .bind(page_id)
-    .bind(page_id)
-    .bind(page_id)
+    .bind(page_id) // inbound: descendant.page_id
+    .bind(page_id) // inbound: src.page_id !=
+    .bind(page_id) // child: descendant.page_id
+    .bind(page_id) // child: descendant.id !=
+    .bind(page_id) // WHERE page_id =
     .execute(pool)
     .await
     .unwrap();
@@ -182,6 +189,18 @@ async fn seed_prop_text(pool: &SqlitePool, block_id: &str, key: &str, value: &st
         .bind(block_id)
         .bind(key)
         .bind(value)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// PEND-58d — set the fixed `blocks.priority` column on a page block so a
+/// `Priority { priority }` filter (compiled to `b.priority = ?`) can
+/// match. Mirrors migration 0012's fixed-field shape.
+async fn seed_priority(pool: &SqlitePool, block_id: &str, priority: &str) {
+    sqlx::query("UPDATE blocks SET priority = ? WHERE id = ?")
+        .bind(priority)
+        .bind(block_id)
         .execute(pool)
         .await
         .unwrap();
@@ -1072,6 +1091,76 @@ async fn filter_stub_and_tag_compose_with_and_semantics() {
         contents,
         vec!["StubTagged"],
         "only the page satisfying BOTH primitives must pass"
+    );
+}
+
+#[tokio::test]
+async fn filter_priority_and_tag_compose_correctly_despite_cost_reorder() {
+    // PEND-58d T-B5 — `compile_pages_filters` stable-sorts the request
+    // primitives by `cost_hint` (Tag is 0, Priority is 1), so a request of
+    // `[Priority, Tag]` is REORDERED to Tag-first and each fragment's
+    // anonymous `?` is renumbered to an explicit `?N`. This test guards
+    // that the renumbering keeps each bind aligned with ITS clause: a
+    // misalignment (e.g. the priority string bound where Tag's tag_id is
+    // expected, or vice-versa) would change which pages match.
+    //
+    // The fixture is built so a swap is observable: exactly one page
+    // satisfies BOTH the tag AND priority A; the other two each satisfy
+    // only one side. Correct AND-narrowing returns only the both-page.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let tag = "01TAG000000000000000000T1";
+
+    // Tagged but priority B → matches Tag, fails Priority A.
+    seed_page(&pool, "01PAGE00000000000000000AA1", "TaggedPriB").await;
+    seed_tag(&pool, "01PAGE00000000000000000AA1", tag).await;
+    seed_priority(&pool, "01PAGE00000000000000000AA1", "B").await;
+
+    // Priority A but a DIFFERENT tag → matches Priority, fails Tag.
+    seed_page(&pool, "01PAGE00000000000000000BB1", "PriAOtherTag").await;
+    seed_tag(
+        &pool,
+        "01PAGE00000000000000000BB1",
+        "01TAG000000000000000000T2",
+    )
+    .await;
+    seed_priority(&pool, "01PAGE00000000000000000BB1", "A").await;
+
+    // BOTH the target tag AND priority A → the only correct match.
+    seed_page(&pool, "01PAGE00000000000000000CC1", "TaggedPriA").await;
+    seed_tag(&pool, "01PAGE00000000000000000CC1", tag).await;
+    seed_priority(&pool, "01PAGE00000000000000000CC1", "A").await;
+
+    // Request order is Priority (cost 1) THEN Tag (cost 0); the compiler
+    // reorders to Tag-first and renumbers the binds.
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![
+                FilterPrimitive::Priority {
+                    priority: "A".to_string(),
+                },
+                FilterPrimitive::Tag {
+                    tag: tag.to_string(),
+                },
+            ],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("compound Priority+Tag filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["TaggedPriA"],
+        "only the page matching BOTH tag and priority A must pass — \
+         the cost-reorder must renumber binds without crossing clauses"
     );
 }
 

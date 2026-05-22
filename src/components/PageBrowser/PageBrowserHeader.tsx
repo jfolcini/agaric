@@ -58,6 +58,14 @@ export interface PageBrowserHeaderProps {
   filteredCount?: number | undefined
   /** True when a search filter is active (suppresses the "all pages" form). */
   isFiltering?: boolean
+  /**
+   * PEND-58d D3 — true when a frontend-only sort (`alphabetical`,
+   * `recent`, `created`) is active AND more pages remain to load. The
+   * client-side reorder only covers the loaded pages, so we surface a
+   * subtle cue near the sort control to set expectations. Never set for
+   * `default` or the server-side sorts, nor when fully loaded.
+   */
+  frontendSortAtScale?: boolean
 }
 
 export function PageBrowserHeader({
@@ -77,6 +85,7 @@ export function PageBrowserHeader({
   totalCount,
   filteredCount,
   isFiltering,
+  frontendSortAtScale,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
   // PageBrowser pagination UX (2026-05-14) — small muted text near
@@ -175,6 +184,24 @@ export function PageBrowserHeader({
               <SelectItem value="default">{t('pageBrowser.sortDefault')}</SelectItem>
             </SelectContent>
           </Select>
+          {/* PEND-58d D3 — frontend-only sorts reorder just the loaded
+              pages; while more remain, surface a muted cue so the user
+              knows the visible order isn't the global order yet. */}
+          {frontendSortAtScale && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="text-xs text-muted-foreground whitespace-nowrap cursor-default"
+                    data-testid="page-browser-frontend-sort-cue"
+                  >
+                    {t('pageBrowser.frontendSortHint')}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{t('pageBrowser.frontendSortHintTooltip')}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <Select value={density} onValueChange={(v) => onDensityChange(v as DensityMode)}>
             <TooltipProvider>
               <Tooltip>

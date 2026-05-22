@@ -6211,8 +6211,13 @@ mod pages_cache_count_parity {
         let inbound: i64 = sqlx::query_scalar(
             "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                  JOIN blocks descendant ON bl.target_id = descendant.id \
-             WHERE descendant.page_id = ? AND descendant.deleted_at IS NULL",
+                 JOIN blocks src ON src.id = bl.source_id \
+             WHERE descendant.page_id = ? AND descendant.deleted_at IS NULL \
+               AND src.deleted_at IS NULL \
+               AND src.page_id IS NOT NULL \
+               AND src.page_id != ?",
         )
+        .bind(page_id)
         .bind(page_id)
         .fetch_one(pool)
         .await
@@ -6359,7 +6364,12 @@ mod pages_cache_count_parity {
                  inbound_link_count = ( \
                      SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                          JOIN blocks d ON bl.target_id = d.id \
-                         WHERE d.page_id = pages_cache.page_id AND d.deleted_at IS NULL), \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         WHERE d.page_id = pages_cache.page_id \
+                           AND d.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != pages_cache.page_id), \
                  child_block_count = ( \
                      SELECT COUNT(*) FROM blocks d \
                          WHERE d.page_id = pages_cache.page_id \
@@ -6471,7 +6481,12 @@ mod pages_cache_count_parity {
                  inbound_link_count = ( \
                      SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                          JOIN blocks d ON bl.target_id = d.id \
-                         WHERE d.page_id = pages_cache.page_id AND d.deleted_at IS NULL), \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         WHERE d.page_id = pages_cache.page_id \
+                           AND d.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != pages_cache.page_id), \
                  child_block_count = ( \
                      SELECT COUNT(*) FROM blocks d \
                          WHERE d.page_id = pages_cache.page_id \
@@ -6523,7 +6538,12 @@ mod pages_cache_count_parity {
                  inbound_link_count = ( \
                      SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
                          JOIN blocks d ON bl.target_id = d.id \
-                         WHERE d.page_id = pages_cache.page_id AND d.deleted_at IS NULL), \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         WHERE d.page_id = pages_cache.page_id \
+                           AND d.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != pages_cache.page_id), \
                  child_block_count = ( \
                      SELECT COUNT(*) FROM blocks d \
                          WHERE d.page_id = pages_cache.page_id \
@@ -6540,5 +6560,86 @@ mod pages_cache_count_parity {
         let payload = r#"{"block_id":"NEW1"}"#;
         run_op(&pool, op_task("purge_block", payload), &[]).await;
         assert_parity(&pool, "after purge NEW1").await;
+    }
+
+    /// T-B6 — same-page (and self) edges must NOT count toward
+    /// `inbound_link_count`. A block on page P linking to another block on
+    /// the same page P is a same-page reference; the canonical backlink
+    /// query (`backlink/grouped.rs`) excludes it via `src.page_id != P`, so
+    /// the materialised column must too. The OLD 0069 shape (no `src` join)
+    /// would have counted it as 1 — this test pins it to 0 and then proves
+    /// a cross-page edge from a different page DOES count.
+    #[tokio::test]
+    async fn same_page_edge_excluded_from_inbound_count() {
+        let (pool, _dir) = test_pool().await;
+        seed_page(&pool, "PAGE_P", "Page P").await;
+
+        // Two content descendants of PAGE_P, both with page_id = PAGE_P.
+        for id in ["PD_1", "PD_2"] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+                 VALUES (?, 'content', 'c', 'PAGE_P', 'PAGE_P')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Same-page edge: PD_1 (on PAGE_P) links to PD_2 (also on PAGE_P).
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('PD_1', 'PD_2')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Recompute via the corrected inline UPDATE (direct inserts bypassed
+        // the materializer). Mirrors the canonical_counts shape.
+        let recompute = "UPDATE pages_cache SET \
+                 inbound_link_count = ( \
+                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                         JOIN blocks d ON bl.target_id = d.id \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         WHERE d.page_id = pages_cache.page_id \
+                           AND d.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != pages_cache.page_id), \
+                 child_block_count = ( \
+                     SELECT COUNT(*) FROM blocks d \
+                         WHERE d.page_id = pages_cache.page_id \
+                           AND d.deleted_at IS NULL \
+                           AND d.id != pages_cache.page_id)";
+        sqlx::query(recompute).execute(&pool).await.unwrap();
+
+        // The same-page edge must NOT count: inbound stays 0 (OLD shape: 1).
+        let (inbound, _) = cached_counts(&pool, "PAGE_P").await.unwrap();
+        assert_eq!(
+            inbound, 0,
+            "same-page edge must be excluded from inbound_link_count"
+        );
+        assert_parity(&pool, "same-page edge only").await;
+
+        // Now add a cross-page edge: a block on a DIFFERENT page (PAGE_Q)
+        // links into a descendant of PAGE_P. That one DOES count.
+        seed_page(&pool, "PAGE_Q", "Page Q").await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES ('QD_1', 'content', 'c', 'PAGE_Q', 'PAGE_Q')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('QD_1', 'PD_2')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(recompute).execute(&pool).await.unwrap();
+
+        let (inbound, _) = cached_counts(&pool, "PAGE_P").await.unwrap();
+        assert_eq!(
+            inbound, 1,
+            "cross-page edge from a different page must count toward inbound_link_count"
+        );
+        assert_parity(&pool, "after cross-page edge").await;
     }
 }

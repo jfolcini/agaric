@@ -288,10 +288,19 @@ impl FilterPrimitive {
     ///   correlated `MAX(created_at)` subquery over `op_log`, served
     ///   per-row via `idx_op_log_block_id` — not an index anti-join, so it
     ///   ranks below the genuine index-backed primitives).
-    /// - **2 (full scan, GLOB):** `PathGlob` when the pattern has no
-    ///   leading anchor (a true table scan of `pages_cache.title`). An
-    ///   anchored prefix glob (`foo*`) is range-scannable, so it ranks as
-    ///   index-backed (0).
+    /// - **2 (full scan, LIKE):** `PathGlob`, always. It compiles to
+    ///   `title COLLATE NOCASE LIKE ? ESCAPE '\'` (see `glob_to_like`).
+    ///   SQLite (measured on 3.50.6, the family sqlx bundles) does **not**
+    ///   apply its LIKE-index optimization to a *case-insensitive* `LIKE`
+    ///   — neither a `COLLATE NOCASE` column/index nor a `LOWER(title)`
+    ///   expression index is used; only an explicit `COLLATE NOCASE >= p
+    ///   AND < p++` range hits `idx_pages_cache_title_nocase`. So every
+    ///   `PathGlob` is a true `pages_cache.title` scan regardless of
+    ///   anchoring. That scan is cheap in practice — `pages_cache` holds
+    ///   one row per page (hundreds–low thousands), so a NOCASE prefix
+    ///   range (Unicode-fiddly to build by hand) isn't worth it; `PathGlob`
+    ///   is simply ranked last among the SQL primitives so it never runs
+    ///   before a SARGable clause.
     /// - **3 (post-filter / non-SQL):** the Search-only toggles
     ///   (`Regex`, `CaseSensitive`, `WholeWord`, `Snippet`) — never seen
     ///   on the Pages surface (allowed-keys gate rejects them), but
@@ -308,19 +317,13 @@ impl FilterPrimitive {
             | FilterPrimitive::HasNoInboundLinks => 0,
             // `Priority` is a per-row equality; `LastEdited` is a
             // per-row correlated `MAX()` subquery (served via
-            // `idx_op_log_block_id`) — both rank above the true index
-            // anti-joins but below a full GLOB scan.
+            // `idx_op_log_block_id`) — both rank above a full LIKE scan.
             FilterPrimitive::Priority { .. } | FilterPrimitive::LastEdited { .. } => 1,
-            // Anchored prefix globs (`foo*`, no leading `*`/`?`/`[`) are
-            // range-scannable → index-backed cost. A leading wildcard
-            // forces a full scan → ranked highest among SQL primitives.
-            FilterPrimitive::PathGlob { pattern, .. } => {
-                if pattern.starts_with(['*', '?', '[']) {
-                    2
-                } else {
-                    0
-                }
-            }
+            // `PathGlob` is always a full `pages_cache.title` scan: SQLite
+            // won't use a NOCASE index for a case-insensitive `LIKE` (only
+            // an explicit NOCASE range would), so anchoring buys nothing.
+            // Ranked highest among the SQL primitives.
+            FilterPrimitive::PathGlob { .. } => 2,
             FilterPrimitive::Regex { .. }
             | FilterPrimitive::CaseSensitive { .. }
             | FilterPrimitive::WholeWord { .. }
@@ -348,6 +351,48 @@ impl FilterPrimitive {
             FilterPrimitive::WholeWord { .. } => "whole-word",
             FilterPrimitive::Snippet { .. } => "snippet",
         }
+    }
+}
+
+// ── Glob → LIKE translation ──────────────────────────────────────────────
+
+/// Translate the documented Page-path glob mini-language into a SQLite
+/// `LIKE` pattern for use with ``ESCAPE '\'`` against a `COLLATE NOCASE`
+/// column (so the `idx_pages_cache_title_nocase` prefix index can serve
+/// anchored patterns).
+///
+/// Mapping (see `docs/PAGES.md` "Page path"):
+/// - `*` → `%` (any run of characters),
+/// - `?` → `_` (exactly one character),
+/// - any other char is a literal — `%`, `_`, `\` are escaped (a `\` is
+///   pushed before them) so they match themselves; everything else
+///   (including `[`, which LIKE has no character-class meaning for) is
+///   passed through verbatim.
+///
+/// If the ORIGINAL pattern contained neither `*` nor `?` (a bare word),
+/// the result is wrapped in leading + trailing `%` so it becomes a
+/// substring match (`Alpha` → `%Alpha%`). Otherwise the translated
+/// pattern is returned as-is, so anchored prefixes stay index-usable
+/// (`Projects/*` → `Projects/%`) and leading wildcards stay full scans
+/// (`*foo` → `%foo`).
+fn glob_to_like(pattern: &str) -> String {
+    let has_wildcard = pattern.contains(['*', '?']);
+    let mut out = String::with_capacity(pattern.len() + 2);
+    for ch in pattern.chars() {
+        match ch {
+            '*' => out.push('%'),
+            '?' => out.push('_'),
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    if has_wildcard {
+        out
+    } else {
+        format!("%{out}%")
     }
 }
 
@@ -404,11 +449,22 @@ impl Projection for PagesProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
-        // Pages: GLOB on pages_cache.title (LOWER for case-insensitive).
+        // Pages: case-insensitive LIKE on pages_cache.title, matching the
+        // documented glob contract (anchored `Projects/*` → `Projects/%`;
+        // bare words → substring `%word%`; see `glob_to_like`). NOTE: this
+        // is a `pages_cache.title` scan — SQLite won't use the NOCASE index
+        // for a case-insensitive LIKE (only an explicit NOCASE range
+        // would). That's fine: `pages_cache` is one row per page, so the
+        // scan is cheap. The win here is correctness (the old `LOWER(title)
+        // GLOB ?` inverted the bare-word semantics) + dropping per-row
+        // `LOWER()`.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!("b.id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)",),
-            vec![Bind::Text(pattern.to_lowercase())],
+            format!(
+                "b.id {op} (SELECT page_id FROM pages_cache \
+                 WHERE title COLLATE NOCASE LIKE ? ESCAPE '\\')"
+            ),
+            vec![Bind::Text(glob_to_like(pattern))],
         )
     }
     fn compile_has_property(
@@ -491,7 +547,9 @@ impl Projection for PagesProjection {
         // `pending/PEND-58-pages-view-compound-filters.md:141` requires
         // `source_id IN (SELECT id FROM blocks WHERE page_id = …)`.
         //
-        // **Inbound semantic** (PEND-58 Phase-2 alignment with PEND-56b):
+        // **Inbound semantic** (PEND-58 Phase-2 alignment with PEND-56b;
+        // refined by PEND-58d D2 / migration 0070 to exclude same-page,
+        // self, and deleted-source edges — mirroring `backlink/grouped.rs`):
         // `pc.inbound_link_count` aggregates `block_links` edges whose
         // target is the page block *or any non-deleted descendant block*
         // (see migration 0069 lines 56-64 + the metadata IPC SELECT at
@@ -525,8 +583,9 @@ impl Projection for PagesProjection {
     fn compile_has_no_inbound_links(&self) -> WhereClause {
         // Looser companion to Orphan: zero inbound block-link edges,
         // outbound side ignored. Same materialised column — and same
-        // "page OR any non-deleted descendant" semantic — as the
-        // inbound half of Orphan; see that fn's doc comment for the
+        // "page OR any non-deleted descendant" semantic, with same-page /
+        // self / deleted sources excluded (PEND-58d D2) — as the inbound
+        // half of Orphan; see that fn's doc comment for the
         // PEND-58 / PEND-56b alignment rationale.
         WhereClause::new("COALESCE(pc.inbound_link_count, 0) = 0", Vec::new())
     }
@@ -548,10 +607,18 @@ impl Projection for SearchProjection {
         )
     }
     fn compile_path_glob(&self, pattern: &str, exclude: bool) -> WhereClause {
+        // Search: same case-insensitive LIKE on pages_cache.title as the
+        // Pages surface (a scan — see the Pages `compile_path_glob` note on
+        // why the NOCASE index isn't used), but keyed by `b.page_id` (block
+        // rows). Anchored patterns and bare-word substrings per
+        // `glob_to_like`.
         let op = if exclude { "NOT IN" } else { "IN" };
         WhereClause::new(
-            format!("b.page_id {op} (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?)",),
-            vec![Bind::Text(pattern.to_lowercase())],
+            format!(
+                "b.page_id {op} (SELECT page_id FROM pages_cache \
+                 WHERE title COLLATE NOCASE LIKE ? ESCAPE '\\')"
+            ),
+            vec![Bind::Text(glob_to_like(pattern))],
         )
     }
     fn compile_has_property(
@@ -995,19 +1062,29 @@ mod tests {
             .cost_hint(),
             1
         );
-        // Anchored glob is range-scannable (0); leading-wildcard glob is
-        // a full scan (2).
+        // Every `PathGlob` is a full `pages_cache.title` scan (2):
+        // SQLite won't use a NOCASE index for a case-insensitive `LIKE`,
+        // so anchoring (`foo*`), a leading wildcard (`*foo*`), and a bare
+        // substring word (`alpha` → `%alpha%`) all rank the same.
         assert_eq!(
             FilterPrimitive::PathGlob {
                 pattern: "foo*".into(),
                 exclude: false
             }
             .cost_hint(),
-            0
+            2
         );
         assert_eq!(
             FilterPrimitive::PathGlob {
                 pattern: "*foo*".into(),
+                exclude: false
+            }
+            .cost_hint(),
+            2
+        );
+        assert_eq!(
+            FilterPrimitive::PathGlob {
+                pattern: "alpha".into(),
                 exclude: false
             }
             .cost_hint(),
@@ -1021,6 +1098,27 @@ mod tests {
             .cost_hint(),
             3
         );
+    }
+
+    #[test]
+    fn glob_to_like_translates_documented_mini_language() {
+        // Bare word (no wildcard) → substring match.
+        assert_eq!(glob_to_like("word"), "%word%");
+        // Anchored prefix → prefix LIKE (index-usable).
+        assert_eq!(glob_to_like("Projects/*"), "Projects/%");
+        // Leading + trailing `*` → substring with no extra wrap.
+        assert_eq!(glob_to_like("*x*"), "%x%");
+        // `?` → single-char `_`; presence of a wildcard suppresses the
+        // substring wrap.
+        assert_eq!(glob_to_like("a?b"), "a_b");
+        // Literal LIKE metacharacters in a bare word are escaped, then
+        // wrapped for the substring match.
+        assert_eq!(glob_to_like("50%_off"), r"%50\%\_off%");
+        // A literal `%`/`_` alongside a glob wildcard is escaped without
+        // the substring wrap.
+        assert_eq!(glob_to_like("a%*"), r"a\%%");
+        // `[` is a literal — LIKE has no character classes.
+        assert_eq!(glob_to_like("[draft]"), "%[draft]%");
     }
 
     #[test]
@@ -1259,6 +1357,53 @@ mod explain_query_plan_tests {
         assert!(
             !plan.to_lowercase().contains("target_id"),
             "composite plan must not scan block_links by target_id; got:\n{plan}"
+        );
+    }
+
+    /// PEND-58d D1 — `PathGlob` must compile to a case-insensitive
+    /// `title COLLATE NOCASE LIKE ? ESCAPE '\'` (matching the documented
+    /// substring/glob contract in `docs/PAGES.md`), NOT the old
+    /// `LOWER(title) GLOB ?`. The old shape wrapped the column in `LOWER()`
+    /// and used GLOB's BINARY collation, so it could never use the
+    /// `idx_pages_cache_title_nocase` index AND it inverted the documented
+    /// "bare word = substring" semantics.
+    ///
+    /// On the plan: SQLite does NOT apply its LIKE-index optimization to a
+    /// case-insensitive `LIKE` (verified empirically — only an explicit
+    /// `COLLATE NOCASE >= p AND < p++` range hits the index), so this is a
+    /// `pages_cache.title` scan. That is acceptable: `pages_cache` is one
+    /// row per page, so the scan is sub-millisecond at realistic scale.
+    /// This test pins the *compiled shape* (the load-bearing fix) and
+    /// confirms the plan stays on `pages_cache` without the `LOWER()`
+    /// wrapper.
+    #[tokio::test]
+    async fn path_glob_compiles_to_collate_nocase_like_not_glob() {
+        let (pool, _dir) = test_pool().await;
+        ensure_test_space(&pool).await;
+        seed_pages(&pool, 16).await;
+        let frag = PagesProjection
+            .compile(&FilterPrimitive::PathGlob {
+                pattern: "page*".into(),
+                exclude: false,
+            })
+            .sql;
+        // Compiled-shape regression guard (deterministic, the real fix).
+        assert!(
+            frag.contains("COLLATE NOCASE LIKE") && frag.contains("ESCAPE"),
+            "PathGlob must compile to `COLLATE NOCASE LIKE ? ESCAPE`; got: {frag}"
+        );
+        assert!(
+            !frag.contains("GLOB") && !frag.to_uppercase().contains("LOWER("),
+            "PathGlob must not use the old LOWER()/GLOB shape; got: {frag}"
+        );
+        let plan = explain_for(&pool, &frag).await;
+        eprintln!("[PEND-58 EXPLAIN PathGlob page*]\n{plan}");
+        // The plan stays on pages_cache (a scan is fine for the small,
+        // one-row-per-page table). The point is it no longer wraps the
+        // column in LOWER().
+        assert!(
+            plan.to_lowercase().contains("pages_cache"),
+            "PathGlob plan must reference pages_cache; got:\n{plan}"
         );
     }
 }

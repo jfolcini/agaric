@@ -106,6 +106,22 @@ export function pageSortWireFor(sort: SortOption): PageSortWire {
   }
 }
 
+/**
+ * True when `sort` is a frontend-only reorder that maps to the
+ * `'default'` wire value (server returns id-ASC) and is re-sorted
+ * client-side over only the loaded ≤50 rows — i.e. `alphabetical`,
+ * `recent`, `created`. For these the visible order is globally
+ * accurate only once every page is loaded; `default` is the raw
+ * server id-ASC order and is therefore globally accurate, so it
+ * returns `false`. The three server-side sorts return `false`.
+ *
+ * Used by `PageBrowser` (PEND-58d D3) to surface a "sorted within
+ * loaded pages" cue while more pages remain to load.
+ */
+export function isFrontendOnlySort(sort: SortOption): boolean {
+  return pageSortWireFor(sort) === 'default' && sort !== 'default'
+}
+
 export interface UsePageBrowserSortReturn {
   sortOption: SortOption
   setSortOption: (value: SortOption) => void

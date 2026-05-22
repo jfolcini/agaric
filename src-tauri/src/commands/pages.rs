@@ -1459,10 +1459,13 @@ pub async fn load_page_subtree(
 //     Page-only (not subtree-aware) per PEND-56 open-question 1 — the
 //     recursive-CTE variant is deferred until a benchmark says it's
 //     worth the cost.
-//   - `inbound_link_count`: COUNT links targeting this page OR any of
-//     its descendants. Walked via `blocks.page_id`, the materializer-
-//     maintained denormalisation — same index as the rest of the
-//     `page_id`-fan-out helpers in this file.
+//   - `inbound_link_count`: COUNT of distinct source blocks linking to
+//     this page OR any of its descendants, EXCLUDING same-page/self links
+//     (a source on this same page) and deleted/orphan sources — matching
+//     the canonical backlink count in `backlink/grouped.rs`. Read straight
+//     from the materializer-maintained `pages_cache.inbound_link_count`
+//     column (recomputed by `recompute_pages_cache_counts_for_pages` and
+//     backfilled by migration 0070), not computed here.
 //   - `child_block_count`: COUNT non-deleted blocks whose `page_id`
 //     matches AND id != page_id (descendants only).
 //   - `has_property_flags`: 4-bit bitmask. Initial allowlist per the

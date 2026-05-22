@@ -152,6 +152,11 @@ export const pages: Record<string, string> = {
   'pageBrowser.sortMostContent': 'Most content',
   'pageBrowser.sortDefault': 'Default',
   'pageBrowser.sortPersistedTooltip': 'Your sort choice is saved across sessions',
+  // PEND-58d D3 — cue for frontend-only sorts that reorder only the
+  // loaded pages while more remain to load.
+  'pageBrowser.frontendSortHint': 'Sorted within loaded pages',
+  'pageBrowser.frontendSortHintTooltip':
+    'This order covers the pages loaded so far. Scroll to load more pages for the full global order.',
   'pageBrowser.densityLabel': 'Row density',
   'pageBrowser.densityCompact': 'Compact',
   'pageBrowser.densityRegular': 'Regular',
