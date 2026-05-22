@@ -3367,18 +3367,12 @@ describe('list_pages_with_metadata — inbound same-page exclusion', () => {
     expect(inboundOf('Getting Started')).toBe(1)
   })
 
-  it('excludes the same-page seed edge (BLOCK_QN_2 → BLOCK_QN_1)', () => {
-    // BLOCK_QN_2 links to its sibling BLOCK_QN_1 (both on Quick Notes). That
-    // same-page edge must NOT be counted: Quick Notes stays at inbound = 1
-    // (the cross-page BLOCK_GS_2 edge only). A regressed exclusion would
-    // over-count it to 2.
-    expect(inboundOf('Quick Notes')).toBe(1)
-  })
-
-  it('a fresh same-page link does not bump the inbound count', () => {
-    // Add a second same-page edge dynamically (BLOCK_QN_1 → BLOCK_QN_2) and
-    // confirm Quick Notes' inbound count is still unaffected by same-page
-    // edges in either direction.
+  it('excludes a same-page link (does not bump the inbound count)', () => {
+    // The canonical seed deliberately carries NO same-page edge on Quick Notes
+    // (it is a shared fixture — see the note in `seed.ts`). Create the edge
+    // here at runtime: BLOCK_QN_1 → BLOCK_QN_2, both on Quick Notes. It must
+    // NOT be counted — Quick Notes stays at inbound = 1 (the cross-page
+    // BLOCK_GS_2 edge only). A regressed exclusion would over-count it to 2.
     invoke('edit_block', {
       blockId: SEED_IDS.BLOCK_QN_1,
       toText: `Linking sibling [[${SEED_IDS.BLOCK_QN_2}]] on the same page.`,

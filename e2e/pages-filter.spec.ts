@@ -1,4 +1,4 @@
-import { activePopover, expect, test, waitForBoot } from './helpers'
+import { activePopover, expect, openAddFilter, test, waitForBoot } from './helpers'
 
 /**
  * E2E coverage for PEND-58 — Pages-view compound-filter chip-row.
@@ -38,7 +38,7 @@ async function addBooleanFacet(
   page: import('@playwright/test').Page,
   label: 'Orphan' | 'Stub' | 'No inbound links',
 ): Promise<void> {
-  await page.getByRole('button', { name: 'Add filter' }).click()
+  await openAddFilter(page)
   await activePopover(page)
     .getByRole('button', { name: new RegExp(`^${label}`) })
     .click()
@@ -94,7 +94,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('Add-Filter popover offers the shared and Pages-only facets', async ({ page }) => {
     await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     const pop = activePopover(page)
     await expect(pop).toBeVisible()
 
@@ -105,7 +105,10 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     // Shared value-facets — these menu items carry only their label, so an
     // exact accessible-name match is correct.
     for (const facet of ['Tag', 'Page path', 'Has property']) {
-      await expect(pop.getByRole('button', { name: facet, exact: true })).toBeVisible()
+      // PEND-58e E19 added a muted description inside each value-facet menu
+      // item (matching the boolean facets below), so the accessible name is
+      // now `<label> <description>` — anchor on the label prefix.
+      await expect(pop.getByRole('button', { name: new RegExp(`^${facet}`) })).toBeVisible()
     }
     // Pages-only boolean facets — each menu item appends a muted description
     // to its accessible name, so anchor on the label prefix instead.
@@ -115,7 +118,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     // Last-edited buckets + Priority quick-picks render as inline buttons.
     await expect(pop.getByRole('button', { name: 'Edited today' })).toBeVisible()
     await expect(pop.getByText('Priority', { exact: true })).toBeVisible()
-    await expect(pop.getByRole('button', { name: 'A', exact: true })).toBeVisible()
+    await expect(pop.getByRole('button', { name: '1', exact: true })).toBeVisible()
 
     // Search-only primitives are NEVER offered on the Pages surface.
     await expect(pop.getByText('Regex', { exact: true })).toHaveCount(0)
@@ -278,10 +281,10 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('Tag inline editor: Back returns to the menu, Enter applies a chip', async ({ page }) => {
     await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     const pop = activePopover(page)
 
-    await pop.getByRole('button', { name: 'Tag', exact: true }).click()
+    await pop.getByRole('button', { name: /^Tag/ }).click()
     // Back returns to the category menu.
     await pop.getByRole('button', { name: 'Back' }).click()
     // The Stub menu item's accessible name now carries its description tail,
@@ -289,8 +292,8 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await expect(pop.getByRole('button', { name: /^Stub/ })).toBeVisible()
 
     // Re-open, type, and apply with Enter.
-    await pop.getByRole('button', { name: 'Tag', exact: true }).click()
-    const input = pop.getByPlaceholder('Tag name or id')
+    await pop.getByRole('button', { name: /^Tag/ }).click()
+    const input = pop.getByPlaceholder('Tag id')
     await input.fill('work')
     await input.press('Enter')
     await expect(page.getByRole('group', { name: /Filter: tag:/ })).toBeVisible()
@@ -298,9 +301,9 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('Page-path inline editor adds a chip', async ({ page }) => {
     await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     const pop = activePopover(page)
-    await pop.getByRole('button', { name: 'Page path', exact: true }).click()
+    await pop.getByRole('button', { name: /^Page path/ }).click()
     await pop.getByPlaceholder('e.g. Projects/*').fill('Projects/*')
     await pop.getByRole('button', { name: 'Apply' }).click()
     await expect(page.getByRole('group', { name: 'Filter: path: Projects/*' })).toBeVisible()
@@ -308,9 +311,9 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('Has-property editor adds a key=value chip', async ({ page }) => {
     await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     const pop = activePopover(page)
-    await pop.getByRole('button', { name: 'Has property', exact: true }).click()
+    await pop.getByRole('button', { name: /^Has property/ }).click()
     await pop.getByPlaceholder('Property key').fill('status')
     // Default op is `is` (Eq) → the value input is shown and required.
     await pop.getByPlaceholder('Value', { exact: true }).fill('active')
@@ -320,11 +323,11 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('Priority and Last-edited quick-picks add chips', async ({ page }) => {
     await bootPages(page)
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'A', exact: true }).click()
-    await expect(page.getByRole('group', { name: 'Filter: priority A' })).toBeVisible()
+    await openAddFilter(page)
+    await activePopover(page).getByRole('button', { name: '1', exact: true }).click()
+    await expect(page.getByRole('group', { name: 'Filter: priority 1' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     await activePopover(page).getByRole('button', { name: 'Edited today' }).click()
     await expect(page.getByRole('group', { name: 'Filter: Edited today' })).toBeVisible()
   })
@@ -355,16 +358,16 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     // eight different path globs — each is a unique `PathGlob{pattern}` so none
     // collapse, and none narrow the seed to zero in a way that hides the row.
     for (let i = 0; i < 8; i++) {
-      await page.getByRole('button', { name: 'Add filter' }).click()
+      await openAddFilter(page)
       const pop = activePopover(page)
-      await pop.getByRole('button', { name: 'Page path', exact: true }).click()
+      await pop.getByRole('button', { name: /^Page path/ }).click()
       await pop.getByPlaceholder('e.g. Projects/*').fill(`p${i}`)
       await pop.getByRole('button', { name: 'Apply' }).click()
     }
     await expect(page.getByRole('group', { name: /^Filter: path:/ })).toHaveCount(8)
 
     // The ninth Add-Filter open surfaces the soft-cap warning note.
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     await expect(activePopover(page).getByText('Many filters can slow the view.')).toBeVisible()
   })
 

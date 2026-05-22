@@ -125,24 +125,33 @@ if ! node scripts/prepare-external-bins.mjs --placeholder-only > /dev/null 2>&1;
 fi
 echo "  ✓ externalBin placeholder"
 
-# ── Phase 2a: parallel CPU-bound checks (vitest + cargo) ───────────
-# vitest and cargo nextest spawn many parallel workers each but their
-# resource footprints compose cleanly (node vs. rustc); failures are
-# aggregated so a single failed check doesn't hide the rest.
-
-echo "→ Phase 2a: parallel checks (vitest + cargo)"
-launch 'vitest (full)' \
-    npx vitest run
-launch 'cargo (nextest + agaric-mcp + sqlx-prepare)' \
-    bash -c 'cd src-tauri && cargo nextest run --profile ci && cargo build --bin agaric-mcp && cargo sqlx prepare --check -- --tests'
-
-if ! wait_all; then
+# ── Phase 2a: CPU-bound checks (vitest, then cargo — serialized) ────
+# vitest and cargo nextest are BOTH CPU-bound at *run* time (node test
+# workers vs. compiled Rust test threads), and each sizes its pool to the
+# core count. Running them together oversubscribes the box, so
+# timing-sensitive frontend tests (userEvent keypresses, Radix overlay
+# mounts, axe audits) miss their deadlines and flake — a pure scheduling
+# artifact, not a real failure. GitHub CI never hits this because it runs
+# vitest and cargo as SEPARATE jobs on SEPARATE runners; serializing the two
+# here mirrors that isolation. The cost is a minute or two of wall time,
+# which is far cheaper than a flaky push.
+fail_phase2() {
     echo ""
     echo "✗ Pre-push verification FAILED. Push aborted."
     echo "  Re-run a single check with the command shown above to iterate."
     echo "  Bypass (use sparingly): SKIP_CI_VERIFY=1 git push"
     exit 1
-fi
+}
+
+echo "→ Phase 2a (i): vitest (full)"
+launch 'vitest (full)' \
+    npx vitest run
+wait_all || fail_phase2
+
+echo "→ Phase 2a (ii): cargo (nextest + agaric-mcp + sqlx-prepare)"
+launch 'cargo (nextest + agaric-mcp + sqlx-prepare)' \
+    bash -c 'cd src-tauri && cargo nextest run --profile ci && cargo build --bin agaric-mcp && cargo sqlx prepare --check -- --tests'
+wait_all || fail_phase2
 
 # ── Phase 2b: playwright (serialized) ──────────────────────────────
 # Playwright owns the vite dev server (started via webServer config) and

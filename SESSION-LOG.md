@@ -36,8 +36,11 @@
 - `cd src-tauri && cargo nextest run` — 3912 passed, 6 skipped.
 - `npx vitest run` — 10525 passed; `npx tsc -b` — clean.
 - `prek run --all-files` — all hooks pass.
+- `scripts/verify-ci-equivalent.sh` (full pre-push: vitest + cargo + **playwright e2e** + sqlx + MCP smoke) — PASSED.
 
-**Commit plan:** single commit onto `pend-58-phase2-pages-primitives` (PR #48), pushed.
+**Process notes:** The pre-push CI-equivalent (which prek does *not* cover — it adds the full Playwright e2e + sqlx-prepare check) surfaced flakes and a few real e2e breaks that the per-builder vitest gate missed. Stabilized in a follow-up commit: (1) the e2e value-facet selectors and the priority/tag fixtures were updated for the E1/E5/E19 behaviour changes (e2e is not in the prek gate, so the build subagents couldn't have caught these); (2) F3's E12 same-page seed edge was reverted off the shared "Quick Notes" fixture (it reordered rendered blocks and broke the editor/keyboard/inner-links specs) — the same-page exclusion is now covered by a runtime mock unit test instead; (3) **pre-push reliability**: `verify-ci-equivalent.sh` now serializes the vitest and cargo phases (they oversubscribed the box and starved timing-sensitive frontend tests — CI never hits this because it shards them onto separate runners), `src/test-setup.ts` raises the Testing-Library `asyncUtilTimeout` so `axe()` audits survive CPU pressure, and `playwright.config.ts` caps local workers + enables local retries to match CI.
+
+**Commit plan:** two commits onto `pend-58-phase2-pages-primitives` (PR #48) — the PEND-58e delivery, then the e2e/pre-push stabilization — both pushed.
 
 ---
 

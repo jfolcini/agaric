@@ -1,6 +1,13 @@
 import { createRequire } from 'node:module'
 import type { Locator, Page } from '@playwright/test'
-import { activeAlertDialog, activePopover, expect, test, waitForBoot } from './helpers'
+import {
+  activeAlertDialog,
+  activePopover,
+  expect,
+  openAddFilter,
+  test,
+  waitForBoot,
+} from './helpers'
 
 // Resolve the bundled axe-core source for in-page injection. `addScriptTag`
 // runs in Node, and this spec is ESM, so build a `require` to locate the
@@ -30,7 +37,7 @@ const axePath = createRequire(import.meta.url).resolve('axe-core')
  *   - Page-level `Tag` / `Priority` are not set on the canonical seed (its
  *     tags/priorities live on child blocks). The `__mockFacetFixture` opt-in
  *     adds one "Facet Fixture" page carrying a page-level tag `work` +
- *     priority `A` so those two facets narrow to a concrete non-empty set.
+ *     priority `1` so those two facets narrow to a concrete non-empty set.
  *
  * Seed pages (6, alphabetical): the daily page (YYYY-MM-DD), Getting Started,
  * Meeting Notes Template, Meetings, Projects, Quick Notes.
@@ -91,7 +98,7 @@ function countChip(page: Page): Locator {
  * accessible name (so `exact: true` no longer matches). Anchors on the label.
  */
 async function addBooleanFacet(page: Page, label: 'Orphan' | 'Stub' | 'No inbound links') {
-  await page.getByRole('button', { name: 'Add filter' }).click()
+  await openAddFilter(page)
   await activePopover(page)
     .getByRole('button', { name: new RegExp(`^${label}`) })
     .click()
@@ -99,9 +106,9 @@ async function addBooleanFacet(page: Page, label: 'Orphan' | 'Stub' | 'No inboun
 
 /** Open the path editor, fill a pattern, optionally tick Exclude, and apply. */
 async function addPathFilter(page: Page, pattern: string, exclude = false) {
-  await page.getByRole('button', { name: 'Add filter' }).click()
+  await openAddFilter(page)
   const pop = activePopover(page)
-  await pop.getByRole('button', { name: 'Page path', exact: true }).click()
+  await pop.getByRole('button', { name: /^Page path/ }).click()
   await pop.getByPlaceholder('e.g. Projects/*').fill(pattern)
   if (exclude) {
     await pop.getByRole('checkbox', { name: 'Exclude matching pages' }).click()
@@ -116,9 +123,9 @@ async function addPropertyFilter(
   op: 'is' | 'is not' | 'exists' | "doesn't exist",
   value?: string,
 ) {
-  await page.getByRole('button', { name: 'Add filter' }).click()
+  await openAddFilter(page)
   const pop = activePopover(page)
-  await pop.getByRole('button', { name: 'Has property', exact: true }).click()
+  await pop.getByRole('button', { name: /^Has property/ }).click()
   await pop.getByPlaceholder('Property key').fill(key)
   await pop.getByRole('combobox', { name: 'Comparison' }).selectOption({ label: op })
   if (value !== undefined) {
@@ -183,11 +190,11 @@ test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => 
 
   test('Tag narrows to the tagged page', async ({ page }) => {
     await bootPages(page, { facetFixture: true })
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     const pop = activePopover(page)
-    await pop.getByRole('button', { name: 'Tag', exact: true }).click()
-    await pop.getByPlaceholder('Tag name or id').fill(TAG_WORK_ID)
-    await pop.getByPlaceholder('Tag name or id').press('Enter')
+    await pop.getByRole('button', { name: /^Tag/ }).click()
+    await pop.getByPlaceholder('Tag id').fill(TAG_WORK_ID)
+    await pop.getByPlaceholder('Tag id').press('Enter')
 
     await expect(grid(page).getByText('Facet Fixture', { exact: true })).toBeVisible()
     await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
@@ -196,8 +203,8 @@ test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => 
 
   test('Priority narrows to the prioritised page', async ({ page }) => {
     await bootPages(page, { facetFixture: true })
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'A', exact: true }).click()
+    await openAddFilter(page)
+    await activePopover(page).getByRole('button', { name: '1', exact: true }).click()
 
     await expect(visibleTitles(page)).resolves.toEqual(['Facet Fixture'])
     await expect(countChip(page)).toHaveText('1 matching page')
@@ -262,7 +269,7 @@ test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => 
     await bootPages(page, { extraPages: 5 })
 
     for (const bucket of ['Edited today', 'Edited this week', 'Edited this month']) {
-      await page.getByRole('button', { name: 'Add filter' }).click()
+      await openAddFilter(page)
       await activePopover(page).getByRole('button', { name: bucket }).click()
       // Only the recent bulk pages match these rolling windows.
       await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toBeVisible()
@@ -273,7 +280,7 @@ test.describe('PEND-58d — facet narrowing (each facet does the thing)', () => 
     }
 
     // Long-ago → the six canonical (old) pages, none of the recent bulk pages.
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     await activePopover(page).getByRole('button', { name: 'Edited long ago' }).click()
     await expect(grid(page).getByText('Getting Started', { exact: true })).toBeVisible()
     await expect(grid(page).getByText('Bulk Page 001', { exact: true })).toHaveCount(0)
@@ -323,7 +330,7 @@ test.describe('PEND-58d — compound filters (AND-compose / widen / soft-cap)', 
     }
     await expect(page.getByRole('group', { name: /^Filter: path:/ })).toHaveCount(8)
     // The next Add-Filter open surfaces the soft-cap note.
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     await expect(activePopover(page).getByText('Many filters can slow the view.')).toBeVisible()
   })
 })
@@ -747,12 +754,13 @@ test.describe('PEND-58d — metadata badges', () => {
     await expect(row.locator('[data-metadata-children]')).toBeVisible()
   })
 
-  test('same-page links are excluded from the inbound badge (E12)', async ({ page }) => {
+  test('cross-page inbound links render the inbound badge', async ({ page }) => {
     await bootPages(page)
-    // Quick Notes carries BOTH a cross-page inbound edge (from BLOCK_GS_2 on
-    // Getting Started) AND a same-page edge (BLOCK_QN_2 → BLOCK_QN_1, both on
-    // Quick Notes). The same-page edge must NOT count — so the inbound badge
-    // reads "1 ↗", not "2 ↗" (migration 0070 exclusion mirrored in the mock).
+    // Quick Notes has exactly one cross-page inbound edge (from BLOCK_GS_2 on
+    // Getting Started), so its inbound badge reads "1 ↗". (The same-page
+    // exclusion mirrored from migration 0070 is covered by the mock unit test
+    // `excludes a same-page link` — the shared Quick Notes seed deliberately
+    // carries no same-page edge to keep the editor/inner-links specs stable.)
     const row = grid(page).locator('[data-page-item]:has-text("Quick Notes")')
     await expect(row.locator('[data-metadata-inbound]')).toBeVisible()
     await expect(row.locator('[data-metadata-inbound]')).toContainText('1 ↗')
@@ -968,7 +976,7 @@ test.describe('PEND-58d — a11y + keyboard', () => {
     expect(await runAxe()).toEqual([])
 
     // Popover open.
-    await page.getByRole('button', { name: 'Add filter' }).click()
+    await openAddFilter(page)
     await expect(activePopover(page)).toBeVisible()
     expect(await runAxe()).toEqual([])
   })

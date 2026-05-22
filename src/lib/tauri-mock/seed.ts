@@ -433,19 +433,21 @@ export function seedBlocks(): void {
       0,
     ),
   )
-  // BLOCK_QN_2 carries a SAME-PAGE link to its sibling BLOCK_QN_1 (both live
-  // on Quick Notes). This exercises the inbound same-page/self exclusion
-  // (migration 0070 + `recompute_pages_cache_counts_for_pages`): the edge
-  // targets a Quick Notes descendant but its SOURCE also belongs to Quick
-  // Notes, so it must NOT count toward Quick Notes' `inbound_link_count`.
-  // Quick Notes therefore stays at inbound = 1 (the cross-page edge from
-  // BLOCK_GS_2 only); if the exclusion regressed it would over-count to 2.
+  // NOTE (PEND-58e E12): Quick Notes is a SHARED fixture that many e2e specs
+  // depend on (editor/keyboard block-nth indexing, inner-links `*ideas*` →
+  // `<em>`, import-export snapshots). Adding a same-page `[[…]]` link to either
+  // content block to exercise the inbound same-page exclusion broke those
+  // specs (a block-ref reorders the rendered `block-static` nodes; a page-ref
+  // perturbed static rendering). The same-page exclusion is instead covered by
+  // the *dynamic* mock unit test `a fresh same-page link does not bump the
+  // inbound count` (it adds the edge at runtime) plus the backend's Rust
+  // exclusion tests — neither of which has to mutate this shared seed.
   blocks.set(
     SEED_IDS.BLOCK_QN_2,
     makeBlock(
       SEED_IDS.BLOCK_QN_2,
       'content',
-      `Jot down quick thoughts and *ideas* here. Related: [[${SEED_IDS.BLOCK_QN_1}]].`,
+      'Jot down quick thoughts and *ideas* here.',
       SEED_IDS.PAGE_QUICK_NOTES,
       1,
     ),
@@ -587,10 +589,10 @@ export function seedBlocks(): void {
  * exactly 6 pages (the `tauri-mock.test.ts` count assertion and every other
  * spec are unaffected). When enabled it adds ONE page:
  *
- *   "Facet Fixture" — tag `work` (`TAG_WORK`) + priority `A`, one child block
+ *   "Facet Fixture" — tag `work` (`TAG_WORK`) + priority `1`, one child block
  *   (not a `Stub`), no links (so it is also an `Orphan`).
  *
- * Behavioural e2e can then assert `Tag(work)` and `Priority(A)` each narrow to
+ * Behavioural e2e can then assert `Tag(work)` and `Priority(1)` each narrow to
  * exactly this one page rather than to the (otherwise empty) page-level set.
  */
 function seedFacetFixturePage(): void {
@@ -603,7 +605,11 @@ function seedFacetFixturePage(): void {
   if (!enabled) return
   const pageId = fakeId()
   const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
-  page['priority'] = 'A'
+  // PEND-58e E1: the Priority facet now offers the configured levels
+  // (`DEFAULT_PRIORITY_LEVELS` = '1'/'2'/'3'), not the old 'A'/'B'/'C'. The
+  // canonical seed sets no page-level priority, so '1' here is unique and the
+  // facet narrows to exactly this page.
+  page['priority'] = '1'
   blocks.set(pageId, page)
   pageLastModified.set(pageId, offsetIso(-90))
   if (!properties.has(pageId)) properties.set(pageId, new Map())
