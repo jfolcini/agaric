@@ -79,7 +79,10 @@ export const references: Record<string, string> = {
   'graph.filter.priorityValue.1': 'High (1)',
   'graph.filter.priorityValue.2': 'Medium (2)',
   'graph.filter.priorityValue.3': 'Low (3)',
-  'search.minCharsHint': 'Search requires at least 3 characters',
+  // UX-7 — search actually fires at 1 char; this is a soft hint (the
+  // FTS trigram index matches whole words of 3+ chars best), not a hard
+  // requirement, so the copy must not promise a gate that doesn't exist.
+  'search.minCharsHint': 'Tip: words of 3+ characters return the best matches.',
   'search.parentPage': 'in: {{title}}',
   'tags.loadFailed': 'Failed to load tags',
   'tags.nameTooLong': 'Tag name must be under 100 characters',
@@ -165,7 +168,7 @@ export const references: Record<string, string> = {
   'search.failed': 'Failed to search',
   'search.loadResultsFailed': 'Failed to load search results',
   'search.noParentPage': 'This block has no parent page',
-  'search.searchPlaceholder': 'Search blocks (3+ chars)...',
+  'search.searchPlaceholder': 'Search blocks...',
   'search.searchLabel': 'Search blocks',
   'search.cjkNoteLabel': 'Note:',
   'search.cjkLimitationNote':
@@ -242,6 +245,14 @@ export const references: Record<string, string> = {
   'search.groupCollapsedLabel': 'Show matches in {{pageTitle}}',
   'search.groupExpandedLabel': 'Hide matches in {{pageTitle}}',
   'search.helpButtonLabel': 'Search help',
+  // UX-1/UX-3 — search help dialog (structural strings; the dense
+  // token reference inside each section is monospace code, not prose).
+  'search.help.description': 'Search basics: paginated full-text search across blocks and pages.',
+  'search.help.section.filterSyntax': 'Filter syntax',
+  'search.help.section.toggles': 'Toggles',
+  'search.help.section.regexSyntax': 'Regex syntax',
+  'search.help.section.booleanOperators': 'Boolean operators',
+  'search.help.section.tips': 'Tips',
   // PEND-55 — toggle row (`Aa` / `Ab|` / `.*`) + search history.
   'search.toggle.caseSensitive': 'Case-sensitive (Aa)',
   'search.toggle.wholeWord': 'Whole word (Ab|)',
@@ -257,6 +268,13 @@ export const references: Record<string, string> = {
   'search.history.disabledNotice': 'Search history is off',
   'search.filterGroupLabel': 'Filter: {{value}}',
   'search.invalidRegex': '{{message}}',
+  // UX-2 — generic (non-regex) search failure: announced in the live
+  // region and shown as a visible inline error state.
+  'search.statusError': 'Search failed',
+  'search.errorTitle': 'Search failed',
+  'search.errorBody': 'Something went wrong running your search. Try again.',
+  // UX-4 — result cap notice (the 5000-item ceiling was hit silently).
+  'search.cappedNotice': 'Showing the first results — refine your search to narrow them down.',
   // PEND-51 — Cmd+K palette dialog.
   'palette.dialogLabel': 'Quick search',
   'palette.dialogTitle': 'Search palette',

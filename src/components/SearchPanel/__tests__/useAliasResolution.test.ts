@@ -139,9 +139,12 @@ describe('useAliasResolution', () => {
     await waitFor(() => {
       expect(mockedResolveAlias).toHaveBeenCalled()
     })
+    // FE-12 — suppression is now a render-time derive (a changing
+    // `results` array no longer re-fires the alias IPC). The card is
+    // still hidden when the resolved page is already in results;
+    // whether getBlock ran is an implementation detail.
     expect(result.current.aliasMatch).toBeNull()
     expect(result.current.aliasQuery).toBe('')
-    expect(mockedGetBlock).not.toHaveBeenCalled()
   })
 
   it('resets to null when getBlock fails', async () => {

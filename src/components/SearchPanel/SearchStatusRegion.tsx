@@ -33,6 +33,11 @@ export function getSearchStatusText(
   t: TFunction,
 ): string | null {
   const { searched, searchLoading, error, cleared, resultCount } = args
+  // UX-2 — announce generic search failures. Without this branch a
+  // non-regex error left the live region (and the panel) silent/blank.
+  if (searched && !searchLoading && error) {
+    return t('search.statusError')
+  }
   if (searched && !searchLoading && !error && resultCount > 0) {
     return t('search.resultsCount', { count: resultCount })
   }

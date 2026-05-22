@@ -52,6 +52,31 @@ describe('usePaginatedQuery', () => {
     expect(result.current.items).toEqual(['x'])
   })
 
+  it('discards an in-flight response after `enabled` flips false (FE-1)', async () => {
+    let resolve!: (v: PaginatedResponse<string>) => void
+    const queryFn = vi.fn(
+      () =>
+        new Promise<PaginatedResponse<string>>((r) => {
+          resolve = r
+        }),
+    )
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => usePaginatedQuery(queryFn, { enabled }),
+      { initialProps: { enabled: true } },
+    )
+
+    expect(result.current.loading).toBe(true)
+    // Disable mid-flight — e.g. the user cleared the search input.
+    act(() => rerender({ enabled: false }))
+    expect(result.current.loading).toBe(false)
+
+    // The superseded request resolves late; its result must NOT
+    // repopulate the just-cleared list.
+    await act(async () => resolve(makePage(['stale'])))
+    expect(result.current.items).toEqual([])
+    expect(result.current.loading).toBe(false)
+  })
+
   it('tracks hasMore from the response', async () => {
     const queryFn = vi.fn().mockResolvedValue(makePage(['a'], true, 'c1'))
     const { result } = renderHook(() => usePaginatedQuery(queryFn))

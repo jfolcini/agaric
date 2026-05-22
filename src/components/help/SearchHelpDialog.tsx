@@ -5,17 +5,11 @@
  * panel itself; this component is a passive `open` / `onOpenChange`
  * sink so the parent owns trigger state).
  *
- * The five sections below are populated additively by follow-up plans:
- *   - Filter syntax    → PEND-54 (inline filter syntax + glob/tag)
- *   - Toggles          → PEND-55 (toggle row + history)
- *   - Regex syntax     → PEND-55
- *   - Boolean operators → PEND-55
- *   - Tips             → PEND-55 and later
- *
- * Skeleton-only by design: each section ships a single placeholder
- * paragraph that cross-links to the owning plan so a contributor
- * landing here knows exactly where the prose comes from. Do not
- * pre-fill content here — append it from the follow-up PRs.
+ * Five populated sections: Filter syntax, Toggles, Regex syntax,
+ * Boolean operators, and Tips. Section headings + the dialog
+ * description are i18n'd; the dense token reference inside each section
+ * is monospace code (filter prefixes, regex syntax), not translatable
+ * prose, so it is rendered verbatim.
  */
 
 import { useTranslation } from 'react-i18next'
@@ -127,9 +121,10 @@ function FilterSyntaxBody() {
         start on Monday.
       </p>
       <p>
-        <strong>Property filters</strong>: v1 matches <span className="font-mono">value_text</span>{' '}
-        only — numeric / date / reference values are not yet searchable via{' '}
-        <span className="font-mono">prop:</span>. Property keys are <strong>case-sensitive</strong>.
+        <strong>Property filters</strong>: <span className="font-mono">prop:KEY=VALUE</span> matches
+        a block&apos;s stored property values; an empty value (
+        <span className="font-mono">prop:KEY=</span>) matches key-presence only. Property keys are{' '}
+        <strong>case-sensitive</strong>.
       </p>
       <p>
         Glob filters are <strong>case-insensitive</strong> and match against the page title. A bare
@@ -225,8 +220,9 @@ function RegexSyntaxBody() {
           <span className="font-mono">(?x)</span> are supported.
         </li>
         <li>
-          Caps: pattern length 1 KiB, compiled size 10 MiB, DFA cache 10 MiB, 50 match-offsets per
-          block, 1000 pre-filter rows.
+          Bounded by design: the pattern length, compiled program size, DFA cache, match-offsets per
+          block, and pre-filter row count are all capped (see the regex constants in the backend;
+          the limits are intentionally not duplicated here).
         </li>
       </ul>
       <p>
@@ -314,29 +310,27 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
       <DialogContent aria-labelledby="search-help-title" data-testid="search-help-dialog">
         <DialogHeader>
           <DialogTitle id="search-help-title">{t('search.helpButtonLabel')}</DialogTitle>
-          <DialogDescription>
-            Search basics: paginated full-text search across blocks and pages.
-          </DialogDescription>
+          <DialogDescription>{t('search.help.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody>
           {/* PEND-54 — Filter syntax section (populated). */}
           <section aria-labelledby="search-help-filter-syntax">
             <h3 id="search-help-filter-syntax" className="text-base font-semibold leading-tight">
-              Filter syntax
+              {t('search.help.section.filterSyntax')}
             </h3>
             <FilterSyntaxBody />
           </section>
           {/* PEND-55 — Toggles. */}
           <section aria-labelledby="search-help-toggles">
             <h3 id="search-help-toggles" className="text-base font-semibold leading-tight">
-              Toggles
+              {t('search.help.section.toggles')}
             </h3>
             <TogglesBody />
           </section>
           {/* PEND-55 — Regex syntax. */}
           <section aria-labelledby="search-help-regex-syntax">
             <h3 id="search-help-regex-syntax" className="text-base font-semibold leading-tight">
-              Regex syntax
+              {t('search.help.section.regexSyntax')}
             </h3>
             <RegexSyntaxBody />
           </section>
@@ -346,14 +340,14 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
               id="search-help-boolean-operators"
               className="text-base font-semibold leading-tight"
             >
-              Boolean operators
+              {t('search.help.section.booleanOperators')}
             </h3>
             <BooleanOperatorsBody />
           </section>
           {/* PEND-55 — Tips. */}
           <section aria-labelledby="search-help-tips">
             <h3 id="search-help-tips" className="text-base font-semibold leading-tight">
-              Tips
+              {t('search.help.section.tips')}
             </h3>
             <TipsBody />
           </section>

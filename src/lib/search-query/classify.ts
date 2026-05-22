@@ -73,6 +73,29 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
     // Everything else is free-text.
   }
 
+  // DSL-5 — only the LAST due:/scheduled: token reaches the backend
+  // (see astToFilterProjection's "last wins"). Flag the earlier,
+  // shadowed tokens as invalid so the rendered chips agree with the
+  // effective query instead of showing filters that silently don't apply.
+  for (const kind of ['due', 'scheduled'] as const) {
+    const indices: number[] = []
+    for (let i = 0; i < filters.length; i++) {
+      if (filters[i]?.kind === kind) indices.push(i)
+    }
+    if (indices.length > 1) {
+      for (const i of indices.slice(0, -1)) {
+        const shadowed = filters[i]
+        if (!shadowed) continue
+        filters[i] = {
+          kind: 'invalid',
+          source: input.slice(shadowed.span[0], shadowed.span[1]),
+          error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
+          span: shadowed.span,
+        }
+      }
+    }
+  }
+
   const freeText = stripSpans(input, consumedSpans).trim().replace(/\s+/g, ' ')
   return { filters, freeText }
 }

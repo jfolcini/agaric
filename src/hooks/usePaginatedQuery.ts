@@ -132,6 +132,12 @@ export function usePaginatedQuery<T>(
   // Only call load() when enabled — this lets callers gate auto-fetch.
   const enabled = options?.enabled ?? true
   useEffect(() => {
+    // FE-1 — invalidate any in-flight request whenever deps change or
+    // `enabled` flips. Without this, disabling the query (e.g. the user
+    // cleared the input) skips `load()`, so `requestIdRef` is never
+    // bumped and the prior request's late response still passes its
+    // stale-id guard and repopulates the just-cleared list.
+    requestIdRef.current++
     setNextCursor(null)
     setHasMore(false)
     setCapped(false)
@@ -139,7 +145,12 @@ export function usePaginatedQuery<T>(
     // previous queryFn doesn't briefly drive an "X of Y" chip
     // against a fresh, unrelated result set.
     setTotalCount(undefined)
-    if (!enabled) return
+    if (!enabled) {
+      // The discarded in-flight request's `finally` won't clear loading
+      // (its rid no longer matches), so clear it here.
+      setLoading(false)
+      return
+    }
     load()
   }, [load, enabled])
 

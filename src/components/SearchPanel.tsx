@@ -74,6 +74,7 @@ import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
 import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { EmptyState } from './EmptyState'
+import { SearchHelpDialog } from './help/SearchHelpDialog'
 import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
@@ -221,6 +222,8 @@ export function SearchPanel(): React.ReactElement {
   // PEND-55 — history dropdown visibility. Shown when the input is
   // focused AND empty (matches the plan's UX mock).
   const [inputFocused, setInputFocused] = useState(false)
+  // UX-1 — search help dialog open state (the `?` toolbar button).
+  const [helpOpen, setHelpOpen] = useState(false)
   // PEND-60 Phase 1 — caret-anchored autocomplete state.
   const [caretPos, setCaretPos] = useState(0)
   const [autocompleteSelected, setAutocompleteSelected] = useState<string | null>(null)
@@ -300,6 +303,15 @@ export function SearchPanel(): React.ReactElement {
       cancelled = true
     }
   }, [debouncedProjection.tagNames, tagNameMap])
+
+  // FE-5 — tag name→id resolutions are space-scoped: the same tag name
+  // can map to a different tag_id (or none) in another space. The cache
+  // keys on the lowercased name only, so drop it on space switch to
+  // avoid a cross-space id collision when the panel isn't remounted.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fire-on-change — the body doesn't read currentSpaceId, it invalidates the space-scoped cache when the space switches.
+  useEffect(() => {
+    setTagNameMap(new Map())
+  }, [currentSpaceId])
 
   // Load recent pages from localStorage on mount
   useEffect(() => {
@@ -403,6 +415,7 @@ export function SearchPanel(): React.ReactElement {
     hasMore,
     loadMore,
     error,
+    capped,
     setItems,
   } = usePaginatedQuery(queryFn, {
     // PEND-54 — the AST's free-text may be empty when the user has only
@@ -440,9 +453,12 @@ export function SearchPanel(): React.ReactElement {
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
+    // FE-11 — only resolve page ids we haven't already resolved. On
+    // Load-More the accumulated `results` set re-issued a batchResolve
+    // for every parent id (including already-known ones) on each page.
     const parentIds = [
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
-    ]
+    ].filter((id) => !pageTitles.has(id))
     if (parentIds.length === 0) return
     batchResolve(parentIds)
       .then((resolved) => {
@@ -475,7 +491,10 @@ export function SearchPanel(): React.ReactElement {
       .catch((err) => {
         logger.warn('SearchPanel', 'breadcrumb resolution failed', undefined, err)
       })
-  }, [results])
+    // `pageTitles` participates so the already-resolved filter above sees
+    // the latest map; the empty-`parentIds` guard makes the follow-up run
+    // a no-op (no resolve loop).
+  }, [results, pageTitles])
 
   // PEND-30 D-3 — alias resolution lifted into its own hook.
   // PEND-54 — alias-match runs against the free-text portion so a
@@ -736,6 +755,14 @@ export function SearchPanel(): React.ReactElement {
 
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      // UX-1 — `?` on an empty input opens the search help dialog
+      // (honours the intro toast's "Press ? for help" CTA). Reading the
+      // live value avoids taking `query` as a dependency.
+      if (e.key === '?' && e.currentTarget.value.length === 0) {
+        e.preventDefault()
+        setHelpOpen(true)
+        return
+      }
       // Autocomplete keys win over history recall when the popover is open.
       if (autocompleteOpen && autocompleteItems.length > 0) {
         if (e.key === 'ArrowDown') {
@@ -792,8 +819,15 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [])
 
+  // FE-4 — a monotonic "navigation generation". Each click claims the
+  // next generation; only the latest may resolve the spinner / perform
+  // the deferred navigation. Without it, clicking row B while row A's
+  // async parent lookup is in flight raced two navigations and A's
+  // `finally` cleared B's spinner.
+  const navGenerationRef = useRef(0)
   const handleResultClick = useCallback(
     async (block: BlockRow | SearchBlockRow) => {
+      const gen = ++navGenerationRef.current
       setLoadingResultId(block.id)
       try {
         if (block.block_type === 'page') {
@@ -805,6 +839,8 @@ export function SearchPanel(): React.ReactElement {
         if (block.parent_id) {
           try {
             const parent = await getBlock(block.parent_id)
+            // A newer click superseded this one while the parent loaded.
+            if (navGenerationRef.current !== gen) return
             addRecentPage(block.parent_id, parent.content ?? 'Untitled')
             setRecentPages(getRecentPages())
             navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
@@ -819,7 +855,8 @@ export function SearchPanel(): React.ReactElement {
           notify.error(t('search.noParentPage'))
         }
       } finally {
-        setLoadingResultId(null)
+        // Only the latest click owns the spinner.
+        if (navGenerationRef.current === gen) setLoadingResultId(null)
       }
     },
     [navigateToPage, t],
@@ -889,7 +926,10 @@ export function SearchPanel(): React.ReactElement {
     patchQuery((a) => removeFilterAt(a, index))
   }
   function handleClearAllFilters() {
-    setQueryAndCaret(debouncedAst.freeText)
+    // FE-6 — keep the LIVE free text (not the debounced/last-committed
+    // AST) so just-typed-but-not-yet-debounced words aren't dropped when
+    // the user clears filters.
+    setQueryAndCaret(parse(query).freeText)
   }
   function handleAddTag(name: string) {
     const token: FilterToken = { kind: 'tag', value: name, span: [0, 0] }
@@ -935,6 +975,7 @@ export function SearchPanel(): React.ReactElement {
         invalid={!!regexError}
         inlineError={regexError}
         comboboxAttrs={inputComboboxAttrs}
+        onHelpClick={() => setHelpOpen(true)}
         toggleRow={<SearchToggleRow toggles={toggles} onChange={setToggles} />}
         historyDropdown={
           <SearchHistoryDropdown
@@ -1038,6 +1079,30 @@ export function SearchPanel(): React.ReactElement {
         <EmptyState icon={Search} message={t('search.noResultsFound')} />
       )}
 
+      {/* UX-2 — a generic (non-regex) failure previously left the panel
+          blank. Regex errors already render inline in the header
+          (`regexError`); everything else gets a visible error state. */}
+      {searched && !searchLoading && error && !regexError && (
+        <div
+          role="alert"
+          data-testid="search-error-state"
+          className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+        >
+          <p className="font-medium">{t('search.errorTitle')}</p>
+          <p className="text-destructive/90">{t('search.errorBody')}</p>
+        </div>
+      )}
+
+      {/* UX-4 — the 5000-item ceiling was hit silently; tell the user. */}
+      {capped && (
+        <div
+          data-testid="search-capped-notice"
+          className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+        >
+          {t('search.cappedNotice')}
+        </div>
+      )}
+
       {aliasMatch && (
         <div data-testid="alias-match">
           <ResultCard
@@ -1087,6 +1152,8 @@ export function SearchPanel(): React.ReactElement {
         onLoadMore={loadMore}
         className="search-load-more"
       />
+
+      <SearchHelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
     </div>
   )
 }

@@ -126,10 +126,12 @@ describe('SearchPanel', () => {
 
   // UX-338 — placeholder must mention the 3-character minimum so users see
   // the requirement before they type, not only after.
-  it('placeholder mentions the 3-character minimum', () => {
+  it('placeholder does not promise a hard character minimum (UX-7)', () => {
     render(<SearchPanel />)
     const input = screen.getByLabelText(t('search.searchLabel')) as HTMLInputElement
-    expect(input.placeholder).toMatch(/3\+\s*chars/i)
+    expect(input.placeholder).toBe(t('search.searchPlaceholder'))
+    // Search fires at 1 char, so the placeholder must not advertise a gate.
+    expect(input.placeholder).not.toMatch(/3\+/)
   })
 
   it('shows no results before first search', () => {
@@ -198,7 +200,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'query' } })
 
-    const searchBtn = screen.getByRole('button', { name: /Search/i })
+    const searchBtn = screen.getByRole('button', { name: t('search.searchButton') })
     await user.click(searchBtn)
 
     await waitFor(() => {
@@ -484,8 +486,18 @@ describe('SearchPanel', () => {
   it('disables search button when input is empty', () => {
     render(<SearchPanel />)
 
-    const searchBtn = screen.getByRole('button', { name: /Search/i })
+    const searchBtn = screen.getByRole('button', { name: t('search.searchButton') })
     expect(searchBtn).toBeDisabled()
+  })
+
+  it('opens the search help dialog from the ? button (UX-1)', async () => {
+    const user = userEvent.setup()
+    render(<SearchPanel />)
+    expect(screen.queryByTestId('search-help-dialog')).toBeNull()
+    await user.click(screen.getByTestId('search-help-button'))
+    expect(await screen.findByTestId('search-help-dialog')).toBeInTheDocument()
+    // The help content is reachable (filter-syntax section heading).
+    expect(screen.getByText(t('search.help.section.filterSyntax'))).toBeInTheDocument()
   })
 
   it('does not search for whitespace-only input', () => {

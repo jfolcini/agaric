@@ -101,9 +101,10 @@ export function SearchHistoryDropdown({
         >
           {entries.map((entry, idx) => (
             <div
-              // The query string is the natural key. Duplicates can't
-              // occur in this list (the store dedupes on insert).
-              key={entry}
+              // FE-13 — key on the positional row id (same basis as the
+              // aria id) rather than the entry text, so view correctness
+              // doesn't depend on the store's case-sensitive dedup.
+              key={searchHistoryRowId(listboxId, idx)}
               id={searchHistoryRowId(listboxId, idx)}
               role="option"
               aria-selected={idx === activeIndex}

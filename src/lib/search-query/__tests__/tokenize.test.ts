@@ -51,6 +51,25 @@ describe('tokenize', () => {
     expect(t1.text).toBe('path:Journal/*')
   })
 
+  it('requires the closing quote at a token boundary (DSL-1)', () => {
+    // `"a"b` — the inner `"` is glued to `b`, so it is not a clean
+    // phrase close; the whole run degrades to a single word rather than
+    // a fragmented phrase + word.
+    const tokens = tokenize('"a"b')
+    expect(tokens).toHaveLength(1)
+    expect(tokens[0]).toMatchObject({ kind: 'word', text: '"a"b' })
+  })
+
+  it('a deliberately quoted phrase swallows a filter-shaped token (DSL-1 contract)', () => {
+    // This is *correct* quote behaviour, documented as a regression
+    // guard: once the user quotes a span, structured tokens inside it
+    // are literal phrase text, not filters.
+    const tokens = tokenize('hello "world tag:#x more"')
+    expect(tokens).toHaveLength(2)
+    expect(tokens[0]).toMatchObject({ kind: 'word', text: 'hello' })
+    expect(tokens[1]).toMatchObject({ kind: 'quoted', text: '"world tag:#x more"' })
+  })
+
   it('preserves Unicode characters', () => {
     const tokens = tokenize('tag:#日本語 #emoji-📌')
     const [t0, t1] = tokens

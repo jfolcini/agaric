@@ -77,6 +77,28 @@ describe('classify / parse', () => {
     })
   })
 
+  it('collapses internal whitespace in free text (DSL-4 contract)', () => {
+    // Documented lossy round-trip: runs of whitespace between free-text
+    // words collapse to a single space.
+    const ast = parse('foo    bar\t\tbaz')
+    expect(ast.freeText).toBe('foo bar baz')
+  })
+
+  it('flags an earlier shadowed due: token as invalid (DSL-5)', () => {
+    const ast = parse('due:today due:this-week')
+    expect(ast.filters).toHaveLength(2)
+    // The first (shadowed) token is marked invalid so its chip reflects
+    // that it does not apply; the last due: stays valid.
+    expect(ast.filters[0]).toMatchObject({ kind: 'invalid', source: 'due:today' })
+    if (ast.filters[0]?.kind === 'invalid') {
+      expect(ast.filters[0].error).toContain('shadowed')
+    }
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'this-week' },
+    })
+  })
+
   it('flags malformed glob as invalid with InvalidGlob: prefix', () => {
     const ast = parse('path:[unclosed')
     expect(ast.filters).toHaveLength(1)
@@ -183,29 +205,21 @@ describe('classify / parse', () => {
   })
 
   it('recognises due: bucket keywords', () => {
-    const ast = parse('due:today due:this-week due:overdue due:none')
-    expect(ast.filters).toHaveLength(4)
-    expect(ast.filters[0]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'today' },
-    })
-    expect(ast.filters[1]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'this-week' },
-    })
-    expect(ast.filters[3]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'none' },
-    })
+    // Each keyword tested in isolation — multiple due: tokens in one
+    // query now shadow all but the last (DSL-5), so recognition is a
+    // per-token unit assertion.
+    for (const name of ['today', 'this-week', 'overdue', 'none'] as const) {
+      const ast = parse(`due:${name}`)
+      expect(ast.filters[0]).toMatchObject({ kind: 'due', value: { kind: 'named', name } })
+    }
   })
 
   it('recognises scheduled: comparison form', () => {
-    const ast = parse('scheduled:>=2026-01-01 scheduled:<2026-06-01')
-    expect(ast.filters[0]).toMatchObject({
+    expect(parse('scheduled:>=2026-01-01').filters[0]).toMatchObject({
       kind: 'scheduled',
       value: { kind: 'op', op: '>=', date: '2026-01-01' },
     })
-    expect(ast.filters[1]).toMatchObject({
+    expect(parse('scheduled:<2026-06-01').filters[0]).toMatchObject({
       kind: 'scheduled',
       value: { kind: 'op', op: '<', date: '2026-06-01' },
     })

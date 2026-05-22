@@ -12,6 +12,7 @@
  */
 
 import type { TFunction } from 'i18next'
+import { HelpCircle } from 'lucide-react'
 import type React from 'react'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
@@ -44,6 +45,8 @@ export interface SearchHeaderProps {
    *  aria-activedescendant / aria-autocomplete / aria-haspopup).
    *  Computed by the orchestrator from autocomplete-popover state. */
   comboboxAttrs?: React.AriaAttributes & { role?: 'combobox' }
+  /** UX-1 — open the search help dialog (the `?` toolbar button). */
+  onHelpClick?: () => void
 }
 
 export function SearchHeader({
@@ -62,6 +65,7 @@ export function SearchHeader({
   onInputFocus,
   onInputBlur,
   comboboxAttrs,
+  onHelpClick,
 }: SearchHeaderProps): React.ReactElement {
   return (
     <ViewHeader>
@@ -90,6 +94,19 @@ export function SearchHeader({
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           {t('search.searchButton')}
         </Button>
+        {onHelpClick ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onHelpClick}
+            aria-label={t('search.helpButtonLabel')}
+            title={t('search.helpButtonLabel')}
+            data-testid="search-help-button"
+          >
+            <HelpCircle className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        ) : null}
         {searchLoading ? (
           <span
             className="flex items-center gap-1.5 text-xs text-muted-foreground"

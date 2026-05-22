@@ -49,6 +49,11 @@ export function useAliasResolution(
   const trimmed = query.trim()
   const isEmpty = trimmed.length === 0
 
+  // FE-12 — resolution depends only on the query + space, NOT on the
+  // `results` array. Keying the effect on `results` re-fired the alias
+  // IPC (and a getBlock) on every pagination / refetch identity change.
+  // The "already in the result list" suppression is a cheap render-time
+  // derive below, so it no longer needs to be a resolution dependency.
   useEffect(() => {
     if (isEmpty) {
       setAliasMatch(null)
@@ -68,11 +73,6 @@ export function useAliasResolution(
           return
         }
         const [pageId] = result
-        if (results.some((r) => r.id === pageId)) {
-          setAliasMatch(null)
-          setAliasQuery('')
-          return
-        }
         try {
           const block = await getBlock(pageId)
           if (!cancelled) {
@@ -96,17 +96,21 @@ export function useAliasResolution(
     return () => {
       cancelled = true
     }
-  }, [trimmed, isEmpty, results, currentSpaceId])
+  }, [trimmed, isEmpty, currentSpaceId])
 
   // Suppress the rendered alias card synchronously when the query is
   // empty. The effect above will eventually reset state, but it runs
   // post-paint (`useEffect`); without this guard there is a 1-frame
   // flash of the stale alias card between "user clears input" and "the
-  // effect runs". The original (pre-D-3) `SearchPanel` avoided this by
-  // calling `setAliasMatch(null)` synchronously inside
-  // `handleInputChange`; the derived return preserves that behaviour
-  // without re-introducing the imperative setter call site.
+  // effect runs".
   if (isEmpty) {
+    return { aliasMatch: null, aliasQuery: '' }
+  }
+
+  // FE-12 — hide the card when the resolved page already appears in the
+  // result list. Done at render (not in the resolution effect) so a
+  // changing `results` array no longer re-triggers the IPC.
+  if (aliasMatch && results.some((r) => r.id === aliasMatch.id)) {
     return { aliasMatch: null, aliasQuery: '' }
   }
 

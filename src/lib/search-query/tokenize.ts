@@ -44,8 +44,26 @@ export function tokenize(input: string): RawToken[] {
     }
     const start = i
     if (ch === '"') {
-      // Try to find closing `"`. If none, fall through to word-handling.
-      const close = input.indexOf('"', i + 1)
+      // DSL-1 — find a *closing* `"` that sits at a token boundary
+      // (followed by whitespace or end-of-input). A `"` glued to more
+      // text (e.g. `"a"b`) is not a clean phrase close, so we keep
+      // scanning; if none qualifies, fall through to word-handling so
+      // the stray quote degrades to a word instead of fragmenting the
+      // rest of the query into a phantom phrase.
+      let close = input.indexOf('"', i + 1)
+      while (close !== -1) {
+        const after = input[close + 1]
+        if (
+          after === undefined ||
+          after === ' ' ||
+          after === '\t' ||
+          after === '\n' ||
+          after === '\r'
+        ) {
+          break
+        }
+        close = input.indexOf('"', close + 1)
+      }
       if (close !== -1) {
         tokens.push({
           kind: 'quoted',
