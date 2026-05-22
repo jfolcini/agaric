@@ -26,6 +26,24 @@ async function openPagesView(page: import('@playwright/test').Page): Promise<voi
   await expect(page.getByRole('grid')).toBeVisible()
 }
 
+/**
+ * The boolean Pages facets (`Orphan` / `Stub` / `No inbound links`) render
+ * their menu-item label AND a muted description inside the SAME `<button>`,
+ * so the button's accessible name is `"<Label><Description>"`. A bare
+ * `{ name, exact: true }` therefore no longer matches — anchor the name with
+ * a start-of-string regex so the description tail is ignored while the match
+ * stays unambiguous (the three labels share no common prefix).
+ */
+async function addBooleanFacet(
+  page: import('@playwright/test').Page,
+  label: 'Orphan' | 'Stub' | 'No inbound links',
+): Promise<void> {
+  await page.getByRole('button', { name: 'Add filter' }).click()
+  await activePopover(page)
+    .getByRole('button', { name: new RegExp(`^${label}`) })
+    .click()
+}
+
 interface BootOpts {
   /** `'off'` exercises the legacy `listBlocks` path (no chip row). */
   flag?: 'default' | 'off'
@@ -84,16 +102,15 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await expect(pop.getByText('Filters', { exact: true })).toBeVisible()
     await expect(pop.getByText('Pages', { exact: true })).toBeVisible()
 
-    // Shared value-facets + Pages-only boolean facets.
-    for (const facet of [
-      'Tag',
-      'Page path',
-      'Has property',
-      'Orphan',
-      'Stub',
-      'No inbound links',
-    ]) {
+    // Shared value-facets — these menu items carry only their label, so an
+    // exact accessible-name match is correct.
+    for (const facet of ['Tag', 'Page path', 'Has property']) {
       await expect(pop.getByRole('button', { name: facet, exact: true })).toBeVisible()
+    }
+    // Pages-only boolean facets — each menu item appends a muted description
+    // to its accessible name, so anchor on the label prefix instead.
+    for (const facet of ['Orphan', 'Stub', 'No inbound links']) {
+      await expect(pop.getByRole('button', { name: new RegExp(`^${facet}`) })).toBeVisible()
     }
     // Last-edited buckets + Priority quick-picks render as inline buttons.
     await expect(pop.getByRole('button', { name: 'Edited today' })).toBeVisible()
@@ -114,8 +131,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await expect(grid.getByText('Getting Started')).toBeVisible()
     await expect(grid.getByText('Projects')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
 
     // The chip renders…
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
@@ -139,8 +155,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     const grid = page.getByRole('grid')
     await expect(grid.getByText('Getting Started')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'Stub', exact: true }).click()
+    await addBooleanFacet(page, 'Stub')
 
     // Every seeded page has children → Stub empties the result set.
     await expect(page.getByRole('group', { name: 'Filter: Stub' })).toBeVisible()
@@ -161,10 +176,8 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
     // Add "No inbound links" (keeps orphan pages) then "Stub" (needs 0
     // children) — the intersection is empty for the seed.
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'Stub', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
+    await addBooleanFacet(page, 'Stub')
 
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
     await expect(page.getByRole('group', { name: 'Filter: Stub' })).toBeVisible()
@@ -223,8 +236,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await bootPages(page, { extraPages: 80 })
     const grid = page.getByRole('grid')
 
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
 
     // 80 bulk + 4 seed orphans all match → still more than one result page.
@@ -259,8 +271,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await expect.poll(savedKey).not.toBeNull()
 
     // Adding a filter invalidates the saved position against the new result set.
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
     await expect.poll(savedKey).toBeNull()
   })
@@ -273,7 +284,9 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await pop.getByRole('button', { name: 'Tag', exact: true }).click()
     // Back returns to the category menu.
     await pop.getByRole('button', { name: 'Back' }).click()
-    await expect(pop.getByRole('button', { name: 'Stub', exact: true })).toBeVisible()
+    // The Stub menu item's accessible name now carries its description tail,
+    // so anchor on the label prefix rather than matching exactly.
+    await expect(pop.getByRole('button', { name: /^Stub/ })).toBeVisible()
 
     // Re-open, type, and apply with Enter.
     await pop.getByRole('button', { name: 'Tag', exact: true }).click()
@@ -299,7 +312,8 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     const pop = activePopover(page)
     await pop.getByRole('button', { name: 'Has property', exact: true }).click()
     await pop.getByPlaceholder('Property key').fill('status')
-    await pop.getByPlaceholder('Value (optional)').fill('active')
+    // Default op is `is` (Eq) → the value input is shown and required.
+    await pop.getByPlaceholder('Value', { exact: true }).fill('active')
     await pop.getByRole('button', { name: 'Apply' }).click()
     await expect(page.getByRole('group', { name: 'Filter: status = active' })).toBeVisible()
   })
@@ -336,15 +350,32 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
 
   test('shows the soft-cap warning once the chip limit is reached', async ({ page }) => {
     await bootPages(page)
-    // Eight boolean chips (each gets a distinct _addId) reach the soft cap.
+    // The chip set dedupes structurally-identical primitives (PEND-58d D22),
+    // so eight *distinct* chips are needed to reach MAX_PAGE_FILTERS (8). Use
+    // eight different path globs — each is a unique `PathGlob{pattern}` so none
+    // collapse, and none narrow the seed to zero in a way that hides the row.
     for (let i = 0; i < 8; i++) {
       await page.getByRole('button', { name: 'Add filter' }).click()
-      await activePopover(page).getByRole('button', { name: 'Orphan', exact: true }).click()
+      const pop = activePopover(page)
+      await pop.getByRole('button', { name: 'Page path', exact: true }).click()
+      await pop.getByPlaceholder('e.g. Projects/*').fill(`p${i}`)
+      await pop.getByRole('button', { name: 'Apply' }).click()
     }
-    await expect(page.getByRole('group', { name: 'Filter: Orphan' })).toHaveCount(8)
+    await expect(page.getByRole('group', { name: /^Filter: path:/ })).toHaveCount(8)
 
+    // The ninth Add-Filter open surfaces the soft-cap warning note.
     await page.getByRole('button', { name: 'Add filter' }).click()
     await expect(activePopover(page).getByText('Many filters can slow the view.')).toBeVisible()
+  })
+
+  test('dedupes a structurally-identical chip (re-adding Orphan is a no-op)', async ({ page }) => {
+    await bootPages(page)
+    // PEND-58d D22 — re-applying the same boolean facet must not stack a
+    // duplicate pill (an AND of a condition with itself is pure noise).
+    await addBooleanFacet(page, 'Orphan')
+    await expect(page.getByRole('group', { name: 'Filter: Orphan' })).toHaveCount(1)
+    await addBooleanFacet(page, 'Orphan')
+    await expect(page.getByRole('group', { name: 'Filter: Orphan' })).toHaveCount(1)
   })
 
   test('paginates a filtered set under the recently-modified (string-keyset) sort', async ({
@@ -356,8 +387,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     await page.getByRole('combobox', { name: 'Sort order' }).click()
     await page.getByRole('option', { name: 'Recently modified' }).click()
 
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
 
     const grid = page.getByRole('grid')
@@ -383,8 +413,7 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
     const grid = page.getByRole('grid')
 
     // Server-side chip keeps the orphan pages (incl. Projects + the Meeting pages).
-    await page.getByRole('button', { name: 'Add filter' }).click()
-    await activePopover(page).getByRole('button', { name: 'No inbound links', exact: true }).click()
+    await addBooleanFacet(page, 'No inbound links')
     await expect(page.getByRole('group', { name: 'Filter: No inbound links' })).toBeVisible()
     await expect(grid.getByText('Projects', { exact: true })).toBeVisible()
 

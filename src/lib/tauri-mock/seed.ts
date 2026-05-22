@@ -568,6 +568,52 @@ export function seedBlocks(): void {
   }
 
   seedBulkPages()
+  seedFacetFixturePage()
+}
+
+/**
+ * Opt-in single fixture page exercising the *page-level* `Tag` and `Priority`
+ * facets, which the canonical seed never sets on a page block (its tags and
+ * priorities live on child blocks, and the `list_pages_with_metadata` filter
+ * evaluates `Tag` / `Priority` against the PAGE id). Gated behind
+ * `localStorage['__mockFacetFixture'] === 'true'` so the default seed stays at
+ * exactly 6 pages (the `tauri-mock.test.ts` count assertion and every other
+ * spec are unaffected). When enabled it adds ONE page:
+ *
+ *   "Facet Fixture" — tag `work` (`TAG_WORK`) + priority `A`, one child block
+ *   (not a `Stub`), no links (so it is also an `Orphan`).
+ *
+ * Behavioural e2e can then assert `Tag(work)` and `Priority(A)` each narrow to
+ * exactly this one page rather than to the (otherwise empty) page-level set.
+ */
+function seedFacetFixturePage(): void {
+  let enabled = false
+  try {
+    enabled = globalThis.localStorage?.getItem('__mockFacetFixture') === 'true'
+  } catch {
+    enabled = false
+  }
+  if (!enabled) return
+  const pageId = fakeId()
+  const page = makeBlock(pageId, 'page', 'Facet Fixture', null, 99)
+  page['priority'] = 'A'
+  blocks.set(pageId, page)
+  pageLastModified.set(pageId, offsetIso(-90))
+  if (!properties.has(pageId)) properties.set(pageId, new Map())
+  properties.get(pageId)?.set('space', {
+    block_id: pageId,
+    key: 'space',
+    value_text: null,
+    value_num: null,
+    value_date: null,
+    value_ref: 'SPACE_PERSONAL',
+    value_bool: null,
+  })
+  // Page-level tag so the `Tag` facet (which reads `blockTags.get(pageId)`)
+  // matches this page directly.
+  blockTags.set(pageId, new Set([SEED_IDS.TAG_WORK]))
+  const childId = fakeId()
+  blocks.set(childId, makeBlock(childId, 'content', 'Facet Fixture body', pageId, 0))
 }
 
 /**

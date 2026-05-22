@@ -54,13 +54,18 @@
   `HasProperty` SQL (`value_ref`) + summary simplification; D27 docs reconciled to the
   Pages-only reality.
 - **Backend/frontend unit + tauri-mock tests — DONE:** T-B2/B3/B4/B7, T-F1/F2/F3/F4, T-M1/M2.
-- **REMAINING:** the **comprehensive e2e suite** (below) and the deferred **D23a**.
+- **Comprehensive e2e suite — SHIPPED (Session 812).** New `e2e/pages-view.spec.ts` (36 tests,
+  13 describe blocks) + extended `e2e/pages-filter.spec.ts` (19) cover all 15 areas behaviourally;
+  55 passing, stable. (Repaired 11 selectors D24 had broken.) Two areas noted as not reachable
+  in the mock harness: cursor `RequiresRefresh` recovery (mock never emits it) and "export all
+  pages" (no wired UI — `pageBrowser.exportAll` i18n key is orphaned).
+- **REMAINING:** the deferred **D23a** (fold-`<mark>`); the open findings from the deep review
+  (Sessions 813+, presented to the maintainer — not yet actioned).
 
 ## TL;DR
 
-- Only the **comprehensive e2e coverage** for every Pages-view feature remains (the explicit
-  ask) — the tauri-mock now genuinely filters + reports a real `total_count` (T-M1), so e2e
-  can assert narrowing and the count chip. See the Testing section.
+- Fix work is complete (P1–P3 + comprehensive e2e). What remains is the deferred D23a and the
+  triaged output of the deep multi-perspective review (presented separately).
 
 ---
 
@@ -108,11 +113,12 @@
 - **T-M1** — ✅ `metaRowMatchesFilter` now filters `PathGlob` / `HasProperty` / `LastEdited` and returns a real `total_count`.
 - **T-M2** — ✅ stale `test.fixme('chip-only zero results …')` removed.
 
-### Comprehensive e2e for **all** Pages-view features (the explicit ask)
+### Comprehensive e2e for **all** Pages-view features — ✅ DONE (Session 812)
 
-Build out `e2e/pages-filter.spec.ts` (and/or a new `e2e/pages-view.spec.ts`) so every
-user-facing capability has a behavioural test — not just that a control renders, but
-that it *does* the thing. Cover, end to end:
+`e2e/pages-view.spec.ts` (new) + `e2e/pages-filter.spec.ts` (extended) — 55 passing, stable.
+The 15 areas below are all covered behaviourally; #10 export-all and #13 `RequiresRefresh`
+recovery are noted as not reachable in the current mock harness (see Status). Original list
+kept for traceability:
 
 1. **Filters — each facet narrows results:** Orphan, Stub, No-inbound, Tag, Priority,
    Page-path (incl. the substring/exact behaviour from D1), Has-property (key-only and
