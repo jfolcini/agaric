@@ -57,6 +57,9 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       continue
     }
     // Token shaped like `xxx:yyy` but unregistered → invalid chip.
+    // DSL-10: `looksLikeUnknownPrefix` returns null for `key://…`
+    // (pasted URLs), so those fall through to free-text below instead of
+    // being consumed as an invalid chip and silently dropped.
     const unk = looksLikeUnknownPrefix(tok.text)
     if (unk) {
       filters.push({

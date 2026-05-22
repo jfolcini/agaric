@@ -18,7 +18,7 @@
  *     the listbox; no `option` elements are rendered.
  */
 
-import { Clock, Trash2 } from 'lucide-react'
+import { Clock, PauseCircle, PlayCircle, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
@@ -30,6 +30,16 @@ export interface SearchHistoryDropdownProps {
   onPick: (query: string) => void
   /** Wipe the per-space MRU list. */
   onClear: () => void
+  /** UX-11 — remove a single entry from the per-space MRU list. */
+  onRemoveEntry: (query: string) => void
+  /**
+   * UX-11 — whether new submissions are being recorded. When `false`,
+   * the footer shows the "history is off" notice and an Enable toggle;
+   * existing entries (if any) still render so they can be picked/removed.
+   */
+  historyEnabled: boolean
+  /** UX-11 — flip the record-history preference. */
+  onToggleEnabled: () => void
   /**
    * PEND-73 Phase 3.U2 — id attached to the inner `role="listbox"` so
    * the owning input can wire `aria-controls` to it. Stable per
@@ -55,6 +65,9 @@ export function SearchHistoryDropdown({
   visible,
   onPick,
   onClear,
+  onRemoveEntry,
+  historyEnabled,
+  onToggleEnabled,
   listboxId,
   activeIndex,
 }: SearchHistoryDropdownProps): React.ReactElement | null {
@@ -73,11 +86,12 @@ export function SearchHistoryDropdown({
         <Clock className="h-3.5 w-3.5" aria-hidden="true" />
         <span>{listboxLabel}</span>
       </div>
-      {isEmpty ? (
+      {isEmpty && historyEnabled ? (
         <p className="px-3 py-2 text-xs text-muted-foreground" data-testid="search-history-empty">
           {t('search.history.empty')}
         </p>
-      ) : (
+      ) : null}
+      {!isEmpty && (
         <div
           role="listbox"
           id={listboxId}
@@ -112,6 +126,14 @@ export function SearchHistoryDropdown({
                   e.preventDefault()
                   onPick(entry)
                 }
+                // UX-11 — Delete/Backspace removes the row (mirrors the
+                // FilterPill convention). The real keyboard path drives
+                // this through the input's history-cycling handler; this
+                // covers a directly-focused row too.
+                if (e.key === 'Delete' || e.key === 'Backspace') {
+                  e.preventDefault()
+                  onRemoveEntry(entry)
+                }
               }}
               className={cn(
                 'flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm',
@@ -121,12 +143,49 @@ export function SearchHistoryDropdown({
               aria-label={t('search.history.entryLabel', { query: entry })}
             >
               <span className="flex-1 truncate font-mono">{entry}</span>
+              {/* UX-11 — per-row delete as a pointer affordance. It is
+                  `aria-hidden` on purpose: a real <button> inside
+                  `role="option"` trips axe's nested-interactive rule
+                  (measured), and a listbox option must not own focusable
+                  controls. AT users delete in bulk via "Clear history"
+                  below; the Delete/Backspace handler on the row covers a
+                  directly-focused row. */}
+              <span
+                aria-hidden="true"
+                data-testid={`search-history-remove-${idx}`}
+                title={t('search.history.removeEntry', { query: entry })}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRemoveEntry(entry)
+                }}
+                onMouseDown={(e) => {
+                  // Don't let the row's mousedown-preventDefault swallow
+                  // this, and stop the row's onClick (pick) from firing.
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                className={cn(
+                  'inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full p-1',
+                  'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+                )}
+              >
+                <X className="h-3 w-3" />
+              </span>
             </div>
           ))}
         </div>
       )}
-      {!isEmpty && (
-        <div className="border-t border-input">
+      {!historyEnabled && (
+        <p
+          className="px-3 py-2 text-xs italic text-muted-foreground"
+          data-testid="search-history-disabled-notice"
+        >
+          {t('search.history.disabledNotice')}
+        </p>
+      )}
+      <div className="border-t border-input">
+        {!isEmpty && (
           <button
             type="button"
             data-testid="search-history-clear"
@@ -146,8 +205,29 @@ export function SearchHistoryDropdown({
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{t('search.history.clear')}</span>
           </button>
-        </div>
-      )}
+        )}
+        <button
+          type="button"
+          data-testid="search-history-toggle"
+          aria-pressed={!historyEnabled}
+          onClick={onToggleEnabled}
+          onMouseDown={(e) => {
+            e.preventDefault()
+          }}
+          className={cn(
+            'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground',
+            'hover:bg-accent/30 transition-colors',
+            'focus-ring-visible rounded-none',
+          )}
+        >
+          {historyEnabled ? (
+            <PauseCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <PlayCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+          <span>{historyEnabled ? t('search.history.disable') : t('search.history.enable')}</span>
+        </button>
+      </div>
     </div>
   )
 }

@@ -67,7 +67,9 @@ export function FilterChipRow({
             removeAriaLabel={t('search.removeFilter', { token: label })}
             onRemove={() => onRemove(index)}
             groupAriaLabel={
-              isInvalid ? `${t('search.invalidFilter')}: ${label}` : `Filter: ${label}`
+              isInvalid
+                ? `${t('search.invalidFilter')}: ${label}`
+                : t('search.filterGroupLabel', { value: label })
             }
             {...(invalidClass ? { className: invalidClass } : {})}
             {...(tooltip ? { title: tooltip } : {})}

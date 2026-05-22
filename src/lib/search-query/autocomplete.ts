@@ -72,8 +72,13 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
       anchor: start + 'tag:#'.length,
     }
   }
-  // tag: alone (no hash) — accept but treat the value as the query.
-  if (slice.startsWith('tag:') && !slice.includes('#') && slice !== 'tag:') {
+  // tag: alone (no leading hash) — accept and treat the value as the
+  // query. DSL-2: a `#` *inside* the value (e.g. `tag:foo#bar`) must NOT
+  // close autocomplete: the classifier (`register.ts`) only strips a
+  // *single leading* `#`, so a value like `foo#bar` is a legal tag name.
+  // Mirror that here — drop the old `!slice.includes('#')` guard which
+  // disagreed with the parser and killed autocomplete on interior `#`.
+  if (slice.startsWith('tag:') && slice !== 'tag:') {
     return {
       active: 'tag',
       query: slice.slice('tag:'.length),

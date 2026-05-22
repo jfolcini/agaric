@@ -251,6 +251,11 @@ export const references: Record<string, string> = {
   'search.history.empty': 'No recent searches',
   'search.history.clear': 'Clear history',
   'search.history.entryLabel': 'Run search: {{query}}',
+  'search.history.removeEntry': 'Remove "{{query}}" from recent searches',
+  'search.history.disable': 'Disable search history',
+  'search.history.enable': 'Enable search history',
+  'search.history.disabledNotice': 'Search history is off',
+  'search.filterGroupLabel': 'Filter: {{value}}',
   'search.invalidRegex': '{{message}}',
   // PEND-51 — Cmd+K palette dialog.
   'palette.dialogLabel': 'Quick search',

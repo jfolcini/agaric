@@ -26,6 +26,13 @@ describe('FilterChipRow', () => {
     expect(screen.getByText('path:Journal/*')).toBeInTheDocument()
   })
 
+  it('labels a valid chip group via i18n, not a hardcoded string (UX-10)', () => {
+    const filters: FilterToken[] = [{ kind: 'tag', value: 'urgent', span: [0, 11] }]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    // The translated `search.filterGroupLabel` resolves to "Filter: …".
+    expect(screen.getByRole('group', { name: 'Filter: tag:#urgent' })).toBeInTheDocument()
+  })
+
   it('calls onRemove(index) when × is clicked', async () => {
     const user = userEvent.setup()
     const onRemove = vi.fn()

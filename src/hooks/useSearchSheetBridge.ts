@@ -124,7 +124,11 @@ export function useSearchSheetBridge(open: boolean, mode: SearchSheetMode): void
         return
       }
       if (q !== useSearchSheetStore.getState().query) {
-        useSearchSheetStore.setState({ query: q })
+        // FE-8 — route through the `setQuery` action (single write
+        // path) instead of a raw `setState`, so the sheet store has
+        // exactly one mutator for `query`. The action is otherwise
+        // dead code; this makes it the canonical write site.
+        useSearchSheetStore.getState().setQuery(q)
       }
     })
     return () => {

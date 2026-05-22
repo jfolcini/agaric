@@ -54,6 +54,29 @@ describe('classify / parse', () => {
     expect(ast.freeText).toBe('baz')
   })
 
+  it('keeps a pasted URL as free text rather than an invalid chip (DSL-10)', () => {
+    // `http:` matches the unknown-prefix shape, but the `//` right after
+    // the colon means it is a URL, not a filter — it must survive in
+    // free text instead of being consumed (and dropped) as an invalid
+    // chip.
+    for (const url of ['http://example.com', 'https://example.com/a?b=c', 'file:///tmp/x']) {
+      const ast = parse(url)
+      expect(ast.filters).toEqual([])
+      expect(ast.freeText).toBe(url)
+    }
+  })
+
+  it('accepts due:/scheduled: NONE case-insensitively, normalised to "none" (DSL-3)', () => {
+    for (const raw of ['due:NONE', 'due:none', 'due:None']) {
+      const ast = parse(raw)
+      expect(ast.filters[0]).toMatchObject({ kind: 'due', value: { kind: 'named', name: 'none' } })
+    }
+    expect(parse('scheduled:NONE').filters[0]).toMatchObject({
+      kind: 'scheduled',
+      value: { kind: 'named', name: 'none' },
+    })
+  })
+
   it('flags malformed glob as invalid with InvalidGlob: prefix', () => {
     const ast = parse('path:[unclosed')
     expect(ast.filters).toHaveLength(1)

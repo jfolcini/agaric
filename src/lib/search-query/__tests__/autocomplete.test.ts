@@ -47,6 +47,17 @@ describe('detectAutocompleteAnchor', () => {
     expect(detectAutocompleteAnchor('tag:#x', -10)).toBeNull()
   })
 
+  it('keeps autocomplete open for an interior # in a tag value (DSL-2)', () => {
+    // The classifier strips only a *single leading* `#`, so `foo#bar`
+    // is a legal tag name. The anchor detector must agree and not bail
+    // out the moment it sees an interior `#`.
+    const input = 'tag:foo#bar'
+    expect(detectAutocompleteAnchor(input, input.length)).toMatchObject({
+      active: 'tag',
+      query: 'foo#bar',
+    })
+  })
+
   // PEND-53 — state / priority / due / scheduled / prop autocomplete.
 
   it('opens on state:', () => {

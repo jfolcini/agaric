@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  coerceBySpace,
   LEGACY_HISTORY_SPACE_KEY,
   MAX_HISTORY,
   selectHistoryForSpace,
@@ -24,7 +25,7 @@ const SPACE_B = 'SPACE_B'
 
 describe('useSearchHistoryStore', () => {
   beforeEach(() => {
-    useSearchHistoryStore.setState({ bySpace: {} })
+    useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
     localStorage.clear()
   })
 
@@ -107,5 +108,71 @@ describe('useSearchHistoryStore', () => {
     push(undefined, 'also-no-space')
     const state = useSearchHistoryStore.getState()
     expect(state.bySpace[LEGACY_HISTORY_SPACE_KEY]).toEqual(['also-no-space', 'no-space'])
+  })
+
+  // UX-11 — per-row delete.
+  it('removeEntry drops a single query, leaving siblings + other spaces intact', () => {
+    const { push, removeEntry } = useSearchHistoryStore.getState()
+    push(SPACE_A, 'alpha')
+    push(SPACE_A, 'beta')
+    push(SPACE_A, 'gamma')
+    push(SPACE_B, 'beta')
+    removeEntry(SPACE_A, 'beta')
+    const state = useSearchHistoryStore.getState()
+    expect(selectHistoryForSpace(state, SPACE_A)).toEqual(['gamma', 'alpha'])
+    // The identically-named entry in another space is untouched.
+    expect(selectHistoryForSpace(state, SPACE_B)).toEqual(['beta'])
+  })
+
+  it('removeEntry is a no-op (stable reference) when the query is absent', () => {
+    const { push, removeEntry } = useSearchHistoryStore.getState()
+    push(SPACE_A, 'alpha')
+    const before = useSearchHistoryStore.getState().bySpace
+    removeEntry(SPACE_A, 'not-present')
+    expect(useSearchHistoryStore.getState().bySpace).toBe(before)
+  })
+
+  // UX-11 — record-history toggle.
+  it('push becomes a no-op while history is disabled, and resumes when re-enabled', () => {
+    const { push, setHistoryEnabled } = useSearchHistoryStore.getState()
+    push(SPACE_A, 'before')
+    setHistoryEnabled(false)
+    push(SPACE_A, 'while-off')
+    let state = useSearchHistoryStore.getState()
+    expect(selectHistoryForSpace(state, SPACE_A)).toEqual(['before'])
+    setHistoryEnabled(true)
+    push(SPACE_A, 'after')
+    state = useSearchHistoryStore.getState()
+    expect(selectHistoryForSpace(state, SPACE_A)).toEqual(['after', 'before'])
+  })
+})
+
+// FE-14 — corrupt-payload coercion on hydrate.
+describe('coerceBySpace', () => {
+  it('returns {} for non-object inputs', () => {
+    expect(coerceBySpace(null)).toEqual({})
+    expect(coerceBySpace(undefined)).toEqual({})
+    expect(coerceBySpace('nope')).toEqual({})
+    expect(coerceBySpace(42)).toEqual({})
+    expect(coerceBySpace(['a', 'b'])).toEqual({})
+  })
+
+  it('drops keys whose value is not an array', () => {
+    expect(coerceBySpace({ A: 'oops', B: ['ok'] })).toEqual({ B: ['ok'] })
+  })
+
+  it('drops non-string, empty, whitespace-only and duplicate entries', () => {
+    expect(coerceBySpace({ A: ['keep', 1, '', '   ', 'keep', null, 'second'] })).toEqual({
+      A: ['keep', 'second'],
+    })
+  })
+
+  it('trims entries and omits keys that end up empty', () => {
+    expect(coerceBySpace({ A: ['  spaced  '], B: [42, null] })).toEqual({ A: ['spaced'] })
+  })
+
+  it('clamps each space to MAX_HISTORY entries', () => {
+    const many = Array.from({ length: MAX_HISTORY + 10 }, (_, i) => `q${i}`)
+    expect(coerceBySpace({ A: many })['A']).toHaveLength(MAX_HISTORY)
   })
 })

@@ -532,6 +532,10 @@ export function SearchPanel(): React.ReactElement {
   const historyEntries = useSearchHistoryStore((s) => selectHistoryForSpace(s, currentSpaceId))
   const pushHistory = useSearchHistoryStore((s) => s.push)
   const clearHistory = useSearchHistoryStore((s) => s.clear)
+  // UX-11 — per-row delete + record-history toggle.
+  const removeHistoryEntry = useSearchHistoryStore((s) => s.removeEntry)
+  const historyEnabled = useSearchHistoryStore((s) => s.historyEnabled)
+  const setHistoryEnabled = useSearchHistoryStore((s) => s.setHistoryEnabled)
   const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
   // PEND-73 Phase 3.U2 — stable id for the history listbox so the
   // owning input can wire `aria-controls` and `aria-activedescendant`.
@@ -718,6 +722,17 @@ export function SearchPanel(): React.ReactElement {
   const handleClearHistory = useCallback(() => {
     clearHistory(currentSpaceId)
   }, [clearHistory, currentSpaceId])
+
+  const handleRemoveHistory = useCallback(
+    (entry: string) => {
+      removeHistoryEntry(currentSpaceId, entry)
+    },
+    [currentSpaceId, removeHistoryEntry],
+  )
+
+  const handleToggleHistoryEnabled = useCallback(() => {
+    setHistoryEnabled(!historyEnabled)
+  }, [historyEnabled, setHistoryEnabled])
 
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -924,9 +939,17 @@ export function SearchPanel(): React.ReactElement {
         historyDropdown={
           <SearchHistoryDropdown
             entries={historyEntries}
-            visible={inputFocused && query.length === 0 && historyEntries.length > 0}
+            // UX-11 — also show when recording is OFF (even with no
+            // entries) so the Enable toggle + "history is off" notice
+            // remain reachable from the dropdown footer.
+            visible={
+              inputFocused && query.length === 0 && (historyEntries.length > 0 || !historyEnabled)
+            }
             onPick={handlePickHistory}
             onClear={handleClearHistory}
+            onRemoveEntry={handleRemoveHistory}
+            historyEnabled={historyEnabled}
+            onToggleEnabled={handleToggleHistoryEnabled}
             listboxId={historyListboxId}
             activeIndex={cycling.activeIndex}
           />

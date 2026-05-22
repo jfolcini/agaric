@@ -24,6 +24,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { addRecentPage } from '../../lib/recent-pages'
 import { useNavigationStore } from '../../stores/navigation'
+import { useSearchHistoryStore } from '../../stores/search-history'
 import { useSpaceStore } from '../../stores/space'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
@@ -68,6 +69,11 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  // The search-history store is a module singleton; its in-memory state
+  // leaks across tests (localStorage.clear() only drops the persisted
+  // copy). Reset it so a prior test's searches don't render the history
+  // dropdown over an auto-focused empty input.
+  useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
   // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
   // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
   // tests exercise the real code path (not the loading skeleton).

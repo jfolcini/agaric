@@ -28,6 +28,9 @@ function renderDropdown(
     visible: true,
     onPick: vi.fn(),
     onClear: vi.fn(),
+    onRemoveEntry: vi.fn(),
+    historyEnabled: true,
+    onToggleEnabled: vi.fn(),
     listboxId: 'lb',
     activeIndex: -1,
   }
@@ -80,6 +83,56 @@ describe('SearchHistoryDropdown', () => {
     // dispatch behaviour expected by listbox option a11y.
     row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(onPick).toHaveBeenCalledWith('alpha')
+  })
+
+  // UX-11 — per-row delete + record-history toggle.
+  it('per-row delete affordance calls onRemoveEntry without picking the row', async () => {
+    const user = userEvent.setup()
+    const onRemoveEntry = vi.fn()
+    const onPick = vi.fn()
+    renderDropdown({ entries: ['alpha', 'beta'], onRemoveEntry, onPick })
+    await user.click(screen.getByTestId('search-history-remove-1'))
+    expect(onRemoveEntry).toHaveBeenCalledWith('beta')
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('footer toggle calls onToggleEnabled and labels by state', async () => {
+    const user = userEvent.setup()
+    const onToggleEnabled = vi.fn()
+    const { rerender } = renderDropdown({
+      entries: ['alpha'],
+      historyEnabled: true,
+      onToggleEnabled,
+    })
+    const toggle = screen.getByTestId('search-history-toggle')
+    expect(toggle).toHaveTextContent(/Disable/i)
+    await user.click(toggle)
+    expect(onToggleEnabled).toHaveBeenCalled()
+
+    rerender(
+      <SearchHistoryDropdown
+        entries={[]}
+        visible
+        onPick={vi.fn()}
+        onClear={vi.fn()}
+        onRemoveEntry={vi.fn()}
+        historyEnabled={false}
+        onToggleEnabled={vi.fn()}
+        listboxId="lb"
+        activeIndex={-1}
+      />,
+    )
+    expect(screen.getByTestId('search-history-toggle')).toHaveTextContent(/Enable/i)
+    expect(screen.getByTestId('search-history-disabled-notice')).toBeInTheDocument()
+    // No empty-state message while disabled — the notice replaces it.
+    expect(screen.queryByTestId('search-history-empty')).toBeNull()
+  })
+
+  it('has no axe violations when disabled with no entries', async () => {
+    const { container } = renderDropdown({ entries: [], historyEnabled: false })
+    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    const results = await axe(container as any)
+    expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations with entries', async () => {

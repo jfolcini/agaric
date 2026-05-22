@@ -177,6 +177,20 @@ function parseDateToken(
       span,
     }
   }
+  // DSL-3: the `none` sentinel is accepted case-insensitively for
+  // parity with `state:NONE` / `priority:NONE` (the backend treats the
+  // date `none` sentinel case-insensitively too). We normalise to the
+  // canonical lowercase `none` so the chip and the wire value agree.
+  // Other bucket keywords stay case-sensitive — they are a fixed,
+  // lowercase vocabulary.
+  if (value.toLowerCase() === 'none') {
+    return {
+      kind,
+      raw: value,
+      value: { kind: 'named', name: 'none' },
+      span,
+    }
+  }
   // Bucket keyword?
   const known: ReadonlyArray<NamedDateRange> = [
     'today',
