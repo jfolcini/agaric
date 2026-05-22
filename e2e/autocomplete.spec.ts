@@ -23,7 +23,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('opens the popover with state values when typing `state:`', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -36,7 +36,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('clicking a value inserts it with a trailing space', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -49,7 +49,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('keyboard ArrowDown + Enter applies the second value', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -69,7 +69,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('Escape closes the popover and keeps focus on the input', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -83,7 +83,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('wires ARIA combobox attrs to the live cmdk listbox / option ids', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
 
     // Pre-open ARIA snapshot. The combobox role + supporting attrs are
