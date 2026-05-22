@@ -19,7 +19,10 @@ CREATE VIRTUAL TABLE fts_blocks USING fts5(
 
 The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
 
-Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (`MAX_SEARCH_RESULTS = 100` in `src-tauri/src/fts/search.rs`) and the 3-character query minimum (enforced both frontend at `src/components/SearchPanel.tsx` and backend at `src-tauri/src/fts/search.rs`) keep that cost bounded.
+Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (`MAX_SEARCH_RESULTS = 100` in `src-tauri/src/fts/search.rs`) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
+
+- **Frontend** (`src/components/SearchPanel.tsx`) — a soft hint. When the trimmed query is non-empty but its JavaScript-string length (UTF-16 code units, counted across the *whole* query) is below 3, the panel shows a "type more characters" notice. It does not block the request.
+- **Backend** (`sanitize_fts_query` in `src-tauri/src/fts/search.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
 
 The synchronous primary-state writer does **not** maintain `fts_blocks`. The materializer rebuilds the FTS row asynchronously on every block insert / update / soft-delete, batched through the materializer's retry queue (`materializer_retry_queue`). The search query therefore sees results that lag the write log by one materializer flush — measured in milliseconds at the desk, but never zero. This is the same lag every materialized view in the app pays.
 
@@ -30,7 +33,7 @@ The search SQL projects `snippet(fts_blocks, 1, '<mark>', '</mark>', '…', N)` 
 - `1` is the index of the `stripped` column (the only indexed column).
 - `<mark>` / `</mark>` are the literal text boundaries SQLite emits around each hit. These are **not** HTML tags at the SQL layer — they are opaque marker strings the frontend parses. Choosing real HTML-looking tags trades a tiny amount of confusion (someone might assume FTS5 returns HTML) for a renderer that can ignore any other angle-bracket in the source content as ordinary text.
 - `'…'` is the ellipsis that flags a truncated window on either end.
-- `N` is the window width measured in **trigrams**, not words. On the trigram tokenizer a window of 32 produces roughly 32 characters of context — much tighter than the per-word windows most FTS5 deployments use. The benchmark in Phase 1 of PEND-50 tunes `N`; expect a value in the 64–96 range to read naturally on typical block content.
+- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/src/fts/search.rs`; consult the code rather than a number here, which would drift.
 
 For page-title-only hits (block with no content body), `snippet()` may return `NULL` on the SQL side; the frontend treats `snippet: None` as "render the page title verbatim, no highlight" and the row still navigates correctly on click.
 
@@ -65,13 +68,17 @@ pub struct SearchBlockRow {
     pub page_id: Option<ActiveBlockId>,
     // Added in PEND-50:
     pub snippet: Option<String>,  // literal <mark>...</mark> boundaries, never HTML-parsed
+    // Added in PEND-55 — UTF-16 match offsets from the toggle/regex
+    // post-filter pass; empty unless a toggle is on. Preferred over
+    // `snippet` by the renderer when populated.
+    pub match_offsets: Vec<MatchOffset>,
     // Follow-ups append optional fields here with #[serde(default)].
 }
 ```
 
 Two invariants ride on this contract:
 
-1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at four arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
+1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at five arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
 2. **`SearchBlockRow.snippet` carries literal `<mark>` boundaries.** The frontend never feeds this string to `dangerouslySetInnerHTML`. Instead the renderer at `src/components/search/SearchResultBlockRow.tsx` splits the string on the literal marker pairs and emits alternating React text nodes and `<mark>` elements. React escapes any stray `<`, `&`, `script`, etc. as text content — so the snippet path has no XSS surface, even though the FTS5 sanitiser is the only thing between user content and the rendered DOM.
 
 Errors propagate through the existing `AppError` shape — `{ kind: string, message: string }` per `src-tauri/src/error.rs`. Typed validation errors (e.g., invalid glob patterns added by PEND-54) use `AppError::Validation("InvalidGlob: …")` and rely on a stable message prefix the frontend parses. The shape is not a tagged union because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
@@ -115,14 +122,14 @@ input string ──tokenize──▶ raw tokens ──classify──▶ SearchQu
 Three pure modules under `src/lib/search-query/`:
 
 - `tokenize.ts` — lexes whitespace-delimited words and `"…"` quoted phrases, attaching `[startCol, endCol)` spans. Mirrors the FTS5 sanitiser's quoting rules so the parser doesn't pre-process operator syntax.
-- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 will register `state:`, `priority:`, `due:`, etc. without touching the core parser.
+- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 registered `state:`, `priority:`, `due:`, etc. on top of this table without touching the core parser.
 - `classify.ts` — walks the raw token stream, asks the registry, and stitches the surviving free-text spans into `freeText`.
 
 The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `s` — is enforced by `fast-check` property tests in `__tests__/serialize.test.ts`. Direct equality `serialize(parse(s)) === s` only holds for canonical inputs (the `#tag` bare alias normalises to `tag:#tag` on the way out, by design).
 
 Validation errors come in two flavours:
 
-- **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) run inside `register.ts`'s parsers and surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
+- **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) live in `glob-validate.ts` (`validateGlob`), which `register.ts`'s `path:` / `not-path:` parsers call; failures surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
 - **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::Validation("InvalidGlob: …")` so the frontend keys on the same prefix regardless of which side caught the error.
 
 ### AST → SQL projection
@@ -140,13 +147,13 @@ The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land a
 
 ### Caps (all locked-in via module constants)
 
-| Constant | Value | Reason |
-|---|---|---|
-| `MAX_PATTERN_LEN` | 1024 | Rejected before `RegexBuilder` to bound parser work. Pattern length > 1 KiB → typed `InvalidRegex:` error. |
-| `REGEX_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::size_limit`. Bounds compiled-regex memory; degenerate patterns fail compilation rather than OOM. |
-| `REGEX_DFA_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::dfa_size_limit`. Bounds the lazy-DFA cache at runtime. |
-| `MAX_OFFSETS_PER_BLOCK` | 50 | Per-row offset count. `.` regex against a long block returns 50 offsets max; trailing matches dropped. |
-| `REGEX_PRE_FILTER_CAP` | 1000 | Regex-mode SQL scan limit. `MAX_SEARCH_RESULTS = 100` is the post-cap; 10× headroom for sparse-match patterns. |
+The regex pipeline is bounded by a set of locked-in caps — pattern length, the
+`RegexBuilder` size / DFA-size limits, the per-row offset count, and the
+regex-mode pre-filter scan limit. The authoritative values and their rationale
+live as documented `pub const`s at the top of `src-tauri/src/fts/toggle_filter.rs`
+(`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
+`MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`). Read them from the code — a copy
+of the numbers here would silently drift.
 
 ### UTF-16 offset emission
 

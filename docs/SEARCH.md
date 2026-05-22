@@ -88,7 +88,7 @@ The in-page find toolbar and the find-across-pages view use different regex engi
   - Supports backreferences (`\1`, `\k<name>`).
   - `\b` / `\d` / `\w` are Unicode-aware by default (we set the `u` flag).
   - Backtracking-based — the caps above bound worst-case time.
-- **Find across pages** uses the Rust `regex` crate (when PEND-55's regex mode lands):
+- **Find across pages** uses the Rust `regex` crate (PEND-55's regex mode):
   - Linear-time guaranteed (no catastrophic backtracking).
   - **No lookaround**, **no backreferences**.
   - `\b` is ASCII-only by default; use `(?u:\b)` for Unicode word boundaries.
@@ -219,13 +219,9 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 
 Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. The frontend keys on the `InvalidGlob:` prefix returned by the backend so the same message can also originate from a server-side rejection.
 
-### Migrating from the old chip UI
+### `path:` is title-substring, not exact-page
 
-PEND-54 replaced the legacy `+ Page` and `+ Tag` popover chips. There is one **documented behavioural change**:
-
-- The old `+ Page` chip filtered by a single exact page ULID. The new `path:` filter matches against the page **title** with substring semantics by default. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. To preserve exact-page-filter semantics, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
-
-The new model is a strict superset of every other previous use case — copy-paste of a query string round-trips, and the chip row is recomputed from the AST on every keystroke.
+`path:` matches against the page **title** with substring semantics by default, not a single exact page. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. For an exact-page filter, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
 
 ## Toggles
 
@@ -252,15 +248,17 @@ The find-across-pages view uses the Rust [`regex`] crate. Key differences from J
 
 ### Regex caps
 
-To bound worst-case compile time and matched-output size, the backend applies four caps:
-
-| Cap | Value | Reason |
-|---|---|---|
-| Pattern length | 1 KiB | Rejected up-front before invoking `RegexBuilder`. Surfaces as `AppError::Validation("InvalidRegex: pattern length N exceeds cap 1024")`. |
-| `RegexBuilder::size_limit` | 10 MiB | Bounds the compiled regex's in-memory size. Surfaces as `AppError::Validation("InvalidRegex: …")`. |
-| `RegexBuilder::dfa_size_limit` | 10 MiB | Bounds the lazy-DFA cache at runtime. |
-| Match offsets per block | 50 | Caps per-row IPC payload. A `.` regex against a long block returns the first 50 matches; trailing matches are silently dropped. |
-| Pre-filter row count | 1000 | Bounds the regex-mode SQL scan. Most-recent-first ordering by `b.id DESC` (ULID prefixes are time-sortable; the `blocks` table doesn't carry `created_at`). |
+To bound worst-case compile time and matched-output size, the backend applies a
+set of caps: a pattern-length limit (over-long patterns reject up front with
+`AppError::Validation("InvalidRegex: …")`), the `RegexBuilder` size and
+DFA-size limits, a per-block match-offset cap (surplus matches are silently
+dropped), and a regex-mode pre-filter row count that bounds the SQL scan
+(most-recent-first ordering by `b.id DESC`, since ULID prefixes are time-sortable
+and `blocks` carries no `created_at`). The exact values and their rationale are
+the documented `pub const`s in `src-tauri/src/fts/toggle_filter.rs`
+(`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
+`MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`) — read them from the code rather
+than a number here, which would drift.
 
 Regex compile errors surface inline next to the input with a red border; the error message follows the `InvalidRegex:` prefix.
 
