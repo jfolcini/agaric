@@ -128,6 +128,9 @@ beforeEach(() => {
 
 describe('PageBrowser', () => {
   it('calls listBlocks with blockType=page on mount', async () => {
+    // Legacy rollback path (flag now defaults on; pin off to assert the
+    // `list_blocks` IPC shape).
+    localStorage.setItem('pageBrowser.densityV1', 'false')
     mockedInvoke.mockResolvedValueOnce(emptyPage)
 
     render(<PageBrowser />)
@@ -197,6 +200,8 @@ describe('PageBrowser', () => {
   })
 
   it('uses cursor-based pagination with Load More', async () => {
+    // Legacy rollback path — asserts the `list_blocks` cursor shape.
+    localStorage.setItem('pageBrowser.densityV1', 'false')
     const page1 = {
       items: [makePage({ id: 'P1', content: 'Page 1' })],
       next_cursor: 'cursor_abc',
@@ -1357,6 +1362,9 @@ describe('PageBrowser', () => {
     // -----------------------------------------------------------------
 
     it('alias resolution discards stale promise resolution (PEND-29 B-2)', async () => {
+      // Pin the legacy `list_blocks` path — this test's custom mock only
+      // models that IPC; alias behaviour is path-agnostic.
+      localStorage.setItem('pageBrowser.densityV1', 'false')
       const user = userEvent.setup()
 
       // Two pages: `Apple` (P_APPLE) and `Banana` (P_BANANA). The alias
@@ -2806,6 +2814,8 @@ describe('PageBrowser', () => {
       // The mocked virtualizer renders ALL items; lastVisible.index ===
       // virtualItemCount - 1 every render. So the auto-load effect
       // fires as soon as we mount and there are more pages.
+      // Legacy rollback path — asserts the `list_blocks` cursor IPC.
+      localStorage.setItem('pageBrowser.densityV1', 'false')
       const page1 = {
         items: [makePage({ id: 'P1', content: 'One' }), makePage({ id: 'P2', content: 'Two' })],
         next_cursor: 'cursor_abc',
@@ -3672,7 +3682,9 @@ describe('PageBrowser', () => {
     })
 
     it('does not render the filter row on the legacy (flag-off) path', async () => {
-      localStorage.removeItem('pageBrowser.densityV1')
+      // The flag is now opt-OUT (default on); set it explicitly to
+      // 'false' to exercise the legacy `listBlocks` rollback path.
+      localStorage.setItem('pageBrowser.densityV1', 'false')
       mockedInvoke.mockImplementation((cmd: string) => {
         if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
         if (cmd === 'list_blocks') {

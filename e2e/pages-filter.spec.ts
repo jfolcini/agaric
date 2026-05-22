@@ -55,8 +55,12 @@ test.describe('PEND-58 — Pages compound-filter chip-row', () => {
   })
 
   test('does not render the filter row when the densityV1 flag is off', async ({ page }) => {
-    // No flag set — boots on the legacy `listBlocks` path, which has no
-    // server-side filter support and therefore no chip row.
+    // The flag is opt-OUT (default on), so explicitly set it to 'false'
+    // before boot to exercise the legacy `listBlocks` rollback path,
+    // which has no server-side filter support and therefore no chip row.
+    await page.addInitScript(() => {
+      window.localStorage.setItem('pageBrowser.densityV1', 'false')
+    })
     await waitForBoot(page)
     await openPagesView(page)
     await expect(page.getByRole('button', { name: 'Add filter' })).toHaveCount(0)

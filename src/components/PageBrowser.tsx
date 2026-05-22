@@ -62,23 +62,27 @@ const HEADER_ROW_HEIGHT = 36
 const INFINITE_SCROLL_BOTTOM_THRESHOLD_PX = 300
 
 /**
- * PEND-56 Phase 3 — localStorage key gating the new
- * `listPagesWithMetadata` + `<DensityRow>` code path. Stored as the
- * bare string `'true'` / `'false'` (not JSON) so it can be flipped
- * by hand from devtools without a parse-fail fallback. Any other
- * value or a missing key falls back to `false`.
+ * PEND-56 — localStorage key gating the new `listPagesWithMetadata` +
+ * `<DensityRow>` code path. Stored as the bare string `'true'` /
+ * `'false'` (not JSON) so it can be flipped by hand from devtools.
+ *
+ * **Rollout (PEND-56 follow-up):** the new path is now the **default**.
+ * A missing key — or any value other than `'false'` — reads as ON. The
+ * key is now an *opt-out*: set it to `'false'` to fall back to the
+ * legacy `listBlocks` + `PageRow` path (the rollback target until that
+ * path is removed in a later cleanup). Private-mode `localStorage`
+ * throws are treated as "on" so the default experience is consistent.
  */
 const DENSITY_V1_FLAG_KEY = 'pageBrowser.densityV1'
 
 function usePageBrowserDensityV1Flag(): boolean {
-  // Defensive read — `localStorage` throws in private-mode Safari.
-  // No reactive subscription: the flag is set by hand or by tests
-  // before the component mounts, never toggled from the UI.
+  // No reactive subscription: the flag is read once at mount, never
+  // toggled from the UI.
   const [flagOn] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(DENSITY_V1_FLAG_KEY) === 'true'
+      return localStorage.getItem(DENSITY_V1_FLAG_KEY) !== 'false'
     } catch {
-      return false
+      return true
     }
   })
   return flagOn
