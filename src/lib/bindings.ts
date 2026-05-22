@@ -1164,10 +1164,15 @@ export type FilterPrimitive =
 { type: "Priority"; priority: string } |
 /**
  *  Pages-only — page has no inbound links AND no outbound links.
- *  (`Stub` is similar but excludes the AND-no-outbound clause.)
+ *  (`HasNoInboundLinks` is the looser inbound-only sibling.)
  */
 { type: "Orphan" } |
-/**  Pages-only — page has fewer than a "stub" threshold of descendants. */
+/**
+ *  Pages-only — page has zero non-title descendants. Per PEND-58
+ *  (pending/PEND-58-pages-view-compound-filters.md:142): "Page
+ *  whose only block is its own title row (zero non-title
+ *  descendants)". Backed by `pages_cache.child_block_count == 0`.
+ */
 { type: "Stub" } |
 /**  Pages-only — page has no inbound links (looser than `Orphan`). */
 { type: "HasNoInboundLinks" } |
@@ -1258,6 +1263,19 @@ export type ImportResult = {
  *  Internally-tagged on `"type"` (PascalCase) so the TS union reads
  *  `{ type: "Rolling", days } | { type: "Range", start, end }
  *  | { type: "OlderThan", days }`.
+ *
+ *  PEND-58 Phase 2 review — the existing variants already cover the
+ *  plan's full bucket vocabulary (pending/PEND-58-pages-view-compound-
+ *  filters.md:144, lines 308-310). No `LastEditedBucket` variant is
+ *  needed — the parser maps each chip token to one of these variants:
+ *
+ *  | Chip token                | Variant               |
+ *  |---------------------------|-----------------------|
+ *  | `last-edited:today`       | `Rolling { days: 1 }`  |
+ *  | `last-edited:this-week`   | `Rolling { days: 7 }`  |
+ *  | `last-edited:this-month`  | `Rolling { days: 30 }` |
+ *  | `last-edited:older`       | `OlderThan { days: 30 }` |
+ *  | `last-edited:>=YYYY-MM-DD` | `Range { .. }`        |
  */
 export type LastEditedSpec =
 /**
