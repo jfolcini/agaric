@@ -44,4 +44,8 @@ pub(crate) use toggle_filter::search_with_toggles_partitioned;
 
 // Re-export crate-internal API
 pub(crate) use search::sanitize_fts_query;
+// PEND-58f BE-2 — the partitioned IPC command validates its
+// `page_limit` / `block_limit` against this ceiling and rejects an
+// over-limit request (the cursor path rejects via `PageRequest::new`).
+pub(crate) use search::MAX_SEARCH_RESULTS;
 pub(crate) use strip::{load_ref_maps, PAGE_LINK_RE, TAG_REF_RE};

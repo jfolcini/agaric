@@ -356,8 +356,14 @@ fn probe_limit_i64(limit: u32) -> i64 {
 /// The user input is escaped via [`regex::escape`] so the FTS-mode
 /// path never interprets metacharacters; only the regex-mode path
 /// accepts metacharacters verbatim.
+///
+/// SQL-5 (PEND-58f) — the input is NFC-normalised before escaping so a
+/// pasted NFD literal matches the same way the FTS path's NFC query
+/// would (the post-filter still runs against the raw FTS row content;
+/// see the contract note in [`regex_mode_query`]).
 fn compose_literal_pattern(query: &str, toggles: SearchToggles) -> String {
-    let escaped = regex::escape(query);
+    let normalised = super::strip::nfc_normalise(query);
+    let escaped = regex::escape(&normalised);
     let prefix = if toggles.case_sensitive {
         "(?-i)"
     } else {
@@ -486,6 +492,38 @@ async fn regex_mode_query(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    // SQL-5 (PEND-58f) — **contract**: regex mode runs the user's
+    // pattern against the **raw `blocks.content`** column, NOT against
+    // the stripped / reference-resolved / NFC-normalised text that the
+    // FTS5 index (`fts_blocks.stripped`, written by
+    // `strip_for_fts_with_maps`) matches. The two search modes therefore
+    // see DIFFERENT text for the same block, with three concrete
+    // consequences the caller must understand:
+    //
+    //   1. **Reference tokens are visible to regex, invisible to FTS.**
+    //      A `#[ULID]` tag/page reference is left verbatim in
+    //      `blocks.content` but resolved to its target name in the FTS
+    //      index. A regex on a tag/page *name* will MISS a block that
+    //      only references that name via `#[ULID]`; FTS would match it.
+    //   2. **Raw markdown is matchable by regex only.** Markup the FTS
+    //      strip pass removes (link syntax, formatting markers) is still
+    //      present in `blocks.content`, so a regex can match it.
+    //   3. **NFC/NFD.** `blocks.content` is stored as the user typed it
+    //      (may be NFD, e.g. a macOS paste); the FTS index is NFC. We
+    //      NFC-normalise the *pattern* below (cheap, safe) so an
+    //      NFC-typed pattern reaches NFC content consistently, but we do
+    //      NOT normalise the stored content on this path — a regex
+    //      against NFD-stored content can still diverge from FTS.
+    //
+    // Changing the column scanned (stripped vs raw) is a behaviour change
+    // deliberately out of scope here; this comment is the documented
+    // contract. See `docs/SEARCH.md`'s regex-mode section.
+    //
+    // NFC-normalise the user pattern so a composed pattern (e.g. a paste
+    // containing NFD diacritics) is canonical before regex compilation.
+    let query_nfc = super::strip::nfc_normalise(query);
+    let query: &str = &query_nfc;
+
     // Compose the final regex. `case_sensitive` flips the (?i) flag;
     // `whole_word` wraps in `(?-u:\b)`. The user's input is the regex
     // pattern verbatim (NOT escaped).
@@ -535,7 +573,22 @@ async fn regex_mode_query(
         i
     });
 
-    let tag_ids_active: &[String] = tag_ids.filter(|t| !t.is_empty()).unwrap_or(&[]);
+    // SQL-1 (PEND-58f) — dedupe `tag_ids` before binding, mirroring the
+    // FTS path in `fts::search::fts_fetch_rows`. The "ALL tags" predicate
+    // compares `COUNT(DISTINCT bt.tag_id)` against the bound list length;
+    // a duplicate id makes that length unachievable and the regex scan
+    // silently returns zero rows. Order is preserved for deterministic
+    // placeholder/bind indices.
+    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
+        Some(ids) => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .filter(|id| seen.insert((*id).clone()))
+                .cloned()
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let tag_start = if !tag_ids_active.is_empty() {
         let start = next_param;
         let placeholders: Vec<String> = (0..tag_ids_active.len())
@@ -634,7 +687,7 @@ async fn regex_mode_query(
     if let Some(pid) = parent_id {
         db_query = db_query.bind(pid);
     }
-    for tid in tag_ids_active {
+    for tid in &tag_ids_active {
         db_query = db_query.bind(tid);
     }
     if !tag_ids_active.is_empty() {
@@ -664,6 +717,28 @@ async fn regex_mode_query(
     db_query = db_query.bind(REGEX_PRE_FILTER_CAP);
 
     let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
+
+    // SQL-8 (PEND-58f) — the SQL scan returns at most the newest
+    // `REGEX_PRE_FILTER_CAP` (1000) structurally-filtered rows, ordered
+    // `b.id DESC` (recency). If the scan returns *exactly* the cap, there
+    // were at least that many candidate rows and OLDER matches beyond the
+    // window are silently invisible — yet this path always reports
+    // `has_more: false` (it emits no cursor; the candidate set is
+    // intentionally bounded). We cannot surface a richer truncation
+    // signal without changing the `PageResponse` wire type (which would
+    // force a `bindings.ts` regen, out of scope here), so for now we emit
+    // a `warn!` breadcrumb when the window is saturated. Wiring a typed
+    // truncation flag onto the wire is DEFERRED to a follow-up that
+    // touches the IPC surface.
+    let prefilter_cap_usize = usize::try_from(REGEX_PRE_FILTER_CAP).unwrap_or(usize::MAX);
+    if rows.len() >= prefilter_cap_usize {
+        tracing::warn!(
+            prefilter_cap = REGEX_PRE_FILTER_CAP,
+            "regex-mode pre-filter window saturated — matches older than the \
+             newest {REGEX_PRE_FILTER_CAP} structurally-filtered blocks are not \
+             scanned (has_more reported false; no truncation signal on the wire)"
+        );
+    }
 
     // Run the regex post-filter. Trim to `limit` survivors.
     let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);

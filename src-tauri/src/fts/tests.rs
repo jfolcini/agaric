@@ -1,6 +1,7 @@
 use super::strip::strip_for_fts_with_maps;
 use super::*;
 use crate::db::init_pool;
+use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -5012,24 +5013,24 @@ async fn concurrent_pool_starvation_bound_500ms() {
 }
 
 #[tokio::test]
-async fn partitioned_long_query_returns_empty_via_short_circuit() {
-    // A 100KB query of `"a a a a …"` — every token is a single-character
-    // word (sub-trigram length). The sanitizer drops sub-trigram word
-    // tokens (per `sanitize_fts_query`'s `TRIGRAM_MIN_LEN = 3` filter),
-    // which leaves the post-sanitised query empty. `search_fts` then
-    // short-circuits to an empty `PageResponse` rather than passing the
-    // empty MATCH expression to SQLite (which would error).
+async fn partitioned_over_long_query_is_rejected() {
+    // SQL-4 (PEND-58f) — a 100KB query now exceeds `MAX_QUERY_LEN`
+    // (4 KiB) and is REJECTED up front with a validation error, before
+    // any tokenise / sanitise work. This supersedes the pre-PEND-58f
+    // behaviour where a long sub-trigram-only query was tokenised,
+    // sanitised to empty, and short-circuited to an empty response. The
+    // sub-trigram empty-short-circuit itself is still covered by
+    // `partitioned_sub_trigram_only_under_cap_short_circuits` below for
+    // queries that fit under the length cap.
     let (pool, _dir) = test_pool().await;
     seed_partitioned_fixture(&pool, 3, 3).await;
 
-    // 50_000 alternating chars + spaces ≈ 100KB UTF-8 (each char is 2
-    // bytes including the space). The exact size isn't load-bearing —
-    // any sub-trigram-only input >> bytecode buffer exercises the
-    // path. We pick 100K to match the plan's stated size.
+    // 50_000 alternating chars + spaces ≈ 100KB UTF-8 — well over the
+    // 4 KiB `MAX_QUERY_LEN` cap.
     let huge: String = "a ".repeat(50_000);
     assert!(huge.len() >= 100_000, "fixture must be at least 100KB");
 
-    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
         &pool,
         huge,
         10,
@@ -5038,15 +5039,49 @@ async fn partitioned_long_query_returns_empty_via_short_circuit() {
         None,
     )
     .await
-    .expect("long sub-trigram-only query must short-circuit, not error");
+    .expect_err("over-long query must be rejected, not short-circuited");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long query must surface AppError::Validation, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
+    // A sub-trigram-only query that fits UNDER `MAX_QUERY_LEN`: every
+    // token is a single-character word (sub-trigram length). The
+    // sanitizer drops sub-trigram word tokens (per `sanitize_fts_query`'s
+    // `TRIGRAM_MIN_LEN = 3` filter), leaving the post-sanitised query
+    // empty. The partitioned path then short-circuits to two empty
+    // partitions rather than passing an empty MATCH expression to SQLite.
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    // "a a a …" — comfortably under the 4 KiB cap.
+    let short: String = "a ".repeat(100);
+    assert!(
+        short.len() < super::search::MAX_QUERY_LEN,
+        "fixture must fit under MAX_QUERY_LEN"
+    );
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        short,
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect("sub-trigram-only query must short-circuit, not error");
 
     assert!(
         resp.pages.items.is_empty(),
-        "long sub-trigram-only query must yield empty pages partition"
+        "sub-trigram-only query must yield empty pages partition"
     );
     assert!(
         resp.blocks.items.is_empty(),
-        "long sub-trigram-only query must yield empty blocks partition"
+        "sub-trigram-only query must yield empty blocks partition"
     );
     assert!(!resp.pages.has_more);
     assert!(!resp.blocks.has_more);
@@ -6321,5 +6356,414 @@ async fn fts_index_consistency_check_flags_missing_rows() {
         drift,
         vec!["01HQFTSC03BLK00000000B03CC".to_string()],
         "the helper must catch a block that was inserted without FTS indexing"
+    );
+}
+
+// ======================================================================
+// PEND-58f — SQL/BE hardening regression tests
+// ======================================================================
+
+/// SQL-1 (PEND-58f) — duplicate tag IDs in the "ALL tags" filter must
+/// NOT silently zero out the result on the FTS path. Before the dedup
+/// fix, `tag_ids = [T, T]` made `COUNT(DISTINCT tag_id) = 1` compare
+/// against the bound list length `2`, so the predicate could never hold.
+#[tokio::test]
+async fn fts_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQDUPTAG0000000000000T01";
+    let blk = "01HQDUPTAG000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "duptag", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        &format!("dup-tag candidate referencing #[{tag_id}]"),
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    // The duplicate id appears twice in the caller-supplied list.
+    let dup_tags = vec![tag_id.to_string(), tag_id.to_string()];
+    let resp = search_fts(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&dup_tags),
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&blk),
+        "duplicate tag ids must still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-1 (PEND-58f) — same dedup guarantee on the regex-mode path.
+#[tokio::test]
+async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQDUPRGX0000000000000T01";
+    let blk = "01HQDUPRGX000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "duprgx", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        "regex-dup candidate alpha",
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let dup_tags = vec![tag_id.to_string(), tag_id.to_string()];
+    let resp = search_with_toggles(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&dup_tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&blk),
+        "regex-mode duplicate tag ids must still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-4 (PEND-58f) — an over-long FTS query is rejected up front with a
+/// validation error rather than tokenised + bound into a MATCH.
+#[tokio::test]
+async fn fts_over_long_query_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let huge = "a".repeat(super::search::MAX_QUERY_LEN + 1);
+    let err = search_fts(
+        &pool,
+        &huge,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .expect_err("over-long query must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long query must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// SQL-4 (PEND-58f) — a query at exactly the cap is accepted (boundary).
+#[tokio::test]
+async fn fts_query_at_exactly_the_cap_is_accepted() {
+    let (pool, _dir) = test_pool().await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let at_cap = "a".repeat(super::search::MAX_QUERY_LEN);
+    // No matching content — an empty result is fine; the point is that
+    // the length guard does NOT reject a query at exactly the cap.
+    let resp = search_fts(
+        &pool,
+        &at_cap,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await;
+    assert!(
+        resp.is_ok(),
+        "query at exactly MAX_QUERY_LEN must not be rejected: {resp:?}"
+    );
+}
+
+/// SQL-3 (PEND-58f) — `has_more` must be TRUE at exactly the
+/// `MAX_SEARCH_RESULTS` (100) cap when more rows exist. Before the fix,
+/// `limit_plus_one_capped(100)` collapsed to `100`, so the probe could
+/// never see the 101st row and `has_more` was stuck false at the cap.
+#[tokio::test]
+async fn partitioned_has_more_is_true_at_exactly_the_cap() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed > 100 matching content rows under a single root page so the
+    // blocks partition's scan overflows the cap.
+    let root = pt_block_id(0);
+    insert_block(&pool, &root, "page", "cap boundary root", None, Some(0)).await;
+    let mut tx = pool.begin().await.unwrap();
+    for i in 1..=130u32 {
+        let id = pt_block_id(i);
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(format!("capboundary row {i}"))
+        .bind(&root)
+        .bind(i64::from(i))
+        .bind(&root)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // Request the page/block limits at exactly the cap (100).
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "capboundary".to_string(),
+        100,
+        100,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.blocks.items.len(),
+        100,
+        "blocks partition must fill to the 100 cap"
+    );
+    assert!(
+        resp.blocks.has_more,
+        "blocks.has_more must be TRUE at the cap when >100 rows matched"
+    );
+}
+
+/// BE-2 (PEND-58f) — the partitioned command rejects an over-limit
+/// request (mirrors the cursor path's `PageRequest::new` reject contract)
+/// instead of silently capping it.
+#[tokio::test]
+async fn partitioned_over_limit_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    // page_limit over the cap.
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        101,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect_err("page_limit over the cap must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-limit page_limit must surface AppError::Validation, got {err:?}"
+    );
+
+    // block_limit over the cap.
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        101,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect_err("block_limit over the cap must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-limit block_limit must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-2 (PEND-58f) — limits at exactly the cap are accepted (boundary).
+#[tokio::test]
+async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        100,
+        100,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await;
+    assert!(
+        resp.is_ok(),
+        "limits at exactly MAX_SEARCH_RESULTS must be accepted: {resp:?}"
+    );
+}
+
+/// BE-6 (PEND-58f) — fail-fast: an invalid regex routed through the
+/// partitioned inner surfaces a validation error (not a partial / empty
+/// response). Exercises the command-layer error envelope.
+#[tokio::test]
+async fn partitioned_invalid_regex_fails_fast_with_validation() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "(unclosed".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect_err("invalid regex must fail fast");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "invalid regex must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-6 (PEND-58f) — cancellation envelope: a pre-cancelled token makes
+/// the partitioned inner return `AppError::Cancelled` rather than running
+/// the scan to completion.
+#[tokio::test]
+async fn partitioned_pre_cancelled_token_returns_cancelled() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let guard = crate::cancellation::CancellationGuard::new();
+    let token = guard.token();
+    // Fire the cancel signal before the search runs.
+    drop(guard);
+
+    let result = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        Some(token),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Cancelled)),
+        "a pre-cancelled token must yield AppError::Cancelled, got {result:?}"
+    );
+}
+
+/// BE-8 (PEND-58f) — an empty `prop:` key is rejected at the command
+/// layer (mirrors `query_by_property_inner`'s contract) instead of
+/// composing a `bp.key = ''` clause that silently matches nothing.
+#[tokio::test]
+async fn search_empty_property_key_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            property_filters: vec![crate::commands::queries::SearchPropertyFilter {
+                key: "   ".to_string(),
+                value: "x".to_string(),
+            }],
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect_err("empty prop: key must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "empty prop: key must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-9 (PEND-58f) — `space_id: Some("")` is the "match nothing"
+/// space-isolation invariant. A search scoped to the empty space must
+/// return zero rows even when matching content exists in real spaces.
+#[tokio::test]
+async fn search_empty_space_id_matches_nothing() {
+    let (pool, _dir) = test_pool().await;
+    // Seed a real space + a matching page assigned to it, so without the
+    // empty-space guard the row would otherwise be reachable.
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+    assign_to_space_for_fts(&pool, PT_PAGE_IDS[0], FTS_SPACE_A_ID).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            space_id: Some(String::new()),
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("empty space_id search must succeed (returning nothing)");
+
+    assert_eq!(
+        resp.pages.items.len(),
+        0,
+        "space_id=\"\" must match no pages"
+    );
+    assert_eq!(
+        resp.blocks.items.len(),
+        0,
+        "space_id=\"\" must match no blocks"
     );
 }

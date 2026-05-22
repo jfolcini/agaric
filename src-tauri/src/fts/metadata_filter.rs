@@ -225,6 +225,24 @@ pub fn prepare_metadata_with_today(
         out.scheduled = Some(resolve_date_filter(df, today)?);
     }
 
+    // BE-8 (PEND-58f) — reject an empty `prop:` key, matching the
+    // dedicated `query_by_property_inner` command's contract ("property
+    // key must not be empty"). Without this, an empty key produced a
+    // `bp.key = ''` clause that silently matches nothing — a confusing
+    // no-result outcome instead of a clear validation error. We check
+    // both the include and exclude sets.
+    for pf in filter
+        .property_filters
+        .iter()
+        .chain(filter.excluded_property_filters.iter())
+    {
+        if pf.key.trim().is_empty() {
+            return Err(AppError::Validation(
+                "property key must not be empty".into(),
+            ));
+        }
+    }
+
     // Property filters carry through verbatim; SQL composition site
     // handles the EXISTS / NOT EXISTS construction.
     out.property_includes = filter.property_filters.clone();
@@ -584,6 +602,24 @@ fn append_text_not_in_or_not_null(
     }
     let mut parts: Vec<String> = Vec::new();
     if !values.is_empty() {
+        // SQL-6 (PEND-58f) — defensive guard against the SQL three-valued
+        // `NOT IN (…, NULL)` trap. In SQL, `x NOT IN (a, b, NULL)` is
+        // NULL (never TRUE) for *every* non-matching `x`, because the
+        // comparison against the NULL element yields UNKNOWN — so a list
+        // containing a SQL NULL would silently drop ALL rows. Here the
+        // `values` are `&[String]`, so they can never carry a SQL NULL,
+        // and the `none` sentinel (the only thing that maps to a NULL
+        // predicate) is split out upstream in `prepare_metadata_with_today`
+        // into `not_null` before this fn is reached. The `IS NULL` branch
+        // below is therefore the SEPARATE, deliberate NULL handling — it
+        // is NOT part of the `IN` list. This filter+assert make the
+        // invariant explicit so a future refactor that lets a sentinel
+        // leak into `values` fails loudly in debug instead of silently
+        // returning zero rows.
+        debug_assert!(
+            values.iter().all(|v| !v.eq_ignore_ascii_case("none")),
+            "the `none` sentinel must be split out before reaching the NOT IN list"
+        );
         let placeholders: Vec<String> = values
             .iter()
             .map(|_| {
@@ -593,7 +629,9 @@ fn append_text_not_in_or_not_null(
             })
             .collect();
         // NULL-inclusive inversion: a row with `column IS NULL` is
-        // counted as "not in the excluded set".
+        // counted as "not in the excluded set". This `IS NULL` lives
+        // OUTSIDE the `IN (...)` list (see the SQL-6 note above) so the
+        // 3-valued `NOT IN (…, NULL)` trap cannot arise.
         parts.push(format!(
             "{column} IS NULL OR {column} NOT IN ({})",
             placeholders.join(", ")
@@ -863,6 +901,43 @@ mod tests {
         assert_eq!(m.property_includes[0].value, "done");
         assert_eq!(m.property_excludes.len(), 1);
         assert_eq!(m.property_excludes[0].key, "archived");
+    }
+
+    /// BE-8 (PEND-58f) — an empty (or whitespace-only) `prop:` key is
+    /// rejected, matching `query_by_property_inner`'s contract.
+    #[test]
+    fn empty_property_key_is_rejected() {
+        // Empty include key.
+        let f = SearchFilter {
+            property_filters: vec![SearchPropertyFilter {
+                key: String::new(),
+                value: "x".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                prepare_metadata_with_today(&f, fixed_today()),
+                Err(AppError::Validation(_))
+            ),
+            "empty include prop key must be rejected"
+        );
+
+        // Whitespace-only exclude key.
+        let f = SearchFilter {
+            excluded_property_filters: vec![SearchPropertyFilter {
+                key: "   ".into(),
+                value: "x".into(),
+            }],
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                prepare_metadata_with_today(&f, fixed_today()),
+                Err(AppError::Validation(_))
+            ),
+            "whitespace-only exclude prop key must be rejected"
+        );
     }
 
     // -----------------------------------------------------------------
