@@ -1135,6 +1135,52 @@ export type ExtraQueryFilters = {
 };
 
 /**
+ *  One filter atom in a compound-filter expression. Variants are tagged
+ *  so the cross-surface SQL composer can dispatch via match.
+ *
+ *  **Wire shape (Phase 3):** internally-tagged on `"type"` with
+ *  PascalCase variant names, matching `BacklinkFilter`. Every variant is
+ *  a struct variant (single-field where the prior backend-only shape used
+ *  a newtype) because `serde`'s internally-tagged representation does not
+ *  support newtype variants wrapping a primitive — and struct variants
+ *  give the frontend a self-describing field name (`{ type: "Tag", tag }`
+ *  rather than a bare positional value).
+ */
+export type FilterPrimitive =
+/**  Shared — block carries this tag id directly. */
+{ type: "Tag"; tag: string } |
+/**
+ *  Shared — page name matches the GLOB pattern. `exclude=true`
+ *  becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
+ */
+{ type: "PathGlob"; pattern: string; exclude: boolean } |
+/**  Shared — block carries a property matching this predicate. */
+{ type: "HasProperty"; key: string; op: PropertyOp; value: PropertyValue | null } |
+/**  Shared — block's `last_modified_at` falls in this window. */
+{ type: "LastEdited"; spec: LastEditedSpec } |
+/**  Shared — block's owning page lives in this space. */
+{ type: "Space"; space_id: string } |
+/**  Shared — block's `priority` matches this value. */
+{ type: "Priority"; priority: string } |
+/**
+ *  Pages-only — page has no inbound links AND no outbound links.
+ *  (`Stub` is similar but excludes the AND-no-outbound clause.)
+ */
+{ type: "Orphan" } |
+/**  Pages-only — page has fewer than a "stub" threshold of descendants. */
+{ type: "Stub" } |
+/**  Pages-only — page has no inbound links (looser than `Orphan`). */
+{ type: "HasNoInboundLinks" } |
+/**  Search-only — regex pattern over block content. */
+{ type: "Regex"; pattern: string } |
+/**  Search-only — case-sensitive match toggle (post-FTS filter). */
+{ type: "CaseSensitive"; enabled: boolean } |
+/**  Search-only — whole-word match toggle (ASCII `\b` semantics). */
+{ type: "WholeWord"; enabled: boolean } |
+/**  Search-only — FTS5 `snippet()` window spec. */
+{ type: "Snippet"; spec: SnippetSpec };
+
+/**
  *  Result of [`flush_all_drafts_inner`]: how many drafts were processed
  *  inside the single transaction.
  *
@@ -1207,6 +1253,28 @@ export type ImportResult = {
 };
 
 /**
+ *  `last-edited:` time-window spec.
+ *
+ *  Internally-tagged on `"type"` (PascalCase) so the TS union reads
+ *  `{ type: "Rolling", days } | { type: "Range", start, end }
+ *  | { type: "OlderThan", days }`.
+ */
+export type LastEditedSpec =
+/**
+ *  Rolling N-days window. `Today`, `ThisWeek`, `ThisMonth` map to
+ *  1 / 7 / 30. Custom values are accepted but documented as
+ *  "rolling, not calendar".
+ */
+{ type: "Rolling"; days: number } |
+/**  Absolute date range (ISO 8601 dates, inclusive on both ends). */
+{ type: "Range"; start: string; end: string } |
+/**
+ *  Older than the given rolling N-days window (the inverse of
+ *  `Rolling`). Used by PEND-58's `last-edited:older` chip.
+ */
+{ type: "OlderThan"; days: number };
+
+/**
  *  Holder metadata for the push-lease, surfaced to the Settings tab so
  *  users can see which device is currently pushing.
  */
@@ -1242,6 +1310,17 @@ export type LinkMetadata = {
 export type ListPagesWithMetadataFilter = {
 	sort?: PageSort,
 	spaceId: string,
+	/**
+	 *  PEND-58 Phase 3 — compound filter primitives applied server-side,
+	 *  AND-joined into the WHERE before the keyset/ORDER BY/LIMIT. Empty
+	 *  (the default) preserves the pre-PEND-58 "no filter" behaviour, so
+	 *  existing callers and the flag-off path are unaffected. Each
+	 *  primitive is gated against [`PagesProjection::allowed_keys`] and
+	 *  rejected with [`AppError::Validation`] if it is not a Pages-surface
+	 *  token (defence-in-depth — the frontend never sends Search-only
+	 *  primitives, but the backend must not trust that).
+	 */
+	filters?: FilterPrimitive[],
 };
 
 /**  One log file's name + contents returned by [`read_logs_for_report`]. */
@@ -1591,6 +1670,17 @@ export type PropertyFilter = {
 	operator?: string,
 };
 
+/**  Predicate operator on a `has-property:` primitive. */
+export type PropertyOp =
+/**  `block_properties.value_text = ?`. */
+"eq" |
+/**  `block_properties.value_text != ?`. */
+"ne" |
+/**  Property key exists (no value comparison). */
+"exists" |
+/**  Property key does NOT exist. */
+"notExists";
+
 export type PropertyRow = {
 	key: string,
 	value_text: string | null,
@@ -1603,6 +1693,16 @@ export type PropertyRow = {
 	 */
 	value_bool: number | null,
 };
+
+/**
+ *  The right-hand-side value type for `HasProperty`.
+ *
+ *  Internally-tagged on `"type"` (PascalCase) so the TS union reads
+ *  `{ type: "Text", value } | { type: "Ref", value }`.
+ */
+export type PropertyValue = { type: "Text"; value: string } |
+/**  References another block via `block_properties.value_ref`. */
+{ type: "Ref"; value: string };
 
 export type PurgeResponse = {
 	block_id: string,
@@ -1870,6 +1970,16 @@ export type SetPropertyArgs = {
 	value_ref?: string | null,
 	/**  PEND-14: native boolean property value (`true` / `false`). */
 	value_bool?: boolean | null,
+};
+
+/**
+ *  Snippet-rendering parameters threaded through to the FTS5 `snippet()`
+ *  builtin. The SQL composition lives in `fts::search`.
+ */
+export type SnippetSpec = {
+	maxTokens: number,
+	leftMarker: string,
+	rightMarker: string,
 };
 
 /**  Sort direction. */

@@ -15,6 +15,7 @@ use crate::commands::tests::common::{
     assign_to_space, ensure_test_space, ensure_test_space_b, insert_block, test_pool,
     TEST_SPACE_B_ID, TEST_SPACE_ID,
 };
+use crate::filters::FilterPrimitive;
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 
@@ -176,6 +177,16 @@ fn filter(sort: PageSort) -> ListPagesWithMetadataFilter {
     ListPagesWithMetadataFilter {
         sort,
         space_id: TEST_SPACE_ID.to_string(),
+        filters: Vec::new(),
+    }
+}
+
+/// PEND-58 — `filter()` plus a compound-filter primitive set.
+fn filter_with(sort: PageSort, filters: Vec<FilterPrimitive>) -> ListPagesWithMetadataFilter {
+    ListPagesWithMetadataFilter {
+        sort,
+        space_id: TEST_SPACE_ID.to_string(),
+        filters,
     }
 }
 
@@ -949,4 +960,225 @@ async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
         "MostContent plan must NOT contain a correlated scalar subquery \
          (PEND-56b regression); got:\n{plan}"
     );
+}
+
+// ── PEND-58 Phase 3 — compound filters ────────────────────────────────────
+//
+// These exercise `ListPagesWithMetadataFilter.filters`: the allowed-keys
+// gate, cost-ordered AND-join, and the bind-threading that splices each
+// primitive's `?` placeholders between the `?1 = space_id` bind and the
+// keyset binds.
+
+#[tokio::test]
+async fn filter_stub_returns_only_pages_under_threshold() {
+    // `Stub` = page has < 3 non-deleted descendants. Seed a page with 0
+    // children (stub) and one with 4 children (not a stub).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000S1", "StubPage").await;
+    seed_page(&pool, "01PAGE000000000000000000F1", "FullPage").await;
+    for i in 0..4 {
+        seed_child(
+            &pool,
+            &format!("01CHILD000000000000000F{i:02}"),
+            "01PAGE000000000000000000F1",
+            "x",
+        )
+        .await;
+    }
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Stub]),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("stub filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["StubPage"],
+        "only the under-threshold page must pass the Stub filter"
+    );
+}
+
+#[tokio::test]
+async fn filter_stub_and_tag_compose_with_and_semantics() {
+    // Stub + Tag must return the INTERSECTION: a page that is both a stub
+    // AND carries the tag.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let tag = "01TAG000000000000000000T1";
+    // Stub + tagged → passes both.
+    seed_page(&pool, "01PAGE00000000000000000AA1", "StubTagged").await;
+    seed_tag(&pool, "01PAGE00000000000000000AA1", tag).await;
+    // Stub but untagged → fails the Tag clause.
+    seed_page(&pool, "01PAGE00000000000000000BB1", "StubUntagged").await;
+    // Tagged but NOT a stub (4 children) → fails the Stub clause.
+    seed_page(&pool, "01PAGE00000000000000000CC1", "FullTagged").await;
+    seed_tag(&pool, "01PAGE00000000000000000CC1", tag).await;
+    for i in 0..4 {
+        seed_child(
+            &pool,
+            &format!("01CHILD000000000000000C{i:02}"),
+            "01PAGE00000000000000000CC1",
+            "x",
+        )
+        .await;
+    }
+
+    let resp = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![
+                FilterPrimitive::Stub,
+                FilterPrimitive::Tag {
+                    tag: tag.to_string(),
+                },
+            ],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect("compound filter must succeed");
+    let contents: Vec<&str> = resp
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(
+        contents,
+        vec!["StubTagged"],
+        "only the page satisfying BOTH primitives must pass"
+    );
+}
+
+#[tokio::test]
+async fn filter_plus_cursor_paginates_without_dupes_or_drops() {
+    // Filter + sort + cursor: paginate a filtered set across the keyset
+    // boundary. All 5 pages are stubs (0 children); a 6th non-stub page is
+    // seeded to prove the filter excludes it from EVERY page.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    for (i, name) in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+        .iter()
+        .enumerate()
+    {
+        seed_page(&pool, &format!("01PAGE0000000000000000P{i:02}"), name).await;
+    }
+    // A non-stub page that must NEVER appear in the filtered result set.
+    seed_page(&pool, "01PAGE000000000000000000F1", "FullPage").await;
+    for i in 0..4 {
+        seed_child(
+            &pool,
+            &format!("01CHILD000000000000000F{i:02}"),
+            "01PAGE000000000000000000F1",
+            "x",
+        )
+        .await;
+    }
+
+    // Page through the filtered set 2-at-a-time and collect everything.
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = list_pages_with_metadata_inner(
+            &pool,
+            filter_with(PageSort::Alphabetical, vec![FilterPrimitive::Stub]),
+            cursor.clone(),
+            Some(2),
+        )
+        .await
+        .expect("filtered cursor page must succeed");
+        for item in &page.items {
+            seen.push(item.content.clone().unwrap_or_default());
+        }
+        if !page.has_more {
+            break;
+        }
+        cursor = page.next_cursor;
+        assert!(cursor.is_some(), "has_more pages must carry a cursor");
+    }
+
+    // No dupes, no drops: exactly the 5 stub pages in alphabetical order.
+    assert_eq!(
+        seen,
+        vec!["Alpha", "Beta", "Delta", "Epsilon", "Gamma"],
+        "filtered pagination must return each stub once, FullPage never"
+    );
+    assert!(
+        !seen.iter().any(|c| c == "FullPage"),
+        "the non-stub page must be excluded from every page"
+    );
+}
+
+#[tokio::test]
+async fn filter_search_only_primitive_rejected_via_allowed_keys_gate() {
+    // A Search-only primitive (`Regex`) is not in the Pages allow-list;
+    // the backend must reject it with AppError::Validation even though the
+    // frontend would never send it (defence-in-depth).
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "A").await;
+
+    let err = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(
+            PageSort::Alphabetical,
+            vec![FilterPrimitive::Regex {
+                pattern: "foo".to_string(),
+            }],
+        ),
+        None,
+        Some(50),
+    )
+    .await
+    .expect_err("Search-only primitive must be rejected on the Pages surface");
+    assert!(
+        format!("{err}").contains("InvalidFilter"),
+        "rejection must carry the InvalidFilter prefix; got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn empty_filters_vec_matches_unfiltered_behaviour() {
+    // Regression guard: an empty `filters` vec must reproduce today's
+    // unfiltered result set exactly.
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    seed_page(&pool, "01PAGE000000000000000000A1", "Alpha").await;
+    seed_page(&pool, "01PAGE000000000000000000B1", "Beta").await;
+
+    let unfiltered =
+        list_pages_with_metadata_inner(&pool, filter(PageSort::Alphabetical), None, Some(50))
+            .await
+            .unwrap();
+    let empty_filtered = list_pages_with_metadata_inner(
+        &pool,
+        filter_with(PageSort::Alphabetical, Vec::new()),
+        None,
+        Some(50),
+    )
+    .await
+    .unwrap();
+
+    let a: Vec<&str> = unfiltered
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    let b: Vec<&str> = empty_filtered
+        .items
+        .iter()
+        .filter_map(|p| p.content.as_deref())
+        .collect();
+    assert_eq!(a, b, "empty filters must equal the unfiltered result set");
+    assert_eq!(a, vec!["Alpha", "Beta"]);
 }

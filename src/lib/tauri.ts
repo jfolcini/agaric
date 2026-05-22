@@ -16,6 +16,7 @@ export type {
   DiffSpan,
   DiffTag,
   Draft,
+  FilterPrimitive,
   FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
@@ -60,6 +61,7 @@ import type {
   DeleteResponse,
   DiffSpan,
   Draft,
+  FilterPrimitive,
   FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
@@ -500,6 +502,13 @@ export async function listPagesWithMetadata(params: {
   spaceId: string
   cursor?: string | undefined
   limit?: SafeLimit | undefined
+  /**
+   * PEND-58 Phase 3 — compound filter primitives applied server-side
+   * (AND-composed). Omit / empty for today's unfiltered behaviour. The
+   * backend gates each primitive against the Pages allowed-keys set and
+   * rejects Search-only primitives with a validation error.
+   */
+  filters?: FilterPrimitive[] | undefined
 }): Promise<PageResponse<PageWithMetadataRow>> {
   return unwrap(
     await commands.listPagesWithMetadata(
@@ -507,9 +516,15 @@ export async function listPagesWithMetadata(params: {
       // attribute on `PageSort` is the single source of truth. Sending
       // an explicit value here would silently drift if the backend
       // default ever changes (Review Round 1 — UX MEDIUM #5).
-      { sort: params.sort ?? null, spaceId: params.spaceId } as Parameters<
-        typeof commands.listPagesWithMetadata
-      >[0],
+      //
+      // `filters` defaults to `[]` (the Rust `#[serde(default)]` would
+      // accept its absence too, but sending an explicit empty array keeps
+      // the wire shape unambiguous for the mock handler).
+      {
+        sort: params.sort ?? null,
+        spaceId: params.spaceId,
+        filters: params.filters ?? [],
+      } as Parameters<typeof commands.listPagesWithMetadata>[0],
       params.cursor ?? null,
       params.limit ?? null,
     ),

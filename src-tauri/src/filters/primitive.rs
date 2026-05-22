@@ -1,23 +1,39 @@
-//! PEND-58 Phase 1 — `FilterPrimitive` enum + `Projection` trait.
+//! PEND-58 — `FilterPrimitive` enum + `Projection` trait.
 //!
 //! See `crate::filters` module docs for the broader rationale. This file
 //! defines the types; per-surface implementations live in their own
 //! `impl Projection for PagesProjection` / `SearchProjection` blocks.
 //!
-//! **Wire format:** these types are NOT exposed on the IPC boundary in
-//! Phase 1 — they live entirely backend-side. PEND-58 Phase 3 wires
-//! a frontend-facing version once the chip-row UI lands.
+//! **Wire format:** Phase 3 exposes [`FilterPrimitive`] (and its value
+//! sub-types [`PropertyOp`], [`PropertyValue`], [`LastEditedSpec`],
+//! [`SnippetSpec`]) on the IPC boundary via `serde` + `specta::Type`.
+//! The enum is internally-tagged (`#[serde(tag = "type")]`, PascalCase
+//! variant names) so the regenerated TS renders a clean discriminated
+//! union — matching the `BacklinkFilter` convention in
+//! `src-tauri/src/backlink/types.rs`. The compilation internals
+//! ([`Bind`], [`WhereClause`], [`Projection`], the projection structs)
+//! stay backend-only — they are NOT serde/specta.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 // ── Primitive enum ────────────────────────────────────────────────────────
 
 /// One filter atom in a compound-filter expression. Variants are tagged
 /// so the cross-surface SQL composer can dispatch via match.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **Wire shape (Phase 3):** internally-tagged on `"type"` with
+/// PascalCase variant names, matching `BacklinkFilter`. Every variant is
+/// a struct variant (single-field where the prior backend-only shape used
+/// a newtype) because `serde`'s internally-tagged representation does not
+/// support newtype variants wrapping a primitive — and struct variants
+/// give the frontend a self-describing field name (`{ type: "Tag", tag }`
+/// rather than a bare positional value).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
 pub enum FilterPrimitive {
     /// Shared — block carries this tag id directly.
-    Tag(String),
+    Tag { tag: String },
     /// Shared — page name matches the GLOB pattern. `exclude=true`
     /// becomes a `NOT IN (...)` sub-select; otherwise an `IN (...)`.
     PathGlob { pattern: String, exclude: bool },
@@ -28,11 +44,11 @@ pub enum FilterPrimitive {
         value: Option<PropertyValue>,
     },
     /// Shared — block's `last_modified_at` falls in this window.
-    LastEdited(LastEditedSpec),
+    LastEdited { spec: LastEditedSpec },
     /// Shared — block's owning page lives in this space.
-    Space(String),
+    Space { space_id: String },
     /// Shared — block's `priority` matches this value.
-    Priority(String),
+    Priority { priority: String },
     // ── Pages-only ────────────────────────────────────────────────
     /// Pages-only — page has no inbound links AND no outbound links.
     /// (`Stub` is similar but excludes the AND-no-outbound clause.)
@@ -43,17 +59,18 @@ pub enum FilterPrimitive {
     HasNoInboundLinks,
     // ── Search-only ───────────────────────────────────────────────
     /// Search-only — regex pattern over block content.
-    Regex(String),
+    Regex { pattern: String },
     /// Search-only — case-sensitive match toggle (post-FTS filter).
-    CaseSensitive(bool),
+    CaseSensitive { enabled: bool },
     /// Search-only — whole-word match toggle (ASCII `\b` semantics).
-    WholeWord(bool),
+    WholeWord { enabled: bool },
     /// Search-only — FTS5 `snippet()` window spec.
-    Snippet(SnippetSpec),
+    Snippet { spec: SnippetSpec },
 }
 
 /// Predicate operator on a `has-property:` primitive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub enum PropertyOp {
     /// `block_properties.value_text = ?`.
     Eq,
@@ -66,33 +83,44 @@ pub enum PropertyOp {
 }
 
 /// The right-hand-side value type for `HasProperty`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Internally-tagged on `"type"` (PascalCase) so the TS union reads
+/// `{ type: "Text", value } | { type: "Ref", value }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
 pub enum PropertyValue {
-    Text(String),
+    Text {
+        value: String,
+    },
     /// References another block via `block_properties.value_ref`.
-    Ref(String),
+    Ref {
+        value: String,
+    },
 }
 
-/// `last-edited:` time-window spec. Phase 1 defines the shape; Phase 2
-/// implements the SQL bucket math against `pages_cache.last_edited_at`
-/// (or the future equivalent column).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `last-edited:` time-window spec.
+///
+/// Internally-tagged on `"type"` (PascalCase) so the TS union reads
+/// `{ type: "Rolling", days } | { type: "Range", start, end }
+/// | { type: "OlderThan", days }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "type")]
 pub enum LastEditedSpec {
     /// Rolling N-days window. `Today`, `ThisWeek`, `ThisMonth` map to
     /// 1 / 7 / 30. Custom values are accepted but documented as
     /// "rolling, not calendar".
-    Rolling(u32),
+    Rolling { days: u32 },
     /// Absolute date range (ISO 8601 dates, inclusive on both ends).
     Range { start: String, end: String },
     /// Older than the given rolling N-days window (the inverse of
     /// `Rolling`). Used by PEND-58's `last-edited:older` chip.
-    OlderThan(u32),
+    OlderThan { days: u32 },
 }
 
 /// Snippet-rendering parameters threaded through to the FTS5 `snippet()`
-/// builtin. Phase 1 defines the shape; the SQL composition lives in
-/// `fts::search`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// builtin. The SQL composition lives in `fts::search`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct SnippetSpec {
     pub max_tokens: u32,
     pub left_marker: String,
@@ -205,23 +233,98 @@ pub trait Projection {
         Self: Sized,
     {
         match p {
-            FilterPrimitive::Tag(t) => self.compile_tag(t),
+            FilterPrimitive::Tag { tag } => self.compile_tag(tag),
             FilterPrimitive::PathGlob { pattern, exclude } => {
                 self.compile_path_glob(pattern, *exclude)
             }
             FilterPrimitive::HasProperty { key, op, value } => {
                 self.compile_has_property(key, *op, value.as_ref())
             }
-            FilterPrimitive::LastEdited(spec) => self.compile_last_edited(spec),
-            FilterPrimitive::Space(s) => self.compile_space(s),
-            FilterPrimitive::Priority(p) => self.compile_priority(p),
+            FilterPrimitive::LastEdited { spec } => self.compile_last_edited(spec),
+            FilterPrimitive::Space { space_id } => self.compile_space(space_id),
+            FilterPrimitive::Priority { priority } => self.compile_priority(priority),
             FilterPrimitive::Orphan => self.compile_orphan(),
             FilterPrimitive::Stub => self.compile_stub(),
             FilterPrimitive::HasNoInboundLinks => self.compile_has_no_inbound_links(),
-            FilterPrimitive::Regex(p) => self.compile_regex(p),
-            FilterPrimitive::CaseSensitive(b) => self.compile_case_sensitive(*b),
-            FilterPrimitive::WholeWord(b) => self.compile_whole_word(*b),
-            FilterPrimitive::Snippet(s) => self.compile_snippet(s),
+            FilterPrimitive::Regex { pattern } => self.compile_regex(pattern),
+            FilterPrimitive::CaseSensitive { enabled } => self.compile_case_sensitive(*enabled),
+            FilterPrimitive::WholeWord { enabled } => self.compile_whole_word(*enabled),
+            FilterPrimitive::Snippet { spec } => self.compile_snippet(spec),
+        }
+    }
+}
+
+impl FilterPrimitive {
+    /// PEND-58 §Performance — relative SQL-plan cost, used to order the
+    /// compiled WHERE fragments so the index-backed primitives narrow the
+    /// row set before the full-scan ones run. Lower = cheaper = emitted
+    /// first.
+    ///
+    /// The mapping mirrors the plan's "SARGable?" / "Index hit" table:
+    ///
+    /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`,
+    ///   `LastEdited`, `Orphan`, `Stub`, `HasNoInboundLinks` — each hits
+    ///   an existing index (`idx_block_props_key`, `idx_op_log_created`,
+    ///   `idx_block_links_target/source`, `idx_blocks_page_id`).
+    /// - **1 (full scan, cheap):** `Priority` — no dedicated index, but a
+    ///   single equality scan over `blocks.priority`; cheap at vault
+    ///   scale.
+    /// - **2 (full scan, GLOB):** `PathGlob` when the pattern has no
+    ///   leading anchor (a true table scan of `pages_cache.title`). An
+    ///   anchored prefix glob (`foo*`) is range-scannable, so it ranks as
+    ///   index-backed (0).
+    /// - **3 (post-filter / non-SQL):** the Search-only toggles
+    ///   (`Regex`, `CaseSensitive`, `WholeWord`, `Snippet`) — never seen
+    ///   on the Pages surface (allowed-keys gate rejects them), but
+    ///   ranked last so they never precede a SARGable clause if a future
+    ///   surface admits them.
+    #[must_use]
+    pub fn cost_hint(&self) -> u8 {
+        match self {
+            FilterPrimitive::Tag { .. }
+            | FilterPrimitive::HasProperty { .. }
+            | FilterPrimitive::Space { .. }
+            | FilterPrimitive::LastEdited { .. }
+            | FilterPrimitive::Orphan
+            | FilterPrimitive::Stub
+            | FilterPrimitive::HasNoInboundLinks => 0,
+            FilterPrimitive::Priority { .. } => 1,
+            // Anchored prefix globs (`foo*`, no leading `*`/`?`/`[`) are
+            // range-scannable → index-backed cost. A leading wildcard
+            // forces a full scan → ranked highest among SQL primitives.
+            FilterPrimitive::PathGlob { pattern, .. } => {
+                if pattern.starts_with(['*', '?', '[']) {
+                    2
+                } else {
+                    0
+                }
+            }
+            FilterPrimitive::Regex { .. }
+            | FilterPrimitive::CaseSensitive { .. }
+            | FilterPrimitive::WholeWord { .. }
+            | FilterPrimitive::Snippet { .. } => 3,
+        }
+    }
+
+    /// PEND-58 — the allowed-keys token for this primitive, used by the
+    /// per-surface allow-list gate. Mirrors the `&'static str` keys in
+    /// [`PAGES_ALLOWED_KEYS`] / [`SEARCH_ALLOWED_KEYS`].
+    #[must_use]
+    pub fn allowed_key(&self) -> &'static str {
+        match self {
+            FilterPrimitive::Tag { .. } => "tag",
+            FilterPrimitive::PathGlob { .. } => "path",
+            FilterPrimitive::HasProperty { .. } => "has-property",
+            FilterPrimitive::LastEdited { .. } => "last-edited",
+            FilterPrimitive::Space { .. } => "space",
+            FilterPrimitive::Priority { .. } => "priority",
+            FilterPrimitive::Orphan => "orphan",
+            FilterPrimitive::Stub => "stub",
+            FilterPrimitive::HasNoInboundLinks => "has-no-inbound-links",
+            FilterPrimitive::Regex { .. } => "regex",
+            FilterPrimitive::CaseSensitive { .. } => "case-sensitive",
+            FilterPrimitive::WholeWord { .. } => "whole-word",
+            FilterPrimitive::Snippet { .. } => "snippet",
         }
     }
 }
@@ -302,12 +405,12 @@ impl Projection for PagesProjection {
                 "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?)",
                 vec![Bind::Text(key.to_string())],
             ),
-            (PropertyOp::Eq, Some(PropertyValue::Text(v))) => WhereClause::new(
+            (PropertyOp::Eq, Some(PropertyValue::Text { value: v })) => WhereClause::new(
                 "EXISTS (SELECT 1 FROM block_properties \
                  WHERE block_id = b.id AND key = ? AND value_text = ?)",
                 vec![Bind::Text(key.to_string()), Bind::Text(v.clone())],
             ),
-            (PropertyOp::Ne, Some(PropertyValue::Text(v))) => WhereClause::new(
+            (PropertyOp::Ne, Some(PropertyValue::Text { value: v })) => WhereClause::new(
                 "NOT EXISTS (SELECT 1 FROM block_properties \
                  WHERE block_id = b.id AND key = ? AND value_text = ?)",
                 vec![Bind::Text(key.to_string()), Bind::Text(v.clone())],
@@ -321,12 +424,12 @@ impl Projection for PagesProjection {
         // page itself. Phase 2 may swap to a materialised
         // `pages_cache.last_edited_at` column.
         match spec {
-            LastEditedSpec::Rolling(days) => WhereClause::new(
+            LastEditedSpec::Rolling { days } => WhereClause::new(
                 "(SELECT MAX(created_at) FROM op_log WHERE block_id = b.id) \
                  >= datetime('now', ?)",
                 vec![Bind::Text(format!("-{days} days"))],
             ),
-            LastEditedSpec::OlderThan(days) => WhereClause::new(
+            LastEditedSpec::OlderThan { days } => WhereClause::new(
                 "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), '0001-01-01') \
                  < datetime('now', ?)",
                 vec![Bind::Text(format!("-{days} days"))],
@@ -485,14 +588,20 @@ mod tests {
     #[test]
     fn pages_projection_compiles_shared_primitives() {
         let p = PagesProjection;
-        let where_tag = p.compile(&FilterPrimitive::Tag("01TAG000000000000000000T1".into()));
+        let where_tag = p.compile(&FilterPrimitive::Tag {
+            tag: "01TAG000000000000000000T1".into(),
+        });
         assert!(where_tag.sql.contains("block_tags"));
         assert_eq!(where_tag.binds.len(), 1);
 
-        let where_priority = p.compile(&FilterPrimitive::Priority("A".into()));
+        let where_priority = p.compile(&FilterPrimitive::Priority {
+            priority: "A".into(),
+        });
         assert_eq!(where_priority.sql, "b.priority = ?");
 
-        let where_space = p.compile(&FilterPrimitive::Space("01SPACE0001".into()));
+        let where_space = p.compile(&FilterPrimitive::Space {
+            space_id: "01SPACE0001".into(),
+        });
         assert!(where_space.sql.contains("'space'"));
     }
 
@@ -533,14 +642,18 @@ mod tests {
     fn pages_projection_rejects_search_only_primitives_via_default_unsupported() {
         let p = PagesProjection;
         for prim in [
-            FilterPrimitive::Regex("foo".into()),
-            FilterPrimitive::CaseSensitive(true),
-            FilterPrimitive::WholeWord(true),
-            FilterPrimitive::Snippet(SnippetSpec {
-                max_tokens: 5,
-                left_marker: "<".into(),
-                right_marker: ">".into(),
-            }),
+            FilterPrimitive::Regex {
+                pattern: "foo".into(),
+            },
+            FilterPrimitive::CaseSensitive { enabled: true },
+            FilterPrimitive::WholeWord { enabled: true },
+            FilterPrimitive::Snippet {
+                spec: SnippetSpec {
+                    max_tokens: 5,
+                    left_marker: "<".into(),
+                    right_marker: ">".into(),
+                },
+            },
         ] {
             let w = p.compile(&prim);
             assert!(
@@ -557,7 +670,9 @@ mod tests {
         let prim = FilterPrimitive::HasProperty {
             key: "kind".into(),
             op: PropertyOp::Eq,
-            value: Some(PropertyValue::Text("note".into())),
+            value: Some(PropertyValue::Text {
+                value: "note".into(),
+            }),
         };
         let w = p.compile(&prim);
         assert!(w.sql.contains("EXISTS"));
@@ -583,7 +698,9 @@ mod tests {
         let ne = FilterPrimitive::HasProperty {
             key: "kind".into(),
             op: PropertyOp::Ne,
-            value: Some(PropertyValue::Text("draft".into())),
+            value: Some(PropertyValue::Text {
+                value: "draft".into(),
+            }),
         };
         let w = p.compile(&ne);
         assert!(w.sql.contains("NOT EXISTS"));
@@ -592,8 +709,12 @@ mod tests {
     #[test]
     fn last_edited_rolling_vs_older_than_compile_different_clauses() {
         let p = PagesProjection;
-        let rolling = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::Rolling(7)));
-        let older = p.compile(&FilterPrimitive::LastEdited(LastEditedSpec::OlderThan(7)));
+        let rolling = p.compile(&FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Rolling { days: 7 },
+        });
+        let older = p.compile(&FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::OlderThan { days: 7 },
+        });
         assert!(rolling.sql.contains(">="));
         assert!(older.sql.contains("<"));
         // Both bind a "-7 days" sentinel.
@@ -606,7 +727,9 @@ mod tests {
         // The `tag:` primitive is shared and MUST compile to the same
         // SQL fragment on both surfaces — this is the load-bearing
         // invariant for the saved-views round-trip (Pages → Search).
-        let tag = FilterPrimitive::Tag("01TAG".into());
+        let tag = FilterPrimitive::Tag {
+            tag: "01TAG".into(),
+        };
         let pages = PagesProjection.compile(&tag);
         let search = SearchProjection.compile(&tag);
         assert_eq!(pages.sql, search.sql);
@@ -619,5 +742,114 @@ mod tests {
         assert!(unsup.is_unsupported());
         let normal = WhereClause::new("1=1", Vec::new());
         assert!(!normal.is_unsupported());
+    }
+
+    #[test]
+    fn cost_hint_orders_index_backed_before_full_scan() {
+        // Index-backed primitives are cheapest (0).
+        assert_eq!(FilterPrimitive::Tag { tag: "t".into() }.cost_hint(), 0);
+        assert_eq!(FilterPrimitive::Orphan.cost_hint(), 0);
+        assert_eq!(FilterPrimitive::Stub.cost_hint(), 0);
+        assert_eq!(FilterPrimitive::HasNoInboundLinks.cost_hint(), 0);
+        assert_eq!(
+            FilterPrimitive::Space {
+                space_id: "s".into()
+            }
+            .cost_hint(),
+            0
+        );
+        assert_eq!(
+            FilterPrimitive::LastEdited {
+                spec: LastEditedSpec::Rolling { days: 7 }
+            }
+            .cost_hint(),
+            0
+        );
+        // Priority — full scan but cheap (1).
+        assert_eq!(
+            FilterPrimitive::Priority {
+                priority: "A".into()
+            }
+            .cost_hint(),
+            1
+        );
+        // Anchored glob is range-scannable (0); leading-wildcard glob is
+        // a full scan (2).
+        assert_eq!(
+            FilterPrimitive::PathGlob {
+                pattern: "foo*".into(),
+                exclude: false
+            }
+            .cost_hint(),
+            0
+        );
+        assert_eq!(
+            FilterPrimitive::PathGlob {
+                pattern: "*foo*".into(),
+                exclude: false
+            }
+            .cost_hint(),
+            2
+        );
+        // Search-only post-filters are ranked last (3).
+        assert_eq!(
+            FilterPrimitive::Regex {
+                pattern: "x".into()
+            }
+            .cost_hint(),
+            3
+        );
+    }
+
+    #[test]
+    fn filter_primitive_serde_round_trip_is_internally_tagged() {
+        // Struct variant with a single field → `{ "type": "Tag", "tag": … }`.
+        let tag = FilterPrimitive::Tag {
+            tag: "01TAG".into(),
+        };
+        let json = serde_json::to_string(&tag).unwrap();
+        assert_eq!(json, r#"{"type":"Tag","tag":"01TAG"}"#);
+        let back: FilterPrimitive = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, tag);
+
+        // Unit variant → just the tag.
+        let orphan = FilterPrimitive::Orphan;
+        assert_eq!(
+            serde_json::to_string(&orphan).unwrap(),
+            r#"{"type":"Orphan"}"#
+        );
+
+        // Nested internally-tagged sub-type.
+        let le = FilterPrimitive::LastEdited {
+            spec: LastEditedSpec::Range {
+                start: "2026-01-01".into(),
+                end: "2026-02-01".into(),
+            },
+        };
+        let json = serde_json::to_string(&le).unwrap();
+        let back: FilterPrimitive = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, le);
+    }
+
+    #[test]
+    fn allowed_key_matches_surface_static_sets() {
+        // Every primitive's `allowed_key()` is present in at least one
+        // surface's allow-list — the gate uses this token to admit/reject.
+        for prim in [
+            FilterPrimitive::Tag { tag: "t".into() },
+            FilterPrimitive::Orphan,
+            FilterPrimitive::Regex {
+                pattern: "x".into(),
+            },
+        ] {
+            let key = prim.allowed_key();
+            assert!(
+                PAGES_ALLOWED_KEYS.contains(key) || SEARCH_ALLOWED_KEYS.contains(key),
+                "`{key}` must be in some surface allow-list"
+            );
+        }
+        // Pages-only key is not in the Search set.
+        assert!(PAGES_ALLOWED_KEYS.contains(FilterPrimitive::Orphan.allowed_key()));
+        assert!(!SEARCH_ALLOWED_KEYS.contains(FilterPrimitive::Orphan.allowed_key()));
     }
 }
