@@ -17,8 +17,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::error::AppError;
-
 // ── Primitive enum ────────────────────────────────────────────────────────
 
 /// One filter atom in a compound-filter expression. Variants are tagged
@@ -166,53 +164,6 @@ pub struct SnippetSpec {
     pub max_tokens: u32,
     pub left_marker: String,
     pub right_marker: String,
-}
-
-impl SnippetSpec {
-    /// FTS5 `snippet()` hard limit on the token-count argument. SQLite's
-    /// FTS5 `snippet(tbl, col, open, close, ellipsis, N)` rejects `N`
-    /// outside `[-64, 64]` with "SQL logic error" — for our positive
-    /// window we bound to `[1, 64]`. This is a documented SQLite
-    /// constraint, not an invented threshold.
-    pub const MAX_SNIPPET_TOKENS: u32 = 64;
-
-    /// Upper bound on a marker string's byte length. The markers are
-    /// emitted once per match span in the rendered snippet; an unbounded
-    /// marker would let a single primitive balloon the IPC payload. 64
-    /// bytes is far above any real `<mark>`-style boundary (the live path
-    /// uses `<mark>` / `</mark>`, 6–7 bytes) while keeping the bound
-    /// generous.
-    pub const MAX_MARKER_LEN: usize = 64;
-
-    /// BE-5 (PEND-58f) — validate the snippet parameters. Latent until the
-    /// PEND-58 Phase-2 wiring routes `SnippetSpec` into the live
-    /// `fts::search` snippet builder (see the `SearchProjection`
-    /// not-yet-wired banner); validating here means the bounds are
-    /// enforced the moment the wiring lands rather than surfacing as a raw
-    /// SQLite "SQL logic error" at query time.
-    ///
-    /// # Errors
-    /// [`AppError::Validation`] when `max_tokens` is `0` or above
-    /// [`Self::MAX_SNIPPET_TOKENS`], or when either marker exceeds
-    /// [`Self::MAX_MARKER_LEN`].
-    pub fn validate(&self) -> Result<(), AppError> {
-        if self.max_tokens == 0 || self.max_tokens > Self::MAX_SNIPPET_TOKENS {
-            return Err(AppError::Validation(format!(
-                "snippet max_tokens must be in [1, {}]; got {}",
-                Self::MAX_SNIPPET_TOKENS,
-                self.max_tokens
-            )));
-        }
-        if self.left_marker.len() > Self::MAX_MARKER_LEN
-            || self.right_marker.len() > Self::MAX_MARKER_LEN
-        {
-            return Err(AppError::Validation(format!(
-                "snippet markers must each be at most {} bytes",
-                Self::MAX_MARKER_LEN
-            )));
-        }
-        Ok(())
-    }
 }
 
 // ── Where-clause composition ──────────────────────────────────────────────
@@ -793,29 +744,8 @@ impl Projection for PagesProjection {
     }
 }
 
-/// Search-surface projection.
-///
-/// ╔══════════════════════════════════════════════════════════════════╗
-/// ║ BE-1 (PEND-58f) — NOT-YET-WIRED MACHINERY (PEND-58 Phase 2).       ║
-/// ║                                                                    ║
-/// ║ NONE of this projection's `compile_*` output reaches the LIVE      ║
-/// ║ search path. The shipped search SQL is built by                    ║
-/// ║ `fts::search::fts_fetch_rows` /                                    ║
-/// ║ `fts::toggle_filter::regex_mode_query` from the `SearchFilter`     ║
-/// ║ struct — this `Projection` is the Phase-2 replacement that will    ║
-/// ║ compose the same SQL from `FilterPrimitive`s once the existing     ║
-/// ║ `SearchFilter` paths are reshaped. Until then it is exercised      ║
-/// ║ ONLY by unit tests.                                                ║
-/// ║                                                                    ║
-/// ║ Consequently several `compile_*` methods below emit a `1=1`        ║
-/// ║ PLACEHOLDER (`compile_regex` / `compile_case_sensitive` /          ║
-/// ║ `compile_whole_word` / `compile_snippet`): the toggle / snippet    ║
-/// ║ primitives are not WHERE-clause filters at all — on the live path  ║
-/// ║ regex is a post-FTS pass, the toggles flip flags, and snippet is a ║
-/// ║ projection concern. They are kept (not deleted) so the Phase-2     ║
-/// ║ wiring has the full primitive surface to dispatch on; the `1=1`    ║
-/// ║ is a deliberate no-op, not a bug. Do NOT route these through SQL.  ║
-/// ╚══════════════════════════════════════════════════════════════════╝
+/// Search-surface projection. Phase 1 stubs — Phase 2 wires them into
+/// `fts::search` once the existing `SearchFilter` paths are reshaped.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchProjection;
 
@@ -858,16 +788,13 @@ impl Projection for SearchProjection {
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
     }
-    fn compile_regex(&self, _pattern: &str) -> WhereClause {
-        // Search uses a post-FTS regex pass; regex is NOT a WHERE clause.
-        // Phase 2 wires this to the existing `is_regex` path in
-        // `fts::search`. BE-1 (PEND-58f) — the previous stub bound
-        // `Bind::Text(pattern)` into a `1=1` clause that never references
-        // it, so the bind was dead weight that would have desynchronised
-        // the positional bind chain if this fragment were ever (wrongly)
-        // routed to SQL. The bind is removed; the placeholder carries no
-        // params, like the sibling toggle/snippet stubs.
-        WhereClause::new("1=1 /* REGEX: handled by post-filter */", Vec::new())
+    fn compile_regex(&self, pattern: &str) -> WhereClause {
+        // Search uses a post-FTS regex pass. Phase 2 wires this to the
+        // existing `is_regex` path in `fts::search`.
+        WhereClause::new(
+            "1=1 /* REGEX: handled by post-filter */",
+            vec![Bind::Text(pattern.to_string())],
+        )
     }
     fn compile_case_sensitive(&self, enabled: bool) -> WhereClause {
         WhereClause::new(format!("1=1 /* CASE_SENSITIVE = {enabled} */"), Vec::new())
@@ -1753,78 +1680,6 @@ mod explain_query_plan_tests {
         assert!(
             plan.to_lowercase().contains("pages_cache"),
             "PathGlob plan must reference pages_cache; got:\n{plan}"
-        );
-    }
-
-    // ── PEND-58f findings ──────────────────────────────────────────────
-
-    /// BE-1 (PEND-58f) — the `SearchProjection::compile_regex` stub no
-    /// longer binds an unused `pattern` param. The fragment must carry
-    /// zero binds (like the sibling toggle/snippet placeholders).
-    #[test]
-    fn search_projection_regex_stub_binds_no_params() {
-        let w = SearchProjection.compile(&FilterPrimitive::Regex {
-            pattern: "anything".into(),
-        });
-        assert!(
-            w.binds.is_empty(),
-            "the not-yet-wired regex stub must bind no params; got {:?}",
-            w.binds
-        );
-        assert!(
-            w.sql.contains("1=1"),
-            "the regex stub is a 1=1 placeholder; got `{}`",
-            w.sql
-        );
-    }
-
-    /// BE-5 (PEND-58f) — `SnippetSpec::validate` accepts in-range values.
-    #[test]
-    fn snippet_spec_validate_accepts_in_range() {
-        let spec = SnippetSpec {
-            max_tokens: 32,
-            left_marker: "<mark>".into(),
-            right_marker: "</mark>".into(),
-        };
-        assert!(spec.validate().is_ok());
-        // Boundary: exactly the cap is valid.
-        let at_cap = SnippetSpec {
-            max_tokens: SnippetSpec::MAX_SNIPPET_TOKENS,
-            left_marker: String::new(),
-            right_marker: String::new(),
-        };
-        assert!(at_cap.validate().is_ok());
-    }
-
-    /// BE-5 (PEND-58f) — `SnippetSpec::validate` rejects out-of-range
-    /// token counts and over-long markers.
-    #[test]
-    fn snippet_spec_validate_rejects_out_of_bounds() {
-        let zero = SnippetSpec {
-            max_tokens: 0,
-            left_marker: "<".into(),
-            right_marker: ">".into(),
-        };
-        assert!(zero.validate().is_err(), "max_tokens=0 must be rejected");
-
-        let over = SnippetSpec {
-            max_tokens: SnippetSpec::MAX_SNIPPET_TOKENS + 1,
-            left_marker: "<".into(),
-            right_marker: ">".into(),
-        };
-        assert!(
-            over.validate().is_err(),
-            "max_tokens over the cap must be rejected"
-        );
-
-        let long_marker = SnippetSpec {
-            max_tokens: 16,
-            left_marker: "x".repeat(SnippetSpec::MAX_MARKER_LEN + 1),
-            right_marker: ">".into(),
-        };
-        assert!(
-            long_marker.validate().is_err(),
-            "an over-long marker must be rejected"
         );
     }
 }
