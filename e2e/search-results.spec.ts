@@ -45,8 +45,12 @@ test.describe('Search results — grouping + interaction (PEND-58f E2E-8)', () =
     const firstRow = region.locator('[role="option"]').first()
     await expect(firstRow).toBeVisible()
     await firstRow.click()
-    // Navigation lands in the page editor (title region).
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    // Navigation lands on the result's OWNING page — "Welcome…" lives under
+    // "Getting Started", so assert WHICH page we landed on, not just that a
+    // title region is visible.
+    await expect(
+      page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
+    ).toBeVisible()
   })
 
   test('keyboard ArrowDown roves the active option', async ({ page }) => {
@@ -67,7 +71,11 @@ test.describe('Search results — grouping + interaction (PEND-58f E2E-8)', () =
     // focusedIndex defaults to 0 (the first flat row); Enter selects it and
     // navigates to that block's owning page.
     await listbox.press('Enter')
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    // "Welcome…" (the first flat row) navigates to its owning "Getting Started"
+    // page — assert the specific destination, not just any title region.
+    await expect(
+      page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
+    ).toBeVisible()
   })
 
   // E2E-A3 — Load-More / pagination.
@@ -137,6 +145,10 @@ test.describe('Search alias-match card (PEND-58f E2E-9)', () => {
     await expect(card).toBeVisible()
     await expect(card).toContainText('Getting Started')
     await card.getByRole('button').first().click()
-    await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
+    // The alias 'getting-started' resolves to the "Getting Started" page — assert
+    // we landed there specifically.
+    await expect(
+      page.locator('[aria-label="Page title"]', { hasText: 'Getting Started' }),
+    ).toBeVisible()
   })
 })

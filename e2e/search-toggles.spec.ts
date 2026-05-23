@@ -9,8 +9,9 @@
  *   - clicking each toggle flips its `aria-pressed` + `data-state`;
  *   - the toggle state is reflected in the IPC payload (`filter.caseSensitive`
  *     / `wholeWord` / `isRegex`) the panel sends to `search_blocks`;
- *   - regex mode forwards the raw query verbatim and drops structured filter
- *     params (the regex-mode short-circuit in `SearchPanel.queryFn`);
+ *   - regex mode is symmetric with normal mode (PEND-58g cluster-1): structured
+ *     tokens are parsed out and applied as filter params, only the free-text
+ *     remainder is the regex pattern;
  *   - an invalid regex surfaces inline (`search-inline-error`) and a
  *     non-regex backend error renders the visible error state (E2E-2).
  *
@@ -37,7 +38,7 @@ interface MockErrorWindow extends Window {
 /** Fire a query and wait until at least one `search_blocks` IPC is recorded. */
 async function searchAndAwaitIpc(page: import('@playwright/test').Page, query: string) {
   await clearInvokeCalls(page)
-  const input = page.getByPlaceholder('Search blocks...')
+  const input = page.getByRole('combobox', { name: 'Search blocks' })
   await input.fill(query)
   await input.press('Enter')
   await expect
@@ -103,20 +104,26 @@ test.describe('Search toggles (PEND-58f E2E-1)', () => {
     expect(filter['isRegex']).toBe(false)
   })
 
-  test('regex toggle forwards the raw query and drops structured filters', async ({ page }) => {
+  test('regex mode parses structured filters out of the pattern (symmetric with normal mode)', async ({
+    page,
+  }) => {
     await page.getByTestId('search-toggle-regex').click()
-    // In regex mode the user's input is the regex verbatim — a `tag:` token
-    // must NOT be parsed into `filter.tagIds`; the whole string is the pattern.
-    await searchAndAwaitIpc(page, 'W.*come tag:#work')
+    // PEND-58g cluster-1 (DSL-A8 / UX-A4, decided with the user) — regex mode is
+    // SYMMETRIC with normal mode: a structured token (`state:`) is parsed out of
+    // the input and applied as a SQL filter; only the free-text remainder
+    // ('W.*come') is forwarded as the regex pattern. This replaced the original
+    // PEND-58f contract (regex forwarded the raw string verbatim and dropped
+    // filters), which this test used to assert. A `state:` token is used (not a
+    // tag) so the assertion is synchronous — no async tag-id resolution to race.
+    await searchAndAwaitIpc(page, 'W.*come state:TODO')
     const calls = await getInvokeCalls(page, 'search_blocks')
     const last = calls[calls.length - 1]
     const filter = last?.['filter'] as Record<string, unknown>
     expect(filter['isRegex']).toBe(true)
-    // Raw query forwarded verbatim (regex mode bypasses the AST free-text split).
-    expect(last?.['query']).toBe('W.*come tag:#work')
-    // Structured filter params are empty in regex mode.
-    expect(filter['tagIds']).toEqual([])
-    expect(filter['stateFilter']).toEqual([])
+    // The `state:` token is stripped from the regex pattern…
+    expect(last?.['query']).toBe('W.*come')
+    // …and applied as a filter param instead (symmetric with normal mode).
+    expect(filter['stateFilter']).toContain('TODO')
   })
 })
 
@@ -146,7 +153,7 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
     })
 
     await page.getByTestId('search-toggle-regex').click()
-    const input = page.getByPlaceholder('Search blocks...')
+    const input = page.getByRole('combobox', { name: 'Search blocks' })
     await input.fill('(unclosed')
     await input.press('Enter')
 
@@ -166,7 +173,7 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
       )
     })
 
-    const input = page.getByPlaceholder('Search blocks...')
+    const input = page.getByRole('combobox', { name: 'Search blocks' })
     await input.fill('anything')
     await input.press('Enter')
 

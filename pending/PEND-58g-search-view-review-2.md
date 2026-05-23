@@ -147,6 +147,38 @@ from `SearchHeader`, `SearchStatusRegion`, `SearchResultGroups` (each now calls
 `getSearchStatusText` helper still takes `t` as a param (exported for direct
 testing); only the React components/hooks own the `useTranslation()` call.
 
+## Batch 8 — shipped (Session 822)
+
+Closed the verifiable test-coverage gaps. **E2E-A4** (capped 5000-result
+notice) and **E2E-A5** (palette→panel `pendingViewQuery` handoff) had no test at
+any layer; both are now covered at the SearchPanel integration layer (jsdom can't
+hit the 5000-row cap or a viewport, so these live in vitest, not e2e):
+`SearchPanel.capped.test.tsx` mocks `usePaginatedQuery` to assert the
+`search-capped-notice` renders iff `capped` (the cap arithmetic itself stays
+unit-covered in `usePaginatedQuery.test.ts`), and `SearchPanel.handoff.test.tsx`
+asserts the mount effect seeds the input + fires `search_blocks` for a non-empty
+seed and clears the slot in both the non-empty and empty-string (PEND-61 CR)
+cases. **E2E-A9** (full SearchPanel at a mobile viewport) — new
+`search-view-mobile.spec.ts` reaches the full find-in-files panel via the mobile
+search-sheet escalation footer (the desktop sidebar is `hidden` below `md`) and
+asserts the panel lays out + functions at iPhone width (grouped results + row→page
+navigation). **Weak result-assertions** — the three `search-results.spec.ts`
+navigation checks that only asserted *a* page-title region was visible now assert
+the *specific* destination ("Getting Started"), matching the `hasText` pattern
+already used in `inner-links.spec.ts`.
+
+Also fixed **two pre-existing failures** in `search-toggles.spec.ts` surfaced by
+the full-suite regression run (the spec wasn't in the Batch 3–6 run sets, so they
+had gone unnoticed). Both located the input via `getByPlaceholder('Search
+blocks...')` *after* clicking the regex toggle — but NEW-2 (Batch 3) swaps the
+placeholder to a regex-specific string in regex mode, so the lookup timed out;
+switched to the mode-agnostic `getByRole('combobox', { name: 'Search blocks' })`.
+The "regex toggle forwards the raw query and drops structured filters" test also
+encoded the obsolete pre-cluster-1 contract; rewrote it to assert the current
+**symmetric** behavior (DSL-A8 / UX-A4: a `state:` token is parsed out and
+applied as `stateFilter`, only the free-text remainder is the regex pattern) and
+corrected the stale file-header comment.
+
 ---
 
 ## Remaining — Performance / robustness (backend)
@@ -171,21 +203,15 @@ testing); only the React components/hooks own the `useTranslation()` call.
 
 ## Remaining — E2E / test coverage
 
-- **No test at any layer:** the capped (5000) result notice (E2E-A4) and the
-  palette→panel `pendingViewQuery` handoff (E2E-A5).
-- **e2e gaps:** full SearchPanel at a mobile viewport (E2E-A9).
-- **Weak assertions:** several result/alias specs assert only that *a* page title
-  appears, not *which*. (The E2E-6 IPC tests are now precise; `searchUntil` is a
-  presence-poll by design — the mock ignores filters, so it can only assert the IPC
-  payload, which it does via `latestFilter`.)
 - **Harness blind spot (E2E-A6, incl. E2E-A3 pagination):** `<mark>` highlight, the
   real Rust FTS/regex pipeline, and multi-page Load-More are unreachable on the
-  web+mock harness; would need a Tauri-driven e2e harness.
+  web+mock harness; would need a Tauri-driven e2e harness. (The `searchUntil`
+  presence-poll likewise can only assert the IPC payload via `latestFilter`, never
+  the filtered result set, because the mock ignores the filter struct.)
 
 ## Suggested action order (remaining)
 
-1. **Remaining test gaps** (E2E-A4 capped notice, E2E-A5 `pendingViewQuery` handoff,
-   E2E-A9 mobile viewport; the weak result-assertion cleanup). E2E-A3/A6 need a
-   Tauri-driven harness.
-2. **Low-priority UX** (UX-A8 touch toggle-mode explanation; UX-A10/A12/A13 need
+1. **Low-priority UX** (UX-A8 touch toggle-mode explanation; UX-A10/A12/A13 need
    runtime verification) + the by-design backend items (BE-A5, BE-A7).
+2. **Tauri-driven harness** (E2E-A3/A6) — the only way to cover `<mark>`, the real
+   FTS/regex pipeline, and multi-page Load-More.
