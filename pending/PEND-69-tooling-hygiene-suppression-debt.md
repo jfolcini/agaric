@@ -76,8 +76,8 @@ case-by-case review.
 | `clippy::too_many_arguments` | 41 | Keep (mostly) | Tauri command handlers take many fields. Optionally fold related params into request structs; low priority. |
 | `unused_imports` | 4 | Keep (was 23) | **Burned down Session 823.** The 19 file-level `#![allow]` in `commands/tests/*` were removed (4 genuinely-unused imports deleted/narrowed; fmt + clippy + nextest green). The remaining 4 are item-level `pub(crate) use` re-exports in `snapshot/mod.rs` (2) + `sync_daemon/mod.rs` (2) consumed only by a separate integration-test crate — can't be `#[cfg(test)]`-gated without breaking that crate, so the allow is justified and stays. |
 | `dead_code` | ~19 | Audited Session 824 | Removed the genuinely-dead `apply_purge_block_sql_only` wrapper (no callers); converted 3 never-read intentional keeps to `#[expect(dead_code, reason)]` (orchestrator `materializer` field, `dag.rs depth`, `db.rs label`) so they self-report when wired. The remaining ~19 `#[allow(dead_code)]` are confirmed-justified keeps: documented scaffolding (`pagination` parity-test consts, `tag_inheritance` macro-embedded const), test-shim modules (`gcal_push/*`), platform-conditional variants (`mcp::SocketKind`), already-`cfg_attr(not(test))`-scoped (`retry_queue::pending_count`, `sync_daemon` handle), specta-read fields (`error::AppErrorSchema`), test-only-but-kept-as-future-API (`recurrence::handle_recurrence`), and the `is_empty`/`len` symmetry helper (`mcp::activity`). |
-| `clippy::cast_possible_truncation` | 11 | Audit | Numeric narrowing casts. Replace with `try_into()` + explicit handling, or document the invariant that makes truncation impossible. |
-| `clippy::cast_possible_wrap` | 1 | Audit | Same family. |
+| `clippy::cast_possible_truncation` | 11 | Audited Session 825 — justified | All 6 production casts already document the invariant that makes truncation impossible (`f64 → i64/usize` has no `std` `TryFrom`; the values are non-negative whole numbers from SQLite REAL columns, or are `clamp`ed to `[0,1]` before scaling in `op_log_histogram::permyriad_from_share`). The 6 test casts are controlled-input data generation (`(i % 256) as u8`, etc.). No `try_into()` change applies (f64→int has no fallible conversion); keep with the documented invariants. |
+| `clippy::cast_possible_wrap` | 1 | Audited Session 825 — justified | File-level allow on `integration_tests.rs` (test-only, controlled inputs). |
 | `deprecated` | 1 | **Debt (tracked)** | `commands/gcal.rs:552` uses the deprecated `ShellExt::open`. Migrate to `tauri-plugin-opener` (MAINT-227) once the dep lands, then drop the allow. |
 | `unsafe_code` | 1 | Keep | `#![allow(unsafe_code)]` on `sync_daemon/android_multicast.rs` (JNI). Justified; see below. |
 | `clippy::type_complexity`, `match_same_arms`, `assertions_on_constants` | 1 each | Keep | Narrow, justified. |
@@ -85,9 +85,11 @@ case-by-case review.
 ### `unsafe` blocks (2 real)
 
 Both in `sync_daemon/android_multicast.rs` (`JavaVM::from_raw` line 105,
-`JObject::from_raw` line 123) — JNI FFI, justified inline. **Action:** confirm each
-has a `// SAFETY:` comment stating the invariant (Biome/clippy don't enforce this;
-it's a convention worth holding).
+`JObject::from_raw` line 123) — JNI FFI, justified inline. **Confirmed Session
+825:** both already carry detailed `// SAFETY:` comments stating the invariant
+(the process-global `JavaVM`/Activity `Context` from `ndk_context` outlive the
+call; null-checked first), and the file-level `#![allow(unsafe_code)]` is
+documented. No change needed.
 
 ## Migration to `#[expect]` (Rust) — opportunistic
 
@@ -111,7 +113,9 @@ part of the burn-down, not as a mechanical mass-rewrite.
    remaining ~19 `#[allow(dead_code)]` are confirmed-justified keeps (documented
    scaffolding, test-shims, platform variants, specta-read fields).
 5. **`noExcessiveCognitiveComplexity` (14)** — extract sub-functions.
-6. **`cast_possible_truncation`/`_wrap` (12)** — `try_into` or document invariants.
+6. ~~**`cast_possible_truncation`/`_wrap` (12)**~~ — DONE (Session 825, audit-only):
+   all already document the invariant (f64→int has no `try_into`); the 2 `unsafe`
+   blocks already carry `// SAFETY:` comments. No code changes needed.
 7. **MAINT-227** — `tauri-plugin-opener` migration removes the lone `deprecated`.
 8. Lower priority: `noBannedTypes` precise typing; `noNonNullAssertion` guards;
    `too_many_arguments` request-struct folding; a11y holistic pass.
