@@ -402,6 +402,14 @@ pub struct RetryQueueSweeperShutdown(pub Arc<AtomicBool>);
 /// most graceful-exit paths.
 pub struct OrphanDraftsSweeperShutdown(pub Arc<AtomicBool>);
 
+/// Shutdown flag for the periodic Loro snapshot task.
+///
+/// The task persists every engine's snapshot into `loro_doc_state` on a
+/// [`crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS`] cadence and polls
+/// this flag on each tick. Stored in managed state so a clean-exit path
+/// can stop it; a no-op in most graceful-exit paths.
+pub struct SnapshotTaskShutdown(pub Arc<AtomicBool>);
+
 /// Keeps the tracing-appender non-blocking worker alive for the
 /// application lifetime.
 ///
@@ -976,6 +984,23 @@ pub fn run() {
             );
             app.manage(OrphanDraftsSweeperShutdown(orphan_drafts_shutdown));
 
+            // Periodic Loro snapshot persistence. Re-instated after the
+            // PEND-09 parity flush task (which hosted the snapshot save
+            // on its tick) was deleted — that regression left
+            // `loro_doc_state` permanently empty while the apply cursor
+            // kept advancing, so on boot the engine could not be rebuilt
+            // and every edit/move failed "block not found". Persists each
+            // engine's snapshot every SNAPSHOT_INTERVAL_SECS so the next
+            // boot rehydrates without a full op-log replay; cancellation
+            // is via the managed flag, mirroring the sweepers above.
+            let snapshot_shutdown = Arc::new(AtomicBool::new(false));
+            crate::loro::snapshot::spawn_periodic_snapshot(
+                pools.write.clone(),
+                snapshot_shutdown.clone(),
+                crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
+            );
+            app.manage(SnapshotTaskShutdown(snapshot_shutdown));
+
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
 
@@ -1337,10 +1362,27 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(builder.invoke_handler())
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
-            tracing::error!(error = %e, "failed to run Tauri application");
+            tracing::error!(error = %e, "failed to build Tauri application");
             std::process::exit(1);
+        })
+        .run(|app_handle, event| {
+            // Persist Loro snapshots on shutdown so the next boot
+            // rehydrates with no replay gap — a clean exit leaves
+            // `loro_doc_state` exactly current with the apply cursor,
+            // which the periodic 5-minute task alone cannot guarantee.
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                if let (Some(state), Some(pool)) =
+                    (crate::loro::shared::get(), app_handle.try_state::<WritePool>())
+                {
+                    let saved = tauri::async_runtime::block_on(
+                        crate::loro::snapshot::save_all_engines(&pool.0, &state.registry),
+                    );
+                    tracing::info!(saved, "loro: persisted snapshots on exit");
+                }
+            }
         });
 }
 

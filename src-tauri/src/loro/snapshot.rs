@@ -245,6 +245,61 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     ok
 }
 
+/// Default cadence for the periodic snapshot task (5 minutes).
+///
+/// Restored after the PEND-09 parity flush task — which hosted the
+/// `save_all_engines` call on its tick — was deleted, leaving snapshots
+/// unpersisted (the resulting empty `loro_doc_state` + advancing apply
+/// cursor wedged the materializer). The engine applies at human-typing
+/// rates, so a 5-minute snapshot bounds the boot-replay tail to a
+/// handful of ops while keeping the snapshot cost negligible.
+pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
+
+/// Spawn the periodic Loro snapshot task.
+///
+/// Every `interval_secs` it walks the process-global engine registry and
+/// persists each engine's snapshot into `loro_doc_state`, so the next
+/// boot rehydrates without replaying the full op-log. The task runs for
+/// the app's lifetime and stops once `shutdown` flips. Per-space errors
+/// are caught + logged inside [`save_all_engines`], so a transient
+/// SQL/Loro failure never crashes the app.
+pub fn spawn_periodic_snapshot(
+    pool: SqlitePool,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    interval_secs: u64,
+) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    #[cfg(not(test))]
+    let spawn_fn = tauri::async_runtime::spawn;
+    #[cfg(test)]
+    let spawn_fn = tokio::spawn;
+
+    // Fire-and-forget: the task lives for the process lifetime and stops
+    // when `shutdown` flips. The JoinHandle is intentionally discarded.
+    let _handle = spawn_fn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+        // Skip the immediate first tick — `tokio::time::interval` fires
+        // once at construction. Boot rehydrate just ran, so there is
+        // nothing new to persist yet.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            let Some(state) = crate::loro::shared::get() else {
+                continue;
+            };
+            let saved = save_all_engines(&pool, &state.registry).await;
+            if saved > 0 {
+                tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
