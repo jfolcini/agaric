@@ -51,7 +51,7 @@ case-by-case review.
 
 | Rule | ~Count | Judgement | Notes / action |
 |------|-------:|-----------|----------------|
-| `suspicious/noExplicitAny` | 167 | Mostly Keep (tests) / Debt (prod) | 156 are in `__tests__`/`.spec` (mock/harness loose typing — acceptable). The **11 in prod `src/`** are the real targets: type them properly and drop the ignore. |
+| `suspicious/noExplicitAny` | ~156 (tests) | Prod cleared Session 826 | The **11 prod `src/` `t: (...args: any[]) => any` workarounds were all typed as `TFunction`** and their `biome-ignore`s dropped (8 unit-test mocks cast `as unknown as TFunction` to match). The ~156 remaining are all in `__tests__`/`.spec` (mock/harness loose typing — acceptable Keep). |
 | `a11y/useSemanticElements` | 62 | Keep | Custom interactive elements that carry explicit ARIA roles (chip groups, listboxes, toolbars). Legit, but worth one holistic a11y pass to confirm each role is correct. |
 | `correctness/useExhaustiveDependencies` | 59 | **Audit** | Deliberately-omitted React effect deps. Each is a stale-closure bug if the reasoning is wrong. Highest-value audit category. |
 | `complexity/noBannedTypes` | 38 | Debt/Audit | Mostly `{}` / `Function`. Replace with precise types where feasible. |
@@ -63,7 +63,7 @@ case-by-case review.
 | `a11y/useKeyWithClickEvents` | 6 | Audit | Click-only handlers; confirm keyboard parity. |
 | other `a11y/*` | ~11 | Keep | `useAriaPropsSupportedByRole`, `noNoninteractiveElementToInteractiveRole`, `noLabelWithoutControl`, `useAnchorContent`, `noRedundantRoles`. |
 | `suspicious/noArrayIndexKey` | 3 | Audit | Index-as-key; fine only for static lists. |
-| `security/noDangerouslySetInnerHtml` | 2 | **Audit** | Confirm inputs are sanitized (XSS surface). |
+| `security/noDangerouslySetInnerHtml` | 2 | Audited Session 826 — justified | `MermaidDiagram` now pins `securityLevel: 'strict'` explicitly (mermaid DOMPurify-sanitizes the SVG even though the diagram source is user-authored); `PairingQrDisplay` renders a backend-generated QR SVG (trusted, not user input). Both kept — the sink is required to render SVG. |
 | `suspicious/noConsole`, `noDocumentCookie`, `noThenProperty`, `noControlCharactersInRegex`, `noAssignInExpressions`, `style/useThrowOnlyError` | 1–2 each | Keep | Narrow, justified one-offs. |
 | `@ts-expect-error` | 1 | Keep | `e2e/pages-view.spec.ts:956` injects a test-only global; could be typed via a test ambient decl. |
 
@@ -103,8 +103,9 @@ part of the burn-down, not as a mechanical mass-rewrite.
 
 1. **`useExhaustiveDependencies` audit (59)** — highest latent-bug value; verify
    each omitted dep is intentional, fix the wrong ones.
-2. **Prod `noExplicitAny` (11)** + **`noDangerouslySetInnerHtml` (2)** — small,
-   high-value: type the `any`s; confirm the HTML inputs are sanitized.
+2. ~~**Prod `noExplicitAny` (11)** + **`noDangerouslySetInnerHtml` (2)**~~ — DONE
+   (Session 826): all 11 prod `t` anys typed as `TFunction`; both HTML sinks
+   audited safe (mermaid `securityLevel: 'strict'` pinned, QR is backend SVG).
 3. ~~**Rust `unused_imports` (23)**~~ — DONE (Session 823): the 19 file-level test
    allows were removed and 4 unused imports deleted/narrowed; the 4 remaining
    item-level re-export allows are justified (integration-test-crate consumers).
