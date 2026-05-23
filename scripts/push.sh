@@ -45,4 +45,17 @@ echo "▶ Verifying (CI-equivalent) BEFORE opening any push connection…"
 bash "$ROOT/scripts/verify-ci-equivalent.sh"
 
 echo "✓ Verification passed — pushing now (pre-push verify skipped: already green)…"
-exec env SKIP_CI_VERIFY=1 git push "$@"
+
+# Forward explicit push args verbatim if the caller passed any.
+if [ "$#" -gt 0 ]; then
+  exec env SKIP_CI_VERIFY=1 git push "$@"
+fi
+
+# No args: push the current branch to origin. Set the upstream on first
+# push (a brand-new branch has no tracking ref), otherwise a bare
+# `git push` aborts with "no upstream branch".
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  exec env SKIP_CI_VERIFY=1 git push
+fi
+exec env SKIP_CI_VERIFY=1 git push --set-upstream origin "$branch"
