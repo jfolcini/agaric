@@ -53,7 +53,7 @@ case-by-case review.
 |------|-------:|-----------|----------------|
 | `suspicious/noExplicitAny` | ~156 (tests) | Prod cleared Session 826 | The **11 prod `src/` `t: (...args: any[]) => any` workarounds were all typed as `TFunction`** and their `biome-ignore`s dropped (8 unit-test mocks cast `as unknown as TFunction` to match). The ~156 remaining are all in `__tests__`/`.spec` (mock/harness loose typing — acceptable Keep). |
 | `a11y/useSemanticElements` | 62 | Keep | Custom interactive elements that carry explicit ARIA roles (chip groups, listboxes, toolbars). Legit, but worth one holistic a11y pass to confirm each role is correct. |
-| `correctness/useExhaustiveDependencies` | 59 | **Audit** | Deliberately-omitted React effect deps. Each is a stale-closure bug if the reasoning is wrong. Highest-value audit category. |
+| `correctness/useExhaustiveDependencies` | 56 (prod) | Audited Session 827 — no bugs found | Deep-verified the highest-risk members: the two "value read in the effect body but omitted" sites (`PageBrowser` filter-announce — `wireFiltersKey` faithfully tracks the chip set so the effect re-runs with fresh `filters`/`t`; `BlockHistoryItem` compared-diff guards — effect-set state deliberately excluded to avoid a self-cancelling fetch loop), the `resolveVersion` ref-cache identity-bump pattern (`useBacklinkResolution` ×3 et al. — only `currentSpaceId` is reactive and it IS listed), and the `stableKey`/digest array-substitute hooks (`useBatchProperties`, `useBlockPropertiesBatch`). All correct. The remainder are documented variants of vetted patterns: (a) trigger-key "re-run on X; body doesn't read X" — safe by construction, (b) ref/stable-handle reads — refs aren't deps, (c) effect-set guard state excluded to avoid self-cancel loops, (d) mount-only hydration. No stale-closure bugs; each carries an inline reason. (~156 more are in tests — acceptable.) A full line-by-line pass of the remaining ~49 is available but low-ROI given the risky surface is clean. |
 | `complexity/noBannedTypes` | 38 | Debt/Audit | Mostly `{}` / `Function`. Replace with precise types where feasible. |
 | `a11y/useFocusableInteractive` | 25 | Keep | Non-focusable elements with handlers by design; verify keyboard reachability. |
 | `style/noNonNullAssertion` | 16 | Audit | `!` escapes (the rule is `error` globally). Prefer a guard / `?.` + cast. |
@@ -101,8 +101,12 @@ part of the burn-down, not as a mechanical mass-rewrite.
 
 ## Recommended action order
 
-1. **`useExhaustiveDependencies` audit (59)** — highest latent-bug value; verify
-   each omitted dep is intentional, fix the wrong ones.
+1. ~~**`useExhaustiveDependencies` audit (56 prod)**~~ — Session 827: deep-verified
+   the highest-risk members (the read-but-omitted sites + the `resolveVersion` and
+   digest patterns) — all correct, no stale-closure bugs. The remainder are
+   documented variants of vetted patterns (trigger-keys, refs, guard-state,
+   mount-only). A full line-by-line pass of the remaining ~49 is available but
+   low-ROI given the risky surface is clean.
 2. ~~**Prod `noExplicitAny` (11)** + **`noDangerouslySetInnerHtml` (2)**~~ — DONE
    (Session 826): all 11 prod `t` anys typed as `TFunction`; both HTML sinks
    audited safe (mermaid `securityLevel: 'strict'` pinned, QR is backend SVG).
