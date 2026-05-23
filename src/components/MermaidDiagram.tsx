@@ -15,6 +15,12 @@ import { Spinner } from './ui/spinner'
 // Initialize mermaid once globally
 mermaid.initialize({
   startOnLoad: false,
+  // SECURITY: pin the sanitizing render mode explicitly. `'strict'` is mermaid's
+  // default (it DOMPurify-sanitizes the rendered SVG — stripping scripts and
+  // event handlers), but the diagram source is user-authored block content, so
+  // make the XSS protection a hard, visible invariant rather than an implicit
+  // default that a future config tweak could silently regress.
+  securityLevel: 'strict',
   theme:
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
       ? 'dark'
@@ -99,7 +105,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
         aria-label={t('mermaid.label')}
         className="p-3"
         data-testid="mermaid-diagram"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid.render() output is safe
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders with securityLevel 'strict' (DOMPurify-sanitized SVG) — see mermaid.initialize above
         dangerouslySetInnerHTML={{ __html: svg ?? '' }}
       />
     </ScrollArea>
