@@ -434,6 +434,18 @@ pub fn run() {
     use tracing_subscriber::util::SubscriberInitExt;
     use tracing_subscriber::EnvFilter;
 
+    // Linux: WebKitGTK's DMABUF renderer hangs the webview on a blank,
+    // unresponsive window with several GPU drivers (notably the NVIDIA
+    // proprietary stack and some Intel/Mesa combos). It bites packaged builds
+    // (AppImage/.deb) far more than `npm run dev`, which is why the symptom
+    // shows up only after bundling. Forcing the renderer off restores the
+    // stable path. Only set it when the user hasn't already chosen a value, so
+    // an explicit override (e.g. WEBKIT_DISABLE_DMABUF_RENDERER=0) still wins.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     // BUG-34: Tracing-appender setup moved into the Tauri `setup()` hook so
     // it can use `app.path().app_data_dir()` (OS-correct location on every
     // platform) instead of a hard-coded Linux XDG path. The panic hook is
