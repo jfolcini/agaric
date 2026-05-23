@@ -7,8 +7,9 @@
  *
  * UX-269 / UX-335 — the region sits ABOVE the listbox as a separate
  * sibling (NOT wrapping it) so interactive options aren't re-announced
- * on every result-set change. Pre-search and loading states stay
- * silent intentionally — there's no relevant change to announce.
+ * on every result-set change. Pre-search stays silent (nothing to
+ * announce yet); UX-5 added a polite "Searching…" announcement while a
+ * search is in flight.
  */
 
 import type { TFunction } from 'i18next'
@@ -33,6 +34,13 @@ export function getSearchStatusText(
   t: TFunction,
 ): string | null {
   const { searched, searchLoading, error, cleared, resultCount } = args
+  // UX-5 — announce that a search is running. Screen-reader users
+  // otherwise got silence between submit and the result count. The
+  // region is a sibling of (not a wrapper around) the listbox, so this
+  // does not re-announce result options.
+  if (searched && searchLoading) {
+    return t('search.searching')
+  }
   // UX-2 — announce generic search failures. Without this branch a
   // non-regex error left the live region (and the panel) silent/blank.
   if (searched && !searchLoading && error) {

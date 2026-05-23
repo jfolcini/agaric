@@ -602,6 +602,14 @@ types = ["toml"]
 # per-hook. Total wall clock on a warm cache: ≈3-4 min (was ≈5-8 min
 # when each hook ran sequentially via prek).
 #
+# PREFERRED PUSH PATH: `scripts/push.sh` runs this verification BEFORE
+# `git push` opens any SSH connection, then pushes with
+# `SKIP_CI_VERIFY=1` so this hook short-circuits and the fresh
+# connection is used immediately. Plain `git push` still auto-verifies
+# here, but holds the SSH connection open for the whole run — on a slow
+# verify GitHub closes the idle connection and the pack send fails
+# ("Connection closed by remote host"). Use `scripts/push.sh`.
+#
 # Escape hatch: `SKIP_CI_VERIFY=1 git push` short-circuits the
 # script. Use sparingly — for docs-only typo fixes that obviously
 # cannot affect CI behaviour. Anything that touches source code

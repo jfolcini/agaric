@@ -199,6 +199,8 @@ export const references: Record<string, string> = {
   'search.noTagsFound': 'No tags found',
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
+  // UX-8 — accessible name for the alias-match card region.
+  'search.aliasMatchRegion': 'Alias match',
   'search.typing': 'Typing\u2026',
   'search.searching': 'Searching\u2026',
   'tags.addFailed': 'Failed to add tag',

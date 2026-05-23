@@ -786,6 +786,20 @@ export function SearchPanel(): React.ReactElement {
           return
         }
       }
+      // UX-9 — consistent cancel semantics across the two suggestion
+      // sources: just as Escape dismisses the autocomplete popover
+      // above, Escape cancels an in-progress history recall and
+      // restores the empty input. (Commit semantics intentionally
+      // differ: history fills the input eagerly on ArrowUp/Down — the
+      // recalled query *is* the committed value, and Enter submits it —
+      // whereas autocomplete only commits its highlighted token on
+      // Enter/Tab. The actions differ, so the commit keys do too.)
+      if (e.key === 'Escape' && cycling.activeIndex >= 0) {
+        e.preventDefault()
+        cycling.reset()
+        setQueryAndCaret('')
+        return
+      }
       cycling.handleKeyDown(e)
     },
     [
@@ -796,6 +810,7 @@ export function SearchPanel(): React.ReactElement {
       dismissAutocomplete,
       handleAutocompleteSelect,
       cycling,
+      setQueryAndCaret,
     ],
   )
 
@@ -1046,10 +1061,16 @@ export function SearchPanel(): React.ReactElement {
 
       {query === '' && recentPages.length > 0 && (
         <div className="recent-pages">
-          <h3 className="text-sm font-medium text-muted-foreground px-3 py-2">
+          {/* UX-8 — label the list via its heading so screen readers
+              announce it as a named "Recent" group distinct from the
+              results listbox below. */}
+          <h3
+            id="search-recent-heading"
+            className="text-sm font-medium text-muted-foreground px-3 py-2"
+          >
             {t('search.recentTitle')}
           </h3>
-          <ul className="space-y-1 list-none m-0 p-0">
+          <ul aria-labelledby="search-recent-heading" className="space-y-1 list-none m-0 p-0">
             {recentPages.map((page) => (
               <li key={page.id}>
                 <CardButton className="text-sm" onClick={() => handleRecentClick(page)}>
@@ -1104,7 +1125,11 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {aliasMatch && (
-        <div data-testid="alias-match">
+        // UX-8 — expose the alias-match card as a labelled region so it
+        // is announced distinctly from the results listbox (it sits
+        // outside the roving-listbox model by design). `<section>` +
+        // aria-label is an implicit region (semantic over role="region").
+        <section data-testid="alias-match" aria-label={t('search.aliasMatchRegion')}>
           <ResultCard
             block={aliasMatch}
             onClick={() => handleResultClick(aliasMatch)}
@@ -1116,7 +1141,7 @@ export function SearchPanel(): React.ReactElement {
               {t('search.aliasMatch', { alias: aliasQuery })}
             </p>
           </ResultCard>
-        </div>
+        </section>
       )}
 
       {/* PEND-50 Phase 1 — page-grouped result tree. The summary count
