@@ -597,8 +597,8 @@ describe('DaySection', () => {
 
     const section = screen.getByRole('region', { name: 'Journal for Today Display' })
     expect(section.className).toContain('bg-accent/[0.08]')
-    expect(section.className).toContain('border-l-2')
-    expect(section.className).toContain('border-accent')
+    expect(section.className).not.toContain('border-l-2')
+    expect(section.className).not.toContain('border-accent')
   })
 
   // 26. Non-today: does NOT have highlight classes
