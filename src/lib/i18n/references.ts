@@ -413,7 +413,7 @@ export const references: Record<string, string> = {
     'Forces a post-FTS pass — has a cost even when other toggles are off.',
   'search.help.toggles.notes.wholeWord': 'ASCII-only word boundary. CJK content does not match.',
   'search.help.toggles.notes.regex':
-    'Bypasses the FTS index — the entire query becomes a Rust regex pattern.',
+    'Bypasses the FTS index — the free-text remainder becomes a Rust regex pattern; structural filters (tag:, path:, …) still apply.',
   // -- Regex syntax --
   'search.help.regex.intro':
     'Regex mode uses the Rust <mono>regex</mono> crate (linear-time, no backtracking).',

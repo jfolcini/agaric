@@ -6470,6 +6470,325 @@ async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
     );
 }
 
+/// SQL-A6 (PEND-58f) — a MIXED-CASE duplicate tag id must dedup so the
+/// "ALL tags" predicate still matches. `block_tags.tag_id` stores the
+/// canonical UPPERCASE ULID; before normalising the dedup set, the same
+/// id arriving once lower-case and once upper-case survived byte-exact
+/// dedup, inflated the bound list length to 2 against an achievable
+/// `COUNT(DISTINCT) = 1`, and silently zeroed out the regex scan.
+#[tokio::test]
+async fn regex_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() {
+    let (pool, _dir) = test_pool().await;
+
+    // Canonical (uppercase) stored tag id + tagged block.
+    let tag_id = "01HQMIXTAG0000000000000T01";
+    let blk = "01HQMIXTAG000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "mixtag", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        "mixed-case dup candidate alpha",
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    // Same logical id, supplied once upper-case and once lower-case —
+    // a byte-exact dedup would keep both and break the predicate.
+    let mixed = vec![tag_id.to_string(), tag_id.to_ascii_lowercase()];
+    let resp = search_with_toggles(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&mixed),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![blk],
+        "mixed-case duplicate tag ids must dedup to one and still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-A6 (PEND-58f) — same mixed-case dedup guarantee on the FTS path.
+#[tokio::test]
+async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQMIXFTS0000000000000T01";
+    let blk = "01HQMIXFTS000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "mixfts", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        &format!("mixed-case fts candidate referencing #[{tag_id}]"),
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let mixed = vec![tag_id.to_string(), tag_id.to_ascii_lowercase()];
+    let resp = search_fts(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&mixed),
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![blk],
+        "FTS mixed-case duplicate tag ids must dedup and still match (got {ids:?})"
+    );
+}
+
+/// SQL-A4 (PEND-58f) — an over-long RAW regex pattern is rejected up
+/// front (before NFC-normalise / compile) with a validation error,
+/// mirroring the FTS path's `MAX_QUERY_LEN` guard. The raw guard fires
+/// at `MAX_QUERY_LEN` bytes, well below the `MAX_PATTERN_LEN` (1 KiB)
+/// composed-pattern cap, so it is the first guard a giant raw input hits.
+#[tokio::test]
+async fn regex_over_long_raw_pattern_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    // One byte past the FTS query cap — the up-front raw guard must
+    // reject this before any normalise/compile work.
+    let huge = "a".repeat(super::search::MAX_QUERY_LEN + 1);
+    let err = search_with_toggles(
+        &pool,
+        &huge,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .expect_err("over-long raw regex pattern must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long raw regex pattern must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-A4 (PEND-58f) — the regex branch of the partitioned scan now
+/// honours the cancellation token. A pre-cancelled token must short-
+/// circuit the regex dispatch with `AppError::Cancelled` rather than
+/// running the two parallel scans to completion. The existing
+/// `partitioned_pre_cancelled_token_returns_cancelled` test only
+/// exercises the FTS branch (default filter); this one drives the
+/// `is_regex = true` path that previously ignored the token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partitioned_regex_pre_cancelled_token_returns_cancelled() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let guard = crate::cancellation::CancellationGuard::new();
+    let token = guard.token();
+    // Fire the cancel signal before the search runs.
+    drop(guard);
+
+    let result = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partition".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        Some(token),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Cancelled)),
+        "a pre-cancelled token on the regex branch must yield AppError::Cancelled, got {result:?}"
+    );
+}
+
+/// Cluster-1 (PEND-58f) — REGRESSION CONTRACT: the regex path APPLIES
+/// structural filters. A concurrent frontend change relies on regex
+/// mode respecting a `tag_ids` filter, so this locks the contract:
+/// seed two blocks whose content both match the regex but only one
+/// carries the tag, search with `is_regex = true` + that tag filter,
+/// and assert only the tagged block is returned.
+#[tokio::test]
+async fn regex_path_applies_tag_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQRGXFLT0000000000000T01";
+    let tagged = "01HQRGXFLT00000000000TAGD1";
+    let untagged = "01HQRGXFLT0000000000UNTAG1";
+    insert_block(&pool, tag_id, "tag", "rgxfilter", None, Some(0)).await;
+    // Both blocks contain "filterme" so the regex /filter.*/ matches both.
+    insert_block(
+        &pool,
+        tagged,
+        "content",
+        "filterme tagged variant",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        untagged,
+        "content",
+        "filterme untagged variant",
+        None,
+        Some(2),
+    )
+    .await;
+    // Only the `tagged` block carries the tag.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(tagged)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![tag_id.to_string()];
+    let resp = search_with_toggles(
+        &pool,
+        "filter.*", // regex matches both blocks' content
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged],
+        "regex mode must apply the tag_ids filter — only the tag-carrying \
+         match may survive, despite both blocks matching the pattern (got {ids:?})"
+    );
+}
+
+/// Cluster-1 sanity sibling: WITHOUT the tag filter the same regex
+/// matches BOTH blocks — proves the filter (not the pattern) is what
+/// narrowed the result above.
+#[tokio::test]
+async fn regex_path_without_tag_filter_matches_all() {
+    let (pool, _dir) = test_pool().await;
+
+    let tagged = "01HQRGXALL00000000000TAGD1";
+    let untagged = "01HQRGXALL0000000000UNTAG1";
+    insert_block(
+        &pool,
+        tagged,
+        "content",
+        "filterme tagged variant",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        untagged,
+        "content",
+        "filterme untagged variant",
+        None,
+        Some(2),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = search_with_toggles(
+        &pool,
+        "filter.*",
+        &page,
+        None,
+        None, // no tag filter
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    ids.sort_unstable();
+    let mut expected = vec![tagged, untagged];
+    expected.sort_unstable();
+    assert_eq!(
+        ids, expected,
+        "without a tag filter the regex must match BOTH blocks (got {ids:?})"
+    );
+}
+
 /// SQL-4 (PEND-58f) — an over-long FTS query is rejected up front with a
 /// validation error rather than tokenised + bound into a MATCH.
 #[tokio::test]

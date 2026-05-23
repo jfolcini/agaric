@@ -22,8 +22,9 @@
  * `scrollToIndex` calls.
  */
 
-import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { groupResultsByPage, SearchResultGroups } from '../SearchResultGroups'
@@ -57,9 +58,19 @@ vi.mock('@tanstack/react-virtual', () => ({
   },
 }))
 
+// FE-A5: spy on the PAGE-level `Element.prototype.scrollIntoView` (jsdom
+// stubs it to a no-op in test-setup; we replace it with a recording spy so
+// the active-row page scroll is observable). Restored after each test.
+let scrollIntoViewSpy: ReturnType<typeof vi.spyOn>
+
+beforeEach(() => {
+  scrollIntoViewSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {})
+})
+
 afterEach(() => {
   scrollCalls.length = 0
   windowSize = null
+  scrollIntoViewSpy.mockRestore()
 })
 
 function makeRow(o: Partial<SearchBlockRow> & { id: string }): SearchBlockRow {
@@ -98,7 +109,7 @@ function setup({ groups: groupDefs, focusedIndex = 0, expanded = {} }: SetupOpts
   const onResultClick = vi.fn()
   const onKeyDown = vi.fn(() => false)
   const onToggleGroup = vi.fn()
-  render(
+  const utils = render(
     <SearchResultGroups
       groups={groups}
       flatRows={flatRows}
@@ -111,7 +122,7 @@ function setup({ groups: groupDefs, focusedIndex = 0, expanded = {} }: SetupOpts
       t={t}
     />,
   )
-  return { onResultClick, onKeyDown, onToggleGroup }
+  return { onResultClick, onKeyDown, onToggleGroup, ...utils }
 }
 
 describe('SearchResultGroups (virtualized)', () => {
@@ -270,6 +281,181 @@ describe('SearchResultGroups (virtualized)', () => {
       />,
     )
     expect(container).toBeEmptyDOMElement()
+  })
+
+  // FE-A7 — exactly one listbox must stay in the tab order so the results
+  // region is reachable with Tab. When `focusedRow` is undefined (e.g. right
+  // after a collapse leaves the focused flat index past the shrunk list),
+  // the FIRST expanded group must fall back to `tabIndex=0`.
+  describe('FE-A7: results region stays tabbable', () => {
+    it('keeps the first expanded group tabbable when focusedRow is undefined', () => {
+      setup({
+        groups: [
+          { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+          { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+        ],
+        // flatRows length is 2; an out-of-range focusedIndex => focusedRow
+        // is undefined (the post-collapse window described in FE-A7).
+        focusedIndex: 99,
+      })
+      const lbA = screen.getByTestId('search-result-group-PAGE_A')
+      const lbB = screen.getByTestId('search-result-group-PAGE_B')
+      // First expanded group is tabbable; later groups are roving (-1).
+      expect(lbA).toHaveAttribute('tabindex', '0')
+      expect(lbB).toHaveAttribute('tabindex', '-1')
+      // At least one listbox is in the tab order — region not orphaned.
+      const tabbable = screen
+        .getAllByRole('listbox')
+        .filter((el) => el.getAttribute('tabindex') === '0')
+      expect(tabbable).toHaveLength(1)
+    })
+
+    it('falls back to the first EXPANDED group when an earlier group is collapsed', () => {
+      setup({
+        groups: [
+          { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+          { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+        ],
+        expanded: { PAGE_A: false },
+        focusedIndex: 99, // focusedRow undefined
+      })
+      // PAGE_A is collapsed → no listbox; PAGE_B is the first EXPANDED group
+      // and must carry tabIndex=0.
+      expect(screen.queryByTestId('search-result-group-PAGE_A')).not.toBeInTheDocument()
+      expect(screen.getByTestId('search-result-group-PAGE_B')).toHaveAttribute('tabindex', '0')
+    })
+
+    it('keeps the focused group tabbable (not the first) when a row IS focused', () => {
+      setup({
+        groups: [
+          { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+          { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+        ],
+        focusedIndex: 1, // flatRows=[A1,B1] → B1, owned by PAGE_B
+      })
+      expect(screen.getByTestId('search-result-group-PAGE_A')).toHaveAttribute('tabindex', '-1')
+      expect(screen.getByTestId('search-result-group-PAGE_B')).toHaveAttribute('tabindex', '0')
+    })
+  })
+
+  // FE-A5 — per-group `scrollToIndex` only scrolls within the group's own
+  // overflow container; the active row can still be below the page fold.
+  // A page-level `scrollIntoView({ block: 'nearest' })` must run on the
+  // active row element when the active row changes.
+  describe('FE-A5: page-level scrollIntoView on the active row', () => {
+    it('calls scrollIntoView on the active row element when a row is focused', () => {
+      setup({
+        groups: [
+          {
+            pageId: 'PAGE_A',
+            title: 'Alpha',
+            rows: [
+              makeRow({ id: 'A1', page_id: 'PAGE_A' }),
+              makeRow({ id: 'A2', page_id: 'PAGE_A' }),
+            ],
+          },
+        ],
+        focusedIndex: 1, // A2 is active
+      })
+      // The active row element (id=search-result-A2) had scrollIntoView
+      // invoked with block:'nearest' (page-level follow).
+      const activeEl = document.getElementById('search-result-A2')
+      expect(activeEl).not.toBeNull()
+      expect(scrollIntoViewSpy).toHaveBeenCalled()
+      const calledOnActive = scrollIntoViewSpy.mock.contexts.some(
+        (ctx: unknown) => ctx === activeEl,
+      )
+      expect(calledOnActive).toBe(true)
+      expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: 'nearest' })
+    })
+
+    it('re-runs the page scroll when the active row changes across groups', () => {
+      const { rerender } = setup({
+        groups: [
+          { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+          { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+        ],
+        focusedIndex: 0, // A1 active
+      })
+      scrollIntoViewSpy.mockClear()
+
+      // Move focus to the next group's row (cross-group roving).
+      const a1 = makeRow({ id: 'A1', page_id: 'PAGE_A' })
+      const b1 = makeRow({ id: 'B1', page_id: 'PAGE_B' })
+      const groups = [
+        { page_id: 'PAGE_A', page_title: 'Alpha', has_page_name_match: false, blocks: [a1] },
+        { page_id: 'PAGE_B', page_title: 'Beta', has_page_name_match: false, blocks: [b1] },
+      ]
+      rerender(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={1} // now B1 is active
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+          t={t}
+        />,
+      )
+      const newActive = document.getElementById('search-result-B1')
+      expect(newActive).not.toBeNull()
+      const scrolledNewActive = scrollIntoViewSpy.mock.contexts.some(
+        (ctx: unknown) => ctx === newActive,
+      )
+      expect(scrolledNewActive).toBe(true)
+    })
+
+    it('does not page-scroll when no row is focused (focusedRow undefined)', () => {
+      setup({
+        groups: [
+          { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+        ],
+        focusedIndex: 99, // out of range → focusedRow undefined
+      })
+      // No active row in any group → no page-level scroll invoked.
+      expect(scrollIntoViewSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  it('has no a11y violations (focused row state)', async () => {
+    const { container } = setup({
+      groups: [
+        {
+          pageId: 'PAGE_A',
+          title: 'Alpha',
+          rows: [
+            makeRow({ id: 'A1', page_id: 'PAGE_A' }),
+            makeRow({ id: 'A2', page_id: 'PAGE_A' }),
+          ],
+        },
+        { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+      ],
+      focusedIndex: 0,
+    })
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  it('has no a11y violations (focusedRow undefined / region still tabbable)', async () => {
+    const { container } = setup({
+      groups: [
+        { pageId: 'PAGE_A', title: 'Alpha', rows: [makeRow({ id: 'A1', page_id: 'PAGE_A' })] },
+        { pageId: 'PAGE_B', title: 'Beta', rows: [makeRow({ id: 'B1', page_id: 'PAGE_B' })] },
+      ],
+      focusedIndex: 99, // focusedRow undefined → FE-A7 fallback engaged
+    })
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })
 

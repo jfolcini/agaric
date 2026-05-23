@@ -219,10 +219,12 @@ pub async fn search_with_toggles(
 /// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
 ///
 /// PEND-70 — `cancel` is an optional cancellation token threaded into
-/// the FTS path. The regex-mode branch does not currently honour the
-/// token (the regex pre-filter is bounded by `REGEX_PRE_FILTER_CAP`
-/// and runs in process; bursty-typing saturation on that branch is
-/// not a measured pain point).
+/// the FTS path. BE-A4 (PEND-58f) — the regex-mode branch now honours
+/// the same token: it checks `is_cancelled()` up front (mirroring
+/// `fts_fetch_rows`' early-cancel) and races the two parallel regex
+/// scans against `cancel.cancelled()` via a `biased` `tokio::select!`,
+/// returning [`AppError::Cancelled`] when the signal fires — the exact
+/// outcome the FTS path returns.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_with_toggles_partitioned(
     pool: &SqlitePool,
@@ -249,6 +251,15 @@ pub(crate) async fn search_with_toggles_partitioned(
                 pages_has_more: false,
                 blocks_has_more: false,
             });
+        }
+        // BE-A4 (PEND-58f) — early-cancel before launching the scans,
+        // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
+        // The palette's next-keystroke pattern fires fresh IPCs faster
+        // than the scans can start, so bail before doing any work.
+        if let Some(ref token) = cancel {
+            if token.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
         }
         // PEND-69 F1 — two parallel regex scans, each with a
         // `limit + 1` probe. The pages scan pushes
@@ -282,7 +293,32 @@ pub(crate) async fn search_with_toggles_partitioned(
             None,
             metadata,
         );
-        let (pages_resp, blocks_resp) = tokio::try_join!(pages_future, blocks_future)?;
+        // BE-A4 (PEND-58f) — race the two parallel scans against the
+        // cancel signal so an in-flight regex burst bails the same way
+        // the FTS path does (`fts_fetch_rows` uses the identical
+        // `biased` `tokio::select!` shape). The `try_join!` is kept as a
+        // *future* (not awaited yet) so the scans run concurrently with
+        // the cancel watcher; `biased;` polls the cancel arm first each
+        // tick so a fast-fire from the next keystroke wins against an
+        // already-ready join. When the cancel arm fires, the joined
+        // future is dropped, cancelling both underlying SQL statements
+        // at their next yield point, and we return
+        // [`AppError::Cancelled`] — the exact outcome the FTS path
+        // returns. When `cancel` is `None` we preserve the pre-BE-A4
+        // behaviour (plain `try_join!`).
+        let join_future = async { tokio::try_join!(pages_future, blocks_future) };
+        let (pages_resp, blocks_resp) = match cancel {
+            Some(mut token) => {
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        return Err(AppError::Cancelled);
+                    }
+                    res = join_future => res?,
+                }
+            }
+            None => join_future.await?,
+        };
 
         let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
         let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
@@ -518,7 +554,23 @@ async fn regex_mode_query(
     // Changing the column scanned (stripped vs raw) is a behaviour change
     // deliberately out of scope here; this comment is the documented
     // contract. See `docs/SEARCH.md`'s regex-mode section.
-    //
+
+    // SQL-A4 (PEND-58f) — reject an over-long RAW pattern up front,
+    // BEFORE the NFC-normalise + regex-compile walk. Mirrors the FTS
+    // path's `MAX_QUERY_LEN` guard (`search_fts` / `search_fts_partitioned`)
+    // so a pathological multi-megabyte raw input is rejected before we
+    // pay to normalise it. `build_regex` already caps the *composed*
+    // pattern at `MAX_PATTERN_LEN`, but that check runs only after
+    // normalisation; this up-front guard bounds the normalise work too.
+    // Same byte-length basis and error shape as the FTS path.
+    if query.len() > super::search::MAX_QUERY_LEN {
+        return Err(AppError::Validation(format!(
+            "search query is too long ({} bytes); maximum is {} bytes",
+            query.len(),
+            super::search::MAX_QUERY_LEN
+        )));
+    }
+
     // NFC-normalise the user pattern so a composed pattern (e.g. a paste
     // containing NFD diacritics) is canonical before regex compilation.
     let query_nfc = super::strip::nfc_normalise(query);
@@ -554,7 +606,6 @@ async fn regex_mode_query(
     // candidate set is bounded by `REGEX_PRE_FILTER_CAP`); the
     // `next_cursor` field returns `None`.
     let limit = page.limit.clamp(1, 100);
-    let _ = limit; // for future per-page slicing; today's response is single-page
 
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -579,12 +630,24 @@ async fn regex_mode_query(
     // a duplicate id makes that length unachievable and the regex scan
     // silently returns zero rows. Order is preserved for deterministic
     // placeholder/bind indices.
+    //
+    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // ULID form BEFORE inserting into the dedup set (and bind the
+    // normalised form). `block_tags.tag_id` stores the canonical
+    // uppercase Crockford-base32 ULID (`BlockId`/`ActiveBlockId` both
+    // normalise via `to_ascii_uppercase`), so a mixed-case duplicate
+    // (e.g. the same id arriving lower- and upper-case from two FE code
+    // paths) would otherwise survive byte-exact dedup, inflate the bound
+    // list length past the achievable `COUNT(DISTINCT)`, and silently
+    // zero out the ALL-tags predicate. Uppercasing collapses the
+    // duplicate AND aligns the bound `IN (...)` values with the stored
+    // canonical form.
     let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
         Some(ids) => {
             let mut seen = std::collections::HashSet::new();
             ids.iter()
-                .filter(|id| seen.insert((*id).clone()))
-                .cloned()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
                 .collect()
         }
         None => Vec::new(),

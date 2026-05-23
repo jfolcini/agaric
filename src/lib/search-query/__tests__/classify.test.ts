@@ -143,6 +143,59 @@ describe('classify / parse', () => {
     expect(ast.freeText).toContain('exact phrase')
   })
 
+  it('preserves multiple internal spaces inside a quoted phrase (DSL-A1)', () => {
+    // A quoted phrase is matched exactly, so the free-text collapse must
+    // NOT touch whitespace inside the quotes.
+    const ast = parse('"two  spaces   here"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"two  spaces   here"')
+  })
+
+  it('collapses whitespace outside quotes while preserving it inside (DSL-A1)', () => {
+    const ast = parse('alpha    "two  spaces"    beta')
+    expect(ast.filters).toEqual([])
+    // Outside the quotes: runs collapse to one space. Inside: verbatim.
+    expect(ast.freeText).toBe('alpha "two  spaces" beta')
+  })
+
+  it('preserves intra-quote whitespace alongside a consumed filter (DSL-A1)', () => {
+    const ast = parse('tag:#x   "keep  the   gaps"   word')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'x' })
+    expect(ast.freeText).toBe('"keep  the   gaps" word')
+  })
+
+  it('handles two quoted phrases each preserving internal spacing (DSL-A1)', () => {
+    const ast = parse('"a  b"   "c   d"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"a  b" "c   d"')
+  })
+
+  it('treats an unterminated quote as a word and collapses normally (DSL-A1)', () => {
+    // No closing quote at a token boundary → the tokeniser degrades the
+    // stray quote to a word, so the run is plain free text and collapses.
+    const ast = parse('foo  "bar  baz')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('foo "bar baz')
+  })
+
+  it('keeps an empty quoted phrase and collapses around it (DSL-A1)', () => {
+    // An empty `""` is a zero-length quoted range; it must survive while
+    // the whitespace on either side still collapses.
+    const ast = parse('a ""  b')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('a "" b')
+  })
+
+  it('shields a colon inside a quoted phrase from filter recognition (DSL-A1)', () => {
+    // `due:today` would normally be consumed as a filter, but inside quotes
+    // the whole phrase is verbatim free text — the colon must NOT be parsed
+    // as a filter key, and the internal spacing is preserved.
+    const ast = parse('"due:today  is  fine"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"due:today  is  fine"')
+  })
+
   it('does not treat boolean operators as filters', () => {
     const ast = parse('foo AND bar OR baz NOT quux')
     expect(ast.filters).toEqual([])

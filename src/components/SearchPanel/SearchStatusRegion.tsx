@@ -19,6 +19,13 @@ export interface SearchStatusRegionProps {
   searched: boolean
   searchLoading: boolean
   error: string | null
+  /**
+   * UX-A2 — non-null when the failure is an invalid regex. The specific
+   * regex message is already announced via the header alert next to the
+   * input, so the generic "Search failed" status branch is suppressed
+   * here to avoid a double announcement to screen readers.
+   */
+  regexError: string | null
   cleared: boolean
   resultCount: number
   t: TFunction
@@ -33,7 +40,7 @@ export function getSearchStatusText(
   args: Omit<SearchStatusRegionProps, 't'>,
   t: TFunction,
 ): string | null {
-  const { searched, searchLoading, error, cleared, resultCount } = args
+  const { searched, searchLoading, error, regexError, cleared, resultCount } = args
   // UX-5 — announce that a search is running. Screen-reader users
   // otherwise got silence between submit and the result count. The
   // region is a sibling of (not a wrapper around) the listbox, so this
@@ -43,7 +50,10 @@ export function getSearchStatusText(
   }
   // UX-2 — announce generic search failures. Without this branch a
   // non-regex error left the live region (and the panel) silent/blank.
-  if (searched && !searchLoading && error) {
+  // UX-A2 — but DON'T announce the generic failure for an invalid-regex
+  // error: that case already surfaces its specific message in the header
+  // alert, and announcing both here would double-announce.
+  if (searched && !searchLoading && error && regexError == null) {
     return t('search.statusError')
   }
   if (searched && !searchLoading && !error && resultCount > 0) {
@@ -62,12 +72,13 @@ export function SearchStatusRegion({
   searched,
   searchLoading,
   error,
+  regexError,
   cleared,
   resultCount,
   t,
 }: SearchStatusRegionProps): React.ReactElement {
   const statusText = getSearchStatusText(
-    { searched, searchLoading, error, cleared, resultCount },
+    { searched, searchLoading, error, regexError, cleared, resultCount },
     t,
   )
   return (

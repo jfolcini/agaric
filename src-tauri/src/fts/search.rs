@@ -543,6 +543,14 @@ async fn fts_fetch_rows(
     // De-duplicating here makes the bound count match the `DISTINCT`
     // semantics. Order is preserved so the placeholder/bind indices stay
     // deterministic.
+    //
+    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // ULID form BEFORE the dedup set (and bind the normalised form).
+    // `block_tags.tag_id` stores the canonical uppercase Crockford-base32
+    // ULID (`BlockId`/`ActiveBlockId` both normalise via
+    // `to_ascii_uppercase`), so a mixed-case duplicate would survive
+    // byte-exact dedup, inflate the bound count past the achievable
+    // `COUNT(DISTINCT)`, and silently zero out the ALL-tags predicate.
     let tag_count_param_idx;
     let tag_param_start;
     let active_tag_ids: Vec<String> = match tag_ids {
@@ -550,8 +558,8 @@ async fn fts_fetch_rows(
             let mut seen = std::collections::HashSet::new();
             let deduped: Vec<String> = ids
                 .iter()
-                .filter(|id| seen.insert((*id).clone()))
-                .cloned()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
                 .collect();
             // Build IN-list placeholders for the deduped tag IDs.
             let placeholders: Vec<String> = (0..deduped.len())

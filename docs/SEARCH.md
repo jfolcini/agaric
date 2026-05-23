@@ -142,7 +142,7 @@ Keyboard model:
 
 `↑` / `↓` cycle through search history only when the input is empty AND the popover is closed. The popover wins when both conditions could apply.
 
-When the `.*` toggle is on, autocomplete is disabled: the user's input is the regex pattern verbatim, so `state:` and friends inside a regex don't trigger value suggestions.
+When the `.*` toggle is on, the value-suggestion popover is disabled. Structural filters still parse and apply in regex mode (only the remaining free text is the regex pattern — see [Regex mode and structural filters](#regex-mode-and-structural-filters)), but the `state:` / `priority:` / etc. value popover stays closed so it never collides with regex metacharacters in the free-text portion.
 
 The input declares ARIA 1.1 combobox-with-listbox semantics:
 
@@ -231,7 +231,7 @@ The toggle row sits to the right of the search input — three pressable buttons
 |---|---|---|
 | **Case-sensitive** | `Aa` | The post-FTS filter narrows results to case-sensitive matches. The FTS5 trigram index is `case_sensitive 0`, so enabling this toggle forces a regex pass over the candidate set even when no other toggle is on — i.e. it has a non-zero cost on every keystroke. |
 | **Whole word** | `Ab\|` | The post-FTS filter wraps the query in ASCII word boundaries (`(?-u:\b)`). **CJK content does NOT match** — CJK characters are not ASCII word characters, so the boundary never asserts. Documented v1 limitation. |
-| **Regex** | `.*` | The query string is treated as a Rust [`regex`] pattern verbatim. The FTS5 MATCH path is **bypassed entirely** — there's no FTS-index acceleration; wall-time scales with the structurally-filtered block count. |
+| **Regex** | `.*` | The free-text portion of the query is treated as a Rust [`regex`] pattern verbatim (structural filter tokens are still parsed out and applied — see [Regex mode and structural filters](#regex-mode-and-structural-filters)). The FTS5 MATCH path is **bypassed entirely** — there's no FTS-index acceleration; wall-time scales with the structurally-filtered block count. |
 
 Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a fresh window restores your preference. State does NOT survive a save — a saved search is `(query, toggles)`, not just `(query)`.
 
@@ -262,9 +262,21 @@ than a number here, which would drift.
 
 Regex compile errors surface inline next to the input with a red border; the error message follows the `InvalidRegex:` prefix.
 
+### Regex mode and structural filters
+
+In regex mode, structural filters **still apply**. The filter tokens (`tag:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:`) are parsed out of the query and applied as structural SQL filters on the pre-filter scan; only the remaining free text is treated as the regex pattern, matched against block content. So `tag:#urgent ^TODO` with the `.*` toggle on runs the regex `^TODO` only over blocks tagged `#urgent`. What the FTS5 boolean operators (`AND` / `OR` / `NOT`) and the trigram length floor lose in regex mode is the *full-text* path — the structural narrowing survives.
+
+### Regex matches raw content, not the stripped FTS text
+
+The regex runs against the **raw block content** — the same text you typed, before the markup-stripping and reference-resolution that the full-text index applies. This has three practical consequences:
+
+- **Tag/page references by name.** A regex on a tag or page *name* will not match a block that only references it via the underlying reference token (FTS resolves the reference to its name; the raw content keeps the token). Use the `tag:` filter for reference-aware tag matching.
+- **Raw markup is matchable by regex only.** Link syntax and formatting markers that full-text search strips out are still present in the raw content, so a regex can match them.
+- **Unicode normalisation.** Content pasted in a decomposed Unicode form (NFD — common from macOS) may not match a regex written in the composed form (NFC), even though full-text search (which normalises to NFC) would match it.
+
 ### Regex-mode trade-off
 
-In regex mode the FTS5 candidate set is unused; the SQL scan returns the 1000 most-recent blocks (within the structural filters: tags, paths, space) and the regex is applied to each. **Recommend a literal seed term (≥3 chars) for tight queries.** Without a seed, the regex runs over the full 1000 candidates.
+In regex mode the FTS5 candidate set is unused; the SQL scan returns the most-recent blocks (within the structural filters above) and the regex is applied to each, up to a fixed candidate cap. **Recommend a literal seed term (≥3 chars) for tight queries** — the structural filters above are the most effective way to keep the candidate set small.
 
 ### Regex differences between surfaces
 
@@ -285,7 +297,7 @@ Non-regex queries pass through the FTS5 sanitiser, which preserves three operato
 
 Quoted phrases bypass the trigram length filter: `"sprint plan"` matches the exact phrase, including 2-char tokens (`OR`, `2x`) that would otherwise be dropped.
 
-Boolean operators **don't work inside regex mode** — there the entire query is the regex pattern; `AND` / `OR` are matched as literal text.
+Boolean operators **don't work inside regex mode** — there the free-text remainder is the regex pattern; `AND` / `OR` in it are matched as literal text. (Structural filters like `tag:` / `path:` still apply — see [Regex mode and structural filters](#regex-mode-and-structural-filters).)
 
 ## Tips
 
@@ -294,7 +306,7 @@ Boolean operators **don't work inside regex mode** — there the entire query is
 - **Clear history.** The dropdown's footer wipes the per-space MRU list. Other spaces stay untouched.
 - **Toggle state persists, history is per-space.** A `tag:` reference is space-specific, so cross-space recall would silently no-match. Toggle preferences are global because their effect (case / whole-word / regex semantics) is space-agnostic.
 - **Filter syntax is sanitiser-friendly.** `tag:#name` survives a literal-mode round-trip; recalling a `tag:` query from history rebuilds the chip row exactly.
-- **Inline filter syntax is not regex-aware.** In regex mode, `tag:#urgent` is interpreted as a literal regex pattern (the `:` is a literal colon). Filter chips and regex compose at the *query* level, not inside the regex pattern. To use filters + regex together, type the filters first, then prepend the regex (e.g. `tag:#urgent ^TODO` with the `.*` toggle on — the FTS bypass keeps the `tag:` filter ineffective, **the structural filters still apply via the regex-mode SQL path**; this is a known sharp edge).
+- **Filters compose with regex at the query level, not inside the pattern.** In regex mode the filter tokens are still parsed out and applied as structural SQL filters; only the *remaining free text* becomes the regex pattern. So `tag:#urgent ^TODO` with the `.*` toggle on applies the `tag:#urgent` filter and runs the regex `^TODO` over those blocks — the filter is **not** part of the regex. Type the filters anywhere in the query and keep the regex to the free-text remainder.
 
 ## Mobile
 

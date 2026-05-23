@@ -18,7 +18,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
@@ -75,6 +75,16 @@ function lastFilter(): Record<string, unknown> | null {
   return last[1].filter
 }
 
+// DSL-A8 — the raw query string forwarded to `search_blocks`. In regex
+// mode this must be the parsed free-text remainder (the regex pattern),
+// NOT the full input including filter tokens like `tag:`.
+function lastQuery(): string | null {
+  const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'search_blocks')
+  if (calls.length === 0) return null
+  const last = calls[calls.length - 1] as unknown as [string, { query: string }]
+  return last[1].query
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
@@ -107,6 +117,80 @@ describe('SearchPanel toggles', () => {
       expect(filter?.['caseSensitive']).toBe(false)
       expect(filter?.['wholeWord']).toBe(false)
     })
+  })
+
+  // DSL-A8 / UX-A4 — regex mode is symmetric with non-regex mode: filter
+  // tokens are parsed OUT of the input and applied as structural SQL
+  // filters; only the remaining free text is the regex pattern.
+  it('regex mode applies structural filters AND sends only the free text as the pattern', async () => {
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'tag:wip foo.*')
+
+    // The tag name resolves asynchronously via `list_tags_by_prefix`;
+    // wait until the resolved id reaches the IPC payload.
+    await waitFor(() => {
+      const filter = lastFilter()
+      expect(filter?.['tagIds']).toEqual(['TAG_WIP'])
+    })
+
+    const filter = lastFilter()
+    expect(filter?.['isRegex']).toBe(true)
+    // The regex pattern is the free text only — `tag:wip` was stripped.
+    expect(lastQuery()).toBe('foo.*')
+  })
+
+  it('regex mode still renders the tag chip parsed from the input', async () => {
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    fireEvent.change(input, { target: { value: 'tag:wip foo.*' } })
+
+    // Chips render from the live AST regardless of mode. The chip label
+    // is the canonical token source (`tag:#wip`).
+    await waitFor(() => {
+      const chipBar = screen.getByTestId('filter-chip-bar')
+      expect(within(chipBar).getByText('tag:#wip')).toBeInTheDocument()
+    })
+  })
+
+  it('regex mode fires the IPC for a filter-only query (no free text)', async () => {
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'list_tags_by_prefix') {
+        return [{ tag_id: 'TAG_WIP', name: 'wip', color: null }]
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'tag:wip')
+
+    await waitFor(() => {
+      expect(lastFilter()?.['tagIds']).toEqual(['TAG_WIP'])
+    })
+    // Free text is empty (only the filter token was typed), so the regex
+    // pattern sent is '' — the filter travels via `tagIds`, not the pattern.
+    expect(lastQuery()).toBe('')
   })
 
   it('clicking case-sensitive sends `caseSensitive: true`', async () => {
@@ -243,5 +327,135 @@ describe('SearchPanel match-offset rendering', () => {
       expect(marks.length).toBeGreaterThan(0)
       expect(marks[0]?.textContent).toBe('Alpha')
     })
+  })
+})
+
+describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
+  it('does not double-announce: the status live region stays silent on an invalid regex', async () => {
+    // The backend rejects an unparseable pattern with the `InvalidRegex:`
+    // prefix; SearchPanel surfaces the specific message inline in the
+    // header. The generic "Search failed" status branch must NOT also
+    // fire (that would double-announce to screen readers).
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_blocks') {
+        throw new Error('InvalidRegex: unclosed group at position 0')
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, '(')
+
+    // The inline regex error owns the failure.
+    await waitFor(() => {
+      expect(screen.getByTestId('search-inline-error')).toBeInTheDocument()
+    })
+
+    // The `role="status"` live region does NOT announce the generic error.
+    const status = screen.getByTestId('search-results-status')
+    expect(status).not.toHaveTextContent(t('search.statusError'))
+    expect(within(status).queryByTestId('search-results-count')).toBeNull()
+  })
+
+  it('still announces the generic failure for a non-regex backend error', async () => {
+    // A plain backend error (no `InvalidRegex:` prefix) must still light
+    // up the status region — UX-A2 only suppresses the regex case.
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_blocks') {
+        throw new Error('database is locked')
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'hello')
+
+    await waitFor(() => {
+      const status = screen.getByTestId('search-results-status')
+      expect(status).toHaveTextContent(t('search.statusError'))
+    })
+    expect(screen.queryByTestId('search-inline-error')).toBeNull()
+  })
+
+  it('has no a11y violations while showing an invalid-regex error', async () => {
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_blocks') {
+        throw new Error('InvalidRegex: unclosed group at position 0')
+      }
+      return emptyPage
+    })
+    const { container } = render(<SearchPanel />)
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, '(')
+    await waitFor(() => {
+      expect(screen.getByTestId('search-inline-error')).toBeInTheDocument()
+    })
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('SearchPanel history dropdown aria parity (FE-A13)', () => {
+  it('does not advertise a listbox when history is disabled+empty (no dangling aria-controls)', async () => {
+    // Recording OFF + zero entries: the dropdown shell is still shown (so
+    // the Enable toggle stays reachable) but it renders NO `role="listbox"`
+    // element. The combobox must therefore NOT report itself expanded into
+    // a listbox, and must not reference a non-existent `aria-controls` id.
+    useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: false })
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    fireEvent.focus(input)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('search-history-dropdown')).toBeInTheDocument()
+    })
+    // No listbox is rendered in the empty case…
+    expect(screen.queryByTestId('search-history-list')).toBeNull()
+    // …so the combobox must not claim to be expanded/controlling one.
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(input).not.toHaveAttribute('aria-controls')
+  })
+
+  it('advertises the history listbox when entries exist (aria-controls resolves)', async () => {
+    // Recording OFF but with prior entries: the `role="listbox"` renders,
+    // so the combobox is expanded and `aria-controls` must point at the
+    // listbox element that actually exists in the DOM.
+    useSearchHistoryStore.setState({
+      bySpace: { SPACE_TEST: ['recent A', 'recent B'] },
+      historyEnabled: false,
+    })
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    fireEvent.focus(input)
+
+    const listbox = await screen.findByTestId('search-history-list')
+    expect(input).toHaveAttribute('aria-expanded', 'true')
+    const controls = input.getAttribute('aria-controls')
+    expect(controls).toBeTruthy()
+    // The referenced id must resolve to the rendered listbox element.
+    expect(listbox).toHaveAttribute('id', controls)
+  })
+
+  it('aria-expanded is false when the dropdown is not shown (focused but typing)', async () => {
+    useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: false })
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    fireEvent.focus(input)
+    fireEvent.change(input, { target: { value: 'x' } })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('search-history-dropdown')).toBeNull()
+    })
+    expect(input).toHaveAttribute('aria-expanded', 'false')
+    expect(input).not.toHaveAttribute('aria-controls')
   })
 })

@@ -106,6 +106,21 @@ export function SearchResultGroups({
     return group.blocks.findIndex((b) => b.id === focusedRow.id)
   }
 
+  // FE-A7: roving `tabIndex`. Exactly one group must be in the tab order so
+  // the results region is reachable with Tab. Normally that is the group
+  // owning the focused row. But immediately after a collapse `focusedRow`
+  // can be `undefined` (the focused flat index now points past the shrunk
+  // list); without a fallback NO group would be tabbable and the whole
+  // region would drop out of the tab order. Fall back to the first EXPANDED
+  // group (collapsed groups render no listbox, so they cannot host tabIndex).
+  const firstExpandedGroupId = groups.find(
+    (g) => (expandedGroups[g.page_id] ?? true) && g.blocks.length > 0,
+  )?.page_id
+  function tabIndexFor(group: SearchResultGroup): 0 | -1 {
+    if (focusedRow) return group.page_id === focusedRow.page_id ? 0 : -1
+    return group.page_id === firstExpandedGroupId ? 0 : -1
+  }
+
   return (
     <section
       aria-label={t('search.resultsRegionLabel')}
@@ -161,7 +176,7 @@ export function SearchResultGroups({
             activeRowId={activeDescendantFor(group)}
             activeRowIndex={activeRowIndexFor(group)}
             ariaLabel={t('search.groupExpandedLabel', { pageTitle: title })}
-            tabIndex={focusedRow && group.page_id === focusedRow.page_id ? 0 : -1}
+            tabIndex={tabIndexFor(group)}
             dataTestId={`search-result-group-${group.page_id}`}
             onKeyDown={(e) => {
               if (onKeyDown(e)) e.preventDefault()

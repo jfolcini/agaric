@@ -96,11 +96,11 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
  * PEND-53 — Filter-param bundle the SearchPanel hands to `searchBlocks`.
  *
  * Split out of the `queryFn` callback so the closure stays under
- * biome's complexity cap. `regexModeFilterParams()` returns the
- * regex-mode no-filter bundle; `astFilterParams(projection, tagIds)`
- * returns the AST-projected bundle for the non-regex path. Both
- * shapes are accepted by `searchBlocks` as `Partial<…>` extension
- * fields (each entry is `T | undefined`).
+ * biome's complexity cap. `astFilterParams(projection, tagIds)`
+ * returns the AST-projected bundle used in BOTH search modes
+ * (DSL-A8 / UX-A4 — see the `filterParams` memo below). The shape is
+ * accepted by `searchBlocks` as `Partial<…>` extension fields (each
+ * entry is `T | undefined`).
  */
 type SearchFilterParams = {
   tagIds?: string[] | undefined
@@ -120,22 +120,6 @@ type SearchFilterParams = {
     | null
   propertyFilters?: { key: string; value: string }[] | undefined
   excludedPropertyFilters?: { key: string; value: string }[] | undefined
-}
-
-function regexModeFilterParams(): SearchFilterParams {
-  return {
-    tagIds: undefined,
-    includePageGlobs: undefined,
-    excludePageGlobs: undefined,
-    stateFilter: undefined,
-    priorityFilter: undefined,
-    excludedStateFilter: undefined,
-    excludedPriorityFilter: undefined,
-    dueFilter: null,
-    scheduledFilter: null,
-    propertyFilters: undefined,
-    excludedPropertyFilters: undefined,
-  }
 }
 
 function astFilterParams(
@@ -195,10 +179,6 @@ export function SearchPanel(): React.ReactElement {
     SEARCH_TOGGLE_STORAGE_KEY,
     DEFAULT_SEARCH_TOGGLES,
   )
-  // PEND-55 — surface invalid-regex errors inline next to the input.
-  // Backend returns `AppError::Validation` with the `InvalidRegex:`
-  // prefix; the frontend strips the prefix for display.
-  const [regexError, setRegexError] = useState<string | null>(null)
   // PEND-55 — history dropdown visibility. Shown when the input is
   // focused AND empty (matches the plan's UX mock).
   const [inputFocused, setInputFocused] = useState(false)
@@ -284,18 +264,18 @@ export function SearchPanel(): React.ReactElement {
   // FE-9 — one-time filter-syntax intro toast extracted to a hook.
   useFilterSyntaxIntroToast()
 
-  // PEND-55 — in regex mode the user's input is the regex verbatim;
-  // skip PEND-54's filter projection so `tag:` / `path:` aren't
-  // parsed as syntax. The full debouncedQuery is forwarded.
-  //
-  // PEND-53 — metadata fields (state / priority / due / scheduled /
-  // prop) are also skipped in regex mode. The `searchFilterFromAst`
-  // helper centralises the regex-mode short-circuit so the callback
-  // body stays under biome's complexity cap.
+  // DSL-A8 / UX-A4 — the two search modes are symmetric. In BOTH modes
+  // the query is parsed into structural filter tokens (`tag:` / `path:`
+  // and the PEND-53 metadata predicates: state / priority / due /
+  // scheduled / prop) plus a free-text remainder. Those structural
+  // filters are always projected and applied as SQL filters server-side
+  // (the Rust `regex_mode_query` honours every one of them). The ONLY
+  // difference between modes is the `isRegex` flag and that the backend
+  // interprets the remaining free text as a regex pattern (matched
+  // against raw block content) rather than an FTS query.
   const filterParams = useMemo(
-    () =>
-      toggles.isRegex ? regexModeFilterParams() : astFilterParams(debouncedProjection, tagIds),
-    [toggles.isRegex, debouncedProjection, tagIds],
+    () => astFilterParams(debouncedProjection, tagIds),
+    [debouncedProjection, tagIds],
   )
   const queryFn = useCallback(
     // FE-2 — forward the AbortSignal so a superseded search is cancelled
@@ -307,7 +287,12 @@ export function SearchPanel(): React.ReactElement {
       // than a runtime null deref.
       searchBlocks(
         {
-          query: toggles.isRegex ? debouncedQuery : debouncedAst.freeText,
+          // DSL-A8 / UX-A4 — send the parsed free-text remainder in BOTH
+          // modes. In regex mode the backend treats it as the regex
+          // pattern; structural filter tokens (e.g. `tag:`) are stripped
+          // out of the free text by the parser and applied via
+          // `filterParams` instead of leaking into the pattern.
+          query: debouncedAst.freeText,
           ...filterParams,
           cursor,
           limit: PAGINATION_LIMIT,
@@ -320,7 +305,6 @@ export function SearchPanel(): React.ReactElement {
       ),
     [
       debouncedAst.freeText,
-      debouncedQuery,
       filterParams,
       currentSpaceId,
       toggles.caseSensitive,
@@ -338,17 +322,15 @@ export function SearchPanel(): React.ReactElement {
     capped,
     setItems,
   } = usePaginatedQuery(queryFn, {
-    // PEND-54 — the AST's free-text may be empty when the user has only
-    // typed structured filter tokens (`tag:#urgent`). We still want to
-    // run the query in that case so filters apply on their own.
-    // PEND-55 — in regex mode, the typed query (not the AST) is the
-    // pattern; gate on debouncedQuery length so an in-progress regex
-    // edit still fires the IPC.
-    enabled:
-      spaceIsReady &&
-      (toggles.isRegex
-        ? debouncedQuery.length > 0
-        : debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
+    // PEND-54 / DSL-A8 — the AST's free-text may be empty when the user
+    // has only typed structured filter tokens (`tag:#urgent`). We still
+    // fire the query in that case (the gate is identical in both modes:
+    // a regex / FTS pattern OR at least one structural filter). NOTE: the
+    // cursor `search_blocks` path short-circuits a blank query to zero
+    // rows today, so a *filter-only* search returns empty in BOTH modes —
+    // making filters apply on their own is a tracked follow-up, not a
+    // regex-mode regression.
+    enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     // E2E-2 — do NOT pass `onError` here. `usePaginatedQuery` would
     // otherwise overwrite the raw IPC message with this friendly string
     // before SearchPanel can parse the `InvalidRegex:` prefix off it, so
@@ -361,19 +343,18 @@ export function SearchPanel(): React.ReactElement {
   // raw IPC error and surface it inline so the user knows how to fix
   // their pattern. Relies on the raw message reaching `error` (E2E-2 —
   // no `onError` clobbering it, see usePaginatedQuery options above).
-  useEffect(() => {
-    if (!error) {
-      setRegexError(null)
-      return
-    }
+  //
+  // UX-A2 — derived synchronously (not via an effect) so the status
+  // region's generic-error suppression is single-commit: there is no
+  // intermediate render where `error` is set but `regexError` is still
+  // `null` (which would briefly announce the generic "Search failed").
+  const regexError = useMemo<string | null>(() => {
+    if (!error) return null
     const msg = typeof error === 'string' ? error : ''
     const prefix = 'InvalidRegex:'
     const idx = msg.indexOf(prefix)
-    if (idx >= 0) {
-      setRegexError(t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() }))
-    } else {
-      setRegexError(null)
-    }
+    if (idx < 0) return null
+    return t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() })
   }, [error, t])
 
   // Resolve page titles for breadcrumbs when results change
@@ -495,13 +476,29 @@ export function SearchPanel(): React.ReactElement {
   // mutually exclusive (history wants an empty query, autocomplete wants
   // caret content), so they share the input's combobox attrs.
   const expanded = autocomplete.open && autocomplete.ariaIds != null
-  const historyVisible = inputFocused && query.length === 0 && historyEntries.length > 0
+  // FE-A13 — ONE source of truth for whether the history dropdown is on
+  // screen. Both the dropdown render (`visible` prop below) and the
+  // input's combobox aria attrs derive from this so they can never
+  // disagree. The dropdown is shown while the input is focused + empty
+  // AND there is either history to recall OR recording is OFF (UX-11
+  // keeps the Enable toggle + "history is off" footer reachable even
+  // with zero entries).
+  const historyDropdownVisible =
+    inputFocused && query.length === 0 && (historyEntries.length > 0 || !historyEnabled)
+  // FE-A13 / UX-A2 review — the `role="listbox"` element (and its
+  // `historyListboxId`) only renders when there are entries (see
+  // `SearchHistoryDropdown`'s `!isEmpty` gate). The combobox's
+  // `aria-expanded` / `aria-controls` must therefore track the LISTBOX,
+  // not the dropdown shell: in the recording-OFF + zero-entries case the
+  // dropdown shows only the Enable prompt, so the combobox is NOT
+  // expanded into a listbox and must not reference a non-existent id.
+  const historyListboxVisible = historyDropdownVisible && historyEntries.length > 0
   const inputComboboxAttrs = useMemo(
     () => ({
       role: 'combobox' as const,
       'aria-autocomplete': 'list' as const,
       'aria-haspopup': 'listbox' as const,
-      'aria-expanded': expanded || historyVisible,
+      'aria-expanded': expanded || historyListboxVisible,
       ...(expanded && autocomplete.ariaIds != null
         ? {
             'aria-controls': autocomplete.ariaIds.listboxId,
@@ -509,7 +506,7 @@ export function SearchPanel(): React.ReactElement {
               ? { 'aria-activedescendant': autocomplete.ariaIds.activeDescendantId }
               : {}),
           }
-        : historyVisible
+        : historyListboxVisible
           ? {
               'aria-controls': historyListboxId,
               ...(cycling.activeIndex >= 0
@@ -520,7 +517,7 @@ export function SearchPanel(): React.ReactElement {
             }
           : {}),
     }),
-    [expanded, autocomplete.ariaIds, historyVisible, historyListboxId, cycling.activeIndex],
+    [expanded, autocomplete.ariaIds, historyListboxVisible, historyListboxId, cycling.activeIndex],
   )
 
   // Stable so the child's state-report effect doesn't re-fire on identity.
@@ -701,6 +698,11 @@ export function SearchPanel(): React.ReactElement {
 
   const { focusedIndex, handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
     itemCount: visibleRows.length,
+    // FE-A8 — `debouncedQuery` is the query-change signal: a new query
+    // resets focus to row 0, but a plain `itemCount` change (group
+    // collapse / Load-More append) clamps the existing focus into range
+    // instead of snapping back to the first row.
+    resetKey: debouncedQuery,
     homeEnd: true,
     pageUpDown: true,
     onSelect: (idx) => {
@@ -722,8 +724,13 @@ export function SearchPanel(): React.ReactElement {
   // to the AST and re-serialises the canonical query string. The
   // serialised result becomes the new caret-end so autocomplete fires
   // against the right anchor on the next render.
+  //
+  // FE-A12 — these read the `ast` memo (already `parse(query)`) instead
+  // of re-parsing the live `query`. `ast` is recomputed on every
+  // `query` change and these handlers run synchronously inside the same
+  // render's event handlers, so it is always the current parse.
   function patchQuery(next: (currentAst: typeof ast) => typeof ast) {
-    const nextValue = serialize(next(parse(query)))
+    const nextValue = serialize(next(ast))
     setQueryAndCaret(nextValue)
   }
   function handleRemoveFilter(index: number) {
@@ -733,7 +740,7 @@ export function SearchPanel(): React.ReactElement {
     // FE-6 — keep the LIVE free text (not the debounced/last-committed
     // AST) so just-typed-but-not-yet-debounced words aren't dropped when
     // the user clears filters.
-    setQueryAndCaret(parse(query).freeText)
+    setQueryAndCaret(ast.freeText)
   }
   function handleAddTag(name: string) {
     const token: FilterToken = { kind: 'tag', value: name, span: [0, 0] }
@@ -784,12 +791,15 @@ export function SearchPanel(): React.ReactElement {
         historyDropdown={
           <SearchHistoryDropdown
             entries={historyEntries}
-            // UX-11 — also show when recording is OFF (even with no
-            // entries) so the Enable toggle + "history is off" notice
+            // FE-A13 — the dropdown shell shares the `historyDropdownVisible`
+            // base with the input's aria attrs (see above); the combobox's
+            // `aria-expanded` / `aria-controls` additionally require entries
+            // (`historyListboxVisible`) so they only reference a listbox that
+            // actually renders.
+            // UX-11 — the shell also shows when recording is OFF (even with
+            // no entries) so the Enable toggle + "history is off" notice
             // remain reachable from the dropdown footer.
-            visible={
-              inputFocused && query.length === 0 && (historyEntries.length > 0 || !historyEnabled)
-            }
+            visible={historyDropdownVisible}
             onPick={handlePickHistory}
             onClear={handleClearHistory}
             onRemoveEntry={handleRemoveHistory}
@@ -841,8 +851,11 @@ export function SearchPanel(): React.ReactElement {
         }
       />
 
+      {/* UX-A11 — info, not warning: search still runs at 1–2 chars, so
+          this is an FYI rather than a problem. Matches the CJK info
+          notice's classes above. */}
       {query.trim().length > 0 && query.trim().length < 3 && (
-        <div className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground">
+        <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
           {t('search.minCharsHint')}
         </div>
       )}
@@ -879,6 +892,10 @@ export function SearchPanel(): React.ReactElement {
         searched={searched}
         searchLoading={searchLoading}
         error={error}
+        // UX-A2 — let the status region suppress the generic "Search
+        // failed" announcement when the failure is an invalid regex (the
+        // header alert already announces the specific message).
+        regexError={regexError}
         cleared={cleared}
         resultCount={results.length}
         t={t}

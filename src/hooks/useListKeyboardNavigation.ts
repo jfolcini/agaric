@@ -12,11 +12,24 @@
  * helper, which makes the rules testable in isolation.
  */
 
-import { type Dispatch, type SetStateAction, useEffect, useState } from 'react'
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react'
 
 export interface UseListKeyboardNavigationOptions {
   /** Number of items in the list */
   itemCount: number
+  /**
+   * Optional value that identifies the *logical list*. When it changes the
+   * hook resets `focusedIndex` to 0 (e.g. a new search query). When it is
+   * supplied, a plain `itemCount` change (collapsing a group, Load-More)
+   * no longer resets to 0 — `focusedIndex` is CLAMPED into the new
+   * `[0, itemCount - 1]` range so the focus ring stays put.
+   *
+   * When omitted, the hook keeps its historical behaviour: any `itemCount`
+   * change resets `focusedIndex` to 0. Callers that filter a single list in
+   * place (e.g. `CodeLanguageSelector`, `HistoryView`) rely on that and
+   * therefore do NOT pass a `resetKey`.
+   */
+  resetKey?: unknown
   /** Use ArrowLeft/ArrowRight instead of ArrowUp/ArrowDown (default: false) */
   horizontal?: boolean
   /** Wrap around when reaching the ends (default: true) */
@@ -166,12 +179,43 @@ export function useListKeyboardNavigation(
 ): UseListKeyboardNavigationReturn {
   const opts = resolveNavOptions(options)
   const { itemCount } = opts
+  const { resetKey } = options
+  const hasResetKey = resetKey !== undefined
   const [focusedIndex, setFocusedIndex] = useState(0)
 
-  // Reset focusedIndex to 0 when itemCount changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on itemCount change
+  // FE-A8: distinguish a *new list* (query change) from a list that merely
+  // grew/shrank in place (group collapse, Load-More).
+  //
+  //  - When a `resetKey` is supplied, a change to it is the query-change
+  //    signal: reset `focusedIndex` to 0. A plain `itemCount` change then
+  //    only CLAMPS the index into the new range so collapsing a group or
+  //    paging in more rows keeps the focus ring where the user left it.
+  //  - When no `resetKey` is supplied, preserve the historical contract:
+  //    any `itemCount` change resets to 0 (in-place filter lists rely on
+  //    this — see `resetKey` doc).
+
+  // Reset to 0 on query (resetKey) change. Skips the initial mount via a ref
+  // so we don't fight the `useState(0)` initialiser.
+  const firstResetKeyRun = useRef(true)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset only when resetKey changes
   useEffect(() => {
+    if (!hasResetKey) return
+    if (firstResetKeyRun.current) {
+      firstResetKeyRun.current = false
+      return
+    }
     setFocusedIndex(0)
+  }, [resetKey])
+
+  // itemCount change: clamp when keyed (resetKey present), else reset to 0.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — runs on itemCount change
+  useEffect(() => {
+    if (hasResetKey) {
+      // Clamp into [0, itemCount - 1]; an empty list parks focus at 0.
+      setFocusedIndex((prev) => (itemCount === 0 ? 0 : Math.min(prev, itemCount - 1)))
+    } else {
+      setFocusedIndex(0)
+    }
   }, [itemCount])
 
   function handleKeyDown(e: React.KeyboardEvent | KeyboardEvent): boolean {

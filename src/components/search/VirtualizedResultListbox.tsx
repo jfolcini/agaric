@@ -82,10 +82,24 @@ export function VirtualizedResultListbox({
   // a11y contract: when the roving focus lands on a row in THIS group,
   // mount + scroll it into view so `aria-activedescendant` resolves to a
   // real element. Other groups receive `activeRowIndex === -1` and skip.
+  //
+  // FE-A5: `scrollToIndex` only scrolls WITHIN this group's own
+  // `overflow-y-auto` container — it cannot bring the active row into view
+  // when the row is below the page fold (e.g. a later group's row reached by
+  // cross-group roving). After the virtualizer has mounted the row, do a
+  // second, page-level `scrollIntoView({ block: 'nearest' })` on the active
+  // row element so the outer/page scroller follows the active descendant
+  // too. `block: 'nearest'` is a no-op when the row is already visible, so
+  // this never hijacks scroll position unnecessarily.
   useEffect(() => {
     if (activeRowIndex < 0) return
     virtualizer.scrollToIndex(activeRowIndex, { align: 'auto' })
-  }, [activeRowIndex, virtualizer])
+    if (!activeRowId) return
+    // The row may have only just been mounted by `scrollToIndex`; resolve it
+    // by its `aria-activedescendant` id and bubble the scroll up the page.
+    const el = scrollRef.current?.ownerDocument.getElementById(activeRowId)
+    el?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeRowIndex, activeRowId, virtualizer])
 
   const virtualItems = virtualizer.getVirtualItems()
   const totalSize = virtualizer.getTotalSize()
