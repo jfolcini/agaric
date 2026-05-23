@@ -30,7 +30,7 @@ describe('usePaginatedQuery', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.items).toEqual(['a', 'b'])
-    expect(queryFn).toHaveBeenCalledWith(undefined)
+    expect(queryFn).toHaveBeenCalledWith(undefined, expect.any(AbortSignal))
     expect(queryFn).toHaveBeenCalledTimes(1)
   })
 
@@ -98,7 +98,7 @@ describe('usePaginatedQuery', () => {
     expect(result.current.items).toEqual(['a', 'b'])
 
     await act(async () => result.current.loadMore())
-    expect(queryFn).toHaveBeenCalledWith('cursor-1')
+    expect(queryFn).toHaveBeenCalledWith('cursor-1', expect.any(AbortSignal))
     expect(result.current.items).toEqual(['a', 'b', 'c'])
     expect(result.current.hasMore).toBe(false)
   })
@@ -411,6 +411,95 @@ describe('usePaginatedQuery', () => {
     // because qf2 doesn't supply a total_count.
     await waitFor(() => expect(result.current.items).toEqual(['b']))
     expect(result.current.totalCount).toBeUndefined()
+  })
+
+  // ── AbortController (PEND-58f FE-2) ─────────────────────────────
+
+  it('passes an AbortSignal to queryFn', async () => {
+    const queryFn = vi.fn().mockResolvedValue(makePage(['a']))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(queryFn).toHaveBeenCalledWith(undefined, expect.any(AbortSignal))
+    const signal = queryFn.mock.calls[0]?.[1] as AbortSignal | undefined
+    expect(signal?.aborted).toBe(false)
+  })
+
+  it('a new load aborts the previous request signal', async () => {
+    // First request stays pending; capture its signal so we can assert
+    // it gets aborted when the second queryFn supersedes it.
+    let firstSignal: AbortSignal | undefined
+    const firstQueryFn = vi.fn((_cursor?: string, signal?: AbortSignal) => {
+      firstSignal = signal
+      return new Promise<PaginatedResponse<string>>(() => {}) // never resolves
+    })
+    const secondQueryFn = vi.fn().mockResolvedValue(makePage(['new']))
+
+    const { result, rerender } = renderHook(
+      ({
+        qf,
+      }: {
+        qf: (cursor?: string, signal?: AbortSignal) => Promise<PaginatedResponse<string>>
+      }) => usePaginatedQuery(qf),
+      { initialProps: { qf: firstQueryFn } },
+    )
+
+    expect(result.current.loading).toBe(true)
+    expect(firstSignal?.aborted).toBe(false)
+
+    // Switching queryFn re-fires page 1 with a fresh controller, which
+    // aborts the prior controller's signal.
+    rerender({ qf: secondQueryFn })
+    await waitFor(() => expect(result.current.items).toEqual(['new']))
+    expect(firstSignal?.aborted).toBe(true)
+  })
+
+  it('aborted (cancelled) requests do not set error or items', async () => {
+    // Simulate an AbortSignal-aware queryFn that rejects with the
+    // backend-compatible `cancelled`-kind AppError when its signal
+    // fires (the shape `withAbort` produces, which `isCancellation`
+    // discriminates).
+    const queryFn = vi.fn(
+      (_cursor?: string, signal?: AbortSignal) =>
+        new Promise<PaginatedResponse<string>>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject({ kind: 'cancelled', message: 'aborted client-side' })
+          })
+        }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => usePaginatedQuery(queryFn, { enabled }),
+      { initialProps: { enabled: true } },
+    )
+
+    expect(result.current.loading).toBe(true)
+
+    // Disabling aborts the in-flight controller, rejecting the promise
+    // with a cancellation. It must be swallowed silently.
+    await act(async () => {
+      rerender({ enabled: false })
+    })
+
+    expect(result.current.error).toBeNull()
+    expect(result.current.items).toEqual([])
+    expect(result.current.loading).toBe(false)
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('aborts the in-flight request on unmount', async () => {
+    let capturedSignal: AbortSignal | undefined
+    const queryFn = vi.fn((_cursor?: string, signal?: AbortSignal) => {
+      capturedSignal = signal
+      return new Promise<PaginatedResponse<string>>(() => {}) // never resolves
+    })
+    const { result, unmount } = renderHook(() => usePaginatedQuery(queryFn))
+
+    expect(result.current.loading).toBe(true)
+    expect(capturedSignal?.aborted).toBe(false)
+
+    unmount()
+    expect(capturedSignal?.aborted).toBe(true)
   })
 
   it('respects a custom maxItems value', async () => {
