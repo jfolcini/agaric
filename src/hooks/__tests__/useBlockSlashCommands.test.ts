@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { createElement, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -77,7 +78,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     setDatePickerOpen: vi.fn(),
     blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
     load: vi.fn(async () => {}),
-    t: vi.fn((key: string) => key),
+    t: vi.fn((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
 }
@@ -609,7 +610,10 @@ describe('useBlockSlashCommands handleSlashCommand stability (#MAINT-10)', () =>
     expect(result.current.handleSlashCommand).toBe(firstRef)
 
     // Change t (via ref)
-    const params3 = makeDefaultParams({ rootParentId: 'PAGE_2', t: vi.fn((k: string) => k) })
+    const params3 = makeDefaultParams({
+      rootParentId: 'PAGE_2',
+      t: vi.fn((k: string) => k) as unknown as TFunction,
+    })
     rerender({ params: params3 })
     expect(result.current.handleSlashCommand).toBe(firstRef)
 
@@ -681,7 +685,7 @@ describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
           rootParentId: 'PAGE_1',
           blocks: [],
           load: async () => {},
-          t: (k: string) => k,
+          t: ((k: string) => k) as unknown as TFunction,
         })
         const date = useSlashCommandDate()
         const property = useSlashCommandProperty()
@@ -734,7 +738,7 @@ describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
           rootParentId: 'PAGE_1',
           blocks: [],
           load: async () => {},
-          t: (k: string) => k,
+          t: ((k: string) => k) as unknown as TFunction,
         }).tables,
         date: useSlashCommandDate(),
         property: useSlashCommandProperty(),

@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 import { notify } from '@/lib/notify'
@@ -10,8 +11,7 @@ export interface UseBlockMultiSelectParams {
   clearSelected: () => void
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
-  // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-  t: (...args: any[]) => any
+  t: TFunction
 }
 
 export interface UseBlockMultiSelectReturn {

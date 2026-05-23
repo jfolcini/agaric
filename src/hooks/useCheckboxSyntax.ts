@@ -8,6 +8,7 @@
  * on completion.
  */
 
+import type { TFunction } from 'i18next'
 import { useCallback } from 'react'
 import type { StoreApi } from 'zustand'
 import { notify } from '@/lib/notify'
@@ -20,8 +21,7 @@ export interface UseCheckboxSyntaxParams {
   focusedBlockId: string | null
   rootParentId: string | null
   pageStore: StoreApi<PageBlockState>
-  // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-  t: (...args: any[]) => any
+  t: TFunction
 }
 
 export type CheckboxSyntaxHandler = (state: 'TODO' | 'DONE') => void

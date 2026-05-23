@@ -9,6 +9,7 @@
  */
 
 import { renderHook, waitFor } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { act } from 'react'
 import { toast } from 'sonner'
 import { describe, expect, it, vi } from 'vitest'
@@ -68,7 +69,7 @@ describe('useCheckboxSyntax', () => {
         focusedBlockId: 'B1',
         rootParentId: 'R1',
         pageStore,
-        t: (k: string) => k,
+        t: ((k: string) => k) as unknown as TFunction,
       }),
     )
 
@@ -118,7 +119,7 @@ describe('useCheckboxSyntax', () => {
         focusedBlockId: 'B1',
         rootParentId: 'R1',
         pageStore,
-        t: (k: string) => k,
+        t: ((k: string) => k) as unknown as TFunction,
       }),
     )
 

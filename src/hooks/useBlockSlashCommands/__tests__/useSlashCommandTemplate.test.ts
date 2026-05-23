@@ -6,6 +6,7 @@
  */
 
 import { renderHook } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { describe, expect, it, vi } from 'vitest'
 import { useSlashCommandTemplate } from '../useSlashCommandTemplate'
 import { makeSyntheticCtx } from './test-utils'
@@ -24,7 +25,7 @@ const defaultParams = () => ({
   rootParentId: 'PAGE_1' as string | null,
   blocks: [{ id: 'BLOCK_1', parent_id: 'PAGE_1', content: 'hello' }],
   load: vi.fn(async () => {}),
-  t: vi.fn((k: string) => k),
+  t: vi.fn((k: string) => k) as unknown as TFunction,
 })
 
 describe('useSlashCommandTemplate', () => {

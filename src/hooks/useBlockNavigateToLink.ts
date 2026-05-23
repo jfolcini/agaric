@@ -11,6 +11,7 @@
  * BlockTree later in the render. Extracted for MAINT-128.
  */
 
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 import { notify } from '@/lib/notify'
@@ -20,8 +21,7 @@ import { logger } from '../lib/logger'
 import { getBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-type TFn = (...args: any[]) => any
+type TFn = TFunction
 
 export interface UseBlockNavigateToLinkParams {
   /** Ref to the editor handle. May be null on first render — populated

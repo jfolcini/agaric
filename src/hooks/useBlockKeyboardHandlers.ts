@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { logger } from '@/lib/logger'
@@ -40,8 +41,7 @@ export interface UseBlockKeyboardHandlersParams {
   justCreatedBlockIds: RefObject<Set<string>>
   /** Discard any persisted draft for the given block (called on Escape). */
   discardDraft: (blockId: string) => void
-  // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-  t: (...args: any[]) => any
+  t: TFunction
 }
 
 export interface UseBlockKeyboardHandlersReturn {

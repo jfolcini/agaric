@@ -1,4 +1,5 @@
 import { act, renderHook } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeBlock } from '../../__tests__/fixtures'
@@ -52,7 +53,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     createBelow: vi.fn(async () => 'NEW_1' as string | null),
     justCreatedBlockIds: { current: new Set<string>() },
     discardDraft: vi.fn(),
-    t: vi.fn((key: string) => key),
+    t: vi.fn((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
 }

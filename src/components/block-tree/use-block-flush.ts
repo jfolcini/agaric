@@ -27,6 +27,7 @@
  *   flush logic.
  */
 
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback } from 'react'
 import { notify } from '@/lib/notify'
@@ -38,8 +39,7 @@ import { setTodoState as setTodoStateCmd } from '../../lib/tauri'
 import type { usePageBlockStoreApi } from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
 
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-type TFn = (...args: any[]) => any
+type TFn = TFunction
 
 export interface UseBlockFlushParams {
   /** Ref to the latest editor handle. Populated by BlockTree after
