@@ -142,6 +142,54 @@ test.describe('Autocomplete (PEND-60)', () => {
     await expect(page.getByTestId('autocomplete-item-Journal/2026-*')).toBeVisible()
   })
 
+  // ── PEND-58g E2E-A7 — static value anchors beyond `state:` ──────────
+  //
+  // `priority:`, `due:`, and `scheduled:` share the same static-projection
+  // path as `state:` but expose distinct vocabularies (numeric priority
+  // levels + `none`; the shared DATE_BUCKET_VALUES for both date anchors).
+  // These guard against the popover failing to surface those sources e2e.
+
+  test('priority: anchor lists the numeric priority levels and none', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('priority:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    // Default priority levels are the numeric 1/2/3, with `none` appended
+    // to mirror the cycle.
+    for (const value of ['1', '2', '3', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
+  test('due: anchor lists the shared date-bucket values', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('due:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    for (const value of ['today', 'yesterday', 'overdue', 'this-week', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
+  test('scheduled: anchor lists the shared date-bucket values', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('scheduled:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    for (const value of ['today', 'overdue', 'this-week', 'next-week', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
   test('wires ARIA combobox attrs to the live cmdk listbox / option ids', async ({ page }) => {
     const input = page.getByPlaceholder('Search blocks...')
     await input.click()

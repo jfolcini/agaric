@@ -96,6 +96,35 @@ glob scaffold is by-design parity with the Rust expander (both truncate, never
 error) and has no production caller; pinned the truncate-not-error contract with a
 test + banner rather than churning the unused public API.
 
+## Batch 6 — shipped (Session 820)
+
+Closed the verifiable E2E coverage gaps. **E2E-A1** (negated filters → IPC:
+`not-state:`→`excludedStateFilter`, `not-priority:`→`excludedPriorityFilter`,
+`not-prop:`→`excludedPropertyFilters`), **E2E-A2** (`scheduled:` → `scheduledFilter`,
+both named-bucket and comparison-op shapes), **E2E-A11** (`not-path:` →
+`excludePageGlobs`), and **E2E-A8** (`prop:key=` empty value → `propertyFilters`
+`{key, value:''}` key-presence contract) were added to the E2E-6 IPC-marshalling
+block in `search-filters.spec.ts`. **E2E-A7** (priority / due / scheduled
+autocomplete anchors) added to `autocomplete.spec.ts`. **E2E-A10** (search-history
+per-space isolation, via a pre-boot `localStorage` seed of a foreign space) added to
+`search-history.spec.ts`.
+
+Also fixed a **pre-existing broken e2e test**: `search-filters.spec.ts`'s "adds a tag
+filter via the tag picker" queried `getByRole('button', { name: '#work' })`, but the
+Batch-2 UX-A6 a11y work made the tag items `role="option"`, so the stale assertion
+timed out. It had gone unnoticed because the Playwright browser wasn't installed in
+the dev environment (verified by reverting to the pre-Batch-5 component — it failed
+identically, ruling out a regression). Switched to `getByRole('option', …)`. The full
+search e2e suite (`search-filters`, `autocomplete`, `search-results`,
+`search-history`) is now green — **47 tests**.
+
+**E2E-A3 (Load-More) reclassified as a harness blind spot:** the web+mock
+`search_blocks` returns the entire match set in one page (`has_more:false`, ignores
+cursor/limit), so multi-page Load-More is unreachable here. The added
+`search-results.spec.ts` test pins the single-page contract (rows render, no spurious
+Load-More control); the append-on-load-more path stays covered at the
+`usePaginatedQuery` unit layer. True pagination needs a Tauri-driven harness (E2E-A6).
+
 ---
 
 ## Remaining — Performance / robustness (backend)
@@ -128,19 +157,19 @@ test + banner rather than churning the unused public API.
 
 - **No test at any layer:** the capped (5000) result notice (E2E-A4) and the
   palette→panel `pendingViewQuery` handoff (E2E-A5).
-- **e2e gaps:** `not-state:`/`not-priority:`/`not-prop:` → IPC (E2E-A1),
-  `scheduled:` → IPC (E2E-A2), Load-More pagination (E2E-A3),
-  `not-path:`→`excludePageGlobs` (E2E-A11); priority/due/scheduled autocomplete
-  anchors (E2E-A7); `prop:key=` empty-contract pin (E2E-A8); full SearchPanel at a
-  mobile viewport (E2E-A9); history per-space isolation (E2E-A10).
-- **Weak assertions:** `search-filters.spec.ts` `searchUntil` is near-tautological;
-  several result/alias specs assert only that *a* page title appears, not *which*.
-- **Harness blind spot (E2E-A6):** `<mark>` highlight + the real Rust FTS/regex
-  pipeline are unreachable on the web+mock harness; would need a Tauri-driven e2e
-  harness.
+- **e2e gaps:** full SearchPanel at a mobile viewport (E2E-A9).
+- **Weak assertions:** several result/alias specs assert only that *a* page title
+  appears, not *which*. (The E2E-6 IPC tests are now precise; `searchUntil` is a
+  presence-poll by design — the mock ignores filters, so it can only assert the IPC
+  payload, which it does via `latestFilter`.)
+- **Harness blind spot (E2E-A6, incl. E2E-A3 pagination):** `<mark>` highlight, the
+  real Rust FTS/regex pipeline, and multi-page Load-More are unreachable on the
+  web+mock harness; would need a Tauri-driven e2e harness.
 
 ## Suggested action order (remaining)
 
-1. **Test gaps** (E2E-A1..A5, A7..A11).
-2. **Maintainability** (FE-A18 hook extraction; FE-A19) + the low-priority UX
-   items (UX-A8; UX-A10/A12/A13 need runtime verification).
+1. **Maintainability** (FE-A18 hook extraction; FE-A19) + the low-priority UX items
+   (UX-A8; UX-A10/A12/A13 need runtime verification).
+2. **Remaining test gaps** (E2E-A4 capped notice, E2E-A5 `pendingViewQuery` handoff,
+   E2E-A9 mobile viewport; the weak result-assertion cleanup). E2E-A3/A6 need a
+   Tauri-driven harness.

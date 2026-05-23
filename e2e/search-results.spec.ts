@@ -70,6 +70,35 @@ test.describe('Search results — grouping + interaction (PEND-58f E2E-8)', () =
     await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
   })
 
+  // E2E-A3 — Load-More / pagination.
+  //
+  // The product paginates results via cursor + `PAGINATION_LIMIT` (50) and
+  // renders a "Load more" button (`LoadMoreButton`) only while
+  // `usePaginatedQuery.hasMore` is true (it derives directly from the IPC
+  // `has_more` flag). On the web+mock harness the `search_blocks` handler
+  // (`src/lib/tauri-mock/handlers.ts`) returns the ENTIRE folded match set in
+  // one page with `next_cursor: null, has_more: false` — it ignores the
+  // `cursor` / `limit` args entirely. The seed data also tops out at a
+  // handful of blocks per query, far under the 50-row page size, so a second
+  // page can never be produced here. The Load-More affordance is therefore
+  // unreachable on this harness; we assert its ABSENCE on a query that *does*
+  // return multiple rows (so the check isn't vacuous on an empty result set).
+  // The append-on-load-more growth path is covered at the hook layer
+  // (`usePaginatedQuery` tests).
+  test('multi-result query renders rows but no Load-More control (mock returns a single page)', async ({
+    page,
+  }) => {
+    // "Review" matches 3 seed blocks across 2 pages (see the grouping test
+    // above) — a real, multi-row result set.
+    const region = await runSearch(page, 'Review')
+    // Sanity: rows actually rendered, so the absence assertion below is
+    // meaningful rather than trivially true on a blank panel.
+    await expect(region.locator('[role="option"]')).toHaveCount(3)
+    // The mock answers in one page (`has_more: false`), so `LoadMoreButton`
+    // returns null and no "Load more" button is mounted.
+    await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0)
+  })
+
   // `<mark>` highlight needs the FTS `snippet()` output the mock never
   // produces; covered at the unit layer (SnippetHighlight.test.tsx).
   test.skip('result snippets render <mark> highlight runs', () => {
