@@ -34,7 +34,6 @@ import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { CardButton } from '@/components/ui/card-button'
-import { getCaretRect } from '@/lib/caret-anchor'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import type { FilterToken } from '@/lib/search-query'
@@ -45,12 +44,7 @@ import {
   removeFilterAt,
   serialize,
 } from '@/lib/search-query'
-import {
-  type AutocompleteAnchor,
-  applyAutocompleteReplacement,
-  detectAutocompleteAnchor,
-} from '@/lib/search-query/autocomplete'
-import { useAutocompleteSources } from '../hooks/useAutocompleteSources'
+
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
@@ -70,12 +64,17 @@ import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { EmptyState } from './EmptyState'
 import { SearchHelpDialog } from './help/SearchHelpDialog'
 import { ResultCard } from './ResultCard'
+import {
+  SearchAutocomplete,
+  type SearchAutocompleteHandle,
+  type SearchAutocompleteState,
+} from './SearchPanel/SearchAutocomplete'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { useFilterSyntaxIntroToast } from './SearchPanel/useFilterSyntaxIntroToast'
 import { useTagResolution } from './SearchPanel/useTagResolution'
-import { type AutocompleteAriaIds, AutocompletePopover } from './search/AutocompletePopover'
+
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
@@ -205,12 +204,15 @@ export function SearchPanel(): React.ReactElement {
   const [inputFocused, setInputFocused] = useState(false)
   // UX-1 — search help dialog open state (the `?` toolbar button).
   const [helpOpen, setHelpOpen] = useState(false)
-  // PEND-60 Phase 1 — caret-anchored autocomplete state.
-  const [caretPos, setCaretPos] = useState(0)
-  const [autocompleteSelected, setAutocompleteSelected] = useState<string | null>(null)
-  const [autocompleteRect, setAutocompleteRect] = useState<DOMRect | null>(null)
-  const [autocompleteDismissed, setAutocompleteDismissed] = useState(false)
-  const [autocompleteAriaIds, setAutocompleteAriaIds] = useState<AutocompleteAriaIds | null>(null)
+  // PEND-60 / FE-10 — the caret-anchored autocomplete machine lives in
+  // <SearchAutocomplete> (so caret moves don't re-render this panel).
+  // SearchPanel keeps only the open/aria summary it reports (for the
+  // input's combobox attrs) and the shared pending-caret ref.
+  const [autocomplete, setAutocomplete] = useState<SearchAutocompleteState>({
+    open: false,
+    ariaIds: null,
+  })
+  const autocompleteRef = useRef<SearchAutocompleteHandle>(null)
   const pendingCaretRef = useRef<number | null>(null)
   // Used by every "external" `setQuery` call (history recall, palette
   // handoff, filter-chip adds, autocomplete pick, …). Stores the target
@@ -432,7 +434,9 @@ export function SearchPanel(): React.ReactElement {
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
     setQuery(value)
-    setCaretPos(e.target.selectionStart ?? value.length)
+    // FE-10 — caret tracking lives in <SearchAutocomplete>; feed it the
+    // authoritative caret eagerly so the anchor stays in lockstep.
+    autocompleteRef.current?.syncCaret(e.target.selectionStart ?? value.length)
 
     debounced.cancel()
 
@@ -480,35 +484,12 @@ export function SearchPanel(): React.ReactElement {
   // SSR + multiple mounts.
   const historyListboxId = useId()
 
-  // PEND-60 Phase 1 — caret-anchored autocomplete.
-  // The active anchor is suppressed in regex mode so structured-filter
-  // prefixes inside the regex aren't treated as autocompletable tokens.
-  const currentAnchor = useMemo<AutocompleteAnchor>(
-    () => (toggles.isRegex ? null : detectAutocompleteAnchor(query, caretPos)),
-    [toggles.isRegex, query, caretPos],
-  )
-  const { items: autocompleteItems, loading: autocompleteLoading } = useAutocompleteSources({
-    anchor: currentAnchor,
-    spaceId: currentSpaceId,
-  })
-  const autocompleteOpen =
-    inputFocused &&
-    !autocompleteDismissed &&
-    currentAnchor != null &&
-    (autocompleteItems.length > 0 || autocompleteLoading)
-  // ARIA 1.1 combobox-with-listbox attrs for the search input. The role
-  // and supporting attrs are stable; `aria-expanded` flips true only
-  // once the popover has reported its live cmdk-generated ids (axe
-  // requires `aria-controls` whenever expanded=true on a combobox, and
-  // those ids land one effect-tick after `autocompleteOpen` toggles).
-  //
-  // PEND-73 Phase 3.U2 — when the autocomplete is NOT open and the
-  // history dropdown IS (input empty + focused + entries exist), wire
-  // the combobox attrs to the history listbox so screen readers can
-  // announce the active row as the user arrows through history.
-  // Autocomplete + history are mutually exclusive by visibility gate
-  // (history wants empty query; autocomplete wants caret content).
-  const expanded = autocompleteOpen && autocompleteAriaIds != null
+  // FE-10 — combobox a11y for the input. <SearchAutocomplete> owns the
+  // caret/anchor machine and reports its open + aria-id state up via
+  // `handleAutocompleteStateChange`. History and autocomplete are
+  // mutually exclusive (history wants an empty query, autocomplete wants
+  // caret content), so they share the input's combobox attrs.
+  const expanded = autocomplete.open && autocomplete.ariaIds != null
   const historyVisible = inputFocused && query.length === 0 && historyEntries.length > 0
   const inputComboboxAttrs = useMemo(
     () => ({
@@ -516,11 +497,11 @@ export function SearchPanel(): React.ReactElement {
       'aria-autocomplete': 'list' as const,
       'aria-haspopup': 'listbox' as const,
       'aria-expanded': expanded || historyVisible,
-      ...(expanded && autocompleteAriaIds != null
+      ...(expanded && autocomplete.ariaIds != null
         ? {
-            'aria-controls': autocompleteAriaIds.listboxId,
-            ...(autocompleteAriaIds.activeDescendantId != null
-              ? { 'aria-activedescendant': autocompleteAriaIds.activeDescendantId }
+            'aria-controls': autocomplete.ariaIds.listboxId,
+            ...(autocomplete.ariaIds.activeDescendantId != null
+              ? { 'aria-activedescendant': autocomplete.ariaIds.activeDescendantId }
               : {}),
           }
         : historyVisible
@@ -534,93 +515,26 @@ export function SearchPanel(): React.ReactElement {
             }
           : {}),
     }),
-    [expanded, autocompleteAriaIds, historyVisible, historyListboxId, cycling.activeIndex],
+    [expanded, autocomplete.ariaIds, historyVisible, historyListboxId, cycling.activeIndex],
   )
-  // Dismissal is cleared on every keystroke — typing again re-opens.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger, not a body-read dep — re-arm on every new keystroke.
-  useEffect(() => {
-    setAutocompleteDismissed(false)
-  }, [query])
-  // Default the highlight to the first item; preserve a stale selection
-  // when it survives the new items list.
-  useEffect(() => {
-    if (!autocompleteOpen) {
-      setAutocompleteSelected(null)
-      return
-    }
-    setAutocompleteSelected((prev) =>
-      prev != null && autocompleteItems.some((i) => i.value === prev)
-        ? prev
-        : (autocompleteItems[0]?.value ?? null),
-    )
-  }, [autocompleteOpen, autocompleteItems])
-  // Recompute caret rect when the anchor changes. The rect anchors the
-  // popover to the start of the *value* portion (after the `state:` /
-  // `priority:` prefix), so the popover stays put as the user types
-  // more characters of the value.
-  useEffect(() => {
-    if (!autocompleteOpen || currentAnchor == null) {
-      setAutocompleteRect(null)
-      return
-    }
-    const input = searchInputRef.current
-    if (input == null) return
-    setAutocompleteRect(getCaretRect(input, currentAnchor.anchor))
-  }, [autocompleteOpen, currentAnchor])
-  // Apply pending caret position after a `setQuery` triggered by item
-  // selection. React doesn't sync controlled `<input>` selectionStart
-  // with the new value automatically.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger — we want this to fire after React has reconciled the new value into the DOM.
-  useEffect(() => {
-    if (pendingCaretRef.current == null) return
-    const input = searchInputRef.current
-    if (input == null) return
-    const pos = pendingCaretRef.current
-    input.setSelectionRange(pos, pos)
-    setCaretPos(pos)
-    pendingCaretRef.current = null
-  }, [query])
 
-  const handleAutocompleteSelect = useCallback(
-    (value: string) => {
-      if (currentAnchor == null) return
-      const { nextValue, nextCaret } = applyAutocompleteReplacement(
-        query,
-        caretPos,
-        currentAnchor,
-        value,
-      )
+  // Stable so the child's state-report effect doesn't re-fire on identity.
+  const handleAutocompleteStateChange = useCallback((state: SearchAutocompleteState) => {
+    setAutocomplete(state)
+  }, [])
+
+  // FE-10 — apply a chosen completion. The child computed nextValue +
+  // nextCaret from its own caret/anchor; SearchPanel owns query + debounce.
+  const handleAutocompleteApply = useCallback(
+    (nextValue: string, nextCaret: number) => {
       setQueryAndCaret(nextValue, nextCaret)
-      setAutocompleteSelected(null)
-      setAutocompleteDismissed(true)
       debounced.cancel()
       setCleared(false)
       setTyping(true)
       debounced.schedule(nextValue)
     },
-    [currentAnchor, query, caretPos, debounced, setQueryAndCaret],
+    [debounced, setQueryAndCaret],
   )
-
-  // PEND-60 Phase 1 — autocomplete keyboard helpers. Extracted to keep
-  // `handleInputKeyDown` under biome's cognitive-complexity cap.
-  const moveAutocompleteHighlight = useCallback(
-    (direction: 1 | -1) => {
-      if (autocompleteItems.length === 0) return
-      const idx =
-        autocompleteSelected != null
-          ? autocompleteItems.findIndex((it) => it.value === autocompleteSelected)
-          : -1
-      const startIdx = idx === -1 ? (direction > 0 ? -1 : 0) : idx
-      const nextIdx = (startIdx + direction + autocompleteItems.length) % autocompleteItems.length
-      const next = autocompleteItems[nextIdx]
-      if (next) setAutocompleteSelected(next.value)
-    },
-    [autocompleteItems, autocompleteSelected],
-  )
-  const dismissAutocomplete = useCallback(() => {
-    setAutocompleteDismissed(true)
-    setAutocompleteSelected(null)
-  }, [])
 
   function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -682,28 +596,9 @@ export function SearchPanel(): React.ReactElement {
         return
       }
       // Autocomplete keys win over history recall when the popover is open.
-      if (autocompleteOpen && autocompleteItems.length > 0) {
-        if (e.key === 'ArrowDown') {
-          e.preventDefault()
-          moveAutocompleteHighlight(1)
-          return
-        }
-        if (e.key === 'ArrowUp') {
-          e.preventDefault()
-          moveAutocompleteHighlight(-1)
-          return
-        }
-        if ((e.key === 'Enter' || e.key === 'Tab') && autocompleteSelected != null) {
-          e.preventDefault()
-          handleAutocompleteSelect(autocompleteSelected)
-          return
-        }
-        if (e.key === 'Escape') {
-          e.preventDefault()
-          dismissAutocomplete()
-          return
-        }
-      }
+      // <SearchAutocomplete> owns that state; it returns true if it
+      // consumed the key.
+      if (autocompleteRef.current?.handleKeyDown(e)) return
       // UX-9 — consistent cancel semantics across the two suggestion
       // sources: just as Escape dismisses the autocomplete popover
       // above, Escape cancels an in-progress history recall and
@@ -720,37 +615,8 @@ export function SearchPanel(): React.ReactElement {
       }
       cycling.handleKeyDown(e)
     },
-    [
-      autocompleteOpen,
-      autocompleteItems,
-      autocompleteSelected,
-      moveAutocompleteHighlight,
-      dismissAutocomplete,
-      handleAutocompleteSelect,
-      cycling,
-      setQueryAndCaret,
-    ],
+    [cycling, setQueryAndCaret],
   )
-
-  // PEND-60 Phase 1 — caret-position tracker. `onChange` covers typing;
-  // these native listeners cover everything else (arrow-key moves,
-  // click, focus, selection drag) without threading 4 props through
-  // `SearchHeader` → `SearchInput` → `Input`.
-  useEffect(() => {
-    const input = searchInputRef.current
-    if (input == null) return
-    const sync = () => setCaretPos(input.selectionStart ?? input.value.length)
-    input.addEventListener('select', sync)
-    input.addEventListener('keyup', sync)
-    input.addEventListener('click', sync)
-    input.addEventListener('focus', sync)
-    return () => {
-      input.removeEventListener('select', sync)
-      input.removeEventListener('keyup', sync)
-      input.removeEventListener('click', sync)
-      input.removeEventListener('focus', sync)
-    }
-  }, [])
 
   // FE-4 — a monotonic "navigation generation". Each click claims the
   // next generation; only the latest may resolve the spinner / perform
@@ -929,20 +795,19 @@ export function SearchPanel(): React.ReactElement {
           />
         }
       />
-      {/* PEND-60 Phase 1 — caret-anchored value autocomplete. Portals
-          to body via Radix, so its placement in the tree is positional
-          only. */}
-      <AutocompletePopover
-        open={autocompleteOpen}
-        anchorRect={autocompleteRect}
-        items={autocompleteItems}
-        selectedValue={autocompleteSelected}
-        onSelectedValueChange={setAutocompleteSelected}
-        onSelect={handleAutocompleteSelect}
-        label={t('search.autocompleteListLabel')}
-        loading={autocompleteLoading}
-        loadingLabel={t('search.searching')}
-        onAriaIdsChange={setAutocompleteAriaIds}
+      {/* PEND-60 / FE-10 — caret-anchored value autocomplete. Owns its
+          own caret state so caret moves don't re-render this panel; the
+          popover portals to body via Radix (placement is positional). */}
+      <SearchAutocomplete
+        ref={autocompleteRef}
+        inputRef={searchInputRef}
+        query={query}
+        suppressed={toggles.isRegex}
+        spaceId={currentSpaceId}
+        focused={inputFocused}
+        pendingCaretRef={pendingCaretRef}
+        onApply={handleAutocompleteApply}
+        onStateChange={handleAutocompleteStateChange}
       />
 
       {/* UX-269 — CJK limitation notice sits directly below the input so
