@@ -29,6 +29,31 @@ import { useSpaceStore } from '../../stores/space'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
+// PEND-58f FE-3 — the per-group result listbox is now virtualized
+// (`@tanstack/react-virtual`). jsdom gives the scroll container zero
+// height, which would collapse the virtual window to zero rows; mirror the
+// AgendaResults / HistoryView test mock so the virtualizer yields every row
+// and the existing `getAllByRole('option')` / keyboard-roving assertions
+// (which capture `options` once and index into them) still see every row.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
+    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    let start = 0
+    const items = sizes.map((size, index) => {
+      const item = { index, key: index, start, size, end: start + size }
+      start += size
+      return item
+    })
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => start,
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      measureElement: vi.fn(),
+    }
+  },
+}))
+
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
 vi.mock('../../lib/tauri', async (importOriginal) => {

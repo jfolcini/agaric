@@ -28,6 +28,28 @@ import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
+// PEND-58f FE-3 — virtualized result listbox: render every row in jsdom
+// (zero-height scroll container would otherwise window to zero rows) so the
+// match-offset `<mark>` assertion below can find the rendered row.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
+    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    let start = 0
+    const items = sizes.map((size, index) => {
+      const item = { index, key: index, start, size, end: start + size }
+      start += size
+      return item
+    })
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => start,
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      measureElement: vi.fn(),
+    }
+  },
+}))
+
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/tauri')>()
   return {
