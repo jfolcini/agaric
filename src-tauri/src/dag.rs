@@ -43,7 +43,10 @@ struct ChainRow {
     prev_seq: Option<i64>,
     // `depth` is only used to guarantee walk order via the outer ORDER BY.
     // Unused by the post-processing loop but kept for debugging clarity.
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "selected only to drive the outer ORDER BY; never read in Rust"
+    )]
     depth: i64,
 }
 

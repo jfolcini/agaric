@@ -75,7 +75,7 @@ case-by-case review.
 |------|-------:|-----------|----------------|
 | `clippy::too_many_arguments` | 41 | Keep (mostly) | Tauri command handlers take many fields. Optionally fold related params into request structs; low priority. |
 | `unused_imports` | 4 | Keep (was 23) | **Burned down Session 823.** The 19 file-level `#![allow]` in `commands/tests/*` were removed (4 genuinely-unused imports deleted/narrowed; fmt + clippy + nextest green). The remaining 4 are item-level `pub(crate) use` re-exports in `snapshot/mod.rs` (2) + `sync_daemon/mod.rs` (2) consumed only by a separate integration-test crate — can't be `#[cfg(test)]`-gated without breaking that crate, so the allow is justified and stays. |
-| `dead_code` | ~23 | **Audit** | Spread across ~14 files. Some is intentional Phase-2 scaffolding (e.g. `filters/primitive.rs` `SearchProjection` — see PEND-58g BE-A7). For each: either wire it up, `#[cfg(test)]`-scope it, or delete. Convert survivors to `#[expect(dead_code, reason = "…")]` so they self-report when they go live. |
+| `dead_code` | ~19 | Audited Session 824 | Removed the genuinely-dead `apply_purge_block_sql_only` wrapper (no callers); converted 3 never-read intentional keeps to `#[expect(dead_code, reason)]` (orchestrator `materializer` field, `dag.rs depth`, `db.rs label`) so they self-report when wired. The remaining ~19 `#[allow(dead_code)]` are confirmed-justified keeps: documented scaffolding (`pagination` parity-test consts, `tag_inheritance` macro-embedded const), test-shim modules (`gcal_push/*`), platform-conditional variants (`mcp::SocketKind`), already-`cfg_attr(not(test))`-scoped (`retry_queue::pending_count`, `sync_daemon` handle), specta-read fields (`error::AppErrorSchema`), test-only-but-kept-as-future-API (`recurrence::handle_recurrence`), and the `is_empty`/`len` symmetry helper (`mcp::activity`). |
 | `clippy::cast_possible_truncation` | 11 | Audit | Numeric narrowing casts. Replace with `try_into()` + explicit handling, or document the invariant that makes truncation impossible. |
 | `clippy::cast_possible_wrap` | 1 | Audit | Same family. |
 | `deprecated` | 1 | **Debt (tracked)** | `commands/gcal.rs:552` uses the deprecated `ShellExt::open`. Migrate to `tauri-plugin-opener` (MAINT-227) once the dep lands, then drop the allow. |
@@ -106,8 +106,10 @@ part of the burn-down, not as a mechanical mass-rewrite.
 3. ~~**Rust `unused_imports` (23)**~~ — DONE (Session 823): the 19 file-level test
    allows were removed and 4 unused imports deleted/narrowed; the 4 remaining
    item-level re-export allows are justified (integration-test-crate consumers).
-4. **Rust `dead_code` (~23)** — wire-up / scope / delete; convert survivors to
-   `#[expect]` with a reason.
+4. ~~**Rust `dead_code` (~23)**~~ — DONE (Session 824): deleted 1 genuinely-dead
+   wrapper, converted 3 never-read keeps to `#[expect(dead_code, reason)]`; the
+   remaining ~19 `#[allow(dead_code)]` are confirmed-justified keeps (documented
+   scaffolding, test-shims, platform variants, specta-read fields).
 5. **`noExcessiveCognitiveComplexity` (14)** — extract sub-functions.
 6. **`cast_possible_truncation`/`_wrap` (12)** — `try_into` or document invariants.
 7. **MAINT-227** — `tauri-plugin-opener` migration removes the lone `deprecated`.

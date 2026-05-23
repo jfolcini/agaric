@@ -1816,14 +1816,6 @@ async fn apply_purge_block_via_loro(
 /// rather than being absorbed into a projection. Every row that
 /// descends from the purged block must go. `depth < 100` is the
 /// runaway-recursion guard.
-#[allow(dead_code)]
-async fn apply_purge_block_sql_only(
-    conn: &mut sqlx::SqliteConnection,
-    p: PurgeBlockPayload,
-) -> Result<(), AppError> {
-    purge_block_sql_cascade(conn, &p).await
-}
-
 async fn purge_block_sql_cascade(
     conn: &mut sqlx::SqliteConnection,
     p: &PurgeBlockPayload,
