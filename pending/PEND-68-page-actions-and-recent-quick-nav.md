@@ -187,7 +187,7 @@ Segment the bar into a **pinned destinations zone** (nav chrome) and a
 
 **Layout** (left → right, inside the existing `<nav>`):
 
-```
+```text
 [ 📄 Pages ][ # Tags ][ ◯ Graph ][ 🔍 Search ]  │  Recent A   Recent B   Recent C …
 └──── sticky, non-scrolling destinations ────┘  div  └──── scrollable recents (mask) ──┘
 ```
@@ -342,7 +342,7 @@ Segment the bar into a **pinned destinations zone** (nav chrome) and a
 2. **Quick-nav destination set — fixed vs. configurable.** v1 ships a fixed
    allowlist (Pages, Tags, Graph, Search [+ Journal]). User-pinnable destinations
    (drag-to-pin, à la a bookmarks bar) is a tempting follow-up but its own design
-   + storage question — defer.
+   and storage question — defer.
 3. **Mobile.** Keep the bar desktop-only (mobile bottom-nav covers destinations),
    or surface a compact destinations row on mobile too? Default: desktop-only.
 4. **Component rename.** `RecentPagesStrip` → `QuickAccessBar` (cleaner) vs. keep
