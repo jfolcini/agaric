@@ -10,8 +10,6 @@
 //! block content for each row so `search_blocks` actually returns
 //! matching rows.
 
-#![allow(unused_imports)]
-
 use crate::commands::queries::{search_blocks_inner, SearchFilter};
 use crate::db::init_pool;
 use sqlx::SqlitePool;

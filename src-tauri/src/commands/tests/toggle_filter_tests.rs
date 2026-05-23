@@ -22,14 +22,12 @@
 //!   tokens never see a boundary.
 //! - UTF-16 offset correctness for CJK + emoji content.
 
-#![allow(unused_imports)]
-
 use super::common::{
     assign_all_to_test_space, ensure_test_space, insert_block, test_pool, TEST_SPACE_ID,
 };
 use crate::commands::{search_blocks_inner, MatchOffset, SearchFilter};
 use crate::error::AppError;
-use crate::fts::{rebuild_fts_index, SearchToggles};
+use crate::fts::rebuild_fts_index;
 
 /// Helper: build a default `SearchFilter` scoped to the test space, with
 /// the toggle flags applied per `case_sensitive` / `whole_word` /

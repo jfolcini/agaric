@@ -74,7 +74,7 @@ case-by-case review.
 | Lint | ~Count | Judgement | Notes / action |
 |------|-------:|-----------|----------------|
 | `clippy::too_many_arguments` | 41 | Keep (mostly) | Tauri command handlers take many fields. Optionally fold related params into request structs; low priority. |
-| `unused_imports` | 23 | **Debt** | ~19 in `commands/tests/*` + 2 each in `sync_daemon/mod.rs` / `snapshot/mod.rs` (likely `cfg`-gated platform imports). Investigate: remove the import (and the allow) where genuinely unused; gate with `#[cfg(...)]` where platform-specific. |
+| `unused_imports` | 4 | Keep (was 23) | **Burned down Session 823.** The 19 file-level `#![allow]` in `commands/tests/*` were removed (4 genuinely-unused imports deleted/narrowed; fmt + clippy + nextest green). The remaining 4 are item-level `pub(crate) use` re-exports in `snapshot/mod.rs` (2) + `sync_daemon/mod.rs` (2) consumed only by a separate integration-test crate — can't be `#[cfg(test)]`-gated without breaking that crate, so the allow is justified and stays. |
 | `dead_code` | ~23 | **Audit** | Spread across ~14 files. Some is intentional Phase-2 scaffolding (e.g. `filters/primitive.rs` `SearchProjection` — see PEND-58g BE-A7). For each: either wire it up, `#[cfg(test)]`-scope it, or delete. Convert survivors to `#[expect(dead_code, reason = "…")]` so they self-report when they go live. |
 | `clippy::cast_possible_truncation` | 11 | Audit | Numeric narrowing casts. Replace with `try_into()` + explicit handling, or document the invariant that makes truncation impossible. |
 | `clippy::cast_possible_wrap` | 1 | Audit | Same family. |
@@ -103,8 +103,9 @@ part of the burn-down, not as a mechanical mass-rewrite.
    each omitted dep is intentional, fix the wrong ones.
 2. **Prod `noExplicitAny` (11)** + **`noDangerouslySetInnerHtml` (2)** — small,
    high-value: type the `any`s; confirm the HTML inputs are sanitized.
-3. **Rust `unused_imports` (23)** — convert to `#[expect]`, delete what's truly
-   unused, `cfg`-gate platform imports.
+3. ~~**Rust `unused_imports` (23)**~~ — DONE (Session 823): the 19 file-level test
+   allows were removed and 4 unused imports deleted/narrowed; the 4 remaining
+   item-level re-export allows are justified (integration-test-crate consumers).
 4. **Rust `dead_code` (~23)** — wire-up / scope / delete; convert survivors to
    `#[expect]` with a reason.
 5. **`noExcessiveCognitiveComplexity` (14)** — extract sub-functions.

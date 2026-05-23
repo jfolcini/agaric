@@ -14,8 +14,6 @@
 //!   parses the literal `<mark>...</mark>` markers as React nodes and
 //!   never invokes `dangerouslySetInnerHTML`.
 
-#![allow(unused_imports)]
-
 use super::super::{MatchOffset, SearchBlockRow, SearchFilter};
 use crate::ulid::ActiveBlockId;
 use serde_json::json;

@@ -1,9 +1,6 @@
-#![allow(unused_imports)]
 use super::super::*;
 use super::common::*;
-use crate::op::{
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload,
-};
+use crate::op::{DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload};
 use crate::op_log;
 
 // ======================================================================

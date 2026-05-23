@@ -6,8 +6,6 @@
 //! end-to-end so the pre-commit snapshot + post-commit notify
 //! pattern is verified from every caller.
 
-#![allow(unused_imports)]
-
 use super::super::*;
 use super::common::*;
 use crate::gcal_push::connector::{DirtyEvent, GcalConnectorHandle};
