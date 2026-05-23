@@ -528,10 +528,10 @@ See *Tests* section.
 
 ## Related
 
-- `pending/PEND-56-pages-view-density-sort.md` — density rows the selection UI overlays;
-  sort foundation saved views snapshot.
-- `pending/PEND-58-pages-view-compound-filters.md` — filter primitives saved views
-  snapshot.
+- PEND-56 (density rows + sort foundation the selection UI overlays / saved-views
+  snapshot) — **shipped**; plan file deleted on completion (see `git log` / `SESSION-LOG.md`).
+- PEND-58 (compound filters; filter primitives saved views snapshot) — **shipped**;
+  plan file deleted on completion.
 - `src/hooks/useListMultiSelect.ts` — **reused verbatim** (with one additive
   `preserveOnGrowth` option).
 - `src/components/BatchActionToolbar.tsx` — **reused verbatim** as the wrapper for the

@@ -1,7 +1,16 @@
 # PEND-58g — Search-view deep-review findings, round 2 (post-verification)
 
-Branch: extends `pend-58f-search-view-hardening` (the PEND-58f hardening already
-landed + pushed at `cbe9db64`). Separate follow-up; same scope as PEND-58f.
+Branch: `pend-58f-search-view-hardening` (the PEND-58f hardening already landed +
+pushed at `cbe9db64`).
+
+**This is the single search-view plan of record.** It supersedes PEND-58f, which
+is fully implemented (DSL-1..10, FE-1..14, UX-1..15, SQL-1..9, BE-1..10, DOC-1..11,
+the E2E suite, and the FE-2/FE-3/FE-9/FE-10 performance trilogy — all shipped this
+session; PEND-58f's only deferred item, the harness-limited `<mark>` e2e, is carried
+forward below as E2E-A6). PEND-58f's plan file was deleted per the `pending/`
+delete-on-completion convention; all *remaining* search-view work is consolidated
+here.
+
 Scope: the full **search view** — FTS/SQL layer, backend command/IPC, the client
 search-query DSL, the SearchPanel/SearchSheet UI tree (incl. the new
 `<SearchAutocomplete>` extraction + results virtualization), stores/hooks, docs,
