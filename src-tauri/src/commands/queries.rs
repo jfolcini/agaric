@@ -512,6 +512,24 @@ pub async fn search_blocks_inner(
         });
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
+
+    // SQL-A1 (PEND-58f) — align the over-cap contract with the
+    // partitioned path (BE-2). `PageRequest::new` accepts `1..=200`, but
+    // the FTS scan ceiling is `MAX_SEARCH_RESULTS` (100); without this
+    // check a cursor caller passing 101–200 would have been silently
+    // capped by `search_fts`'s `min(limit, MAX_SEARCH_RESULTS)` while the
+    // partitioned command REJECTS the same over-limit ask. Reject here so
+    // both surfaces agree (the `min` in `search_fts` stays as
+    // defence-in-depth). Mirrors the BE-2 `AppError::Validation` shape in
+    // `search_blocks_partitioned_inner`.
+    let max_results = fts::MAX_SEARCH_RESULTS;
+    if page.limit > max_results {
+        return Err(AppError::Validation(format!(
+            "search limit must be in [1, {max_results}]; got {}",
+            page.limit
+        )));
+    }
+
     let tag_ids_slice: Option<&[String]> = if filter.tag_ids.is_empty() {
         None
     } else {

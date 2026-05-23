@@ -169,8 +169,36 @@ pub async fn search_with_toggles(
         return Ok(response);
     }
 
-    // FTS5 candidate set (today's path).
-    let mut response = super::search::search_fts(
+    if !toggles.any() {
+        // All toggles off → straight FTS path verbatim (zero overhead).
+        return super::search::search_fts(
+            pool,
+            query,
+            page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        )
+        .await;
+    }
+
+    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // on. The previous shape called `search_fts` (which fixed
+    // `has_more` / `next_cursor` on a `limit + 1` candidate window) and
+    // THEN dropped non-matching rows, which under-filled the page and
+    // permanently lost survivors dropped inside the window (the next
+    // page's cursor pointed past them). Instead use
+    // `fts_fetch_post_filtered_page`, which walks candidate windows,
+    // applies the post-filter per row, and computes `has_more` /
+    // `next_cursor` from the SURVIVOR set so the page is full up to
+    // `limit` and no survivor is skipped across pages.
+    let pattern = compose_literal_pattern(query, toggles);
+    let re = build_regex(&pattern)?;
+    super::search::fts_fetch_post_filtered_page(
         pool,
         query,
         page,
@@ -181,20 +209,9 @@ pub async fn search_with_toggles(
         exclude_page_globs,
         block_type_filter,
         metadata,
+        |row| post_filter_row(row, &re),
     )
-    .await?;
-
-    if !toggles.any() {
-        // All toggles off → return the FTS path verbatim (zero overhead).
-        return Ok(response);
-    }
-
-    // `case_sensitive` and/or `whole_word` on → compile a post-filter
-    // regex from the literal query and narrow the FTS candidate set.
-    let pattern = compose_literal_pattern(query, toggles);
-    let re = build_regex(&pattern)?;
-    apply_post_filter(&mut response.items, &re);
-    Ok(response)
+    .await
 }
 
 /// PEND-61 Phase 1 / PEND-69 F1 — partitioned sibling of
@@ -339,42 +356,79 @@ pub(crate) async fn search_with_toggles_partitioned(
         });
     }
 
-    // PEND-69 F5 — when the toggle bundle will trigger the post-filter
-    // sweep, the snippets emitted by `snippet(fts_blocks, …)` are
-    // clobbered to `None` by `apply_post_filter`. Omit the SQL
-    // function call entirely in that case so SQLite skips the per-row
-    // tokenizer walk.
-    let with_snippet = !toggles.any();
+    if !toggles.any() {
+        // All toggles off → straight FTS partitioned scan, snippets kept
+        // (zero overhead).
+        return super::search::search_fts_partitioned(
+            pool,
+            query,
+            page_limit,
+            block_limit,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            metadata,
+            true,
+            cancel,
+        )
+        .await;
+    }
 
-    // FTS5 candidate set — two parallel scans (page-only + unrestricted).
+    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // on. This path has NO cursor (the palette doesn't paginate), so it
+    // cannot fetch successive windows like the cursor path. The previous
+    // shape fetched only `limit + 1` candidates per partition and then
+    // dropped non-matching rows, which under-filled each partition AND
+    // derived `has_more` from the pre-filter count (so a partition could
+    // report `has_more = true` while rendering far fewer than `limit`
+    // survivors). Instead OVER-FETCH up to the `MAX_SEARCH_RESULTS`
+    // ceiling per partition BEFORE the post-filter, then truncate to the
+    // partition limit and derive `has_more` from the SURVIVOR count.
+    //
+    // This is best-effort within the over-fetch ceiling: lacking a
+    // cursor, if a partition's survivors are sparser than `limit` within
+    // the newest `MAX_SEARCH_RESULTS` candidates, matches beyond that
+    // ceiling are not surfaced (documented trade-off, same spirit as the
+    // regex-mode `REGEX_PRE_FILTER_CAP`).
+    let overfetch = u32::try_from(super::search::MAX_SEARCH_RESULTS).unwrap_or(u32::MAX);
+
+    // PEND-69 F5 — snippets are clobbered to `None` by the post-filter,
+    // so omit the SQL `snippet()` call (skips the per-row tokenizer walk).
     let mut scan = super::search::search_fts_partitioned(
         pool,
         query,
-        page_limit,
-        block_limit,
+        overfetch,
+        overfetch,
         parent_id,
         tag_ids,
         space_id,
         include_page_globs,
         exclude_page_globs,
         metadata,
-        with_snippet,
+        false,
         cancel,
     )
     .await?;
 
-    if !toggles.any() {
-        // All toggles off → return the FTS path verbatim (zero overhead).
-        return Ok(scan);
-    }
-
-    // `case_sensitive` and/or `whole_word` on → compile a post-filter
-    // regex from the literal query and narrow each partition's
-    // candidate set.
     let pattern = compose_literal_pattern(query, toggles);
     let re = build_regex(&pattern)?;
     apply_post_filter(&mut scan.pages, &re);
     apply_post_filter(&mut scan.blocks, &re);
+
+    // Derive `has_more` from the SURVIVOR count against the caller's real
+    // per-partition limit, then truncate to that limit. `limit == 0` is a
+    // degenerate ask (mirrors the FTS path's guard) — nothing to "have
+    // more" of.
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    let pages_has_more = page_limit_usize > 0 && scan.pages.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && scan.blocks.len() > block_limit_usize;
+    scan.pages.truncate(page_limit_usize);
+    scan.blocks.truncate(block_limit_usize);
+    scan.pages_has_more = pages_has_more;
+    scan.blocks_has_more = blocks_has_more;
     Ok(scan)
 }
 
@@ -435,31 +489,41 @@ pub(crate) fn build_regex(pattern: &str) -> Result<Regex, AppError> {
 /// set to only those rows whose `content` matches, and attaches
 /// UTF-16 match offsets.
 fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
-    rows.retain_mut(|row| {
-        let Some(content) = row.content.as_deref() else {
-            // No content → cannot match a post-filter regex. Drop.
-            return false;
-        };
-        let byte_matches: Vec<(usize, usize)> = re
-            .find_iter(content)
-            // Drop zero-width matches — they don't produce a
-            // meaningful highlight (locked in by the plan).
-            .filter(|m| m.end() > m.start())
-            .take(MAX_OFFSETS_PER_BLOCK)
-            .map(|m| (m.start(), m.end()))
-            .collect();
-        if byte_matches.is_empty() {
-            return false;
-        }
-        let utf16 = byte_to_utf16_offsets(content, &byte_matches);
-        row.match_offsets = utf16;
-        // Clear the FTS snippet — the frontend prefers offsets when
-        // present, but clearing the snippet means a pre-PEND-55
-        // frontend bundle won't double-render the highlight via two
-        // paths.
-        row.snippet = None;
-        true
-    });
+    rows.retain_mut(|row| post_filter_row(row, re));
+}
+
+/// SQL-A3 / BE-A1 (PEND-58f) — per-row post-filter predicate, extracted
+/// from [`apply_post_filter`] so the filter-aware cursor pagination loop
+/// ([`super::search::fts_fetch_post_filtered_page`]) can apply the same
+/// logic one row at a time while tracking each survivor's rank.
+///
+/// Returns `true` to KEEP the row (after mutating its `match_offsets` and
+/// clearing `snippet`) and `false` to DROP it (no content, or no
+/// non-zero-width match).
+fn post_filter_row(row: &mut SearchBlockRow, re: &Regex) -> bool {
+    let Some(content) = row.content.as_deref() else {
+        // No content → cannot match a post-filter regex. Drop.
+        return false;
+    };
+    let byte_matches: Vec<(usize, usize)> = re
+        .find_iter(content)
+        // Drop zero-width matches — they don't produce a
+        // meaningful highlight (locked in by the plan).
+        .filter(|m| m.end() > m.start())
+        .take(MAX_OFFSETS_PER_BLOCK)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    if byte_matches.is_empty() {
+        return false;
+    }
+    let utf16 = byte_to_utf16_offsets(content, &byte_matches);
+    row.match_offsets = utf16;
+    // Clear the FTS snippet — the frontend prefers offsets when
+    // present, but clearing the snippet means a pre-PEND-55
+    // frontend bundle won't double-render the highlight via two
+    // paths.
+    row.snippet = None;
+    true
 }
 
 /// Convert `(byte_start, byte_end)` pairs into UTF-16 code-unit offsets.
@@ -605,7 +669,21 @@ async fn regex_mode_query(
     // applied. We do not use cursor pagination on this path (the
     // candidate set is bounded by `REGEX_PRE_FILTER_CAP`); the
     // `next_cursor` field returns `None`.
-    let limit = page.limit.clamp(1, 100);
+    //
+    // SQL-A2 (PEND-58f) — the upper clamp is `MAX_SEARCH_RESULTS + 1`,
+    // NOT `MAX_SEARCH_RESULTS`. The partitioned regex caller
+    // (`search_with_toggles_partitioned`) passes a `limit + 1` PROBE
+    // (`probe_limit_i64`) so it can detect overflow against its own
+    // per-partition cap. With the previous `clamp(1, 100)` that probe
+    // collapsed back to 100 at the cap, so a partition could return at
+    // most 100 survivors and `items.len() > page_limit` (100 > 100) was
+    // never true — `has_more` was dead at exactly `MAX_SEARCH_RESULTS`.
+    // Allowing one extra row through lets the probe see the (cap+1)th
+    // match. The cursor regex path (via `search_with_toggles`) is still
+    // capped at `MAX_SEARCH_RESULTS`: its `page.limit` is the validated
+    // user limit, which SQL-A1 rejects above 100, so the clamp never
+    // lifts it past the cap there.
+    let limit = page.limit.clamp(1, super::search::MAX_SEARCH_RESULTS + 1);
 
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,

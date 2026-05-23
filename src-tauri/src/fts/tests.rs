@@ -7086,3 +7086,557 @@ async fn search_empty_space_id_matches_nothing() {
         "space_id=\"\" must match no blocks"
     );
 }
+
+// ======================================================================
+// PEND-58f BE-A10 — filter-aware pagination (SQL-A1/A2/A3) verification
+// ======================================================================
+//
+// These tests exercise the Cluster-2 pagination fixes:
+//   - SQL-A3 / BE-A1 — `fts_fetch_post_filtered_page`: the case/word
+//     toggle cursor path must return FULL pages up to `limit`, never drop
+//     a survivor across pages, never duplicate one, and report `has_more`
+//     from the SURVIVOR set (not the pre-filter window).
+//   - SQL-A2 — partitioned regex `has_more` correct at exactly the cap.
+//   - SQL-A1 — `search_blocks_inner` rejects `limit > MAX_SEARCH_RESULTS`.
+//   - POST_FILTER_MAX_WINDOWS — a pathologically selective filter stops at
+//     the window bound and reports `has_more = false` without hanging.
+//
+// Design note (rank determinism): the case-sensitive post-filter lets a
+// survivor ("Cat …") and a drop ("cat …") share IDENTICAL FTS tokens and
+// length — the trigram tokenizer is `case_sensitive 0`, so both produce
+// the same trigrams and therefore the same bm25 rank. With ranks tied,
+// the `(rank ASC, id ASC)` keyset collapses to pure `id` order, so the
+// `pt_block_id(index)` zero-padded index fully determines pagination
+// order and the assertions are deterministic.
+
+/// Seed `count` blocks alternating between case-sensitive SURVIVORS
+/// (content `"Cat row …"`) and DROPS (content `"cat row …"`). All blocks
+/// are FTS candidates for the keyword `cat` (trigram tokenizer is
+/// case-insensitive); under `case_sensitive = true` searching `"Cat"`
+/// only the capitalised rows survive the post-filter.
+///
+/// `survivor(index)` is `index % 2 == 0`. IDs are `pt_block_id(index)`
+/// (lex-sortable by index). Returns the survivor IDs in id-ascending
+/// order so callers can assert the exact survivor union.
+async fn seed_case_toggle_corpus(pool: &SqlitePool, count: u32) -> Vec<String> {
+    let mut survivors: Vec<String> = Vec::new();
+    for index in 0..count {
+        let id = pt_block_id(index);
+        // Identical token shape + length across survivor/drop so bm25
+        // ranks tie and the keyset reduces to pure `id` order.
+        let prefix = if index % 2 == 0 { "Cat" } else { "cat" };
+        let content = format!("{prefix} row alpha bravo");
+        insert_block(pool, &id, "content", &content, None, Some(i64::from(index))).await;
+        if index % 2 == 0 {
+            survivors.push(id);
+        }
+    }
+    rebuild_fts_index(pool).await.unwrap();
+    survivors
+}
+
+/// BE-A10 (1) — SQL-A3 cursor pagination: full pages, no under-fill, no
+/// dropped rows, no duplicates across pages.
+///
+/// Seed 20 blocks; 10 survive the case-sensitive post-filter, 10 drop.
+/// Page through with `limit = 3`. While more survivors remain each page
+/// must be FULL (== limit) and `has_more = true`; the union across all
+/// pages must equal the 10 survivors EXACTLY ONCE.
+#[tokio::test]
+async fn be_a10_sqla3_cursor_pagination_full_pages_no_drops_no_dupes() {
+    let (pool, _dir) = test_pool().await;
+    let expected_survivors = seed_case_toggle_corpus(&pool, 20).await;
+    assert_eq!(
+        expected_survivors.len(),
+        10,
+        "fixture invariant: 10 survivors"
+    );
+
+    let limit = 3;
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+
+    loop {
+        let page = PageRequest::new(cursor.clone(), Some(limit)).unwrap();
+        let result = search_with_toggles(
+            &pool,
+            "Cat",
+            &page,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            SearchToggles {
+                case_sensitive: true,
+                whole_word: false,
+                is_regex: false,
+            },
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+        )
+        .await
+        .unwrap();
+
+        let remaining = expected_survivors.len() - collected.len();
+        if result.has_more {
+            // While more survivors remain the page MUST be full to limit —
+            // this is the under-fill regression guard.
+            assert_eq!(
+                result.items.len(),
+                usize::try_from(limit).unwrap(),
+                "page {pages} must be FULL to limit while more survivors remain"
+            );
+            assert!(
+                result.next_cursor.is_some(),
+                "has_more=true page must carry a next_cursor"
+            );
+        } else {
+            // Final page: at most `limit`, and exactly the leftover count.
+            assert_eq!(
+                result.items.len(),
+                remaining,
+                "final page must return exactly the remaining survivors"
+            );
+            assert!(
+                result.next_cursor.is_none(),
+                "final page must NOT carry a next_cursor"
+            );
+        }
+
+        // Every returned row must be a real survivor (post-filter kept the
+        // right rows) and must carry match offsets / no snippet.
+        for item in &result.items {
+            assert!(
+                item.match_offsets.iter().any(|o| o.end > o.start),
+                "survivor must carry a non-empty match offset"
+            );
+            assert!(
+                item.snippet.is_none(),
+                "post-filter survivor must have its FTS snippet cleared"
+            );
+            collected.push(item.id.clone().into());
+        }
+
+        pages += 1;
+        if !result.has_more {
+            break;
+        }
+        cursor = result.next_cursor;
+        assert!(pages <= 10, "too many pages — possible infinite loop");
+    }
+
+    // Union across pages == every survivor exactly once: none dropped,
+    // none duplicated.
+    let unique: std::collections::HashSet<&str> = collected.iter().map(String::as_str).collect();
+    assert_eq!(
+        collected.len(),
+        expected_survivors.len(),
+        "no survivor dropped and none duplicated across pages"
+    );
+    assert_eq!(
+        unique.len(),
+        expected_survivors.len(),
+        "no duplicate survivor across pages"
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted, expected_survivors,
+        "page union must equal the exact survivor set"
+    );
+}
+
+/// BE-A10 (2) — SQL-A3 boundary: survivors exactly == `limit` →
+/// `has_more == false` and `next_cursor == None`.
+///
+/// Seed 6 blocks (3 survivors, 3 drops) and request `limit = 3`. The
+/// single page must hold all 3 survivors, report `has_more = false`, and
+/// emit no cursor (the `limit + 1`-th survivor probe finds nothing past
+/// the candidate window).
+#[tokio::test]
+async fn be_a10_sqla3_boundary_survivors_equal_limit_no_more() {
+    let (pool, _dir) = test_pool().await;
+    let expected_survivors = seed_case_toggle_corpus(&pool, 6).await;
+    assert_eq!(
+        expected_survivors.len(),
+        3,
+        "fixture invariant: 3 survivors"
+    );
+
+    let page = PageRequest::new(None, Some(3)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        3,
+        "boundary page returns all 3 survivors"
+    );
+    assert!(
+        !result.has_more,
+        "survivors == limit must report has_more = false"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "survivors == limit must emit no next_cursor"
+    );
+    let mut ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    ids.sort();
+    assert_eq!(
+        ids, expected_survivors,
+        "exact survivor set on the boundary page"
+    );
+}
+
+/// BE-A10 (2b) — SQL-A3 multi-window fill: when survivors are SPARSER than
+/// the candidate window, a single page must scan SUCCESSIVE windows to
+/// fill (or exhaust). Seeds 250 candidates (all FTS-match `cat`) but only
+/// two case-sensitive survivors at indices 120 and 245 — past the first
+/// `POST_FILTER_WINDOW` (100) candidates, so window 1 yields zero
+/// survivors and the loop MUST advance to windows 2 and 3 to find them.
+/// Without the windowed over-fetch this page would render empty.
+#[tokio::test]
+async fn be_a10_sqla3_multi_window_fill_finds_sparse_survivors() {
+    let (pool, _dir) = test_pool().await;
+    let survivor_indices = [120u32, 245u32];
+    let count: u32 = 250;
+    for index in 0..count {
+        let id = pt_block_id(index);
+        // Only the two designated indices are capitalised survivors; the
+        // rest are lowercase drops. All match the FTS `cat` trigram.
+        let prefix = if survivor_indices.contains(&index) {
+            "Cat"
+        } else {
+            "cat"
+        };
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("{prefix} row alpha bravo"),
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let expected: Vec<String> = survivor_indices.iter().map(|i| pt_block_id(*i)).collect();
+
+    // limit = 2 (== survivor count): the loop must walk window 1 (empty),
+    // window 2 (survivor #1), window 3 (survivor #2 + FTS exhaustion).
+    let page = PageRequest::new(None, Some(2)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    ids.sort();
+    assert_eq!(
+        ids, expected,
+        "multi-window scan must surface both sparse survivors (not under-fill)"
+    );
+    assert!(
+        !result.has_more,
+        "exactly the two survivors exist → has_more = false"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "no more survivors → no cursor"
+    );
+}
+
+/// BE-A10 (3) — FTS plain `has_more` correct at exactly
+/// `limit == MAX_SEARCH_RESULTS`.
+///
+/// Seed `MAX_SEARCH_RESULTS + 1` matching blocks and request a page of
+/// `MAX_SEARCH_RESULTS` (all toggles off → straight FTS path). The page
+/// must fill to the cap and report `has_more = true` (the `limit + 1`
+/// candidate probe sees the extra row).
+#[tokio::test]
+async fn be_a10_fts_plain_has_more_at_exactly_max_search_results() {
+    let (pool, _dir) = test_pool().await;
+    let n = u32::try_from(MAX_SEARCH_RESULTS + 1).unwrap();
+    for index in 0..n {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "ceiling probe keyword",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let limit = MAX_SEARCH_RESULTS;
+    let page = PageRequest::new(None, Some(limit)).unwrap();
+    let result = search_fts(
+        &pool,
+        "keyword",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        i64::try_from(result.items.len()).unwrap(),
+        MAX_SEARCH_RESULTS,
+        "page fills exactly to MAX_SEARCH_RESULTS"
+    );
+    assert!(
+        result.has_more,
+        "has_more must be true at exactly limit == MAX_SEARCH_RESULTS when one more row exists"
+    );
+    assert!(
+        result.next_cursor.is_some(),
+        "has_more=true must carry a next_cursor"
+    );
+}
+
+/// BE-A10 (4) — SQL-A2: partitioned REGEX search with exactly
+/// `MAX_SEARCH_RESULTS + 1` matching rows → `has_more == true` and
+/// `<= MAX_SEARCH_RESULTS` returned.
+///
+/// The partitioned regex caller passes a `limit + 1` PROBE to
+/// `regex_mode_query`, whose clamp is `MAX_SEARCH_RESULTS + 1` (SQL-A2).
+/// At `block_limit == MAX_SEARCH_RESULTS` the probe is `MAX_SEARCH_RESULTS
+/// + 1`, so the (cap+1)-th survivor is seen and `has_more` flips true —
+/// the bug the previous `clamp(1, 100)` masked.
+#[tokio::test]
+async fn be_a10_sqla2_partitioned_regex_has_more_at_cap() {
+    let (pool, _dir) = test_pool().await;
+    let n = u32::try_from(MAX_SEARCH_RESULTS + 1).unwrap();
+    for index in 0..n {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "regexcap candidate row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let cap = u32::try_from(MAX_SEARCH_RESULTS).unwrap();
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "regexcap".to_string(),
+        cap,
+        cap,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        i64::try_from(resp.blocks.items.len()).unwrap(),
+        MAX_SEARCH_RESULTS,
+        "blocks partition returns at most MAX_SEARCH_RESULTS rows"
+    );
+    assert!(
+        resp.blocks.has_more,
+        "SQL-A2: has_more must be true with MAX_SEARCH_RESULTS + 1 matching rows at the cap"
+    );
+}
+
+/// BE-A10 (5) — SQL-A1: cursor `search_blocks_inner` rejects
+/// `limit > MAX_SEARCH_RESULTS` with `AppError::Validation`, while
+/// `limit == MAX_SEARCH_RESULTS` and the default (`None`) limit succeed.
+#[tokio::test]
+async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "content", "sqla1 probe", None, Some(0)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // limit = MAX_SEARCH_RESULTS + 1 (101) — accepted by PageRequest::new
+    // (<= MAX_PAGE_SIZE = 200) but rejected by the SQL-A1 guard.
+    let over = MAX_SEARCH_RESULTS + 1;
+    let err = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        Some(over),
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .expect_err("limit > MAX_SEARCH_RESULTS must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-cap limit must surface AppError::Validation, got {err:?}"
+    );
+
+    // limit = MAX_SEARCH_RESULTS (100) — accepted.
+    let ok_cap = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        Some(MAX_SEARCH_RESULTS),
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await;
+    assert!(
+        ok_cap.is_ok(),
+        "limit == MAX_SEARCH_RESULTS must be accepted, got {:?}",
+        ok_cap.err()
+    );
+    assert_eq!(
+        ok_cap.unwrap().items.len(),
+        1,
+        "the one matching block returns"
+    );
+
+    // Default (None) limit = DEFAULT_PAGE_SIZE (50) <= MAX_SEARCH_RESULTS —
+    // accepted. Guards the None/default path against the SQL-A1 reject.
+    let ok_default = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        None,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await;
+    assert!(
+        ok_default.is_ok(),
+        "default (None) limit must be accepted, got {:?}",
+        ok_default.err()
+    );
+    assert_eq!(
+        ok_default.unwrap().items.len(),
+        1,
+        "default-limit search returns the block"
+    );
+}
+
+/// BE-A10 (6) — POST_FILTER_MAX_WINDOWS bound: a pathologically selective
+/// filter stops at the window bound and reports `has_more = false` without
+/// hanging — AND a survivor sitting *beyond* the bound's reach is NOT
+/// surfaced (the best-effort contract: matches past the scan ceiling are
+/// invisible).
+///
+/// Seed more candidates than the scan ceiling can reach
+/// (`POST_FILTER_WINDOW * POST_FILTER_MAX_WINDOWS` = 100 * 10 = 1000): 1050
+/// blocks that all FTS-match `"cat"`. All are lowercase (drop under the
+/// case-sensitive `"Cat"` post-filter) EXCEPT one capitalised survivor at
+/// index 1040 — which sits past candidate #1000, so the bound stops the
+/// scan BEFORE reaching it. The keyset order is `id ASC` = index order
+/// (`pt_block_id` zero-pads), so candidate position == index here.
+///
+/// This pins the BOUND specifically: if the bound were removed (or
+/// enlarged), the loop would walk to index 1040 and surface the survivor,
+/// flipping `items.len()` to 1 — so this test fails the moment the ceiling
+/// stops being enforced. (An all-drop corpus alone could not distinguish
+/// the bound from plain FTS exhaustion, which also yields an empty page.)
+#[tokio::test]
+async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
+    let (pool, _dir) = test_pool().await;
+    // 1050 > POST_FILTER_WINDOW (100) * POST_FILTER_MAX_WINDOWS (10) = 1000.
+    // The lone survivor at index 1040 sits past the 1000-candidate ceiling.
+    let n: u32 = 1050;
+    let survivor_index: u32 = 1040;
+    for index in 0..n {
+        let id = pt_block_id(index);
+        // All lowercase (drop vs "Cat") except the out-of-reach survivor.
+        let prefix = if index == survivor_index {
+            "Cat"
+        } else {
+            "cat"
+        };
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("{prefix} lowercase only row"),
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(5)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        0,
+        "survivor at index 1040 is past the 1000-candidate bound → empty page"
+    );
+    assert!(
+        !result.has_more,
+        "window-bound exhaustion must report has_more = false (best-effort contract)"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "no survivors surfaced → no next_cursor"
+    );
+}

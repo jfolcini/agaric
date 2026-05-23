@@ -197,6 +197,11 @@ export const references: Record<string, string> = {
   'search.searchTags': 'Search tags...',
   'search.searchPages': 'Search pages...',
   'search.noTagsFound': 'No tags found',
+  // UX-A3 — filter-helper popover navigation + path-entry strings.
+  'search.filterHelper.back': 'Back',
+  'search.filterHelper.add': 'Add',
+  'search.filterHelper.tagResultsLabel': 'Tag suggestions',
+  'search.filterHelper.pathPlaceholder': 'Journal/2026-*',
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
   // UX-8 — accessible name for the alias-match card region.

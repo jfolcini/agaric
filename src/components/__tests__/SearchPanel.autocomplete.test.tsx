@@ -201,7 +201,9 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     fireEvent.keyDown(input, { key: 'Tab' })
 
     await waitFor(() => {
-      expect(input.value).toBe('priority:A ')
+      // NEW-4 — priority autocomplete now offers the numeric levels
+      // (DEFAULT_PRIORITY_LEVELS = ['1','2','3']), not the stale 'A'/'B'/'C'.
+      expect(input.value).toBe('priority:1 ')
     })
   })
 

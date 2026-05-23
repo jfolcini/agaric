@@ -23,6 +23,16 @@ Cluster-1 contract (decided with the user): regex mode is symmetric with non-reg
 mode — filter tokens are parsed out and applied as SQL filters; the free-text
 remainder is the regex pattern (matched against raw `blocks.content`).
 
+## Batch 2 — shipped (Session 816)
+
+Closed: **Cluster 2 — pagination/`has_more`** (SQL-A1 cursor over-cap now rejects to
+mirror BE-2; SQL-A2 regex partitioned `has_more` correct at the cap; SQL-A3/BE-A1
+filter-aware over-fetch so post-filtered pages don't under-fill or drop rows;
+**BE-A10** tests), the **FilterHelperPopover hardening** (FE-A20 debounce+latest-wins
+race guard; UX-A3 i18n; UX-A6 combobox/listbox a11y), and **DOC-A4 / A7 / A8 / A9**.
+Also fixed **NEW-4** (priority autocomplete suggested stale `A/B/C` — now derives
+from the configurable `usePriorityLevels()`; surfaced by the DOC-A7 work).
+
 ---
 
 ## Remaining — Correctness / data bugs
@@ -30,39 +40,20 @@ remainder is the regex pattern (matched against raw `blocks.content`).
 - **UX-A1 (High)** `SearchSheet.tsx:178`. Mobile "all pages" renders the command
   palette, not `SearchPanel`; toggles/filters/regex/history/help are only reachable
   by escalating to the full view. Fix: route all-pages to `SearchPanel`, or surface
-  the toggle row + help in the sheet.
-- **Cluster 2 — pagination / `has_more` (fix once, resolves several)**:
-  - **SQL-A1 (Medium)** `fts/search.rs` vs `commands/queries.rs`. Cursor search
-    silently caps `limit→100`; partitioned rejects over-cap. `PageRequest` allows
-    ≤200, so 101–200 is reachable. Align: reject (mirror BE-2) or document.
-  - **SQL-A3 / BE-A1 (Medium)** `fts/toggle_filter.rs`. The case/word post-filter
-    runs after `has_more`/`next_cursor` are computed, so pages render sparse/empty
-    with `has_more=true`; the partitioned path can't paginate (`next_cursor: None`)
-    so the dropped rows are unrecoverable. Fix: post-filter a larger candidate
-    window, then truncate + derive `has_more`.
-  - **SQL-A2 (Medium)** `fts/toggle_filter.rs`. Regex partitioned `has_more` can
-    never be true at exactly `limit==100` (probe clamped).
-  - These all live in `toggle_filter.rs`/`search.rs`/`queries.rs` and interrelate —
-    do them as one focused backend batch with tests (BE-A10 `has_more`-vs-post-filter
-    coverage belongs here).
+  the toggle row + help in the sheet. (Needs a mobile UX product decision.)
 
 ## Remaining — Performance / robustness (backend)
 
-- **FE-A20 (Medium)** `search/FilterHelperPopover.tsx:62-70`. The popover tag fetch
-  has no debounce/race guard (the other two `listTagsByPrefix` callers do) →
-  out-of-order responses can show stale suggestions. Consolidate behind one cached
-  source.
 - **BE-A5 (Low)** `commands/queries.rs`. The detached partitioned task holds a
   read-pool connection until its next cancel checkpoint (≤200ms). Bounded; note
   only if pool saturation is observed.
 
 ## Remaining — Product / UX / a11y
 
-- **FilterHelperPopover cluster** — **UX-A3 (Medium)** hardcoded English
-  ("Back"/"Back"/"Add"); **UX-A5 (Medium)** the `+ Filter` builder only offers
-  tag/path (the other six filter types are syntax-only); **UX-A6 (Medium, a11y)**
-  the popover tag picker is a plain input + `<ul>` of buttons, not a
-  combobox/listbox with arrow nav.
+- **UX-A5 (Medium)** the `+ Filter` builder only offers tag/path; the other six
+  filter types (`state`/`priority`/`due`/`scheduled`/`prop` + not-variants) are
+  syntax-only. Adding them to the popover builder is a feature expansion (deferred
+  from the FilterHelperPopover hardening batch).
 - **UX-A9 (Low)** `help/SearchHelpDialog.tsx` — help "Icon" column shows
   `Aa`/`Ab|`/`.*` text but the toolbar renders lucide icons.
 - **UX-A7 (Low)** Clear-all link + history-row body lack coarse-pointer 44px
@@ -76,19 +67,14 @@ remainder is the regex pattern (matched against raw `blocks.content`).
 - **FE-A18 (Medium)** `SearchPanel.tsx` is still ~970 lines. Continue FE-9: extract
   `useSearchResults` (queryFn + usePaginatedQuery + pageTitles + groups + nav) and
   `useSearchHistoryControls`; move the filter-param projection to its own module.
+  (Per PROMPT: hook-extraction sweeps stall in subagents — run orchestrator-direct
+  or split by file boundary.)
 - **BE-A7 (Low, by-design)** `filters/primitive.rs`. `SearchProjection` / `compile_*`
   are dead at runtime (1=1 placeholders) — intentional Phase-2 scaffolding behind a
   clear banner. Either finish the wiring or keep the banner.
 - **FE-A19 (Low)** mixed `t`-prop vs `useTranslation()` across the search subtree.
   **DSL-A3/A4/A6/A7 (Low/info)** brace-truncate-vs-error (test-only caller), no NFC
   on tag-name matching, `isInsideQuote` model drift, one dead `tag:#` arm.
-
-## Remaining — Docs
-
-- **DOC-A8 (Low)** stale future-tense PEND-62 (`SEARCH.md`). **DOC-A9 (Low)** "help
-  dialog mirrors the section list" over-claims (dialog has 5 of the doc's 8
-  sections). **DOC-A4/A7 (Low)** inline `MAX_SEARCH_RESULTS=100`; priority `A/B/C`
-  vs `priority:1` inconsistency.
 
 ## Remaining — E2E / test coverage
 
@@ -101,21 +87,18 @@ remainder is the regex pattern (matched against raw `blocks.content`).
   mobile viewport (E2E-A9); history per-space isolation (E2E-A10).
 - **Weak assertions:** `search-filters.spec.ts` `searchUntil` is near-tautological;
   several result/alias specs assert only that *a* page title appears, not *which*.
-- **Backend:** BE-A10 — the toggle `has_more`-vs-post-filter case still lacks a test
-  (do it with Cluster 2). (Regex-mode-under-cancellation is now covered.)
 - **Harness blind spot (E2E-A6):** `<mark>` highlight + the real Rust FTS/regex
   pipeline are unreachable on the web+mock harness; would need a Tauri-driven e2e
   harness.
 
-## New follow-ups (surfaced by the Batch-1 reviews, Session 815)
+## New follow-ups (open)
 
 - **NEW-1 (Medium, discoverability)** The autocomplete popover is suppressed in
   regex mode (`SearchPanel.tsx` `suppressed={toggles.isRegex}`), but structural
   filters now apply in regex mode — so a user building `tag:#urgent ^TODO` gets no
   `tag:`/`state:` autocomplete help for the part that works. Consider allowing the
   *prefix* autocomplete (`tag:`, `state:`) in regex mode and suppressing only once
-  the caret is in the free-text remainder. The rationale comment (avoid collision
-  with regex metacharacters) predates filters-apply-in-regex-mode.
+  the caret is in the free-text remainder.
 - **NEW-2 (Low, discoverability)** No visual cue that the input free-text is a regex
   (only the `.*` toggle's pressed state). Consider a monospace/placeholder/aria hint
   on the input when regex mode is on. Pre-existing.
@@ -131,11 +114,10 @@ remainder is the regex pattern (matched against raw `blocks.content`).
 
 ## Suggested action order (remaining)
 
-1. **Cluster 2 — pagination/`has_more`** (SQL-A1, SQL-A3/BE-A1, SQL-A2, +BE-A10
-   test). One focused backend batch.
-2. **UX-A1** (mobile SearchSheet parity).
-3. **FilterHelperPopover** (FE-A20 race, UX-A6 combobox, UX-A3 i18n, UX-A5 coverage).
-4. **NEW-3** (filter-only search applies filters) + **NEW-1** (regex-mode prefix
-   autocomplete).
-5. **Docs** (DOC-A4/A7/A8/A9) + **test gaps** (E2E-A1..A5, A7..A11).
-6. **Maintainability** (FE-A18 hook extraction; FE-A19; DSL-A3/A4/A6/A7) + NEW-2.
+1. **NEW-3** (filter-only search applies filters) + **NEW-1** (regex-mode prefix
+   autocomplete) — close out the cluster-1 follow-ups.
+2. **UX-A1** (mobile SearchSheet parity — needs a product decision).
+3. **UX-A5** (the `+ Filter` builder gains the remaining filter types).
+4. **Test gaps** (E2E-A1..A5, A7..A11).
+5. **Maintainability** (FE-A18 hook extraction; FE-A19; DSL-A3/A4/A6/A7) + NEW-2 +
+   the low-priority UX items (UX-A7/A8/A9).

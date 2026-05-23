@@ -10,12 +10,13 @@
  * wiring.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import { useTranslation } from 'react-i18next'
 import type { AutocompleteItem } from '@/components/search/AutocompletePopover'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -31,7 +32,6 @@ import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
 const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'WAITING', 'CANCELLED', 'none'] as const
-const PRIORITY_VALUES = ['A', 'B', 'C', 'none'] as const
 const DATE_BUCKET_VALUES = [
   'today',
   'yesterday',
@@ -91,6 +91,14 @@ export function useAutocompleteSources(
   const surfaceFailureOnce = useFailedOnce()
   const { t } = useTranslation()
   const tagDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // DOC-A7 follow-up — priority autocomplete values must track the
+  // user-configurable priority levels (the source of truth), NOT a stale
+  // hardcoded `A/B/C`. The filter parser + chips use the numeric
+  // `DEFAULT_PRIORITY_LEVELS` (`1`/`2`/`3`), so suggesting `A/B/C` offered
+  // values that never matched. `none` is appended to mirror the cycle.
+  const priorityLevels = usePriorityLevels()
+  const priorityValues = useMemo(() => [...priorityLevels, 'none'], [priorityLevels])
 
   const active = anchor?.active ?? null
   const query = anchor?.query ?? ''
@@ -154,7 +162,7 @@ export function useAutocompleteSources(
     case 'state':
       return { items: projectStatic(STATE_VALUES, anchor.query), loading: false }
     case 'priority':
-      return { items: projectStatic(PRIORITY_VALUES, anchor.query), loading: false }
+      return { items: projectStatic(priorityValues, anchor.query), loading: false }
     case 'due':
     case 'scheduled':
       return { items: projectStatic(DATE_BUCKET_VALUES, anchor.query), loading: false }
