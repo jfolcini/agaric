@@ -206,6 +206,119 @@ function openInPageFindFromShortcut(t: (key: string) => string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Global-shortcut actions (MAINT-53)
+//
+// Each `try*` helper checks its own binding and returns `true` when it
+// consumed the event. Keeping the bodies out of the `useEffect` dispatcher
+// is what keeps `handleGlobalShortcuts` within Biome's cognitive-complexity
+// budget. They are module-level (no closure over component state) and read
+// fresh store snapshots via `getState()`, so the dispatcher's only dep is `t`.
+// ---------------------------------------------------------------------------
+
+/**
+ * PEND-52 — `findInPage` (Ctrl+F by default) opens the in-page find toolbar.
+ */
+function tryFindInPage(e: KeyboardEvent, t: (key: string) => string): boolean {
+  if (!matchesShortcutBinding(e, 'findInPage')) return false
+  e.preventDefault()
+  openInPageFindFromShortcut(t)
+  return true
+}
+
+/**
+ * PEND-52 — `focusSearch` (Ctrl+Shift+F by default) opens the global
+ * find-in-files view.
+ */
+function tryFocusSearch(e: KeyboardEvent, t: (key: string) => string): boolean {
+  if (!matchesShortcutBinding(e, 'focusSearch')) return false
+  e.preventDefault()
+  useNavigationStore.getState().setView('search')
+  announce(t('announce.searchOpened'))
+  return true
+}
+
+/**
+ * PEND-67 Phase 8 — `runLastCommand` (Cmd+. by default) re-runs the most
+ * recent palette command without mounting the dialog. Falls back to opening
+ * the palette in commands mode when no recent command exists yet (cold start)
+ * or when the recent id no longer maps to a registered command (registry
+ * change after an upgrade). Skipped when typing in a field so the editor's
+ * TipTap `collapseExpand` chord on the same keys stays unaffected.
+ */
+function tryRunLastCommand(e: KeyboardEvent, t: (key: string) => string): boolean {
+  if (!matchesShortcutBinding(e, 'runLastCommand')) return false
+  // Consume (no preventDefault) so the editor chord still fires while typing.
+  if (isTypingInField(e.target as HTMLElement | null)) return true
+  e.preventDefault()
+  const lastId = getRecentCommands()[0]?.id
+  const cmd = lastId != null ? getPaletteCommand(lastId) : undefined
+  if (cmd != null && lastId != null) {
+    addRecentCommand(lastId)
+    cmd.run({
+      // The palette isn't open — `onClose` is a no-op so run() doesn't try
+      // to flip a closed dialog.
+      onClose: () => {},
+      // Escalation seeds the find-in-files view via the same store path the
+      // palette uses; SearchPanel mounts and consumes `pendingViewQuery`.
+      onEscalate: (q) => {
+        useCommandPaletteStore.getState().setPendingViewQuery(q)
+        useNavigationStore.getState().setView('search')
+      },
+    })
+    announce(t('announce.ranLastCommand'))
+    return true
+  }
+  // Fallback: open palette in commands mode so the user can pick a command
+  // (which becomes the new "last" for next time).
+  useCommandPaletteStore.getState().open$()
+  useCommandPaletteStore.getState().setMode('commands')
+  return true
+}
+
+/**
+ * PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Context-aware: when
+ * focus is inside a TipTap / ProseMirror surface it yields to the editor's own
+ * Cmd+K link command by NOT calling preventDefault (VSCode does the same for
+ * Cmd+P).
+ */
+function tryPaletteOpen(e: KeyboardEvent): boolean {
+  if (!matchesShortcutBinding(e, 'paletteOpen')) return false
+  // Yield to the editor's own Cmd+K handler; consume without preventDefault.
+  if (isFocusInsideEditor(e.target as HTMLElement | null)) return true
+  e.preventDefault()
+  useCommandPaletteStore.getState().open$()
+  return true
+}
+
+/**
+ * `createNewPage` — create an "Untitled" page in the active space and navigate
+ * to it. FEAT-3 Phase 2: every page must belong to a space, so it routes through
+ * the atomic `createPageInSpace` command. The `isReady`/`currentSpaceId` guard
+ * is defensive — the shortcut only fires after boot resolves the space list.
+ */
+function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean {
+  if (!matchesShortcutBinding(e, 'createNewPage')) return false
+  e.preventDefault()
+  const { currentSpaceId, isReady } = useSpaceStore.getState()
+  if (!isReady || currentSpaceId == null) {
+    logger.warn('App', 'createNewPage shortcut fired before space hydrated')
+    notify.error(t('space.notReady'))
+    return true
+  }
+  createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+    .then((newId) => {
+      useResolveStore.getState().set(newId, 'Untitled', false)
+      useTabsStore.getState().navigateToPage(newId, 'Untitled')
+      announce(t('announce.newPageCreated'))
+    })
+    .catch((err: unknown) => {
+      logger.error('App', 'Failed to create page via shortcut', undefined, err)
+      notify.error(t('error.createPageFailed'))
+    })
+  return true
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
@@ -241,108 +354,22 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
     return () => document.removeEventListener('keydown', handleJournalNav)
   }, [t])
 
-  // ── Global shortcuts (focusSearch, createNewPage) ──
+  // ── Global shortcuts (findInPage, focusSearch, runLastCommand,
+  //    paletteOpen, createNewPage) ──
   // All go through matchesShortcutBinding so rebinding in Settings takes
-  // effect (BUG-18).
+  // effect (BUG-18). Each shortcut's action lives in a module-level `try*`
+  // helper that returns true once it consumes the event, keeping this
+  // dispatcher within Biome's cognitive-complexity budget (MAINT-53).
   useEffect(() => {
     function handleGlobalShortcuts(e: KeyboardEvent) {
       // MAINT-105: ignore auto-repeat so holding the shortcut doesn't
       // re-fire view changes / new-page creation on every keypress.
       if (e.repeat) return
-
-      // PEND-52 — `findInPage` (Ctrl+F by default) opens the in-page
-      // find toolbar; `focusSearch` (now Ctrl+Shift+F) opens the
-      // global find-in-files view. Both bindings are landed together
-      // so the help dialog and live behaviour stay consistent.
-      if (matchesShortcutBinding(e, 'findInPage')) {
-        e.preventDefault()
-        openInPageFindFromShortcut(t)
-        return
-      }
-      if (matchesShortcutBinding(e, 'focusSearch')) {
-        e.preventDefault()
-        useNavigationStore.getState().setView('search')
-        announce(t('announce.searchOpened'))
-        return
-      }
-      // PEND-67 Phase 8 — `runLastCommand` (Cmd+. by default) re-runs
-      // the most recent palette command without mounting the dialog.
-      // Falls back to opening the palette in commands mode when no
-      // recent command exists yet (cold start), or when the recent
-      // id no longer maps to a registered command (registry change
-      // after an upgrade). Skipped when typing in a field so the
-      // editor's TipTap `collapseExpand` chord on the same keys stays
-      // unaffected.
-      if (matchesShortcutBinding(e, 'runLastCommand')) {
-        if (isTypingInField(e.target as HTMLElement | null)) return
-        e.preventDefault()
-        const lastId = getRecentCommands()[0]?.id
-        const cmd = lastId != null ? getPaletteCommand(lastId) : undefined
-        if (cmd != null && lastId != null) {
-          addRecentCommand(lastId)
-          cmd.run({
-            // The palette isn't open — `onClose` is a no-op so the
-            // run() doesn't try to flip a closed dialog.
-            onClose: () => {},
-            // Escalation seeds the find-in-files view via the same
-            // store path the palette uses; SearchPanel mounts and
-            // consumes `pendingViewQuery`.
-            onEscalate: (q) => {
-              useCommandPaletteStore.getState().setPendingViewQuery(q)
-              useNavigationStore.getState().setView('search')
-            },
-          })
-          announce(t('announce.ranLastCommand'))
-          return
-        }
-        // Fallback: open palette in commands mode so the user can
-        // pick a command (which becomes the new "last" for next time).
-        useCommandPaletteStore.getState().open$()
-        useCommandPaletteStore.getState().setMode('commands')
-        return
-      }
-      // PEND-51 — Cmd/Ctrl+K opens the quick-navigation palette. Distinct
-      // from `focusSearch` (the find-in-files view): the palette is a
-      // dialog overlay, the view is a full-screen surface.
-      //
-      // Context-aware: when focus is inside a TipTap / ProseMirror surface
-      // (any contenteditable subtree), Cmd+K is the editor's link command
-      // — yield to TipTap by NOT calling preventDefault, so the editor
-      // extension's own keymap dispatches `open-link-popover`. VSCode does
-      // the same thing for Cmd+P (palette outside editor, navigate-symbol
-      // inside).
-      if (matchesShortcutBinding(e, 'paletteOpen')) {
-        if (isFocusInsideEditor(e.target as HTMLElement | null)) {
-          // Yield to the editor's own Cmd+K handler; don't preventDefault.
-          return
-        }
-        e.preventDefault()
-        useCommandPaletteStore.getState().open$()
-        return
-      }
-      if (matchesShortcutBinding(e, 'createNewPage')) {
-        e.preventDefault()
-        // FEAT-3 Phase 2 — every page must belong to a space. Route
-        // through the atomic `createPageInSpace` Tauri command. The
-        // `isReady`/`currentSpaceId` check is defensive: the shortcut
-        // only fires after boot has resolved `refreshAvailableSpaces()`.
-        const { currentSpaceId, isReady } = useSpaceStore.getState()
-        if (!isReady || currentSpaceId == null) {
-          logger.warn('App', 'createNewPage shortcut fired before space hydrated')
-          notify.error(t('space.notReady'))
-          return
-        }
-        createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
-          .then((newId) => {
-            useResolveStore.getState().set(newId, 'Untitled', false)
-            useTabsStore.getState().navigateToPage(newId, 'Untitled')
-            announce(t('announce.newPageCreated'))
-          })
-          .catch((err: unknown) => {
-            logger.error('App', 'Failed to create page via shortcut', undefined, err)
-            notify.error(t('error.createPageFailed'))
-          })
-      }
+      if (tryFindInPage(e, t)) return
+      if (tryFocusSearch(e, t)) return
+      if (tryRunLastCommand(e, t)) return
+      if (tryPaletteOpen(e)) return
+      tryCreateNewPage(e, t)
     }
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
