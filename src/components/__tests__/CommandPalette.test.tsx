@@ -240,7 +240,6 @@ describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
     const fresh = await screen.findByTestId('palette-recent-PAGE_NEW')
     // The pinned row's DOM ordering comes before the unpinned one
     // (compareDocumentPosition: 4 == DOCUMENT_POSITION_FOLLOWING).
-    // eslint-disable-next-line no-bitwise
     expect(old.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(old.getAttribute('data-pinned')).toBe('true')
     expect(fresh.getAttribute('data-pinned')).toBeNull()

@@ -43,8 +43,7 @@ function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
   }
 }
 
-// React import needed for `React.ComponentProps`.
-// biome-ignore lint/correctness/noUnusedImports: tsx requires the React import for component-prop inference
+// React import needed for the `React.ComponentProps` type usage below.
 import type * as React from 'react'
 
 describe('DensityRow', () => {
