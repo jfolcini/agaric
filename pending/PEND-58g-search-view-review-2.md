@@ -70,6 +70,32 @@ for touch needs a real design decision (Radix tooltips don't fire on touch-tap; 
 labels overflow a narrow phone row) plus runtime verification — not shipped to avoid a
 half-baked touch affordance.
 
+## Batch 5 — shipped (Session 819)
+
+Closed **UX-A5** — the `+ Filter` builder now offers the remaining structural
+categories (`state` / `priority` / `due` / `scheduled` / `prop`), each with an
+include/exclude toggle covering the `not-` variants, via new sub-forms under
+`src/components/search/filter-forms/`. The popover builds a `FilterToken` and
+routes through the existing `addFilter` → `serialize` path, so the DSL was
+untouched (purely additive UI). Vocabulary is shared with the caret autocomplete:
+state + date-bucket forms reuse the now-exported `STATE_VALUES` /
+`DATE_BUCKET_VALUES`, priority reuses `usePriorityLevels()` — no divergent
+hardcoded lists. Forms manage focus-on-open (Radix `SelectTrigger` swallows
+`autoFocus`, so a `ref`+effect is used) and meet the coarse-pointer 44px target
+convention.
+
+Also closed the DSL low-priority cleanups: **DSL-A6** — `isInsideQuote` now
+delegates to `tokenize()`, so the autocomplete's "caret inside a quoted phrase"
+decision can't drift from the parser's quote model (fixes wrong suppression on
+glued/stray/unterminated quotes). **DSL-A7** — removed the dead `tag:#`
+autocomplete arm (subsumed by the earlier `startsWith('tag:#')` branch).
+**DSL-A4** — NFC-normalise tag names at the `astToFilterProjection` funnel so
+composed-vs-decomposed Unicode tags match the NFC-indexed backend (chip /
+serialized form stays verbatim). **DSL-A3** — the `expandBraces` / `EXPANSION_CAP`
+glob scaffold is by-design parity with the Rust expander (both truncate, never
+error) and has no production caller; pinned the truncate-not-error contract with a
+test + banner rather than churning the unused public API.
+
 ---
 
 ## Remaining — Performance / robustness (backend)
@@ -80,10 +106,6 @@ half-baked touch affordance.
 
 ## Remaining — Product / UX / a11y
 
-- **UX-A5 (Medium)** the `+ Filter` builder only offers tag/path; the other six
-  filter types (`state`/`priority`/`due`/`scheduled`/`prop` + not-variants) are
-  syntax-only. Adding them to the popover builder is a feature expansion (deferred
-  from the FilterHelperPopover hardening batch).
 - **UX-A8 (Low)** add an always-visible/long-press toggle-mode explanation for touch.
   Deferred from Batch 4: needs a design decision (Radix tooltips don't fire on
   touch-tap; inline labels overflow a narrow phone row) + runtime verification.
@@ -101,8 +123,6 @@ half-baked touch affordance.
   are dead at runtime (1=1 placeholders) — intentional Phase-2 scaffolding behind a
   clear banner. Either finish the wiring or keep the banner.
 - **FE-A19 (Low)** mixed `t`-prop vs `useTranslation()` across the search subtree.
-  **DSL-A3/A4/A6/A7 (Low/info)** brace-truncate-vs-error (test-only caller), no NFC
-  on tag-name matching, `isInsideQuote` model drift, one dead `tag:#` arm.
 
 ## Remaining — E2E / test coverage
 
@@ -121,8 +141,6 @@ half-baked touch affordance.
 
 ## Suggested action order (remaining)
 
-1. **UX-A1** (mobile SearchSheet parity — needs a product decision).
-2. **UX-A5** (the `+ Filter` builder gains the remaining filter types).
-3. **Test gaps** (E2E-A1..A5, A7..A11).
-4. **Maintainability** (FE-A18 hook extraction; FE-A19; DSL-A3/A4/A6/A7) +
-   the low-priority UX items (UX-A7/A8/A9).
+1. **Test gaps** (E2E-A1..A5, A7..A11).
+2. **Maintainability** (FE-A18 hook extraction; FE-A19) + the low-priority UX
+   items (UX-A8; UX-A10/A12/A13 need runtime verification).

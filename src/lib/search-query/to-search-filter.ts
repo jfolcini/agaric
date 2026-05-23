@@ -60,9 +60,18 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
   const excludedPropertyFilters: SearchPropertyFilter[] = []
   for (const f of ast.filters) {
     switch (f.kind) {
-      case 'tag':
-        if (!tagNames.includes(f.value)) tagNames.push(f.value)
+      case 'tag': {
+        // DSL-A3 — NFC-normalise the tag name before it enters the
+        // matching projection. The backend stores/indexes tag content
+        // in NFC (see `src-tauri/src/fts/strip.rs` / `search.rs`), and
+        // `useTagResolution` matches by lowercased name string, so a
+        // decomposed query (e.g. `e`+U+0301) would never equal the
+        // composed stored tag (U+00E9) without this. Normalise once,
+        // here, so both `tag:` and bare-`#tag` tokens funnel through it.
+        const tagValue = f.value.normalize('NFC')
+        if (!tagNames.includes(tagValue)) tagNames.push(tagValue)
         break
+      }
       case 'pathInclude':
         // Comma-separated values inside one path: token expand into
         // multiple include entries (the plan's "Multiple `path:`

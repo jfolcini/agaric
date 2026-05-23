@@ -29,6 +29,32 @@ describe('astToFilterProjection — PEND-54 (tag / path)', () => {
     expect(p.tagNames).toEqual(['a', 'b'])
   })
 
+  it('NFC-normalises tag names (DSL-A3)', () => {
+    // Decomposed `e` + U+0301 (combining acute) vs. composed U+00E9.
+    // The backend stores/indexes in NFC, so the projection must emit
+    // the composed form regardless of how the user typed it.
+    const composed = 'caf\u{00E9}' // café (NFC)
+    const decomposed = 'cafe\u{0301}' // café (NFD)
+    // Pre-condition: the two encodings really are byte-different.
+    expect(decomposed).not.toBe(composed)
+
+    const fromDecomposed = project(`tag:#${decomposed}`)
+    const fromComposed = project(`tag:#${composed}`)
+    expect(fromDecomposed.tagNames).toEqual([composed])
+    expect(fromComposed.tagNames).toEqual([composed])
+
+    // The bare `#tag` alias path funnels through the same case.
+    const fromAlias = project(`#${decomposed}`)
+    expect(fromAlias.tagNames).toEqual([composed])
+  })
+
+  it('dedups composed/decomposed tag names after NFC (DSL-A3)', () => {
+    const composed = 'caf\u{00E9}'
+    const decomposed = 'cafe\u{0301}'
+    const p = project(`tag:#${composed} tag:#${decomposed}`)
+    expect(p.tagNames).toEqual([composed])
+  })
+
   it('splits comma-separated path globs', () => {
     const p = project('path:Journal/*,Notes/*')
     expect(p.includePageGlobs).toEqual(['Journal/*', 'Notes/*'])

@@ -754,6 +754,12 @@ export function SearchPanel(): React.ReactElement {
     const token: FilterToken = { kind: 'pathExclude', value: glob, span: [0, 0] }
     patchQuery((a) => addFilter(a, token))
   }
+  // PEND-58g UX-A5 — the structural builder forms hand back a fully built
+  // token (state / priority / due / scheduled / prop and not- variants);
+  // route it through the same append-and-reserialise path.
+  function handleAddFilter(token: FilterToken) {
+    patchQuery((a) => addFilter(a, token))
+  }
 
   // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
   // we never fire a `searchBlocks` call with an unresolved `spaceId`.
@@ -847,6 +853,7 @@ export function SearchPanel(): React.ReactElement {
             onAddTag={handleAddTag}
             onAddPathInclude={handleAddPathInclude}
             onAddPathExclude={handleAddPathExclude}
+            onAddFilter={handleAddFilter}
           />
         }
       />

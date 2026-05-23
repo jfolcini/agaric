@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+import { type FilterToken, tokenSource } from '@/lib/search-query'
 import type { TagCacheRow } from '@/lib/tauri'
 import { listTagsByPrefix } from '@/lib/tauri'
 import { FilterHelperPopover, type FilterHelperPopoverProps } from '../FilterHelperPopover'
@@ -37,20 +38,23 @@ function renderPopover(props: Partial<FilterHelperPopoverProps> = {}): {
   onAddTag: ReturnType<typeof vi.fn>
   onAddPathInclude: ReturnType<typeof vi.fn>
   onAddPathExclude: ReturnType<typeof vi.fn>
+  onAddFilter: ReturnType<typeof vi.fn>
   container: HTMLElement
 } {
   const onAddTag = vi.fn()
   const onAddPathInclude = vi.fn()
   const onAddPathExclude = vi.fn()
+  const onAddFilter = vi.fn()
   const { container } = render(
     <FilterHelperPopover
       onAddTag={onAddTag}
       onAddPathInclude={onAddPathInclude}
       onAddPathExclude={onAddPathExclude}
+      onAddFilter={onAddFilter}
       {...props}
     />,
   )
-  return { onAddTag, onAddPathInclude, onAddPathExclude, container }
+  return { onAddTag, onAddPathInclude, onAddPathExclude, onAddFilter, container }
 }
 
 beforeEach(() => {
@@ -303,6 +307,233 @@ describe('FilterHelperPopover — path filters', () => {
     await user.type(screen.getByLabelText(t('search.filterCategory.pathExclude')), 'Archive/**')
     await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
     expect(onAddPathExclude).toHaveBeenCalledWith('Archive/**')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PEND-58g UX-A5 — structural filter builder categories
+// ---------------------------------------------------------------------------
+
+async function openCategory(categoryKey: string): Promise<{
+  user: ReturnType<typeof userEvent.setup>
+  onAddFilter: ReturnType<typeof vi.fn>
+}> {
+  const user = userEvent.setup()
+  const { onAddFilter } = renderPopover()
+  await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+  await user.click(screen.getByText(t(categoryKey)))
+  return { user, onAddFilter }
+}
+
+describe('FilterHelperPopover — state filter (UX-A5)', () => {
+  it('emits a `state` token for the default include + selected value', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.state')
+    await user.selectOptions(
+      screen.getByLabelText(t('search.filterHelper.stateValueLabel')),
+      'TODO',
+    )
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({ kind: 'state', value: 'TODO', span: [0, 0] })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('state:TODO')
+  })
+
+  it('emits a `notState` token when exclude is toggled', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.state')
+    await user.selectOptions(
+      screen.getByLabelText(t('search.filterHelper.stateValueLabel')),
+      'DONE',
+    )
+    await user.click(screen.getByRole('radio', { name: t('search.filterHelper.exclude') }))
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({ kind: 'notState', value: 'DONE', span: [0, 0] })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('not-state:DONE')
+  })
+
+  it('closes the popover after adding', async () => {
+    const { user } = await openCategory('search.filterCategory.state')
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    await waitFor(() => {
+      expect(screen.queryByTestId('state-filter-form')).not.toBeInTheDocument()
+    })
+  })
+
+  it('moves focus to the state value control on open', async () => {
+    await openCategory('search.filterCategory.state')
+    // Focus must land on the form's primary control (not orphaned on
+    // document.body when the clicked menu item unmounts), matching the
+    // tag/path pattern.
+    await waitFor(() => {
+      expect(document.activeElement).toHaveAttribute(
+        'aria-label',
+        t('search.filterHelper.stateValueLabel'),
+      )
+    })
+  })
+
+  it('has no axe violations', async () => {
+    await openCategory('search.filterCategory.state')
+    await waitFor(
+      async () => {
+        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        expect(await axe(document.body as any)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+})
+
+describe('FilterHelperPopover — priority filter (UX-A5)', () => {
+  it('emits a `priority` token for the selected value', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.priority')
+    await user.selectOptions(
+      screen.getByLabelText(t('search.filterHelper.priorityValueLabel')),
+      '2',
+    )
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({ kind: 'priority', value: '2', span: [0, 0] })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('priority:2')
+  })
+
+  it('emits a `notPriority` token (with `none`) when exclude is toggled', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.priority')
+    await user.selectOptions(
+      screen.getByLabelText(t('search.filterHelper.priorityValueLabel')),
+      'none',
+    )
+    await user.click(screen.getByRole('radio', { name: t('search.filterHelper.exclude') }))
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'notPriority',
+      value: 'none',
+      span: [0, 0],
+    })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('not-priority:none')
+  })
+
+  it('has no axe violations', async () => {
+    await openCategory('search.filterCategory.priority')
+    await waitFor(
+      async () => {
+        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        expect(await axe(document.body as any)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+})
+
+describe('FilterHelperPopover — due / scheduled filter (UX-A5)', () => {
+  it('emits a `due` named-bucket token round-tripping to `due:today`', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.due')
+    await user.selectOptions(
+      screen.getByLabelText(t('search.filterHelper.dateBucketLabel')),
+      'today',
+    )
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'due',
+      value: { kind: 'named', name: 'today' },
+      raw: 'today',
+      span: [0, 0],
+    })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('due:today')
+  })
+
+  it('emits a `scheduled` op token round-tripping to `scheduled:>=2026-01-01`', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.scheduled')
+    await user.selectOptions(screen.getByLabelText(t('search.filterHelper.dateShapeLabel')), 'op')
+    await user.selectOptions(screen.getByLabelText(t('search.filterHelper.dateOpLabel')), '>=')
+    const dateInput = screen.getByLabelText(t('search.filterHelper.dateValueLabel'))
+    await user.type(dateInput, '2026-01-01')
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'scheduled',
+      value: { kind: 'op', op: '>=', date: '2026-01-01' },
+      raw: '>=2026-01-01',
+      span: [0, 0],
+    })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe(
+      'scheduled:>=2026-01-01',
+    )
+  })
+
+  it('disables Add in op mode until a date is entered', async () => {
+    const { user } = await openCategory('search.filterCategory.due')
+    await user.selectOptions(screen.getByLabelText(t('search.filterHelper.dateShapeLabel')), 'op')
+    expect(screen.getByRole('button', { name: t('search.filterHelper.add') })).toBeDisabled()
+  })
+
+  it('moves focus to the date-shape control on open', async () => {
+    await openCategory('search.filterCategory.due')
+    await waitFor(() => {
+      expect(document.activeElement).toHaveAttribute(
+        'aria-label',
+        t('search.filterHelper.dateShapeLabel'),
+      )
+    })
+  })
+
+  it('has no axe violations', async () => {
+    await openCategory('search.filterCategory.due')
+    await waitFor(
+      async () => {
+        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        expect(await axe(document.body as any)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+})
+
+describe('FilterHelperPopover — property filter (UX-A5)', () => {
+  it('emits a `prop` token with key + value', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.prop')
+    await user.type(screen.getByLabelText(t('search.filterHelper.propKeyLabel')), 'area')
+    await user.type(screen.getByLabelText(t('search.filterHelper.propValueLabel')), 'x')
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'prop',
+      key: 'area',
+      value: 'x',
+      span: [0, 0],
+    })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('prop:area=x')
+  })
+
+  it('emits a `notProp` token when exclude is toggled', async () => {
+    const { user, onAddFilter } = await openCategory('search.filterCategory.prop')
+    await user.click(screen.getByRole('radio', { name: t('search.filterHelper.exclude') }))
+    await user.type(screen.getByLabelText(t('search.filterHelper.propKeyLabel')), 'area')
+    await user.type(screen.getByLabelText(t('search.filterHelper.propValueLabel')), 'x')
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'notProp',
+      key: 'area',
+      value: 'x',
+      span: [0, 0],
+    })
+    expect(tokenSource(onAddFilter.mock.calls[0]?.[0] as FilterToken)).toBe('not-prop:area=x')
+  })
+
+  it('keeps Add disabled until both key and value are filled', async () => {
+    const { user } = await openCategory('search.filterCategory.prop')
+    const add = screen.getByRole('button', { name: t('search.filterHelper.add') })
+    expect(add).toBeDisabled()
+    await user.type(screen.getByLabelText(t('search.filterHelper.propKeyLabel')), 'area')
+    expect(add).toBeDisabled()
+    await user.type(screen.getByLabelText(t('search.filterHelper.propValueLabel')), 'x')
+    expect(add).toBeEnabled()
+  })
+
+  it('has no axe violations', async () => {
+    await openCategory('search.filterCategory.prop')
+    await waitFor(
+      async () => {
+        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        expect(await axe(document.body as any)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })
 

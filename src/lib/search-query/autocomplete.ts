@@ -22,6 +22,8 @@
  * token the user is currently editing.
  */
 
+import { tokenize } from './tokenize'
+
 export type AutocompleteAnchor =
   | { active: 'tag'; query: string; anchor: number }
   | { active: 'pathInclude'; query: string; anchor: number }
@@ -85,7 +87,10 @@ export function detectAutocompleteAnchor(input: string, caret: number): Autocomp
       anchor: start + 'tag:'.length,
     }
   }
-  if (slice === 'tag:#' || slice === 'tag:') {
+  // DSL-A7 — `slice === 'tag:#'` is already handled by the
+  // `startsWith('tag:#')` arm above (which returns `query: ''`), so it
+  // can never reach here. Only the bare-`tag:` case remains.
+  if (slice === 'tag:') {
     return { active: 'tag', query: '', anchor: start + slice.length }
   }
   // not-path: must be checked before path: (longer prefix wins).
@@ -192,17 +197,34 @@ function propAutocomplete(
 }
 
 /**
- * Returns true if `caret` falls inside an unclosed `"…"` phrase.
+ * Returns true if `caret` falls inside a quoted `"…"` phrase, using the
+ * *same* segmentation the tokenizer (`tokenize.ts`) applies.
  *
- * Walk through the input counting unmatched `"` characters. If the
- * count is odd at `caret`, we're inside a phrase.
+ * DSL-A6 — this used to count `"` characters odd/even up to the caret,
+ * which drifted from the tokenizer's model and gave wrong answers
+ * whenever a stray/glued/unterminated quote was involved:
+ *   - `"a"b" tag:#|` — the tokenizer closes the phrase at the
+ *     boundary `"` (span `"a"b"`), leaving `tag:#` as its own token, so
+ *     autocomplete *should* fire; the old odd-count said "inside".
+ *   - `foo" bar tag:#|` — a `"` that is not at a token start is just a
+ *     literal char to the tokenizer (no phrase at all), so autocomplete
+ *     *should* fire; the old odd-count said "inside".
+ *   - `"hello world tag:#|` — an *unterminated* quote degrades to a
+ *     word (`"hello`, `world`, `tag:#` are three separate tokens), so
+ *     `tag:#` is a real filter token and autocomplete *should* fire.
+ *
+ * Delegating to `tokenize` makes drift impossible: a caret is "inside a
+ * quote" iff it lands strictly within a boundary-closed `quoted` token's
+ * span. The caret right after a closing `"` (`span[1]`) is *outside*, so
+ * an adjacent filter prefix (`"phrase" tag:#|`) still autocompletes.
  */
 function isInsideQuote(input: string, caret: number): boolean {
-  let quoted = false
-  for (let i = 0; i < caret; i++) {
-    if (input[i] === '"') quoted = !quoted
+  for (const tok of tokenize(input)) {
+    if (tok.kind !== 'quoted') continue
+    const [start, end] = tok.span
+    if (caret > start && caret < end) return true
   }
-  return quoted
+  return false
 }
 
 /**

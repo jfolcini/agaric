@@ -1,10 +1,16 @@
 /**
  * PEND-54 — `+ Filter ▾` helper popover.
  *
- * Categorised picker for the three filter types this plan ships:
+ * Categorised picker for the structural filter types:
  *   - Tag — opens an inline tag-name list (server-side filtered).
  *   - Page path (include) — opens an inline text-entry form.
  *   - Page path (exclude) — same but produces a `not-path:` token.
+ *   - State / Priority / Property — Select-based builder forms with an
+ *     include/exclude toggle (PEND-58g UX-A5), producing
+ *     `state`/`notState`, `priority`/`notPriority`, `prop`/`notProp`.
+ *   - Due / Scheduled — bucket-or-comparison date builder (no not-
+ *     variant). The forms live under `./filter-forms/` and hand a fully
+ *     built `FilterToken` (`span: [0, 0]`) back via `onAddFilter`.
  *
  * Single-popover-at-a-time pattern: clicking a category row swaps the
  * popover *content* in place rather than opening a nested popover.
@@ -29,9 +35,23 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { logger } from '@/lib/logger'
+import type { FilterToken } from '@/lib/search-query'
 import { listTagsByPrefix, paginationLimit, type TagCacheRow } from '@/lib/tauri'
+import { DateFilterForm } from './filter-forms/DateFilterForm'
+import { PriorityFilterForm } from './filter-forms/PriorityFilterForm'
+import { PropFilterForm } from './filter-forms/PropFilterForm'
+import { StateFilterForm } from './filter-forms/StateFilterForm'
 
-type Mode = 'menu' | 'tag' | 'pathInclude' | 'pathExclude'
+type Mode =
+  | 'menu'
+  | 'tag'
+  | 'pathInclude'
+  | 'pathExclude'
+  | 'state'
+  | 'priority'
+  | 'due'
+  | 'scheduled'
+  | 'prop'
 
 const TAG_LISTBOX_ID = 'filter-helper-tag-listbox'
 const tagOptionId = (tagId: string): string => `filter-helper-tag-option-${tagId}`
@@ -43,12 +63,20 @@ export interface FilterHelperPopoverProps {
   onAddPathInclude: (glob: string) => void
   /** Add a `not-path:` glob filter. */
   onAddPathExclude: (glob: string) => void
+  /**
+   * PEND-58g UX-A5 — add a fully-built structural filter token
+   * (state / priority / due / scheduled / prop and their not- variants).
+   * The builder forms construct the token with `span: [0, 0]` and the
+   * popover closes after calling this.
+   */
+  onAddFilter: (token: FilterToken) => void
 }
 
 export function FilterHelperPopover({
   onAddTag,
   onAddPathInclude,
   onAddPathExclude,
+  onAddFilter,
 }: FilterHelperPopoverProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -163,6 +191,14 @@ export function FilterHelperPopover({
     handleOpenChange(false)
   }
 
+  // PEND-58g UX-A5 — the structural builder forms hand back a finished
+  // token; route it to the parent and close the popover.
+  function handleStructuralAdd(token: FilterToken) {
+    onAddFilter(token)
+    handleOpenChange(false)
+  }
+  const backToMenu = () => setMode('menu')
+
   const tagListExpanded = tagSuggestions.length > 0
   const activeDescendant =
     activeIndex >= 0 && tagSuggestions[activeIndex]
@@ -202,6 +238,26 @@ export function FilterHelperPopover({
               <PopoverMenuItem role="menuitem" onClick={() => setMode('pathExclude')}>
                 <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
+              </PopoverMenuItem>
+              <PopoverMenuItem role="menuitem" onClick={() => setMode('state')}>
+                <span className="font-medium">{t('search.filterCategory.state')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">state:TODO</span>
+              </PopoverMenuItem>
+              <PopoverMenuItem role="menuitem" onClick={() => setMode('priority')}>
+                <span className="font-medium">{t('search.filterCategory.priority')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">priority:1</span>
+              </PopoverMenuItem>
+              <PopoverMenuItem role="menuitem" onClick={() => setMode('due')}>
+                <span className="font-medium">{t('search.filterCategory.due')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">due:today</span>
+              </PopoverMenuItem>
+              <PopoverMenuItem role="menuitem" onClick={() => setMode('scheduled')}>
+                <span className="font-medium">{t('search.filterCategory.scheduled')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">scheduled:next-week</span>
+              </PopoverMenuItem>
+              <PopoverMenuItem role="menuitem" onClick={() => setMode('prop')}>
+                <span className="font-medium">{t('search.filterCategory.prop')}</span>
+                <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
               </PopoverMenuItem>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">{t('search.filterCategoryTip')}</p>
@@ -296,6 +352,18 @@ export function FilterHelperPopover({
               </Button>
             </div>
           </form>
+        )}
+        {mode === 'state' && (
+          <StateFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+        )}
+        {mode === 'priority' && (
+          <PriorityFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+        )}
+        {(mode === 'due' || mode === 'scheduled') && (
+          <DateFilterForm kind={mode} onAddFilter={handleStructuralAdd} onBack={backToMenu} />
+        )}
+        {mode === 'prop' && (
+          <PropFilterForm onAddFilter={handleStructuralAdd} onBack={backToMenu} />
         )}
       </PopoverContent>
     </Popover>
