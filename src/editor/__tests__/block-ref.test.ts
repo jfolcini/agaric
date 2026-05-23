@@ -54,11 +54,9 @@ describe('BlockRef NodeView', () => {
     })
 
     // The addNodeView config is a function that returns the NodeView factory.
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap extension config
-    const factory = (ext.config.addNodeView as Function)?.call(ext)
+    const factory = (ext.config.addNodeView as (...args: unknown[]) => unknown)?.call(ext)
     const fakeNode = { type: { name: 'block_ref' }, attrs: { id: options.id } }
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap NodeView factory
-    const view = (factory as Function)({ node: fakeNode })
+    const view = (factory as (...args: unknown[]) => { dom: unknown })({ node: fakeNode })
     return { dom: view.dom as HTMLSpanElement, view }
   }
   it('active ref has no deleted class', () => {

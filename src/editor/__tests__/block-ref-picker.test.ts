@@ -53,8 +53,7 @@ describe('BlockRefPicker suggestion config', () => {
   function buildPlugins() {
     capturedSuggestionOpts = undefined
     const ext = BlockRefPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const plugins = (ext.config.addProseMirrorPlugins as Function).call({
+    const plugins = (ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -94,8 +93,7 @@ describe('BlockRefPicker suggestion config', () => {
     const range = { from: 10, to: 20 }
     const props = { id: 'BLOCK_1', label: 'Test Block' }
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as (...args: unknown[]) => unknown)({ editor: mockEditor, range, props })
 
     expect(mockDeleteRange).toHaveBeenCalledWith(range)
   })
@@ -118,8 +116,7 @@ describe('BlockRefPicker suggestion config', () => {
     const range = { from: 5, to: 15 }
     const props = { id: 'BLOCK_42', label: 'My Block' }
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as (...args: unknown[]) => unknown)({ editor: mockEditor, range, props })
 
     expect(mockInsertBlockRef).toHaveBeenCalledWith('BLOCK_42')
   })
@@ -145,8 +142,7 @@ describe('BlockRefPicker suggestion config', () => {
     const range = { from: 0, to: 10 }
     const props = { id: 'BLOCK_99', label: 'Another Block' }
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as (...args: unknown[]) => unknown)({ editor: mockEditor, range, props })
 
     expect(mockChain).toHaveBeenCalled()
     expect(mockFocus).toHaveBeenCalled()
@@ -185,8 +181,7 @@ describe('BlockRefPicker suggestion config', () => {
     const range = { from: 4, to: 8 }
     const props = { id: 'BLK_UX232', label: 'Block UX' }
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs direct invocation of captured command
-    ;(opts['command'] as Function)({ editor: mockEditor, range, props })
+    ;(opts['command'] as (...args: unknown[]) => unknown)({ editor: mockEditor, range, props })
 
     expect(calls).toEqual([
       'focus',
@@ -319,8 +314,14 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
 
     const ext = BlockRefPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -363,8 +364,14 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
     const mockItems = vi.fn().mockResolvedValue([])
 
     const ext = BlockRefPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -405,8 +412,14 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
     ])
 
     const ext = BlockRefPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -445,8 +458,14 @@ describe('BlockRefPicker input rule (MAINT-130(c))', () => {
     const mockItems = vi.fn().mockRejectedValue(new Error('items failed'))
 
     const ext = BlockRefPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -510,8 +529,14 @@ describe('BlockRefPicker stale-insertPos guard (FE-M-15)', () => {
       .mockResolvedValue([{ id: 'BLOCK_ULID_1', label: 'Some Block', isCreate: false }])
     const ext = BlockRefPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -560,8 +585,11 @@ describe('resolveBlockRefFromSelection command (MAINT-130(c))', () => {
   function getCommand(ext: ReturnType<typeof BlockRefPicker.configure>) {
     const addCommands = ext.config.addCommands
     expect(addCommands).toBeDefined()
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const commands = (addCommands as Function).call({ options: ext.options })
+    const commands = (
+      addCommands as unknown as (...args: unknown[]) => {
+        resolveBlockRefFromSelection: () => (...a: unknown[]) => unknown
+      }
+    ).call({ options: ext.options })
     return commands.resolveBlockRefFromSelection
   }
 

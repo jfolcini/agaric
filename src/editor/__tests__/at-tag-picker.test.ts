@@ -77,8 +77,14 @@ describe('AtTagPicker input rule (T-2)', () => {
 
     const ext = AtTagPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -122,8 +128,14 @@ describe('AtTagPicker input rule (T-2)', () => {
     const mockOnCreate = vi.fn().mockResolvedValue('NEW_TAG_ULID')
 
     const ext = AtTagPicker.configure({ items: mockItems, onCreate: mockOnCreate })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -164,8 +176,14 @@ describe('AtTagPicker input rule (T-2)', () => {
     const mockItems = vi.fn().mockResolvedValue([])
 
     const ext = AtTagPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -199,8 +217,14 @@ describe('AtTagPicker input rule (T-2)', () => {
     const mockItems = vi.fn().mockRejectedValue(new Error('network error'))
 
     const ext = AtTagPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -255,8 +279,14 @@ describe('AtTagPicker stale-insertPos guard (FE-M-15)', () => {
       .mockResolvedValue([{ id: 'TAG_ULID_1', label: 'myTag', isCreate: false }])
     const ext = AtTagPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -303,8 +333,7 @@ describe('AtTagPicker suggestion plugin configuration', () => {
     }))
     const mod = await import('../extensions/at-tag-picker')
     const ext = mod.AtTagPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -336,8 +365,7 @@ describe('AtTagPicker suggestion command chain (UX-232)', () => {
     }))
     const mod = await import('../extensions/at-tag-picker')
     const ext = mod.AtTagPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -400,8 +428,7 @@ describe('AtTagPicker suggestion command chain (UX-232)', () => {
     const mod = await import('../extensions/at-tag-picker')
     const onCreate = vi.fn().mockResolvedValue('NEW_TAG_ULID')
     const ext = mod.AtTagPicker.configure({ items: () => [], onCreate })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })

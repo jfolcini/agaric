@@ -70,11 +70,9 @@ describe('BlockLink broken link recovery (UX-25)', () => {
     })
 
     // The addNodeView config is a function that returns the NodeView factory.
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap extension config
-    const factory = (ext.config.addNodeView as Function)?.call(ext)
+    const factory = (ext.config.addNodeView as (...args: unknown[]) => unknown)?.call(ext)
     const fakeNode = { type: { name: 'block_link' }, attrs: { id: options.id }, nodeSize: 1 }
-    // biome-ignore lint/complexity/noBannedTypes: test needs dynamic call on TipTap NodeView factory
-    const view = (factory as Function)({
+    const view = (factory as (...args: unknown[]) => { dom: unknown })({
       node: fakeNode,
       editor: options.editor ?? {},
       getPos: options.getPos ?? (() => 0),
