@@ -298,21 +298,26 @@ export function SearchPanel(): React.ReactElement {
     [toggles.isRegex, debouncedProjection, tagIds],
   )
   const queryFn = useCallback(
-    (cursor?: string) =>
+    // FE-2 — forward the AbortSignal so a superseded search is cancelled
+    // mid-flight instead of running the backend scan to completion.
+    (cursor?: string, signal?: AbortSignal) =>
       // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
       // fallback is intentional pre-bootstrap behaviour: empty string
       // forces a no-match SQL filter (returning empty results) rather
       // than a runtime null deref.
-      searchBlocks({
-        query: toggles.isRegex ? debouncedQuery : debouncedAst.freeText,
-        ...filterParams,
-        cursor,
-        limit: PAGINATION_LIMIT,
-        spaceId: currentSpaceId ?? '',
-        caseSensitive: toggles.caseSensitive,
-        wholeWord: toggles.wholeWord,
-        isRegex: toggles.isRegex,
-      }),
+      searchBlocks(
+        {
+          query: toggles.isRegex ? debouncedQuery : debouncedAst.freeText,
+          ...filterParams,
+          cursor,
+          limit: PAGINATION_LIMIT,
+          spaceId: currentSpaceId ?? '',
+          caseSensitive: toggles.caseSensitive,
+          wholeWord: toggles.wholeWord,
+          isRegex: toggles.isRegex,
+        },
+        signal,
+      ),
     [
       debouncedAst.freeText,
       debouncedQuery,
