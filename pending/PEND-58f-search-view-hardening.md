@@ -327,12 +327,22 @@ and accurate). DOC-5 was FALSE.
   bug fixed: SearchPanel no longer passes `onError` (which clobbered the raw IPC
   message), so the inline regex error + the UX-2 visible error state both work.
 
+**Done — performance trilogy (third batch):**
+
+- FE-2 — `searchBlocks` now takes an `AbortSignal`; `usePaginatedQuery` arms a fresh
+  `AbortController` per load and aborts the previous, so a superseded keystroke
+  cancels the prior backend scan mid-flight (no more running every scan to
+  completion). SearchPanel forwards the signal through its queryFn.
+- FE-3 — the results list is virtualized per page-group (`@tanstack/react-virtual`),
+  mounting only the visible window + overscan instead of up to the 5000-item cap. The
+  roving-listbox a11y is preserved: `scrollToIndex` keeps the active row mounted so
+  `aria-activedescendant` always resolves.
+- FE-10 — the caret-anchored autocomplete machine moved into `<SearchAutocomplete>`
+  (caret moves no longer re-render the ~1100-line panel); keydown delegated via a ref
+  handle, open/aria reported up via `onStateChange`.
+
 **Deferred (correctness unaffected; each warrants its own focused change):**
 
-- FE-2 (abort signal — cross-cutting IPC/hook/component plumbing), FE-3 (virtualize
-  the result list — rewrites the roving-listbox a11y model; win only at the 5000-item
-  cap), FE-10 (move caret state out of the panel). The request-id guard already
-  prevents stale results, so these are pure performance/structure work.
 - E2E-2 `<mark>` highlight + the literal "real Rust pipeline" assertions: not
   reachable on the web+mock harness (mock returns no snippet/match_offsets and no
   real regex compiler); covered at the unit layer.
