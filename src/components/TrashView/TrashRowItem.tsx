@@ -59,7 +59,7 @@ export function TrashRowItem({
       className={cn(
         'trash-item flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 rounded-lg border bg-card p-4 transition-colors cursor-pointer',
         isSelected ? 'bg-accent/50 border-accent' : 'hover:bg-accent/50 active:bg-accent/70',
-        isFocused && 'ring-2 ring-ring/50 bg-accent/30',
+        isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
       )}
       data-testid="trash-item"
       onClick={(e) => onRowClick(block.id, e)}

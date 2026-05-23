@@ -467,7 +467,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                               // Override ListItem's `gap-3 rounded-lg px-3 py-2 hover:bg-accent/50` chrome
                               // with the muted dashed-border "projected" shape via tailwind-merge.
                               'gap-2 rounded-md border border-dashed border-muted-foreground/20 bg-muted/30 px-2 py-1.5 text-sm text-muted-foreground cursor-pointer hover:bg-muted/50 active:bg-muted/70',
-                              projectedFocused && 'ring-2 ring-ring/50 bg-accent/30',
+                              projectedFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
                             )}
                             onClick={() => {
                               if (!entry.block.page_id || !onNavigateToPage) return

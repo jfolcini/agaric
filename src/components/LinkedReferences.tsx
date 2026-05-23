@@ -33,7 +33,7 @@ import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { SourcePageFilter } from './SourcePageFilter'
 
-const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30'] as const
+const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50', 'bg-accent/30'] as const
 
 export interface LinkedReferencesProps {
   pageId: string
