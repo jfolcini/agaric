@@ -137,7 +137,7 @@ export function SearchHistoryDropdown({
                 }
               }}
               className={cn(
-                'flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm',
+                'flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm [@media(pointer:coarse)]:min-h-11',
                 'hover:bg-accent/30 active:bg-accent/40 transition-colors',
                 'truncate',
               )}
@@ -198,7 +198,7 @@ export function SearchHistoryDropdown({
               e.preventDefault()
             }}
             className={cn(
-              'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground',
+              'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
               'hover:bg-accent/30 transition-colors',
               'focus-ring-visible rounded-none',
             )}
@@ -216,7 +216,7 @@ export function SearchHistoryDropdown({
             e.preventDefault()
           }}
           className={cn(
-            'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground',
+            'flex w-full items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground [@media(pointer:coarse)]:min-h-11',
             'hover:bg-accent/30 transition-colors',
             'focus-ring-visible rounded-none',
           )}

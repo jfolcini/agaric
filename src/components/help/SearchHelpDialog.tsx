@@ -12,6 +12,7 @@
  * syntax) render verbatim as code.
  */
 
+import { CaseSensitive, Regex, WholeWord } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import {
@@ -165,17 +166,23 @@ function TogglesBody() {
         </thead>
         <tbody>
           <tr>
-            <td className="pr-3">Aa</td>
+            <td className="pr-3">
+              <CaseSensitive className="h-4 w-4" aria-hidden="true" />
+            </td>
             <td className="pr-3">{t('search.help.toggles.mode.caseSensitive')}</td>
             <td>{t('search.help.toggles.notes.caseSensitive')}</td>
           </tr>
           <tr>
-            <td className="pr-3">Ab|</td>
+            <td className="pr-3">
+              <WholeWord className="h-4 w-4" aria-hidden="true" />
+            </td>
             <td className="pr-3">{t('search.help.toggles.mode.wholeWord')}</td>
             <td>{t('search.help.toggles.notes.wholeWord')}</td>
           </tr>
           <tr>
-            <td className="pr-3">.*</td>
+            <td className="pr-3">
+              <Regex className="h-4 w-4" aria-hidden="true" />
+            </td>
             <td className="pr-3">{t('search.help.toggles.mode.regex')}</td>
             <td>{t('search.help.toggles.notes.regex')}</td>
           </tr>

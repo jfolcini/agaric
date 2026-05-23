@@ -52,14 +52,25 @@ regex placeholder + monospace + an sr-only `aria-describedby` hint when regex mo
 is on. Backend reviewed with empirical mutation testing (cursor `<`/`has_more`
 boundaries) which caught + fixed an exact-multiple `has_more` test gap.
 
+## Batch 4 — shipped (Session 818)
+
+Closed the mobile/touch/a11y polish cluster. **UX-A1** (mobile escalation
+discoverability) — per the product decision ("better escalation only"), the mobile
+all-pages palette now shows an always-visible, prominent two-line "Filters & regex /
+Open full search" CTA (replacing the muted, query-gated footer), so toggles, filters,
+regex, and history are discoverable from the sheet via the full search view (a new
+`showMobileEscalation` gate; desktop inline footer unchanged). **UX-A7** — the history
+rows, Clear-history, and the enable/disable toggle gained coarse-pointer 44px
+(`min-h-11`) targets (the per-row delete already had one). **UX-A9** — the search help
+dialog's Toggles "Icon" column now renders the same `CaseSensitive` / `WholeWord` /
+`Regex` lucide icons the toolbar shows, instead of `Aa` / `Ab|` / `.*` text glyphs.
+
+**UX-A8 deferred** (kept open): an always-visible/long-press toggle-mode explanation
+for touch needs a real design decision (Radix tooltips don't fire on touch-tap; inline
+labels overflow a narrow phone row) plus runtime verification — not shipped to avoid a
+half-baked touch affordance.
+
 ---
-
-## Remaining — Correctness / data bugs
-
-- **UX-A1 (High)** `SearchSheet.tsx:178`. Mobile "all pages" renders the command
-  palette, not `SearchPanel`; toggles/filters/regex/history/help are only reachable
-  by escalating to the full view. Fix: route all-pages to `SearchPanel`, or surface
-  the toggle row + help in the sheet. (Needs a mobile UX product decision.)
 
 ## Remaining — Performance / robustness (backend)
 
@@ -73,11 +84,9 @@ boundaries) which caught + fixed an exact-multiple `has_more` test gap.
   filter types (`state`/`priority`/`due`/`scheduled`/`prop` + not-variants) are
   syntax-only. Adding them to the popover builder is a feature expansion (deferred
   from the FilterHelperPopover hardening batch).
-- **UX-A9 (Low)** `help/SearchHelpDialog.tsx` — help "Icon" column shows
-  `Aa`/`Ab|`/`.*` text but the toolbar renders lucide icons.
-- **UX-A7 (Low)** Clear-all link + history-row body lack coarse-pointer 44px
-  targets (the category rows already have them). **UX-A8 (Low)** add an always-
-  visible/long-press toggle-mode explanation for touch.
+- **UX-A8 (Low)** add an always-visible/long-press toggle-mode explanation for touch.
+  Deferred from Batch 4: needs a design decision (Radix tooltips don't fire on
+  touch-tap; inline labels overflow a narrow phone row) + runtime verification.
 - **UX-A10 / UX-A12 / UX-A13 (uncertain)** history dropdown in normal flow vs
   overlaid; capped + error co-render; RTL physical spacing — verify at runtime.
 

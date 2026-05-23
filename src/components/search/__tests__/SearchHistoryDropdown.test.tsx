@@ -176,4 +176,19 @@ describe('SearchHistoryDropdown', () => {
       expect(row).toHaveAttribute('aria-selected', 'false')
     }
   })
+
+  // UX-A7 — the per-row delete affordance already had a coarse-pointer 44px
+  // target; the row body, Clear-history, and the enable/disable toggle did not.
+  it('gives the rows and footer controls a coarse-pointer 44px target', () => {
+    renderDropdown({ entries: ['alpha', 'beta'] })
+    expect(screen.getByTestId('search-history-entry-0')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
+    expect(screen.getByTestId('search-history-clear')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
+    expect(screen.getByTestId('search-history-toggle')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
+  })
 })
