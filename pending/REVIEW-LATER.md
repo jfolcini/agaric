@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-22 open items in the summary table; 22 detail entries (FE-* sub-tables don't appear in the summary).
+23 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -42,6 +42,7 @@ Items flagged during development that need revisiting. Organized by section with
 | CI-R11 | MAINT | macOS notarisation — strict no-go for current cycle per maintainer decision. SLSA-provenance posture stays; `docs/BUILD.md` unquarantine instructions remain the user-facing UX for the Gatekeeper warning. Revisit trigger: a downstream that requires notarisation (managed corporate fleet, third-party Mac app catalogue). | M (Apple Dev Program $99/yr + notarytool wiring) | Maintainer decision to invest in Apple Developer Program |
 | CI-R15 | PERF | Vitest pool A/B benchmark — `forks` (default) vs `threads`. Happy-dom suites *may* run faster on threads but threads can leak module state; the actual delta is unknown without measurement. ADOPT if measured speedup >30% on a CI experiment (run one branch each, compare wall times); document either way. | S (one CI run + decision) | Opt-in benchmark cycle |
 | CI-R16 | MAINT | `SKIP_CI_VERIFY` reason-string / safe-glob guard. Habit-creep vs friction-cost is genuinely balanced for a solo workflow. Cheap version (reject `=1`, require non-empty reason string in env var) is ~10 lines bash; rigorous version (safe-glob allowlist) requires git-diff inspection in the pre-push script. | S (cheap) or M (rigorous) | Maintainer decision on cadence-vs-friction |
+| PAGES-FOLD-MARK | MAINT | Fold-aware highlight `<mark>` mis-bounding (ß↔ss) in the Pages view. The fold offset-mapping in `src/lib/fold-for-search.ts` / `PageBrowserRowRenderer.tsx` can mis-place the highlight when a folded character changes length. Low-impact; deferred to avoid churn in the shared search-fold util. (Was PEND-58d D23a; the rest of PEND-58d shipped.) | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -214,6 +215,20 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 - **Risk:** Low (defensive changes).
 - **Impact:** Low today; medium if gcal push usage grows.
 - **Status:** Open, speculative. Surface concrete profiling data showing gcal contention before pursuing. Filed from PEND-25 (session 661).
+
+### PAGES-FOLD-MARK — fold-aware highlight `<mark>` mis-bounding (ß↔ss)
+
+**Site:** `src/lib/fold-for-search.ts` (fold offset-mapping) + `src/components/PageBrowser/PageBrowserRowRenderer.tsx` (highlight rendering).
+
+**What:** When a case/diacritic fold changes a character's length (e.g. `ß` → `ss`), the offset map used to place the `<mark>` highlight can drift, so the highlight is positioned over the wrong span of the rendered title.
+
+**Why it matters:** Cosmetic only — purely the visual highlight bound; search matching and results are unaffected. Edge-case (titles containing length-changing folded characters).
+
+**Fix:** Correct the fold offset-mapping to track per-character length deltas, or render the highlight against the folded string consistently. Overlaps the shared search-fold util, so deferred to avoid churn there.
+
+**Cost:** S. **Risk:** Low. **Impact:** Low (cosmetic, rare).
+
+**Status:** Open, deferred. Was PEND-58d D23a; the rest of PEND-58d (P1–P3 + comprehensive e2e) shipped. (D23b — `aria-activedescendant` guarding — already shipped.)
 
 ## TEST — Backend test improvements
 
