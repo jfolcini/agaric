@@ -62,13 +62,7 @@ import { recordPathHistory } from '../lib/path-history'
 import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow, SearchBlockRow } from '../lib/tauri'
-import {
-  batchResolve,
-  getBlock,
-  listTagsByPrefix,
-  paginationLimit,
-  searchBlocks,
-} from '../lib/tauri'
+import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
 import { selectHistoryForSpace, useSearchHistoryStore } from '../stores/search-history'
 import { useSpaceStore } from '../stores/space'
 import { useTabsStore } from '../stores/tabs'
@@ -79,27 +73,14 @@ import { ResultCard } from './ResultCard'
 import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
+import { useFilterSyntaxIntroToast } from './SearchPanel/useFilterSyntaxIntroToast'
+import { useTagResolution } from './SearchPanel/useTagResolution'
 import { type AutocompleteAriaIds, AutocompletePopover } from './search/AutocompletePopover'
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
 import { groupResultsByPage, SearchResultGroups } from './search/SearchResultGroups'
 import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRow'
-
-/** localStorage key for the PEND-54 one-time migration toast. */
-const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'
-
-/**
- * PEND-73 Phase 3.U10 — session-scoped sentinel for the PEND-54 toast.
- * Lives outside React state so a SearchPanel remount within the same
- * page session re-reads the existing `true` without re-toasting. The
- * localStorage write below remains the cross-session persistence
- * mechanism; this module-level flag is purely the in-memory guard
- * against the "localStorage write fails, get fails next mount" loop
- * that historically re-fired the toast on every remount in private-
- * mode browsers.
- */
-let filterSyntaxToastShownThisSession = false
 
 /** PEND-55 — localStorage key for the toggle state (component-local but
  * persisted across reloads so power users don't re-click on every
@@ -260,58 +241,10 @@ export function SearchPanel(): React.ReactElement {
   // that match the rendered chips.
   const debouncedAst = useMemo(() => parse(debouncedQuery), [debouncedQuery])
   const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
-  // Resolve tag names → tag_ids before firing the IPC. This is a
-  // best-effort lookup: unknown names produce no tag_id (the SQL
-  // path then matches nothing for that tag, which is correct).
-  const [tagNameMap, setTagNameMap] = useState<Map<string, string>>(new Map())
-  const tagIds = useMemo(() => {
-    const out: string[] = []
-    for (const name of debouncedProjection.tagNames) {
-      const id = tagNameMap.get(name.toLowerCase())
-      if (id) out.push(id)
-    }
-    return out
-  }, [debouncedProjection.tagNames, tagNameMap])
-
-  // Resolve tag names in `ast.filters` to ids via the prefix lookup.
-  useEffect(() => {
-    const names = debouncedProjection.tagNames.filter((n) => !tagNameMap.has(n.toLowerCase()))
-    if (names.length === 0) return
-    let cancelled = false
-    Promise.all(
-      names.map((name) =>
-        listTagsByPrefix({ prefix: name, limit: paginationLimit(20) }).catch(() => []),
-      ),
-    )
-      .then((batches) => {
-        if (cancelled) return
-        setTagNameMap((prev) => {
-          const next = new Map(prev)
-          for (let i = 0; i < names.length; i++) {
-            const name = names[i]
-            const batch = batches[i]
-            if (!name || !batch) continue
-            const lower = name.toLowerCase()
-            const exact = batch.find((t) => t.name.toLowerCase() === lower)
-            if (exact) next.set(lower, exact.tag_id)
-          }
-          return next
-        })
-      })
-      .catch((err) => logger.warn('SearchPanel', 'tag resolution failed', undefined, err))
-    return () => {
-      cancelled = true
-    }
-  }, [debouncedProjection.tagNames, tagNameMap])
-
-  // FE-5 — tag name→id resolutions are space-scoped: the same tag name
-  // can map to a different tag_id (or none) in another space. The cache
-  // keys on the lowercased name only, so drop it on space switch to
-  // avoid a cross-space id collision when the panel isn't remounted.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fire-on-change — the body doesn't read currentSpaceId, it invalidates the space-scoped cache when the space switches.
-  useEffect(() => {
-    setTagNameMap(new Map())
-  }, [currentSpaceId])
+  // FE-9 — tag name→id resolution extracted into `useTagResolution`
+  // (best-effort prefix lookup; FE-5 space-scoped cache invalidation
+  // lives in the hook).
+  const tagIds = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
 
   // Load recent pages from localStorage on mount
   useEffect(() => {
@@ -346,28 +279,8 @@ export function SearchPanel(): React.ReactElement {
   // PEND-54 — one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
   //
-  // PEND-73 Phase 3.U10 — guard against re-firing in browsers where
-  // localStorage is unavailable (private mode, embedded webviews with
-  // storage disabled). The earlier shape silently caught the write
-  // failure but ALSO failed the read, so the toast re-fired on every
-  // mount. The in-memory sentinel below is checked first; the
-  // localStorage write is best-effort and only matters for cross-
-  // session persistence.
-  useEffect(() => {
-    if (filterSyntaxToastShownThisSession) return
-    filterSyntaxToastShownThisSession = true
-    try {
-      if (localStorage.getItem(FILTER_SYNTAX_INTRO_TOAST_FLAG)) return
-      notify(t('search.filterSyntaxIntro'))
-      localStorage.setItem(FILTER_SYNTAX_INTRO_TOAST_FLAG, '1')
-    } catch {
-      // localStorage unavailable; the session-scoped flag above is
-      // what actually gates re-fires within this session, and the
-      // toast was shown once on the first mount where this branch
-      // ran — that's the best we can do without storage.
-      notify(t('search.filterSyntaxIntro'))
-    }
-  }, [t])
+  // FE-9 — one-time filter-syntax intro toast extracted to a hook.
+  useFilterSyntaxIntroToast()
 
   // PEND-55 — in regex mode the user's input is the regex verbatim;
   // skip PEND-54's filter projection so `tag:` / `path:` aren't
