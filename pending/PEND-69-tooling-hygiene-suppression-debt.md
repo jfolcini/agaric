@@ -54,10 +54,10 @@ case-by-case review.
 | `suspicious/noExplicitAny` | ~156 (tests) | Prod cleared Session 826 | The **11 prod `src/` `t: (...args: any[]) => any` workarounds were all typed as `TFunction`** and their `biome-ignore`s dropped (8 unit-test mocks cast `as unknown as TFunction` to match). The ~156 remaining are all in `__tests__`/`.spec` (mock/harness loose typing — acceptable Keep). |
 | `a11y/useSemanticElements` | 62 | Keep | Custom interactive elements that carry explicit ARIA roles (chip groups, listboxes, toolbars). Legit, but worth one holistic a11y pass to confirm each role is correct. |
 | `correctness/useExhaustiveDependencies` | 56 (prod) | Audited Session 827 — no bugs found | Deep-verified the highest-risk members: the two "value read in the effect body but omitted" sites (`PageBrowser` filter-announce — `wireFiltersKey` faithfully tracks the chip set so the effect re-runs with fresh `filters`/`t`; `BlockHistoryItem` compared-diff guards — effect-set state deliberately excluded to avoid a self-cancelling fetch loop), the `resolveVersion` ref-cache identity-bump pattern (`useBacklinkResolution` ×3 et al. — only `currentSpaceId` is reactive and it IS listed), and the `stableKey`/digest array-substitute hooks (`useBatchProperties`, `useBlockPropertiesBatch`). All correct. The remainder are documented variants of vetted patterns: (a) trigger-key "re-run on X; body doesn't read X" — safe by construction, (b) ref/stable-handle reads — refs aren't deps, (c) effect-set guard state excluded to avoid self-cancel loops, (d) mount-only hydration. No stale-closure bugs; each carries an inline reason. (~156 more are in tests — acceptable.) A full line-by-line pass of the remaining ~49 is available but low-ROI given the risky surface is clean. |
-| `complexity/noBannedTypes` | 38 | Debt/Audit | Mostly `{}` / `Function`. Replace with precise types where feasible. |
+| `complexity/noBannedTypes` | 38 | Audited Session 827 — all test | All 38 are in `__tests__`/`.spec` (mock/harness `{}`/`Function` typing — acceptable Keep); **0 in prod `src/`**. |
 | `a11y/useFocusableInteractive` | 25 | Keep | Non-focusable elements with handlers by design; verify keyboard reachability. |
-| `style/noNonNullAssertion` | 16 | Audit | `!` escapes (the rule is `error` globally). Prefer a guard / `?.` + cast. |
-| `complexity/noExcessiveCognitiveComplexity` | 14 | **Debt** | Functions over budget. Extract sub-functions (cf. the `useAppKeyboardShortcuts` refactor pattern). |
+| `style/noNonNullAssertion` | 15 | Audited Session 827 | Only 2 were in prod: `fold-for-search.ts` now uses `charAt` (returns `string`, suppression dropped); `tauri-mock/index.ts` kept (dev/e2e error-injection path, `!` guarded by `hasInjectedError()`). The other 14 are in tests (acceptable Keep). |
+| `complexity/noExcessiveCognitiveComplexity` | 13 (prod) | **Debt — deferred** | Functions over budget across 9 files (5 in the `tauri-mock/handlers.ts` dispatcher, where complexity is inherent; 8 in real components/hooks). Each is a genuine sub-function-extraction refactor (cf. `useAppKeyboardShortcuts`) carrying real regression risk — the **main remaining PEND-69 debt**, deferred as its own focused effort rather than churned into a release. Suppressed → CI stays green. |
 | `a11y/noStaticElementInteractions` | 10 | Keep/Audit | div/span with handlers; confirm role + key handlers exist. |
 | `a11y/noNoninteractiveTabindex` | 9 | Keep | Roving-tabindex / focus-management patterns. |
 | `a11y/useKeyWithClickEvents` | 6 | Audit | Click-only handlers; confirm keyboard parity. |
@@ -117,13 +117,32 @@ part of the burn-down, not as a mechanical mass-rewrite.
    wrapper, converted 3 never-read keeps to `#[expect(dead_code, reason)]`; the
    remaining ~19 `#[allow(dead_code)]` are confirmed-justified keeps (documented
    scaffolding, test-shims, platform variants, specta-read fields).
-5. **`noExcessiveCognitiveComplexity` (14)** — extract sub-functions.
+5. **`noExcessiveCognitiveComplexity` (13 prod)** — **the main remaining debt.**
+   Extract sub-functions (cf. `useAppKeyboardShortcuts`). Deferred from the
+   Session 823–827 burn-down as its own focused, regression-risky effort — NOT
+   churned into the release. Suppressed, so CI is green.
 6. ~~**`cast_possible_truncation`/`_wrap` (12)**~~ — DONE (Session 825, audit-only):
    all already document the invariant (f64→int has no `try_into`); the 2 `unsafe`
    blocks already carry `// SAFETY:` comments. No code changes needed.
-7. **MAINT-227** — `tauri-plugin-opener` migration removes the lone `deprecated`.
-8. Lower priority: `noBannedTypes` precise typing; `noNonNullAssertion` guards;
-   `too_many_arguments` request-struct folding; a11y holistic pass.
+7. **MAINT-227** — `tauri-plugin-opener` migration removes the lone `deprecated`
+   (blocked until the dep lands).
+8. Lower priority / by-design keeps: `noBannedTypes` is all-test (no prod work);
+   prod `noNonNullAssertion` is cleared (1 fixed, 1 justified mock keep);
+   `too_many_arguments` (41, Rust) request-struct folding is optional; the a11y
+   suppressions (`useSemanticElements` ×62 etc.) are documented role-carrying
+   elements — a holistic a11y verification pass is a separate effort.
+
+## Status (after Session 827)
+
+Every **actionable, low-risk** suppression has been burned down or its category
+audited-and-justified: `unused_imports` (removed), `dead_code` (deleted/`expect`/keep),
+prod `noExplicitAny` (→ `TFunction`), prod `noNonNullAssertion` (1 fixed, 1 mock
+keep), casts + `unsafe` (documented invariants / SAFETY), `useExhaustiveDependencies`
+(risky surface verified clean), `noBannedTypes` (all-test). The toolchain is
+squeaky clean (`prek run --all-files` green). The **only remaining prod debt** is
+`noExcessiveCognitiveComplexity` (13) — a deliberately-deferred, regression-risky
+sub-function-extraction refactor — plus the by-design keeps and the dep-blocked
+MAINT-227.
 
 ## How to re-audit
 
