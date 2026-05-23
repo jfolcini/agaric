@@ -14,6 +14,7 @@
 
 import type { TFunction } from 'i18next'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 
 export interface SearchStatusRegionProps {
   searched: boolean
@@ -28,7 +29,6 @@ export interface SearchStatusRegionProps {
   regexError: string | null
   cleared: boolean
   resultCount: number
-  t: TFunction
 }
 
 /**
@@ -36,10 +36,7 @@ export interface SearchStatusRegionProps {
  * the region should stay empty (pre-search / loading). Exported for
  * direct testing.
  */
-export function getSearchStatusText(
-  args: Omit<SearchStatusRegionProps, 't'>,
-  t: TFunction,
-): string | null {
+export function getSearchStatusText(args: SearchStatusRegionProps, t: TFunction): string | null {
   const { searched, searchLoading, error, regexError, cleared, resultCount } = args
   // UX-5 — announce that a search is running. Screen-reader users
   // otherwise got silence between submit and the result count. The
@@ -75,8 +72,8 @@ export function SearchStatusRegion({
   regexError,
   cleared,
   resultCount,
-  t,
 }: SearchStatusRegionProps): React.ReactElement {
+  const { t } = useTranslation()
   const statusText = getSearchStatusText(
     { searched, searchLoading, error, regexError, cleared, resultCount },
     t,

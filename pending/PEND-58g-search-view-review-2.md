@@ -125,6 +125,28 @@ cursor/limit), so multi-page Load-More is unreachable here. The added
 Load-More control); the append-on-load-more path stays covered at the
 `usePaginatedQuery` unit layer. True pagination needs a Tauri-driven harness (E2E-A6).
 
+## Batch 7 — shipped (Session 821)
+
+Closed the maintainability cluster. **FE-A18** — decomposed the ~996-line
+`SearchPanel.tsx` god-component (continues FE-9). The results pipeline (AST→IPC
+projection, `usePaginatedQuery`, the inline regex-error derive, breadcrumb
+page-title resolution, page grouping + collapse state, the roving
+`useListKeyboardNavigation` model, and result/recent-page navigation) moved into
+a new `useSearchResults` hook; the per-space search-history surface (store
+wiring, `useSearchHistoryCycling`, the listbox id, and the recall/clear/remove/
+toggle handlers) moved into `useSearchHistoryControls`; and the filter-param
+projection (`SearchFilterParams` + `astFilterParams`) moved to its own pure
+`searchFilterParams.ts` module (now unit-tested). Behaviour-preserving lift —
+every memo/effect dependency array is unchanged; the integration suite
+(`SearchPanel.*` + `SearchResultGroups`) stayed green. `SearchPanel.tsx` dropped
+from 996 to 625 lines (the remainder is mostly the JSX tree, which stays in the
+orchestrator). **FE-A19** — converged the search subtree on the
+dominant `useTranslation()` convention: removed the drilled `t: TFunction` prop
+from `SearchHeader`, `SearchStatusRegion`, `SearchResultGroups` (each now calls
+`useTranslation()` itself) and from the new `useSearchResults` hook. The pure
+`getSearchStatusText` helper still takes `t` as a param (exported for direct
+testing); only the React components/hooks own the `useTranslation()` call.
+
 ---
 
 ## Remaining — Performance / robustness (backend)
@@ -143,15 +165,9 @@ Load-More control); the append-on-load-more path stays covered at the
 
 ## Remaining — Maintainability
 
-- **FE-A18 (Medium)** `SearchPanel.tsx` is still ~970 lines. Continue FE-9: extract
-  `useSearchResults` (queryFn + usePaginatedQuery + pageTitles + groups + nav) and
-  `useSearchHistoryControls`; move the filter-param projection to its own module.
-  (Per PROMPT: hook-extraction sweeps stall in subagents — run orchestrator-direct
-  or split by file boundary.)
 - **BE-A7 (Low, by-design)** `filters/primitive.rs`. `SearchProjection` / `compile_*`
   are dead at runtime (1=1 placeholders) — intentional Phase-2 scaffolding behind a
   clear banner. Either finish the wiring or keep the banner.
-- **FE-A19 (Low)** mixed `t`-prop vs `useTranslation()` across the search subtree.
 
 ## Remaining — E2E / test coverage
 
@@ -168,8 +184,8 @@ Load-More control); the append-on-load-more path stays covered at the
 
 ## Suggested action order (remaining)
 
-1. **Maintainability** (FE-A18 hook extraction; FE-A19) + the low-priority UX items
-   (UX-A8; UX-A10/A12/A13 need runtime verification).
-2. **Remaining test gaps** (E2E-A4 capped notice, E2E-A5 `pendingViewQuery` handoff,
+1. **Remaining test gaps** (E2E-A4 capped notice, E2E-A5 `pendingViewQuery` handoff,
    E2E-A9 mobile viewport; the weak result-assertion cleanup). E2E-A3/A6 need a
    Tauri-driven harness.
+2. **Low-priority UX** (UX-A8 touch toggle-mode explanation; UX-A10/A12/A13 need
+   runtime verification) + the by-design backend items (BE-A5, BE-A7).

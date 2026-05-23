@@ -29,37 +29,19 @@
 
 import { Search } from 'lucide-react'
 import type React from 'react'
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { CardButton } from '@/components/ui/card-button'
-import { PAGINATION_LIMIT } from '@/lib/constants'
-import { notify } from '@/lib/notify'
 import type { FilterToken } from '@/lib/search-query'
-import {
-  addFilter,
-  astToFilterProjection,
-  parse,
-  removeFilterAt,
-  serialize,
-} from '@/lib/search-query'
+import { addFilter, parse, removeFilterAt, serialize } from '@/lib/search-query'
 
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
-import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
-import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
-import { useSearchHistoryCycling } from '../hooks/useSearchHistoryCycling'
-import { logger } from '../lib/logger'
 import { recordPathHistory } from '../lib/path-history'
-import { addRecentPage, getRecentPages, type RecentPage } from '../lib/recent-pages'
-import { reportIpcError } from '../lib/report-ipc-error'
-import type { BlockRow, SearchBlockRow } from '../lib/tauri'
-import { batchResolve, getBlock, searchBlocks } from '../lib/tauri'
-import { selectHistoryForSpace, useSearchHistoryStore } from '../stores/search-history'
 import { useSpaceStore } from '../stores/space'
-import { useTabsStore } from '../stores/tabs'
 import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { EmptyState } from './EmptyState'
 import { SearchHelpDialog } from './help/SearchHelpDialog'
@@ -73,12 +55,13 @@ import { SearchHeader } from './SearchPanel/SearchHeader'
 import { SearchStatusRegion } from './SearchPanel/SearchStatusRegion'
 import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { useFilterSyntaxIntroToast } from './SearchPanel/useFilterSyntaxIntroToast'
-import { useTagResolution } from './SearchPanel/useTagResolution'
+import { useSearchHistoryControls } from './SearchPanel/useSearchHistoryControls'
+import { useSearchResults } from './SearchPanel/useSearchResults'
 
 import { FilterChipRow } from './search/FilterChipRow'
 import { FilterHelperPopover } from './search/FilterHelperPopover'
 import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
-import { groupResultsByPage, SearchResultGroups } from './search/SearchResultGroups'
+import { SearchResultGroups } from './search/SearchResultGroups'
 import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRow'
 
 /** PEND-55 — localStorage key for the toggle state (component-local but
@@ -92,65 +75,6 @@ const DEFAULT_SEARCH_TOGGLES: SearchToggleState = {
   isRegex: false,
 }
 
-/**
- * PEND-53 — Filter-param bundle the SearchPanel hands to `searchBlocks`.
- *
- * Split out of the `queryFn` callback so the closure stays under
- * biome's complexity cap. `astFilterParams(projection, tagIds)`
- * returns the AST-projected bundle used in BOTH search modes
- * (DSL-A8 / UX-A4 — see the `filterParams` memo below). The shape is
- * accepted by `searchBlocks` as `Partial<…>` extension fields (each
- * entry is `T | undefined`).
- */
-type SearchFilterParams = {
-  tagIds?: string[] | undefined
-  includePageGlobs?: string[] | undefined
-  excludePageGlobs?: string[] | undefined
-  stateFilter?: string[] | undefined
-  priorityFilter?: string[] | undefined
-  excludedStateFilter?: string[] | undefined
-  excludedPriorityFilter?: string[] | undefined
-  dueFilter?:
-    | { kind: 'named'; name: string }
-    | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
-    | null
-  scheduledFilter?:
-    | { kind: 'named'; name: string }
-    | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
-    | null
-  propertyFilters?: { key: string; value: string }[] | undefined
-  excludedPropertyFilters?: { key: string; value: string }[] | undefined
-}
-
-function astFilterParams(
-  projection: ReturnType<typeof astToFilterProjection>,
-  tagIds: string[],
-): SearchFilterParams {
-  return {
-    tagIds: tagIds.length === 0 ? undefined : tagIds,
-    includePageGlobs:
-      projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,
-    excludePageGlobs:
-      projection.excludePageGlobs.length === 0 ? undefined : projection.excludePageGlobs,
-    stateFilter: projection.stateFilter.length === 0 ? undefined : projection.stateFilter,
-    priorityFilter: projection.priorityFilter.length === 0 ? undefined : projection.priorityFilter,
-    excludedStateFilter:
-      projection.excludedStateFilter.length === 0 ? undefined : projection.excludedStateFilter,
-    excludedPriorityFilter:
-      projection.excludedPriorityFilter.length === 0
-        ? undefined
-        : projection.excludedPriorityFilter,
-    dueFilter: projection.dueFilter,
-    scheduledFilter: projection.scheduledFilter,
-    propertyFilters:
-      projection.propertyFilters.length === 0 ? undefined : projection.propertyFilters,
-    excludedPropertyFilters:
-      projection.excludedPropertyFilters.length === 0
-        ? undefined
-        : projection.excludedPropertyFilters,
-  }
-}
-
 /** Returns true if the text contains CJK codepoints. */
 function hasCJK(text: string): boolean {
   return /[\u4E00-\u9FFF\u3400-\u4DBF\u3000-\u303F\u30A0-\u30FF\u3040-\u309F\uAC00-\uD7AF]/.test(
@@ -161,9 +85,8 @@ function hasCJK(text: string): boolean {
 export function SearchPanel(): React.ReactElement {
   const { t } = useTranslation()
 
-  // FEAT-3 Phase 2 — scope search to the current space. Mirrors the
-  // `PageBrowser` pattern: render a `LoadingSkeleton` until the
-  // `SpaceStore` has hydrated so the first `searchBlocks` call never
+  // FEAT-3 Phase 2 — scope search to the current space. Render a skeleton
+  // until the SpaceStore has hydrated so the first `searchBlocks` call never
   // leaks cross-space results.
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const spaceIsReady = useSpaceStore((s) => s.isReady)
@@ -171,84 +94,119 @@ export function SearchPanel(): React.ReactElement {
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [searched, setSearched] = useState(false)
-  // PEND-55 — toggle state. Persisted via localStorage so re-opening
-  // the app preserves the user's preference (the plan calls this an
-  // opt-in default; persisting is a UX win and the cost is one
-  // serialise per change).
+  // PEND-55 — toggle state, persisted via localStorage so re-opening the app
+  // preserves the user's preference.
   const [toggles, setToggles] = useLocalStoragePreference<SearchToggleState>(
     SEARCH_TOGGLE_STORAGE_KEY,
     DEFAULT_SEARCH_TOGGLES,
   )
-  // PEND-55 — history dropdown visibility. Shown when the input is
-  // focused AND empty (matches the plan's UX mock).
+  // PEND-55 — history dropdown visibility (shown when the input is focused
+  // AND empty).
   const [inputFocused, setInputFocused] = useState(false)
   // UX-1 — search help dialog open state (the `?` toolbar button).
   const [helpOpen, setHelpOpen] = useState(false)
   // PEND-60 / FE-10 — the caret-anchored autocomplete machine lives in
-  // <SearchAutocomplete> (so caret moves don't re-render this panel).
-  // SearchPanel keeps only the open/aria summary it reports (for the
-  // input's combobox attrs) and the shared pending-caret ref.
+  // <SearchAutocomplete>; SearchPanel keeps only the open/aria summary it
+  // reports (for the input's combobox attrs) and the shared pending-caret ref.
   const [autocomplete, setAutocomplete] = useState<SearchAutocompleteState>({
     open: false,
     ariaIds: null,
   })
   const autocompleteRef = useRef<SearchAutocompleteHandle>(null)
   const pendingCaretRef = useRef<number | null>(null)
-  // Used by every "external" `setQuery` call (history recall, palette
-  // handoff, filter-chip adds, autocomplete pick, …). Stores the target
-  // caret in `pendingCaretRef` so the `[query]` effect can sync
-  // `input.selectionStart` + `caretPos` after React commits the new
-  // value. Without this, the input's caret stays at its previous
-  // position (the input is controlled), which makes the autocomplete
-  // detector fire against a stale offset and can briefly re-open the
-  // popover with the wrong anchor.
+  // Used by every "external" `setQuery` call (history recall, palette handoff,
+  // filter-chip adds, autocomplete pick). Stores the target caret in
+  // `pendingCaretRef` so <SearchAutocomplete>'s `[query]` effect can sync
+  // `input.selectionStart` after React commits the new value (the input is
+  // controlled, so otherwise the caret stays at its previous position and the
+  // autocomplete detector fires against a stale offset).
   const setQueryAndCaret = useCallback((value: string, caret?: number): void => {
     pendingCaretRef.current = caret ?? value.length
     setQuery(value)
   }, [])
-  // UX-335 — `cleared` is true iff the user emptied the search input AFTER a
-  // search had been performed. Used to surface a `t('search.statusCleared')`
-  // announcement in the aria-live status region (separate from pre-search).
+  // UX-335 — `cleared` is true iff the user emptied the input AFTER a search
+  // had been performed (surfaces a `t('search.statusCleared')` announcement).
   const [cleared, setCleared] = useState(false)
   const [typing, setTyping] = useState(false)
-  const [loadingResultId, setLoadingResultId] = useState<string | null>(null)
-  const [pageTitles, setPageTitles] = useState<Map<string, string>>(new Map())
-  const [recentPages, setRecentPages] = useState<RecentPage[]>([])
-  const navigateToPage = useTabsStore((s) => s.navigateToPage)
 
-  // PEND-54 — the query string is the canonical filter state. The
-  // AST is derived state recomputed on every keystroke via `useMemo`.
+  // PEND-54 — the query string is the canonical filter state. The AST is
+  // derived state recomputed on every keystroke. The debounced query is also
+  // parsed so the IPC sees the filters that match the rendered chips.
   const ast = useMemo(() => parse(query), [query])
-  // The debounced query is also parsed so the IPC sees the filters
-  // that match the rendered chips.
   const debouncedAst = useMemo(() => parse(debouncedQuery), [debouncedQuery])
-  const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
-  // FE-9 — tag name→id resolution extracted into `useTagResolution`
-  // (best-effort prefix lookup; FE-5 space-scoped cache invalidation
-  // lives in the hook).
-  const tagIds = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
 
-  // Load recent pages from localStorage on mount
-  useEffect(() => {
-    setRecentPages(getRecentPages())
-  }, [])
+  const debounced = useDebouncedCallback((value: string) => {
+    setTyping(false)
+    setDebouncedQuery(value)
+    setSearched(true)
+  }, 300)
 
-  // PEND-51 — consume the palette's transient `pendingViewQuery`
-  // handoff slot. When the user clicks "Search in all pages with
-  // toggles → Ctrl+Shift+F" in the palette, the palette writes the
-  // current query into the store and flips the navigation view to
-  // `'search'`. This effect reads-and-clears the slot exactly once on
-  // mount, then triggers the IPC by seeding both `query` and
-  // `debouncedQuery`. We deliberately read via `getState()` so no
-  // subscription is created and the effect's empty-dep array stays
-  // honest.
+  // FE-A18 — the results pipeline (AST→IPC projection, pagination,
+  // breadcrumbs, grouping + collapse, roving keyboard nav, navigation) lives
+  // in `useSearchResults`.
+  const {
+    results,
+    searchLoading,
+    hasMore,
+    loadMore,
+    error,
+    capped,
+    setItems,
+    regexError,
+    groups,
+    visibleRows,
+    focusedIndex,
+    handleListKeyDown,
+    expandedGroups,
+    handleToggleGroup,
+    handleResultClick,
+    loadingResultId,
+    recentPages,
+    handleRecentClick,
+  } = useSearchResults({ debouncedAst, debouncedQuery, currentSpaceId, spaceIsReady, toggles })
+
+  // PEND-30 D-3 / PEND-54 — alias resolution runs against the free-text
+  // portion so a query like `[[Alpha]] tag:#x` resolves the alias correctly.
+  const { aliasMatch, aliasQuery } = useAliasResolution(
+    debouncedAst.freeText,
+    results,
+    currentSpaceId,
+  )
+
+  // FE-A18 — the search-history surface (per-space store wiring, recall
+  // cycling, recall/clear/remove/toggle handlers, listbox id) lives in
+  // `useSearchHistoryControls`.
+  const {
+    historyEntries,
+    historyEnabled,
+    pushHistory,
+    cycling,
+    historyListboxId,
+    handlePickHistory,
+    handleClearHistory,
+    handleRemoveHistory,
+    handleToggleHistoryEnabled,
+  } = useSearchHistoryControls({
+    currentSpaceId,
+    query,
+    setQueryAndCaret,
+    setDebouncedQuery,
+    setSearched,
+    setTyping,
+    debounced,
+  })
+
+  // PEND-51 — consume the palette's transient `pendingViewQuery` handoff slot
+  // exactly once on mount, then seed both `query` + `debouncedQuery` to fire
+  // the IPC. Read via `getState()` so no subscription is created and the
+  // effect's empty-dep array stays honest.
   useEffect(() => {
     const pending = useCommandPaletteStore.getState().pendingViewQuery
     if (pending != null) {
-      // PEND-61 CR — accept empty-string escalation seeds (the
-      // commands-mode "Search everywhere" entry writes `''` to land
-      // the user on this panel with a clean input). The previous
-      // `length > 0` gate left the slot dirty across the session.
+      // PEND-61 CR — accept empty-string escalation seeds (the commands-mode
+      // "Search everywhere" entry writes `''` to land the user on this panel
+      // with a clean input). The previous `length > 0` gate left the slot
+      // dirty across the session.
       if (pending.length > 0) {
         setQueryAndCaret(pending)
         setDebouncedQuery(pending)
@@ -258,164 +216,9 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [setQueryAndCaret])
 
-  // PEND-54 — one-time migration toast pointing users at the help
+  // PEND-54 / FE-9 — one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
-  //
-  // FE-9 — one-time filter-syntax intro toast extracted to a hook.
   useFilterSyntaxIntroToast()
-
-  // DSL-A8 / UX-A4 — the two search modes are symmetric. In BOTH modes
-  // the query is parsed into structural filter tokens (`tag:` / `path:`
-  // and the PEND-53 metadata predicates: state / priority / due /
-  // scheduled / prop) plus a free-text remainder. Those structural
-  // filters are always projected and applied as SQL filters server-side
-  // (the Rust `regex_mode_query` honours every one of them). The ONLY
-  // difference between modes is the `isRegex` flag and that the backend
-  // interprets the remaining free text as a regex pattern (matched
-  // against raw block content) rather than an FTS query.
-  const filterParams = useMemo(
-    () => astFilterParams(debouncedProjection, tagIds),
-    [debouncedProjection, tagIds],
-  )
-  const queryFn = useCallback(
-    // FE-2 — forward the AbortSignal so a superseded search is cancelled
-    // mid-flight instead of running the backend scan to completion.
-    (cursor?: string, signal?: AbortSignal) =>
-      // FEAT-3 Phase 4 — `searchBlocks` requires `spaceId`. The `?? ''`
-      // fallback is intentional pre-bootstrap behaviour: empty string
-      // forces a no-match SQL filter (returning empty results) rather
-      // than a runtime null deref.
-      searchBlocks(
-        {
-          // DSL-A8 / UX-A4 — send the parsed free-text remainder in BOTH
-          // modes. In regex mode the backend treats it as the regex
-          // pattern; structural filter tokens (e.g. `tag:`) are stripped
-          // out of the free text by the parser and applied via
-          // `filterParams` instead of leaking into the pattern.
-          query: debouncedAst.freeText,
-          ...filterParams,
-          cursor,
-          limit: PAGINATION_LIMIT,
-          spaceId: currentSpaceId ?? '',
-          caseSensitive: toggles.caseSensitive,
-          wholeWord: toggles.wholeWord,
-          isRegex: toggles.isRegex,
-        },
-        signal,
-      ),
-    [
-      debouncedAst.freeText,
-      filterParams,
-      currentSpaceId,
-      toggles.caseSensitive,
-      toggles.wholeWord,
-      toggles.isRegex,
-    ],
-  )
-
-  const {
-    items: results,
-    loading: searchLoading,
-    hasMore,
-    loadMore,
-    error,
-    capped,
-    setItems,
-  } = usePaginatedQuery(queryFn, {
-    // PEND-54 / DSL-A8 — the AST's free-text may be empty when the user
-    // has only typed structured filter tokens (`tag:#urgent`). We still
-    // fire the query in that case (the gate is identical in both modes:
-    // a regex / FTS pattern OR at least one structural filter). PEND-58g
-    // NEW-3 — the backend now honours a *filter-only* query: a blank
-    // free-text with at least one structural filter returns the filtered
-    // blocks (recency-ordered) in BOTH modes, instead of the old
-    // blank-query short-circuit that returned empty.
-    enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
-    // E2E-2 — do NOT pass `onError` here. `usePaginatedQuery` would
-    // otherwise overwrite the raw IPC message with this friendly string
-    // before SearchPanel can parse the `InvalidRegex:` prefix off it, so
-    // the inline regex error could never light up. We surface failures
-    // via the inline regex error (header) + the UX-2 visible error state
-    // (body) instead of a toast.
-  })
-
-  // PEND-55 — parse `AppError::Validation("InvalidRegex: …")` off the
-  // raw IPC error and surface it inline so the user knows how to fix
-  // their pattern. Relies on the raw message reaching `error` (E2E-2 —
-  // no `onError` clobbering it, see usePaginatedQuery options above).
-  //
-  // UX-A2 — derived synchronously (not via an effect) so the status
-  // region's generic-error suppression is single-commit: there is no
-  // intermediate render where `error` is set but `regexError` is still
-  // `null` (which would briefly announce the generic "Search failed").
-  const regexError = useMemo<string | null>(() => {
-    if (!error) return null
-    const msg = typeof error === 'string' ? error : ''
-    const prefix = 'InvalidRegex:'
-    const idx = msg.indexOf(prefix)
-    if (idx < 0) return null
-    return t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() })
-  }, [error, t])
-
-  // Resolve page titles for breadcrumbs when results change
-  useEffect(() => {
-    // FE-11 — only resolve page ids we haven't already resolved. On
-    // Load-More the accumulated `results` set re-issued a batchResolve
-    // for every parent id (including already-known ones) on each page.
-    const parentIds = [
-      ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
-    ].filter((id) => !pageTitles.has(id))
-    if (parentIds.length === 0) return
-    batchResolve(parentIds)
-      .then((resolved) => {
-        if (Array.isArray(resolved)) {
-          setPageTitles((prev) => {
-            // PEND-73 Phase 4.P2 — stabilise Map identity so the
-            // `groupResultsByPage` memo doesn't invalidate on every
-            // batchResolve fetch. Walk the resolved array; only
-            // allocate a new Map if at least one (id → title) pair
-            // changed vs. what we already had. Common case (results
-            // refetch with the same parent ids) returns `prev` and
-            // the downstream useMemo skips its expensive group/rank.
-            let changed = false
-            for (const r of resolved) {
-              const nextTitle = r.title ?? 'Untitled'
-              if (prev.get(r.id) !== nextTitle) {
-                changed = true
-                break
-              }
-            }
-            if (!changed) return prev
-            const next = new Map(prev)
-            for (const r of resolved) {
-              next.set(r.id, r.title ?? 'Untitled')
-            }
-            return next
-          })
-        }
-      })
-      .catch((err) => {
-        logger.warn('SearchPanel', 'breadcrumb resolution failed', undefined, err)
-      })
-    // `pageTitles` participates so the already-resolved filter above sees
-    // the latest map; the empty-`parentIds` guard makes the follow-up run
-    // a no-op (no resolve loop).
-  }, [results, pageTitles])
-
-  // PEND-30 D-3 — alias resolution lifted into its own hook.
-  // PEND-54 — alias-match runs against the free-text portion so a
-  // query like `[[Alpha]] tag:#x` resolves the alias correctly.
-  const { aliasMatch, aliasQuery } = useAliasResolution(
-    debouncedAst.freeText,
-    results,
-    currentSpaceId,
-  )
-
-  const debounced = useDebouncedCallback((value: string) => {
-    setTyping(false)
-    setDebouncedQuery(value)
-    setSearched(true)
-  }, 300)
 
   function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
     const value = e.target.value
@@ -427,16 +230,15 @@ export function SearchPanel(): React.ReactElement {
     debounced.cancel()
 
     if (!value.trim()) {
-      // UX-335 — if a search had been performed (or we were already in the
-      // cleared state and somehow re-emptied), keep `cleared` set so the
-      // aria-live region announces `t('search.statusCleared')`.
+      // UX-335 — keep `cleared` set so the aria-live region announces
+      // `t('search.statusCleared')`.
       setCleared((prev) => prev || searched)
       setDebouncedQuery('')
       setItems([])
       setSearched(false)
       setTyping(false)
-      // Alias state clears automatically: `useAliasResolution` re-runs
-      // when `debouncedQuery` becomes '' and resets the match.
+      // Alias state clears automatically: `useAliasResolution` re-runs when
+      // `debouncedQuery` becomes '' and resets the match.
       return
     }
 
@@ -447,51 +249,26 @@ export function SearchPanel(): React.ReactElement {
 
   // Auto-focus search input on mount.
   // PEND-73 Phase 3.U4 — useLayoutEffect to focus before paint, matching
-  // CommandPalette + InPageFind. Avoids the one-frame unfocused flash on
-  // slow mounts (e.g. cold tab activation on low-end devices).
+  // CommandPalette + InPageFind (avoids the one-frame unfocused flash).
   const searchInputRef = useRef<HTMLInputElement>(null)
   useRegisterPrimaryFocus(searchInputRef)
   useLayoutEffect(() => {
     searchInputRef.current?.focus()
   }, [])
 
-  // PEND-55 — history store + cycling hook
-  const historyEntries = useSearchHistoryStore((s) => selectHistoryForSpace(s, currentSpaceId))
-  const pushHistory = useSearchHistoryStore((s) => s.push)
-  const clearHistory = useSearchHistoryStore((s) => s.clear)
-  // UX-11 — per-row delete + record-history toggle.
-  const removeHistoryEntry = useSearchHistoryStore((s) => s.removeEntry)
-  const historyEnabled = useSearchHistoryStore((s) => s.historyEnabled)
-  const setHistoryEnabled = useSearchHistoryStore((s) => s.setHistoryEnabled)
-  const cycling = useSearchHistoryCycling(historyEntries, query, setQueryAndCaret)
-  // PEND-73 Phase 3.U2 — stable id for the history listbox so the
-  // owning input can wire `aria-controls` and `aria-activedescendant`.
-  // React.useId() returns a per-instance stable string; safe across
-  // SSR + multiple mounts.
-  const historyListboxId = useId()
-
-  // FE-10 — combobox a11y for the input. <SearchAutocomplete> owns the
-  // caret/anchor machine and reports its open + aria-id state up via
-  // `handleAutocompleteStateChange`. History and autocomplete are
-  // mutually exclusive (history wants an empty query, autocomplete wants
-  // caret content), so they share the input's combobox attrs.
+  // FE-10 — combobox a11y for the input. History and autocomplete are
+  // mutually exclusive (history wants an empty query, autocomplete wants caret
+  // content), so they share the input's combobox attrs.
   const expanded = autocomplete.open && autocomplete.ariaIds != null
   // FE-A13 — ONE source of truth for whether the history dropdown is on
-  // screen. Both the dropdown render (`visible` prop below) and the
-  // input's combobox aria attrs derive from this so they can never
-  // disagree. The dropdown is shown while the input is focused + empty
-  // AND there is either history to recall OR recording is OFF (UX-11
-  // keeps the Enable toggle + "history is off" footer reachable even
-  // with zero entries).
+  // screen. The dropdown is shown while the input is focused + empty AND there
+  // is either history to recall OR recording is OFF (UX-11 keeps the Enable
+  // toggle + "history is off" footer reachable even with zero entries).
   const historyDropdownVisible =
     inputFocused && query.length === 0 && (historyEntries.length > 0 || !historyEnabled)
-  // FE-A13 / UX-A2 review — the `role="listbox"` element (and its
-  // `historyListboxId`) only renders when there are entries (see
-  // `SearchHistoryDropdown`'s `!isEmpty` gate). The combobox's
-  // `aria-expanded` / `aria-controls` must therefore track the LISTBOX,
-  // not the dropdown shell: in the recording-OFF + zero-entries case the
-  // dropdown shows only the Enable prompt, so the combobox is NOT
-  // expanded into a listbox and must not reference a non-existent id.
+  // FE-A13 / UX-A2 — the `role="listbox"` element (and its `historyListboxId`)
+  // only renders when there are entries, so the combobox's `aria-expanded` /
+  // `aria-controls` must track the LISTBOX, not the dropdown shell.
   const historyListboxVisible = historyDropdownVisible && historyEntries.length > 0
   const inputComboboxAttrs = useMemo(
     () => ({
@@ -549,9 +326,9 @@ export function SearchPanel(): React.ReactElement {
       // PEND-55 — push on submit, not on every keystroke. Per-space
       // partitioning is owned by the store.
       pushHistory(currentSpaceId, trimmed)
-      // PEND-60 Phase 2 — record each path glob (include + exclude) in
-      // the per-space MRU so the next caret-anchored `path:` /
-      // `not-path:` autocomplete surfaces them.
+      // PEND-60 Phase 2 — record each path glob (include + exclude) in the
+      // per-space MRU so the next caret-anchored `path:` autocomplete surfaces
+      // them.
       for (const filter of ast.filters) {
         if (filter.kind === 'pathInclude' || filter.kind === 'pathExclude') {
           recordPathHistory(currentSpaceId, filter.value)
@@ -560,37 +337,9 @@ export function SearchPanel(): React.ReactElement {
     }
   }
 
-  const handlePickHistory = useCallback(
-    (entry: string) => {
-      setQueryAndCaret(entry)
-      setDebouncedQuery(entry)
-      setSearched(true)
-      pushHistory(currentSpaceId, entry)
-      debounced.cancel()
-      setTyping(false)
-    },
-    [currentSpaceId, debounced, pushHistory, setQueryAndCaret],
-  )
-
-  const handleClearHistory = useCallback(() => {
-    clearHistory(currentSpaceId)
-  }, [clearHistory, currentSpaceId])
-
-  const handleRemoveHistory = useCallback(
-    (entry: string) => {
-      removeHistoryEntry(currentSpaceId, entry)
-    },
-    [currentSpaceId, removeHistoryEntry],
-  )
-
-  const handleToggleHistoryEnabled = useCallback(() => {
-    setHistoryEnabled(!historyEnabled)
-  }, [historyEnabled, setHistoryEnabled])
-
   const handleInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
-      // UX-1 — `?` on an empty input opens the search help dialog
-      // (honours the intro toast's "Press ? for help" CTA). Reading the
+      // UX-1 — `?` on an empty input opens the search help dialog. Reading the
       // live value avoids taking `query` as a dependency.
       if (e.key === '?' && e.currentTarget.value.length === 0) {
         e.preventDefault()
@@ -598,17 +347,12 @@ export function SearchPanel(): React.ReactElement {
         return
       }
       // Autocomplete keys win over history recall when the popover is open.
-      // <SearchAutocomplete> owns that state; it returns true if it
-      // consumed the key.
+      // <SearchAutocomplete> owns that state; it returns true if it consumed
+      // the key.
       if (autocompleteRef.current?.handleKeyDown(e)) return
-      // UX-9 — consistent cancel semantics across the two suggestion
-      // sources: just as Escape dismisses the autocomplete popover
-      // above, Escape cancels an in-progress history recall and
-      // restores the empty input. (Commit semantics intentionally
-      // differ: history fills the input eagerly on ArrowUp/Down — the
-      // recalled query *is* the committed value, and Enter submits it —
-      // whereas autocomplete only commits its highlighted token on
-      // Enter/Tab. The actions differ, so the commit keys do too.)
+      // UX-9 — Escape cancels an in-progress history recall and restores the
+      // empty input (commit semantics differ between the two suggestion
+      // sources, so the keys do too).
       if (e.key === 'Escape' && cycling.activeIndex >= 0) {
         e.preventDefault()
         cycling.reset()
@@ -620,115 +364,10 @@ export function SearchPanel(): React.ReactElement {
     [cycling, setQueryAndCaret],
   )
 
-  // FE-4 — a monotonic "navigation generation". Each click claims the
-  // next generation; only the latest may resolve the spinner / perform
-  // the deferred navigation. Without it, clicking row B while row A's
-  // async parent lookup is in flight raced two navigations and A's
-  // `finally` cleared B's spinner.
-  const navGenerationRef = useRef(0)
-  const handleResultClick = useCallback(
-    async (block: BlockRow | SearchBlockRow) => {
-      const gen = ++navGenerationRef.current
-      setLoadingResultId(block.id)
-      try {
-        if (block.block_type === 'page') {
-          addRecentPage(block.id, block.content ?? 'Untitled')
-          setRecentPages(getRecentPages())
-          navigateToPage(block.id, block.content ?? 'Untitled')
-          return
-        }
-        if (block.parent_id) {
-          try {
-            const parent = await getBlock(block.parent_id)
-            // A newer click superseded this one while the parent loaded.
-            if (navGenerationRef.current !== gen) return
-            addRecentPage(block.parent_id, parent.content ?? 'Untitled')
-            setRecentPages(getRecentPages())
-            navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
-          } catch (err) {
-            reportIpcError('SearchPanel', 'search.loadResultsFailed', err, t, {
-              blockId: block.id,
-              parentId: block.parent_id,
-            })
-          }
-        } else {
-          logger.warn('SearchPanel', 'block has no parent page', { blockId: block.id })
-          notify.error(t('search.noParentPage'))
-        }
-      } finally {
-        // Only the latest click owns the spinner.
-        if (navGenerationRef.current === gen) setLoadingResultId(null)
-      }
-    },
-    [navigateToPage, t],
-  )
-
-  // PEND-50 Phase 1 — page-group results.
-  // The flat result list drives the `focusedIndex` for roving-tabindex /
-  // `aria-activedescendant`. Groups are derived from the flat list each
-  // render via `groupResultsByPage`; their expand state lives in
-  // `expandedGroups` so it persists across re-renders but resets on a
-  // new query (see effect below).
-  const groups = useMemo(() => groupResultsByPage(results, pageTitles), [results, pageTitles])
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({})
-  const handleToggleGroup = useCallback((pageId: string) => {
-    setExpandedGroups((prev) => ({ ...prev, [pageId]: !(prev[pageId] ?? true) }))
-  }, [])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `debouncedQuery` is the trigger, not a body-read dep — we intentionally reset on every new query.
-  useEffect(() => {
-    // Reset collapse state on each new query so the UX always starts
-    // fully expanded.
-    setExpandedGroups({})
-  }, [debouncedQuery])
-
-  // PEND-50 Phase 1 — flatten visible (i.e. expanded) rows for the
-  // keyboard nav hook. Collapsed groups contribute zero rows. Note that
-  // we keep `results.length` as the upper bound for `useListKeyboardNavigation`
-  // when no groups are collapsed, which is the default state (every
-  // `expandedGroups[k]` is `undefined`, treated as expanded).
-  const visibleRows = useMemo(() => {
-    const out: SearchBlockRow[] = []
-    for (const g of groups) {
-      const isExpanded = expandedGroups[g.page_id] ?? true
-      if (!isExpanded) continue
-      for (const block of g.blocks) out.push(block)
-    }
-    return out
-  }, [groups, expandedGroups])
-
-  const { focusedIndex, handleKeyDown: handleListKeyDown } = useListKeyboardNavigation({
-    itemCount: visibleRows.length,
-    // FE-A8 — `debouncedQuery` is the query-change signal: a new query
-    // resets focus to row 0, but a plain `itemCount` change (group
-    // collapse / Load-More append) clamps the existing focus into range
-    // instead of snapping back to the first row.
-    resetKey: debouncedQuery,
-    homeEnd: true,
-    pageUpDown: true,
-    onSelect: (idx) => {
-      const block = visibleRows[idx]
-      if (block) handleResultClick(block)
-    },
-  })
-
-  const handleRecentClick = useCallback(
-    (page: RecentPage) => {
-      addRecentPage(page.id, page.title)
-      setRecentPages(getRecentPages())
-      navigateToPage(page.id, page.title)
-    },
-    [navigateToPage],
-  )
-
-  // PEND-54 — chip / helper handlers. Each appends a filter token
-  // to the AST and re-serialises the canonical query string. The
-  // serialised result becomes the new caret-end so autocomplete fires
-  // against the right anchor on the next render.
-  //
-  // FE-A12 — these read the `ast` memo (already `parse(query)`) instead
-  // of re-parsing the live `query`. `ast` is recomputed on every
-  // `query` change and these handlers run synchronously inside the same
-  // render's event handlers, so it is always the current parse.
+  // PEND-54 / FE-A12 — chip / helper handlers. Each appends a filter token to
+  // the AST and re-serialises the canonical query string; they read the `ast`
+  // memo (already `parse(query)`, recomputed on every `query` change and
+  // current inside the same render's event handlers).
   function patchQuery(next: (currentAst: typeof ast) => typeof ast) {
     const nextValue = serialize(next(ast))
     setQueryAndCaret(nextValue)
@@ -737,9 +376,8 @@ export function SearchPanel(): React.ReactElement {
     patchQuery((a) => removeFilterAt(a, index))
   }
   function handleClearAllFilters() {
-    // FE-6 — keep the LIVE free text (not the debounced/last-committed
-    // AST) so just-typed-but-not-yet-debounced words aren't dropped when
-    // the user clears filters.
+    // FE-6 — keep the LIVE free text (not the debounced/last-committed AST) so
+    // just-typed-but-not-yet-debounced words aren't dropped.
     setQueryAndCaret(ast.freeText)
   }
   function handleAddTag(name: string) {
@@ -761,8 +399,8 @@ export function SearchPanel(): React.ReactElement {
     patchQuery((a) => addFilter(a, token))
   }
 
-  // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so
-  // we never fire a `searchBlocks` call with an unresolved `spaceId`.
+  // FEAT-3 Phase 2 — render a skeleton while the SpaceStore hydrates so we
+  // never fire a `searchBlocks` call with an unresolved `spaceId`.
   if (!spaceIsReady) {
     return (
       <div className="search-panel space-y-4" aria-busy="true">
@@ -782,12 +420,11 @@ export function SearchPanel(): React.ReactElement {
         onSubmit={handleSubmit}
         searchLoading={searchLoading}
         typing={typing}
-        t={t}
         onInputKeyDown={handleInputKeyDown}
         onInputFocus={() => setInputFocused(true)}
-        // PEND-73 Phase 3.U5 — synchronous blur. The history dropdown's
-        // rows preventDefault on mousedown, which keeps the input
-        // focused through the click; no defer needed.
+        // PEND-73 Phase 3.U5 — synchronous blur. The history dropdown's rows
+        // preventDefault on mousedown, which keeps the input focused through
+        // the click; no defer needed.
         onInputBlur={() => setInputFocused(false)}
         invalid={!!regexError}
         inlineError={regexError}
@@ -799,13 +436,13 @@ export function SearchPanel(): React.ReactElement {
           <SearchHistoryDropdown
             entries={historyEntries}
             // FE-A13 — the dropdown shell shares the `historyDropdownVisible`
-            // base with the input's aria attrs (see above); the combobox's
-            // `aria-expanded` / `aria-controls` additionally require entries
+            // base with the input's aria attrs; the combobox's `aria-expanded`
+            // / `aria-controls` additionally require entries
             // (`historyListboxVisible`) so they only reference a listbox that
             // actually renders.
-            // UX-11 — the shell also shows when recording is OFF (even with
-            // no entries) so the Enable toggle + "history is off" notice
-            // remain reachable from the dropdown footer.
+            // UX-11 — the shell also shows when recording is OFF (even with no
+            // entries) so the Enable toggle + "history is off" notice remain
+            // reachable from the dropdown footer.
             visible={historyDropdownVisible}
             onPick={handlePickHistory}
             onClear={handleClearHistory}
@@ -817,9 +454,9 @@ export function SearchPanel(): React.ReactElement {
           />
         }
       />
-      {/* PEND-60 / FE-10 — caret-anchored value autocomplete. Owns its
-          own caret state so caret moves don't re-render this panel; the
-          popover portals to body via Radix (placement is positional). */}
+      {/* PEND-60 / FE-10 — caret-anchored value autocomplete. Owns its own
+          caret state so caret moves don't re-render this panel; the popover
+          portals to body via Radix (placement is positional). */}
       <SearchAutocomplete
         ref={autocompleteRef}
         inputRef={searchInputRef}
@@ -831,8 +468,8 @@ export function SearchPanel(): React.ReactElement {
         onStateChange={handleAutocompleteStateChange}
       />
 
-      {/* UX-269 — CJK limitation notice sits directly below the input so
-          CJK users see it before scanning results. */}
+      {/* UX-269 — CJK limitation notice sits directly below the input so CJK
+          users see it before scanning results. */}
       {hasCJK(query) && (
         <div
           className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground"
@@ -858,9 +495,8 @@ export function SearchPanel(): React.ReactElement {
         }
       />
 
-      {/* UX-A11 — info, not warning: search still runs at 1–2 chars, so
-          this is an FYI rather than a problem. Matches the CJK info
-          notice's classes above. */}
+      {/* UX-A11 — info, not warning: search still runs at 1–2 chars, so this
+          is an FYI rather than a problem. */}
       {query.trim().length > 0 && query.trim().length < 3 && (
         <div className="rounded-lg border border-alert-info-border bg-alert-info p-3 text-sm text-alert-info-foreground">
           {t('search.minCharsHint')}
@@ -869,9 +505,8 @@ export function SearchPanel(): React.ReactElement {
 
       {query === '' && recentPages.length > 0 && (
         <div className="recent-pages">
-          {/* UX-8 — label the list via its heading so screen readers
-              announce it as a named "Recent" group distinct from the
-              results listbox below. */}
+          {/* UX-8 — label the list via its heading so screen readers announce
+              it as a named "Recent" group distinct from the results listbox. */}
           <h3
             id="search-recent-heading"
             className="text-sm font-medium text-muted-foreground px-3 py-2"
@@ -899,22 +534,21 @@ export function SearchPanel(): React.ReactElement {
         searched={searched}
         searchLoading={searchLoading}
         error={error}
-        // UX-A2 — let the status region suppress the generic "Search
-        // failed" announcement when the failure is an invalid regex (the
-        // header alert already announces the specific message).
+        // UX-A2 — let the status region suppress the generic "Search failed"
+        // announcement when the failure is an invalid regex (the header alert
+        // already announces the specific message).
         regexError={regexError}
         cleared={cleared}
         resultCount={results.length}
-        t={t}
       />
 
       {searched && !searchLoading && results.length === 0 && !error && !aliasMatch && (
         <EmptyState icon={Search} message={t('search.noResultsFound')} />
       )}
 
-      {/* UX-2 — a generic (non-regex) failure previously left the panel
-          blank. Regex errors already render inline in the header
-          (`regexError`); everything else gets a visible error state. */}
+      {/* UX-2 — a generic (non-regex) failure previously left the panel blank.
+          Regex errors already render inline in the header (`regexError`);
+          everything else gets a visible error state. */}
       {searched && !searchLoading && error && !regexError && (
         <div
           role="alert"
@@ -937,10 +571,9 @@ export function SearchPanel(): React.ReactElement {
       )}
 
       {aliasMatch && (
-        // UX-8 — expose the alias-match card as a labelled region so it
-        // is announced distinctly from the results listbox (it sits
-        // outside the roving-listbox model by design). `<section>` +
-        // aria-label is an implicit region (semantic over role="region").
+        // UX-8 — expose the alias-match card as a labelled region so it is
+        // announced distinctly from the results listbox (it sits outside the
+        // roving-listbox model by design).
         <section data-testid="alias-match" aria-label={t('search.aliasMatchRegion')}>
           <ResultCard
             block={aliasMatch}
@@ -956,11 +589,10 @@ export function SearchPanel(): React.ReactElement {
         </section>
       )}
 
-      {/* PEND-50 Phase 1 — page-grouped result tree. The summary count
-          sits above the first group (rendered inside `SearchResultGroups`).
-          Per-group listboxes preserve the existing
-          `useListKeyboardNavigation` roving model and replace the flat
-          listbox formerly owned by `SearchResultList`. */}
+      {/* PEND-50 Phase 1 — page-grouped result tree. The summary count sits
+          above the first group (rendered inside `SearchResultGroups`).
+          Per-group listboxes preserve the existing `useListKeyboardNavigation`
+          roving model. */}
       <SearchResultGroups
         groups={groups}
         flatRows={visibleRows}
@@ -968,19 +600,16 @@ export function SearchPanel(): React.ReactElement {
         expandedGroups={expandedGroups}
         onToggleGroup={handleToggleGroup}
         onResultClick={handleResultClick}
-        // PEND-50 Phase 1 — passing a no-op tells `CollapsibleGroupList`
-        // to render the page title via `<PageLink>` (its own click
-        // navigates through `useTabsStore.navigateToPage`). The
-        // callback signature is preserved for future hooks (e.g.
-        // recent-page bookkeeping); today it deliberately defers to
-        // `PageLink`'s built-in handler so click + Enter parity is
-        // free.
+        // PEND-50 Phase 1 — passing a no-op tells `CollapsibleGroupList` to
+        // render the page title via `<PageLink>` (its own click navigates
+        // through `useTabsStore.navigateToPage`). The callback signature is
+        // preserved for future hooks; today it defers to `PageLink`'s built-in
+        // handler so click + Enter parity is free.
         onPageTitleClick={() => {
           /* navigation handled by `PageLink` */
         }}
         loadingResultId={loadingResultId}
         onKeyDown={handleListKeyDown}
-        t={t}
       />
 
       <LoadMoreButton

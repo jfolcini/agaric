@@ -11,9 +11,9 @@
  * auto-focus.
  */
 
-import type { TFunction } from 'i18next'
 import { HelpCircle } from 'lucide-react'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
@@ -26,7 +26,6 @@ export interface SearchHeaderProps {
   onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
   searchLoading: boolean
   typing: boolean
-  t: TFunction
   /** PEND-55 — onKeyDown handler that consumes `↑`/`↓` for history recall. */
   onInputKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   /** PEND-55 — toggle row rendered next to the input. */
@@ -60,7 +59,6 @@ export function SearchHeader({
   onSubmit,
   searchLoading,
   typing,
-  t,
   onInputKeyDown,
   toggleRow,
   historyDropdown,
@@ -72,6 +70,7 @@ export function SearchHeader({
   onHelpClick,
   regexMode,
 }: SearchHeaderProps): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <ViewHeader>
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}

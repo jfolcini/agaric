@@ -30,8 +30,8 @@
  * change and persist across re-renders.
  */
 
-import type { TFunction } from 'i18next'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { CollapsibleGroupList } from '../CollapsibleGroupList'
 import { ResultCountSummary } from './ResultCountSummary'
@@ -65,7 +65,6 @@ export interface SearchResultGroupsProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => boolean
   /** Click handler for a group's page-title link (navigates to the page). */
   onPageTitleClick?: (pageId: string, title: string) => void
-  t: TFunction
 }
 
 export function SearchResultGroups({
@@ -78,8 +77,8 @@ export function SearchResultGroups({
   loadingResultId,
   onKeyDown,
   onPageTitleClick,
-  t,
 }: SearchResultGroupsProps): React.ReactElement | null {
+  const { t } = useTranslation()
   if (groups.length === 0) return null
 
   const focusedRow = flatRows[focusedIndex]

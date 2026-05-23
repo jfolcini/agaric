@@ -119,7 +119,6 @@ function setup({ groups: groupDefs, focusedIndex = 0, expanded = {} }: SetupOpts
       onResultClick={onResultClick}
       loadingResultId={null}
       onKeyDown={onKeyDown}
-      t={t}
     />,
   )
   return { onResultClick, onKeyDown, onToggleGroup, ...utils }
@@ -277,7 +276,6 @@ describe('SearchResultGroups (virtualized)', () => {
         onResultClick={vi.fn()}
         loadingResultId={null}
         onKeyDown={vi.fn(() => false)}
-        t={t}
       />,
     )
     expect(container).toBeEmptyDOMElement()
@@ -396,7 +394,6 @@ describe('SearchResultGroups (virtualized)', () => {
           onResultClick={vi.fn()}
           loadingResultId={null}
           onKeyDown={vi.fn(() => false)}
-          t={t}
         />,
       )
       const newActive = document.getElementById('search-result-B1')
