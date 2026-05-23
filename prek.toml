@@ -12,7 +12,7 @@ hooks = [
     { id = "check-merge-conflict" },
     { id = "check-added-large-files", args = ["--maxkb=500"], exclude = "^docs/session-log/" },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
-    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$" },
+    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/" },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
