@@ -312,17 +312,29 @@ in the e2e audit (reproduce via the review fleet if needed).
 DOC-4 resolved by the dialog wire-up + content fix (the `?` help is now reachable
 and accurate). DOC-5 was FALSE.
 
+**Done — second batch:**
+
+- Pre-push reliability: `scripts/push.sh` (verify-then-push) runs the CI-equivalent
+  verification BEFORE git opens the SSH connection, fixing the "Connection closed by
+  remote host" failure where the long pre-push hook held the connection until GitHub
+  timed it out.
+- FE-9 (extracted `useTagResolution` + `useFilterSyntaxIntroToast` hooks).
+- UX-3 (full SearchHelpDialog body-prose i18n — 52 keys, `t()`/`<Trans>`), UX-5
+  (loading announcement), UX-8 (recent-pages + alias-card a11y), UX-9 (Escape-cancel
+  consistency).
+- E2E-1, E2E-3..E2E-10 Playwright specs (45+ tests across `e2e/search-*.spec.ts` +
+  autocomplete). E2E-2 (invalid-regex inline error) is covered AND its underlying
+  bug fixed: SearchPanel no longer passes `onError` (which clobbered the raw IPC
+  message), so the inline regex error + the UX-2 visible error state both work.
+
 **Deferred (correctness unaffected; each warrants its own focused change):**
 
 - FE-2 (abort signal — cross-cutting IPC/hook/component plumbing), FE-3 (virtualize
-  the result list), FE-10 (move caret state out of the panel), FE-9 (SearchPanel
-  god-component split). The request-id guard already prevents stale results, so
-  these are pure performance/structure work.
-- UX-3 dense-body i18n (the section bodies are mostly monospace code identifiers;
-  headings + description are i18n'd). UX-5 (loading announcement — conflicts with
-  the deliberate "silent during load" live-region design), UX-8, UX-9.
-- E2E-1..10 Playwright suite — the action order puts this last ("after behaviour is
-  settled"); authoring ~50 real-backend specs is a dedicated effort and the new
-  behaviour is component-tested in the meantime.
+  the result list — rewrites the roving-listbox a11y model; win only at the 5000-item
+  cap), FE-10 (move caret state out of the panel). The request-id guard already
+  prevents stale results, so these are pure performance/structure work.
+- E2E-2 `<mark>` highlight + the literal "real Rust pipeline" assertions: not
+  reachable on the web+mock harness (mock returns no snippet/match_offsets and no
+  real regex compiler); covered at the unit layer.
 
 **Backend (SQL/BE):** see the `search(backend)` commit on this branch.
