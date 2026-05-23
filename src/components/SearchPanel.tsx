@@ -342,13 +342,18 @@ export function SearchPanel(): React.ReactElement {
       (toggles.isRegex
         ? debouncedQuery.length > 0
         : debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
-    onError: t('search.failed'),
+    // E2E-2 — do NOT pass `onError` here. `usePaginatedQuery` would
+    // otherwise overwrite the raw IPC message with this friendly string
+    // before SearchPanel can parse the `InvalidRegex:` prefix off it, so
+    // the inline regex error could never light up. We surface failures
+    // via the inline regex error (header) + the UX-2 visible error state
+    // (body) instead of a toast.
   })
 
-  // PEND-55 — parse `AppError::Validation("InvalidRegex: …")` from the
-  // IPC error and surface it inline. Otherwise the panel error reads
-  // as a generic "Failed to search" which doesn't tell the user how
-  // to fix their regex.
+  // PEND-55 — parse `AppError::Validation("InvalidRegex: …")` off the
+  // raw IPC error and surface it inline so the user knows how to fix
+  // their pattern. Relies on the raw message reaching `error` (E2E-2 —
+  // no `onError` clobbering it, see usePaginatedQuery options above).
   useEffect(() => {
     if (!error) {
       setRegexError(null)

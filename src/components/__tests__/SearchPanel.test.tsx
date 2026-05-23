@@ -524,9 +524,11 @@ describe('SearchPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledOnce()
     })
 
-    // Should show error toast
+    // UX-2 / E2E-2 — generic errors now render a visible error state
+    // (the raw message reaches `error` so the regex parser can work; no
+    // toast clobbering it).
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(t('search.failed'))
+      expect(screen.getByTestId('search-error-state')).toBeInTheDocument()
     })
 
     // No results shown

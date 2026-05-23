@@ -11,10 +11,8 @@
  *     / `wholeWord` / `isRegex`) the panel sends to `search_blocks`;
  *   - regex mode forwards the raw query verbatim and drops structured filter
  *     params (the regex-mode short-circuit in `SearchPanel.queryFn`);
- *   - a backend search error renders a visible error state (E2E-2).
- *
- * E2E-2's *inline* regex error (`search-inline-error`) is NOT achievable on
- * the live wiring — see the skipped test below for the root cause.
+ *   - an invalid regex surfaces inline (`search-inline-error`) and a
+ *     non-regex backend error renders the visible error state (E2E-2).
  *
  * The IPC recorder (helpers `installIpcRecorder` / `getInvokeCalls`) wraps the
  * live mock `invoke` so we can read the filter flags the real backend would
@@ -133,24 +131,12 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
     clearConsoleErrors(page)
   })
 
-  // E2E-2 (the *inline* regex error path) is NOT achievable against the live
-  // wiring: `SearchPanel`'s `regexError` effect parses the `InvalidRegex:`
-  // prefix off the hook's `error`, but `usePaginatedQuery` is given
-  // `onError: t('search.failed')`, which OVERWRITES the raw IPC message with
-  // the generic "Failed to search" string before it ever reaches the panel
-  // (usePaginatedQuery.ts:119-121). The raw `InvalidRegex:` text therefore
-  // never arrives, so `search-inline-error` cannot light up from a real
-  // backend error — it's a frontend wiring gap, not a test-harness limit.
-  // Skipped + documented; the observable behaviour (a visible error state) is
-  // covered by the test below.
-  test.skip('invalid regex shows the inline error (search-inline-error)', () => {
-    // Unreachable: see the describe-block comment. To revive this, the panel
-    // must forward the raw IPC error to `regexError` (e.g. omit `onError`
-    // in regex mode, or have usePaginatedQuery expose the raw message
-    // alongside the toast string).
-  })
-
-  test('a backend search error renders a visible error state (UX-2)', async ({ page }) => {
+  // E2E-2 — an invalid regex surfaces inline. The raw `InvalidRegex:` IPC
+  // message now reaches the panel (SearchPanel no longer passes `onError`
+  // to usePaginatedQuery, which used to overwrite the raw message), so the
+  // `regexError` parser lights up `search-inline-error` and the body
+  // error-state is suppressed.
+  test('invalid regex shows the inline error (search-inline-error)', async ({ page }) => {
     await openSearchView(page)
     await page.evaluate(() => {
       ;(window as unknown as MockErrorWindow).__injectMockError?.(
@@ -164,7 +150,27 @@ test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
     await input.fill('(unclosed')
     await input.press('Enter')
 
-    // UX-2 — generic (non-inline) failures previously left the panel blank;
+    const inlineError = page.getByTestId('search-inline-error')
+    await expect(inlineError).toBeVisible()
+    await expect(inlineError).toContainText('unclosed group')
+    // The inline regex error owns the failure; the body error-state stays out.
+    await expect(page.getByTestId('search-error-state')).toHaveCount(0)
+  })
+
+  test('a non-regex backend error renders a visible error state (UX-2)', async ({ page }) => {
+    await openSearchView(page)
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__injectMockError?.(
+        'search_blocks',
+        'database is locked',
+      )
+    })
+
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.fill('anything')
+    await input.press('Enter')
+
+    // UX-2 — generic (non-regex) failures previously left the panel blank;
     // they now render a visible, role="alert" error state.
     const errorState = page.getByTestId('search-error-state')
     await expect(errorState).toBeVisible()
