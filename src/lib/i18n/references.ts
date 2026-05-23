@@ -358,4 +358,105 @@ export const references: Record<string, string> = {
   'palette.copyIdSuccess': 'ULID copied to clipboard',
   'palette.copyLinkSuccess': 'Block link copied to clipboard',
   'palette.copyFailed': 'Could not access clipboard',
+  // UX-3 — search help body
+  //
+  // Prose for the five SearchHelpDialog body sections (Filter syntax,
+  // Toggles, Regex syntax, Boolean operators, Tips). Monospace code
+  // identifiers (filter prefixes, regex syntax, examples) stay verbatim
+  // inside `<mono>…</mono>` tags so they render as code regardless of
+  // locale; only the surrounding prose is translatable. Tags map to the
+  // inline elements supplied via `<Trans components={{…}}>`.
+  // -- Filter syntax --
+  'search.help.filter.intro':
+    'Filters can be typed directly in the search input or added via the <mono>+ Filter ▾</mono> button. Filters AND-combine with the free-text portion.',
+  'search.help.filter.col.token': 'Token',
+  'search.help.filter.col.meaning': 'Meaning',
+  'search.help.filter.cell.tagName': 'Block carries the tag `name`. Repeats AND.',
+  'search.help.filter.cell.bareTag': 'Bare alias for tag:#name.',
+  'search.help.filter.cell.path': 'Page-name glob include. Comma-separated values OR-combine.',
+  'search.help.filter.cell.notPath': 'Page-name glob exclude.',
+  'search.help.filter.cell.state':
+    "Block's todo_state = VALUE. Repeats OR-combine. state:none = IS NULL.",
+  'search.help.filter.cell.priority':
+    "Block's priority = VALUE. Repeats OR-combine. priority:none = IS NULL.",
+  'search.help.filter.cell.due':
+    'Bucket (today, this-week, overdue, …), ISO date, or comparison form (>=2026-01-01).',
+  'search.help.filter.cell.scheduled': 'Same shape as due: but on scheduled_date.',
+  'search.help.filter.cell.prop':
+    'Block has property KEY with value VALUE. Empty value = key-presence-only.',
+  'search.help.filter.cell.notProp': 'Block does NOT have that property/value.',
+  'search.help.filter.cell.phrase': 'Quoted phrase — passed to FTS5 verbatim.',
+  'search.help.filter.cell.boolean': 'Boolean operators (uppercase) — passed to FTS5.',
+  'search.help.filter.datePredicates':
+    '<strong>Date predicates</strong>: bucket keywords are <mono>today</mono>, <mono>yesterday</mono>, <mono>overdue</mono>, <mono>this-week</mono>, <mono>this-month</mono>, <mono>next-week</mono>, <mono>older</mono>, <mono>none</mono>. Weeks start on Monday.',
+  'search.help.filter.propertyFilters':
+    '<strong>Property filters</strong>: <mono>prop:KEY=VALUE</mono> matches a stored property value; an empty value (<mono>prop:KEY=</mono>) matches key-presence only. Property keys are <strong>case-sensitive</strong>.',
+  'search.help.filter.globs':
+    'Glob filters are <strong>case-insensitive</strong> and match against the page title. A bare token like <mono>path:Journal</mono> wraps to <mono>*Journal*</mono> (substring match); add <mono>*</mono>, <mono>?</mono>, or <mono>[...]</mono> for explicit glob syntax. <mono>{{brace}}</mono> brace-expansion is supported (no nesting).',
+  'search.help.filter.examplesIntro': 'Examples:',
+  'search.help.filter.example.todo':
+    '<mono>TODO path:Journal/2026-* tag:#urgent</mono> — TODOs on January 2026 journal pages tagged urgent.',
+  'search.help.filter.example.meeting':
+    '<mono>tag:#meeting not-path:Archive/**</mono> — meetings outside the archive.',
+  'search.help.filter.example.brace':
+    '<mono>path:{{brace}}/*</mono> — match pages in either Journal or Notes.',
+  // -- Toggles --
+  'search.help.toggles.intro':
+    'Three pressable buttons sit to the right of the input. Click a toggle to flip its mode (icon glows when active). State persists across sessions in localStorage.',
+  'search.help.toggles.col.icon': 'Icon',
+  'search.help.toggles.col.mode': 'Mode',
+  'search.help.toggles.col.notes': 'Notes',
+  'search.help.toggles.mode.caseSensitive': 'Case-sensitive',
+  'search.help.toggles.mode.wholeWord': 'Whole word',
+  'search.help.toggles.mode.regex': 'Regex',
+  'search.help.toggles.notes.caseSensitive':
+    'Forces a post-FTS pass — has a cost even when other toggles are off.',
+  'search.help.toggles.notes.wholeWord': 'ASCII-only word boundary. CJK content does not match.',
+  'search.help.toggles.notes.regex':
+    'Bypasses the FTS index — the entire query becomes a Rust regex pattern.',
+  // -- Regex syntax --
+  'search.help.regex.intro':
+    'Regex mode uses the Rust <mono>regex</mono> crate (linear-time, no backtracking).',
+  // The `(?<=…)`, `(?<!…)`, `\k<name>` and `(?u:\b)` code tokens contain
+  // angle brackets / backslashes that the `<Trans>` HTML parser would
+  // mangle if written as inline text. They are supplied verbatim via
+  // self-closing placeholder tags (`<m0/>`, `<m1/>`, …) whose React
+  // children carry the literal token; only the surrounding prose is here.
+  'search.help.regex.noLookaround':
+    '<strong>No lookaround</strong>: <m0/>, <m1/>, <m2/>, <m3/> are not supported.',
+  'search.help.regex.noBackrefs':
+    '<strong>No backreferences</strong>: <m0/>, <m1/> are not supported.',
+  'search.help.regex.asciiBoundaries':
+    '<strong>ASCII boundaries by default</strong>: <m0/> only asserts between ASCII word chars. Use <m1/> for Unicode word boundaries.',
+  'search.help.regex.inlineFlags':
+    'Inline flags <mono>(?i)</mono> / <mono>(?m)</mono> / <mono>(?s)</mono> / <mono>(?x)</mono> are supported.',
+  'search.help.regex.caps':
+    'Bounded by design: the pattern length, compiled program size, DFA cache, match-offsets per block, and pre-filter row count are all capped (see the regex constants in the backend; the limits are intentionally not duplicated here).',
+  'search.help.regex.bypassesFts':
+    'Regex mode <strong>bypasses the FTS index</strong>: wall-time scales with the structurally-filtered block count, not the FTS candidate count. Anchor your regex (<mono>^foo</mono>, <mono>bar$</mono>, <mono>\\bword\\b</mono>) for tight queries.',
+  // `lnk` (not `link`) is intentional: `<link>` is a void HTML element,
+  // so the Trans HTML parser would self-close it and drop the inner text.
+  'search.help.regex.seeAlso':
+    "See <lnk>Rust regex syntax</lnk> for the full grammar. The in-page find (<mono>Ctrl+F</mono>) uses JavaScript's native <mono>RegExp</mono> instead — patterns may behave differently between the two surfaces; see <mono>docs/SEARCH.md</mono> for the cross-link.",
+  // -- Boolean operators --
+  'search.help.boolean.intro':
+    'Non-regex queries support three FTS5 boolean operators (uppercase on the wire, case-insensitive on input):',
+  'search.help.boolean.and': '<mono>AND</mono> — explicit intersection (the default).',
+  'search.help.boolean.or': '<mono>OR</mono> — union, e.g. <mono>cats OR dogs</mono>.',
+  'search.help.boolean.not': '<mono>NOT</mono> — negation, <mono>meeting NOT cancelled</mono>.',
+  'search.help.boolean.phrases':
+    'Quoted phrases bypass the trigram length filter: <mono>"sprint plan"</mono> matches the literal phrase including 2-char tokens.',
+  'search.help.boolean.regexNote':
+    'Boolean operators do NOT apply inside regex mode (everything is treated as the regex).',
+  // -- Tips --
+  'search.help.tips.recall':
+    '<strong>Recall recent queries with</strong> <kbd>↑</kbd> / <kbd>↓</kbd> when the input is empty.',
+  'search.help.tips.dedupe':
+    'History dedupes — re-submitting the same query moves it to the front.',
+  'search.help.tips.perSpace': 'Per-space partitioning — recall stays inside the current space.',
+  'search.help.tips.dropdown':
+    'The dropdown surfaces the last 20 submitted queries; pressing past the newest entry clears the input.',
+  'search.help.tips.clear':
+    'Clear the per-space history via the footer button below the dropdown — other spaces stay untouched.',
+  'search.help.tips.toggleState': 'Toggle state survives reloads (stored in localStorage).',
 }
