@@ -238,6 +238,83 @@ export async function openPage(page: Page, title: string) {
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }
 
+// ---------------------------------------------------------------------------
+// Search-view helpers (PEND-58f).
+//
+// `openSearchView` boots the app and navigates to the find-in-files search
+// view (the `SearchPanel`), waiting for the header label so the panel has
+// mounted before the caller interacts with it.
+//
+// `installIpcRecorder` / `getInvokeCalls` let a spec assert the *IPC payload*
+// the UI sends. The Tauri mock installs `window.__TAURI_INTERNALS__.invoke`
+// at boot (see `@tauri-apps/api/mocks` + `tauri-mock/index.ts`). We wrap that
+// live function with a recorder that pushes `{ cmd, args }` onto a window
+// array, then delegates to the original so the mock still answers. This is
+// purely test-side — no production source is touched — and is the only way to
+// observe toggle flags / filter params on the web+mock harness (the mock's
+// `search_blocks` handler folds on content and ignores the filter struct).
+// ---------------------------------------------------------------------------
+
+/** Boot the app and open the find-in-files Search view (SearchPanel). */
+export async function openSearchView(page: Page): Promise<Locator> {
+  await waitForBoot(page)
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Search', exact: true })
+    .click()
+  await expect(page.getByTestId('header-label')).toContainText('Search')
+  const input = page.getByPlaceholder('Search blocks...')
+  await expect(input).toBeVisible()
+  return input
+}
+
+declare global {
+  interface Window {
+    __ipcCalls__?: Array<{ cmd: string; args: unknown }>
+  }
+}
+
+/**
+ * Wrap the live Tauri-mock `invoke` with a recorder. Must be called AFTER the
+ * app has booted (the mock installs `invoke` during `setupMock()` on load).
+ * Idempotent: a second call resets the buffer without double-wrapping.
+ */
+export async function installIpcRecorder(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const internals = (window as unknown as { __TAURI_INTERNALS__?: Record<string, unknown> })
+      .__TAURI_INTERNALS__
+    if (!internals) return
+    window.__ipcCalls__ = []
+    const tagged = internals['invoke'] as { __recorderWrapped__?: boolean } | undefined
+    if (tagged?.__recorderWrapped__) return
+    const original = internals['invoke'] as (cmd: string, args: unknown, opts?: unknown) => unknown
+    const wrapped = (cmd: string, args: unknown, opts?: unknown) => {
+      window.__ipcCalls__?.push({ cmd, args })
+      return original(cmd, args, opts)
+    }
+    ;(wrapped as { __recorderWrapped__?: boolean }).__recorderWrapped__ = true
+    internals['invoke'] = wrapped
+  })
+}
+
+/** Return the recorded `{ cmd, args }` calls for a given command name. */
+export function getInvokeCalls(page: Page, cmd: string): Promise<Array<Record<string, unknown>>> {
+  return page.evaluate(
+    (name) =>
+      (window.__ipcCalls__ ?? [])
+        .filter((c) => c.cmd === name)
+        .map((c) => c.args as Record<string, unknown>),
+    cmd,
+  )
+}
+
+/** Clear the IPC recorder buffer (e.g. between assertions). */
+export async function clearInvokeCalls(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    window.__ipcCalls__ = []
+  })
+}
+
 /**
  * Navigate away and back to force `BlockTree` to re-fetch from the mock backend.
  *

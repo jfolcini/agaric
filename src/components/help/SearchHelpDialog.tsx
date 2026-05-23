@@ -303,9 +303,16 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-labelledby="search-help-title" data-testid="search-help-dialog">
+      {/* Radix `Dialog.Title` owns the label id: it renders the `<h2>` with
+          its own generated `titleId` and points `Content`'s `aria-labelledby`
+          at it automatically. Passing an explicit `id` to `DialogTitle`
+          OVERRODE that generated id, so Radix's own labelling broke and its
+          `TitleWarning` (which looks up the generated id via
+          `getElementById`) fired a "DialogContent requires a DialogTitle"
+          console.error. Let Radix wire it — no manual id / aria-labelledby. */}
+      <DialogContent data-testid="search-help-dialog">
         <DialogHeader>
-          <DialogTitle id="search-help-title">{t('search.helpButtonLabel')}</DialogTitle>
+          <DialogTitle>{t('search.helpButtonLabel')}</DialogTitle>
           <DialogDescription>{t('search.help.description')}</DialogDescription>
         </DialogHeader>
         <DialogBody>

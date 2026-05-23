@@ -82,6 +82,66 @@ test.describe('Autocomplete (PEND-60)', () => {
     await expect(input).toBeFocused()
   })
 
+  // ── PEND-58f E2E-10 — dynamic autocomplete sources ──────────────────
+  //
+  // The `state:` happy path above covers the static source. These cover the
+  // three *dynamic* sources the audit flagged as untested e2e: tag names via
+  // the `list_tags_by_prefix` IPC, the `path:` MRU history, and property keys
+  // via `list_property_keys`.
+
+  test('tag: anchor lists seed tag names from the list_tags_by_prefix IPC', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    // Bare `tag:` (no leading hash) is a valid anchor; the value drives the
+    // server-side prefix filter.
+    await input.fill('tag:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    // Seed tags: work / personal / idea.
+    for (const name of ['work', 'personal', 'idea']) {
+      await expect(page.getByTestId(`autocomplete-item-${name}`)).toBeVisible()
+    }
+  })
+
+  test('tag: anchor narrows to the typed prefix', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('tag:#wo')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-work')).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-personal')).toHaveCount(0)
+  })
+
+  test('prop: anchor lists property keys from list_property_keys', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('prop:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    // Seed property keys include `context` and `project`.
+    await expect(page.getByTestId('autocomplete-item-context')).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-project')).toBeVisible()
+  })
+
+  test('path: anchor surfaces the per-space MRU after a submit records it', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    // Submit a query carrying a path: token — `recordPathHistory` writes the
+    // glob to the per-space MRU on submit.
+    await input.fill('hello path:Journal/2026-*')
+    await input.press('Enter')
+
+    // Now re-anchor on `path:` with a matching prefix; the MRU entry surfaces.
+    await input.fill('path:J')
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-Journal/2026-*')).toBeVisible()
+  })
+
   test('wires ARIA combobox attrs to the live cmdk listbox / option ids', async ({ page }) => {
     const input = page.getByPlaceholder('Search blocks...')
     await input.click()
