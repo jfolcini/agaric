@@ -5,9 +5,14 @@
  * tokens. The classifier (`classify.ts`) is responsible for mapping
  * each raw token to a `FilterToken` (or to free-text).
  *
- * Quoting / boolean operator behaviour is preserved verbatim from
- * `src-tauri/src/fts/search.rs::tokenize_query` so the parser doesn't
- * accidentally pre-process FTS5 syntax.
+ * Quoting / boolean operator behaviour started as a port of
+ * `src-tauri/src/fts/search.rs::tokenize_query` (so the parser doesn't
+ * accidentally pre-process FTS5 syntax), but DSL-1 deliberately diverges
+ * on the closing-quote rule: this tokeniser is boundary-aware (a quote
+ * only closes at a token boundary) because it drives chip projection +
+ * caret autocomplete, whereas the Rust `tokenize_query` closes on the
+ * first `"` (it only builds the FTS5 query string). The two roles differ,
+ * so the divergence is intentional — do not "re-sync" them.
  */
 
 /** A raw lexical token. */
