@@ -33,6 +33,25 @@ race guard; UX-A3 i18n; UX-A6 combobox/listbox a11y), and **DOC-A4 / A7 / A8 / A
 Also fixed **NEW-4** (priority autocomplete suggested stale `A/B/C` — now derives
 from the configurable `usePriorityLevels()`; surfaced by the DOC-A7 work).
 
+## Batch 3 — shipped (Session 817)
+
+Closed the cluster-1 follow-ups: **NEW-3** (filter-only search) — a blank free-text
+query carrying ≥1 structural filter now returns the filtered blocks (recency-ordered,
+`b.id DESC`) instead of empty, in BOTH the cursor and partitioned paths and
+mode-independent. FTS5 MATCH can't express "match all", so a new `filter_only_scan`
+(+ `fts_fetch_filter_only_page` cursor and `fts_fetch_filter_only_partitioned`)
+bypasses FTS/regex; the old blank-query short-circuits in `search_blocks_inner` /
+`search_blocks_partitioned_inner` were removed (the decision moved into
+`search_with_toggles*`). `space_id` is excluded from the "has filters" test (it's
+always supplied), so a space-only blank query still returns empty. **NEW-1**
+(regex-mode prefix autocomplete) — the over-broad `suppressed={isRegex}` gate is
+gone; the caret anchor detector already returns null for free-text, so filter
+prefixes (`tag:`, `state:`, …) now autocomplete in regex mode while the free-text
+regex remainder stays suppressed. **NEW-2** (regex visual cue) — the input gains a
+regex placeholder + monospace + an sr-only `aria-describedby` hint when regex mode
+is on. Backend reviewed with empirical mutation testing (cursor `<`/`has_more`
+boundaries) which caught + fixed an exact-multiple `has_more` test gap.
+
 ---
 
 ## Remaining — Correctness / data bugs
@@ -91,33 +110,10 @@ from the configurable `usePriorityLevels()`; surfaced by the DOC-A7 work).
   pipeline are unreachable on the web+mock harness; would need a Tauri-driven e2e
   harness.
 
-## New follow-ups (open)
-
-- **NEW-1 (Medium, discoverability)** The autocomplete popover is suppressed in
-  regex mode (`SearchPanel.tsx` `suppressed={toggles.isRegex}`), but structural
-  filters now apply in regex mode — so a user building `tag:#urgent ^TODO` gets no
-  `tag:`/`state:` autocomplete help for the part that works. Consider allowing the
-  *prefix* autocomplete (`tag:`, `state:`) in regex mode and suppressing only once
-  the caret is in the free-text remainder.
-- **NEW-2 (Low, discoverability)** No visual cue that the input free-text is a regex
-  (only the `.*` toggle's pressed state). Consider a monospace/placeholder/aria hint
-  on the input when regex mode is on. Pre-existing.
-- **NEW-3 (Medium, pre-existing, both modes)** A *filter-only* search (empty free
-  text + only structural filters, e.g. `tag:wip` with no pattern) returns empty in
-  BOTH non-regex and regex modes: the cursor `search_blocks_inner` short-circuits a
-  blank query to zero rows before applying filters. To make "filters apply on their
-  own" true (as the SearchPanel `enabled` gate intends), rework the short-circuit to
-  proceed when structural filters are present, and handle the empty/match-all pattern
-  on both the FTS and regex paths. Symmetric across modes — not a regex regression.
-
----
-
 ## Suggested action order (remaining)
 
-1. **NEW-3** (filter-only search applies filters) + **NEW-1** (regex-mode prefix
-   autocomplete) — close out the cluster-1 follow-ups.
-2. **UX-A1** (mobile SearchSheet parity — needs a product decision).
-3. **UX-A5** (the `+ Filter` builder gains the remaining filter types).
-4. **Test gaps** (E2E-A1..A5, A7..A11).
-5. **Maintainability** (FE-A18 hook extraction; FE-A19; DSL-A3/A4/A6/A7) + NEW-2 +
+1. **UX-A1** (mobile SearchSheet parity — needs a product decision).
+2. **UX-A5** (the `+ Filter` builder gains the remaining filter types).
+3. **Test gaps** (E2E-A1..A5, A7..A11).
+4. **Maintainability** (FE-A18 hook extraction; FE-A19; DSL-A3/A4/A6/A7) +
    the low-priority UX items (UX-A7/A8/A9).

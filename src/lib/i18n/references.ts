@@ -169,7 +169,10 @@ export const references: Record<string, string> = {
   'search.loadResultsFailed': 'Failed to load search results',
   'search.noParentPage': 'This block has no parent page',
   'search.searchPlaceholder': 'Search blocks...',
+  'search.searchPlaceholderRegex': 'Search with a regular expression...',
   'search.searchLabel': 'Search blocks',
+  'search.regexModeHint':
+    'Free-text is matched as a regular expression. Filters like tag: and path: still apply.',
   'search.cjkNoteLabel': 'Note:',
   'search.cjkLimitationNote':
     'CJK search is limited in v1. Some results may be incomplete. Try queries of 3 or more characters for the best matches.',

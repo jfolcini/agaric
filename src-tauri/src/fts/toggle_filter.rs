@@ -135,11 +135,22 @@ pub async fn search_with_toggles(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    if toggles.is_regex {
-        // Regex-mode bypasses FTS entirely — empty query short-circuits
-        // here to avoid compiling an empty pattern (which would match
-        // every row).
-        if query.trim().is_empty() {
+    // PEND-58g NEW-3 — a blank free-text query has nothing for FTS5
+    // MATCH (cannot express "match all") or the regex engine (an empty
+    // pattern matches everything) to act on, so dispatch BEFORE the
+    // mode branch: with at least one STRUCTURAL filter, return the
+    // structurally-filtered blocks recency-ordered (mode-independent);
+    // with NO filter, preserve the prior behaviour of returning empty
+    // (never the whole DB). `space_id` is always supplied (FEAT-3p4) so
+    // it is NOT a user filter and is excluded from `has_filters`.
+    if query.trim().is_empty() {
+        let has_filters = parent_id.is_some()
+            || tag_ids.is_some_and(|t| !t.is_empty())
+            || !include_page_globs.is_empty()
+            || !exclude_page_globs.is_empty()
+            || block_type_filter.is_some()
+            || !metadata.is_empty();
+        if !has_filters {
             return Ok(PageResponse {
                 items: vec![],
                 next_cursor: None,
@@ -147,6 +158,21 @@ pub async fn search_with_toggles(
                 total_count: None,
             });
         }
+        return fts_fetch_filter_only_page(
+            pool,
+            page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        )
+        .await;
+    }
+
+    if toggles.is_regex {
         // PEND-69 F2 — `block_type_filter` is now pushed into the
         // regex SQL builder so we don't drag the full 1000-row
         // pre-filter window through Rust just to discard non-matching
@@ -257,11 +283,20 @@ pub(crate) async fn search_with_toggles_partitioned(
     metadata: &MetadataPredicates,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<super::search::FtsPartitionedScan, AppError> {
-    if toggles.is_regex {
-        // Regex-mode bypasses FTS entirely — empty query short-circuits
-        // here to avoid compiling an empty pattern (which would match
-        // every row).
-        if query.trim().is_empty() {
+    // PEND-58g NEW-3 — blank free-text query dispatch (mode-independent),
+    // mirroring `search_with_toggles`. This path has NO `block_type_filter`
+    // param (partitioning handles block_type), so it is excluded from
+    // `has_filters`; `space_id` is always supplied (FEAT-3p4) and excluded
+    // too. With NO user filter, preserve the prior empty-partitions
+    // behaviour; with at least one filter, return the structurally-
+    // filtered partitions recency-ordered.
+    if query.trim().is_empty() {
+        let has_filters = parent_id.is_some()
+            || tag_ids.is_some_and(|t| !t.is_empty())
+            || !include_page_globs.is_empty()
+            || !exclude_page_globs.is_empty()
+            || !metadata.is_empty();
+        if !has_filters {
             return Ok(super::search::FtsPartitionedScan {
                 pages: Vec::new(),
                 blocks: Vec::new(),
@@ -269,6 +304,26 @@ pub(crate) async fn search_with_toggles_partitioned(
                 blocks_has_more: false,
             });
         }
+        if let Some(ref token) = cancel {
+            if token.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
+        }
+        return fts_fetch_filter_only_partitioned(
+            pool,
+            page_limit,
+            block_limit,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            metadata,
+        )
+        .await;
+    }
+
+    if toggles.is_regex {
         // BE-A4 (PEND-58f) — early-cancel before launching the scans,
         // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
         // The palette's next-keystroke pattern fires fresh IPCs faster
@@ -944,6 +999,348 @@ struct RegexScanRow {
     due_date: Option<String>,
     scheduled_date: Option<String>,
     page_id: Option<String>,
+}
+
+/// PEND-58g NEW-3 — filter-only structural scan (NO free-text pattern).
+///
+/// A blank query has nothing for FTS5 MATCH (which cannot express
+/// "match all") or the regex engine (an empty pattern matches every
+/// row) to act on. When the caller still supplies at least one
+/// STRUCTURAL filter (`tag:`, `parent_id`, page globs, `block_type`, a
+/// metadata predicate), the intent is "give me the blocks that match
+/// those filters", recency-ordered. This helper builds the SAME
+/// structural-filter SQL as [`regex_mode_query`] (deduped/UPPERCASE tag
+/// ids with the `COUNT(DISTINCT)` ALL-tags predicate, space_id,
+/// include/exclude page globs, [`append_metadata_sql`], optional
+/// `block_type`) but:
+///
+///   * compiles NO regex and applies NO post-filter — every
+///     structurally-matching row is returned;
+///   * supports id-DESC cursor pagination via `after_id` (`AND b.id < ?`);
+///     ULIDs sort lexicographically by recency, so `id DESC` is
+///     recency-descending.
+///   * emits `snippet: None` / `match_offsets: vec![]` (no pattern → no
+///     highlight offsets).
+///
+/// The `fetch_limit` cap is bound to the `LIMIT` placeholder; callers
+/// pass `effective_limit + 1` so a one-row overflow probe can drive
+/// `has_more`.
+#[allow(clippy::too_many_arguments)]
+async fn filter_only_scan(
+    pool: &SqlitePool,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+    after_id: Option<&str>,
+    fetch_limit: i64,
+) -> Result<Vec<SearchBlockRow>, AppError> {
+    let mut sql = String::from(
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                  b.deleted_at, b.todo_state, b.priority, b.due_date,
+                  b.scheduled_date, b.page_id
+           FROM blocks b
+           WHERE b.deleted_at IS NULL
+             AND b.content IS NOT NULL"#,
+    );
+
+    let mut next_param = 1;
+    let parent_idx = parent_id.map(|_| {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.parent_id = ?{i}"));
+        next_param += 1;
+        i
+    });
+
+    // SQL-1 / SQL-A6 (PEND-58f) — dedupe + UPPERCASE-normalise tag ids
+    // before binding, exactly as `regex_mode_query` does, so the
+    // `COUNT(DISTINCT)` ALL-tags predicate is achievable and a
+    // mixed-case duplicate can't silently zero the scan.
+    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
+        Some(ids) => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let tag_start = if !tag_ids_active.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..tag_ids_active.len())
+            .map(|i| format!("?{}", start + i))
+            .collect();
+        next_param += tag_ids_active.len();
+        let count_idx = next_param;
+        next_param += 1;
+        sql.push_str(&format!(
+            "\n             AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN ({})) = ?{count_idx}",
+            placeholders.join(", ")
+        ));
+        Some((start, count_idx))
+    } else {
+        None
+    };
+
+    let space_idx = space_id.map(|_| {
+        let i = next_param;
+        sql.push_str(&format!(
+            "\n             AND b.page_id IN (\
+              SELECT bp.block_id FROM block_properties bp \
+              WHERE bp.key = 'space' AND bp.value_ref = ?{i})"
+        ));
+        next_param += 1;
+        i
+    });
+
+    let include_start = if !include_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..include_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n             AND b.page_id IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += include_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
+    let exclude_start = if !exclude_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..exclude_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n             AND b.page_id NOT IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += exclude_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
+    // PEND-53 — metadata predicates (same shape as `regex_mode_query`).
+    let metadata_binds =
+        super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
+
+    let block_type_idx = if block_type_filter.is_some() {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.block_type = ?{i}"));
+        next_param += 1;
+        Some(i)
+    } else {
+        None
+    };
+
+    // id-DESC cursor pagination — ULID prefixes sort lexicographically by
+    // recency, so `b.id < ?` resumes strictly after the previous page's
+    // last (oldest) returned row.
+    let after_idx = if after_id.is_some() {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.id < ?{i}"));
+        next_param += 1;
+        Some(i)
+    } else {
+        None
+    };
+
+    let cap_idx = next_param;
+    sql.push_str(&format!(
+        "\n           ORDER BY b.id DESC\n           LIMIT ?{cap_idx}"
+    ));
+
+    let _ = (
+        parent_idx,
+        tag_start,
+        space_idx,
+        include_start,
+        exclude_start,
+        block_type_idx,
+        after_idx,
+    );
+
+    let mut db_query = sqlx::query_as::<_, RegexScanRow>(&sql);
+    if let Some(pid) = parent_id {
+        db_query = db_query.bind(pid);
+    }
+    for tid in &tag_ids_active {
+        db_query = db_query.bind(tid);
+    }
+    if !tag_ids_active.is_empty() {
+        let count: i64 = i64::try_from(tag_ids_active.len()).unwrap_or(i64::MAX);
+        db_query = db_query.bind(count);
+    }
+    if let Some(sid) = space_id {
+        db_query = db_query.bind(sid);
+    }
+    for pat in include_page_globs {
+        db_query = db_query.bind(pat);
+    }
+    for pat in exclude_page_globs {
+        db_query = db_query.bind(pat);
+    }
+    for v in &metadata_binds {
+        db_query = v.bind(db_query);
+    }
+    if let Some(bt) = block_type_filter {
+        db_query = db_query.bind(bt);
+    }
+    if let Some(aid) = after_id {
+        db_query = db_query.bind(aid);
+    }
+    db_query = db_query.bind(fetch_limit);
+
+    let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
+
+    let out: Vec<SearchBlockRow> = rows
+        .into_iter()
+        .map(|r| SearchBlockRow {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
+            block_type: r.block_type,
+            content: r.content,
+            parent_id: r.parent_id,
+            position: r.position,
+            deleted_at: r.deleted_at,
+            todo_state: r.todo_state,
+            priority: r.priority,
+            due_date: r.due_date,
+            scheduled_date: r.scheduled_date,
+            page_id: r.page_id,
+            snippet: None,
+            match_offsets: vec![],
+        })
+        .collect();
+
+    Ok(out)
+}
+
+/// PEND-58g NEW-3 — cursor-paginated filter-only page (mode-independent;
+/// no free-text pattern). Drives [`filter_only_scan`] with a `limit + 1`
+/// overflow probe and emits an id-DESC `next_cursor` so the palette /
+/// search view can page through the structurally-filtered set without
+/// dropping or duplicating a row.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fts_fetch_filter_only_page(
+    pool: &SqlitePool,
+    page: &PageRequest,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    let effective_limit = page.limit.min(super::search::MAX_SEARCH_RESULTS);
+    let fetch_limit = effective_limit + 1;
+    let after_id = page.after.as_ref().map(|c| c.id.as_str());
+
+    let mut rows = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        block_type_filter,
+        metadata,
+        after_id,
+        fetch_limit,
+    )
+    .await?;
+
+    let effective_limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > effective_limit_usize;
+    rows.truncate(effective_limit_usize);
+
+    let next_cursor = if has_more {
+        // `next_cursor` keys on the LAST RETURNED (post-truncate) row's id;
+        // the next page resumes with `b.id < that_id`. The cursor stores
+        // the raw String id, matching `SearchBlockRow.id` (an
+        // `ActiveBlockId` whose `as_str()` is the canonical ULID).
+        let last = rows
+            .last()
+            .expect("has_more implies at least `limit` rows (limit >= 1)");
+        Some(crate::pagination::Cursor::for_id(last.id.as_str().to_string()).encode()?)
+    } else {
+        None
+    };
+
+    Ok(PageResponse {
+        items: rows,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
+/// PEND-58g NEW-3 — partitioned filter-only scan (mode-independent; no
+/// free-text pattern). Mirrors [`search_with_toggles_partitioned`]'s two
+/// partitions: a pages partition (`block_type = 'page'`) and an
+/// unrestricted blocks partition, each with a `limit + 1` overflow probe
+/// driving its `has_more`. No cursor — the palette doesn't paginate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fts_fetch_filter_only_partitioned(
+    pool: &SqlitePool,
+    page_limit: u32,
+    block_limit: u32,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    metadata: &MetadataPredicates,
+) -> Result<super::search::FtsPartitionedScan, AppError> {
+    let mut pages = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        Some("page"),
+        metadata,
+        None,
+        i64::from(page_limit) + 1,
+    )
+    .await?;
+    let mut blocks = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        None,
+        metadata,
+        None,
+        i64::from(block_limit) + 1,
+    )
+    .await?;
+
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    // `limit == 0` — same degenerate-ask guard as the FTS / regex paths;
+    // the caller asked for nothing, so don't claim there's more.
+    let pages_has_more = page_limit_usize > 0 && pages.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && blocks.len() > block_limit_usize;
+    pages.truncate(page_limit_usize);
+    blocks.truncate(block_limit_usize);
+
+    Ok(super::search::FtsPartitionedScan {
+        pages,
+        blocks,
+        pages_has_more,
+        blocks_has_more,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -325,11 +325,11 @@ export function SearchPanel(): React.ReactElement {
     // PEND-54 / DSL-A8 — the AST's free-text may be empty when the user
     // has only typed structured filter tokens (`tag:#urgent`). We still
     // fire the query in that case (the gate is identical in both modes:
-    // a regex / FTS pattern OR at least one structural filter). NOTE: the
-    // cursor `search_blocks` path short-circuits a blank query to zero
-    // rows today, so a *filter-only* search returns empty in BOTH modes —
-    // making filters apply on their own is a tracked follow-up, not a
-    // regex-mode regression.
+    // a regex / FTS pattern OR at least one structural filter). PEND-58g
+    // NEW-3 — the backend now honours a *filter-only* query: a blank
+    // free-text with at least one structural filter returns the filtered
+    // blocks (recency-ordered) in BOTH modes, instead of the old
+    // blank-query short-circuit that returned empty.
     enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     // E2E-2 — do NOT pass `onError` here. `usePaginatedQuery` would
     // otherwise overwrite the raw IPC message with this friendly string
@@ -787,6 +787,7 @@ export function SearchPanel(): React.ReactElement {
         inlineError={regexError}
         comboboxAttrs={inputComboboxAttrs}
         onHelpClick={() => setHelpOpen(true)}
+        regexMode={toggles.isRegex}
         toggleRow={<SearchToggleRow toggles={toggles} onChange={setToggles} />}
         historyDropdown={
           <SearchHistoryDropdown
@@ -817,7 +818,6 @@ export function SearchPanel(): React.ReactElement {
         ref={autocompleteRef}
         inputRef={searchInputRef}
         query={query}
-        suppressed={toggles.isRegex}
         spaceId={currentSpaceId}
         focused={inputFocused}
         pendingCaretRef={pendingCaretRef}

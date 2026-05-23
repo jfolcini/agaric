@@ -107,7 +107,8 @@ describe('SearchPanel toggles', () => {
     fireEvent.click(regexButton)
     expect(regexButton).toHaveAttribute('aria-pressed', 'true')
 
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    // PEND-58g NEW-2 — flipping regex mode swaps in the regex placeholder.
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, '^TODO')
 
     await waitFor(() => {
@@ -133,7 +134,7 @@ describe('SearchPanel toggles', () => {
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
 
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, 'tag:wip foo.*')
 
     // The tag name resolves asynchronously via `list_tags_by_prefix`;
@@ -160,7 +161,7 @@ describe('SearchPanel toggles', () => {
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
 
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     fireEvent.change(input, { target: { value: 'tag:wip foo.*' } })
 
     // Chips render from the live AST regardless of mode. The chip label
@@ -182,7 +183,7 @@ describe('SearchPanel toggles', () => {
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
 
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, 'tag:wip')
 
     await waitFor(() => {
@@ -237,6 +238,50 @@ describe('SearchPanel toggles', () => {
     await waitFor(async () => {
       expect(await axe(container)).toHaveNoViolations()
     })
+  })
+})
+
+// PEND-58g NEW-2 — a visual + a11y cue that the input free-text is matched
+// as a regular expression when regex mode is on.
+describe('SearchPanel regex-mode input cue (PEND-58g NEW-2)', () => {
+  it('off by default: normal placeholder, no font-mono, no regex hint', () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    expect(input).toBeInTheDocument()
+    expect(input).not.toHaveClass('font-mono')
+    expect(input).not.toHaveAttribute('aria-describedby', 'search-regex-hint')
+    expect(screen.queryByText(t('search.regexModeHint'))).not.toBeInTheDocument()
+  })
+
+  it('on: regex placeholder + font-mono + aria-describedby wired to the sr-only hint', () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
+    expect(input).toHaveClass('font-mono')
+    expect(input).toHaveClass('flex-1')
+    expect(input).toHaveAttribute('aria-describedby', 'search-regex-hint')
+
+    const hint = document.getElementById('search-regex-hint')
+    expect(hint).not.toBeNull()
+    expect(hint).toHaveClass('sr-only')
+    expect(hint).toHaveTextContent(t('search.regexModeHint'))
+  })
+
+  it('has no a11y violations with the regex cue showing', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+    const { container } = render(<SearchPanel />)
+    fireEvent.click(screen.getByTestId('search-toggle-regex'))
+    // The describedby target must exist for the input that references it.
+    expect(screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))).toHaveAttribute(
+      'aria-describedby',
+      'search-regex-hint',
+    )
+    expect(await axe(container)).toHaveNoViolations()
   })
 })
 
@@ -345,7 +390,7 @@ describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
     render(<SearchPanel />)
 
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, '(')
 
     // The inline regex error owns the failure.
@@ -389,7 +434,7 @@ describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
     })
     const { container } = render(<SearchPanel />)
     fireEvent.click(screen.getByTestId('search-toggle-regex'))
-    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholderRegex'))
     typeAndSubmit(input, '(')
     await waitFor(() => {
       expect(screen.getByTestId('search-inline-error')).toBeInTheDocument()

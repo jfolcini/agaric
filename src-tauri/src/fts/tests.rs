@@ -7640,3 +7640,812 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
         "no survivors surfaced → no next_cursor"
     );
 }
+
+// ======================================================================
+// PEND-58g NEW-3 — filter-only search (blank free-text + structural
+// filters). A blank query bypasses FTS/regex entirely and runs a
+// recency-ordered (`id DESC`) structural scan; with NO filter it stays
+// empty (never the whole DB). Mode-independent.
+// ======================================================================
+
+/// Default (all-off) toggles — the common case for these tests.
+fn new3_toggles_off() -> SearchToggles {
+    SearchToggles {
+        case_sensitive: false,
+        whole_word: false,
+        is_regex: false,
+    }
+}
+
+/// Seed the `TAG_ULID` tag as a `tag`-typed block so `block_tags.tag_id`'s
+/// FK to `blocks(id)` is satisfied. Call once per test before tagging.
+async fn new3_seed_tag(pool: &SqlitePool) {
+    insert_block(pool, TAG_ULID, "tag", "urgent", None, None).await;
+}
+
+/// Tag a block via a direct `block_tags` row (canonical UPPERCASE id).
+/// Requires the tag block to already exist (see [`new3_seed_tag`]).
+async fn new3_tag_block(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// NEW-3 (1) — filter-only by tag: a blank query plus one tag filter
+/// returns ONLY blocks carrying that tag; an untagged block is excluded.
+#[tokio::test]
+async fn new3_filter_only_by_tag_returns_tagged_excludes_untagged() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    let tagged_a = pt_block_id(0);
+    let tagged_b = pt_block_id(1);
+    let untagged = pt_block_id(2);
+    insert_block(&pool, &tagged_a, "content", "tagged alpha", None, Some(0)).await;
+    insert_block(&pool, &tagged_b, "content", "tagged bravo", None, Some(1)).await;
+    insert_block(
+        &pool,
+        &untagged,
+        "content",
+        "untagged charlie",
+        None,
+        Some(2),
+    )
+    .await;
+    new3_tag_block(&pool, &tagged_a, TAG_ULID).await;
+    new3_tag_block(&pool, &tagged_b, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "   ", // blank free-text (whitespace only)
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "exactly the two tagged blocks return (got {ids:?})"
+    );
+    assert!(ids.contains(tagged_a.as_str()), "tagged_a must be present");
+    assert!(ids.contains(tagged_b.as_str()), "tagged_b must be present");
+    assert!(
+        !ids.contains(untagged.as_str()),
+        "untagged block must be excluded"
+    );
+    // No pattern → no highlight offsets, no snippet.
+    for item in &result.items {
+        assert!(
+            item.match_offsets.is_empty(),
+            "filter-only row carries no match offsets"
+        );
+        assert!(item.snippet.is_none(), "filter-only row carries no snippet");
+    }
+}
+
+/// NEW-3 (2) — blank query + NO filter → empty (preserved), cursor path.
+#[tokio::test]
+async fn new3_empty_query_no_filter_returns_empty_cursor() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "content", "anything at all", None, Some(0)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        Some("01HQSPACE0000000000000SP01"), // space_id is NOT a user filter
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        result.items.is_empty(),
+        "blank query + no filter must return empty (never the whole DB)"
+    );
+    assert!(!result.has_more, "empty result has no more");
+    assert!(result.next_cursor.is_none(), "empty result emits no cursor");
+}
+
+/// NEW-3 (2b) — blank query + NO filter → two empty partitions
+/// (preserved), partitioned path. `space_id` supplied is not a filter.
+#[tokio::test]
+async fn new3_empty_query_no_filter_returns_empty_partitioned() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "page", "some page", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "some block", None, Some(1)).await;
+
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "  ",
+        50,
+        50,
+        None,
+        None,
+        Some("01HQSPACE0000000000000SP01"),
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(scan.pages.is_empty(), "no-filter pages partition is empty");
+    assert!(
+        scan.blocks.is_empty(),
+        "no-filter blocks partition is empty"
+    );
+    assert!(!scan.pages_has_more);
+    assert!(!scan.blocks_has_more);
+}
+
+/// NEW-3 (3) — cursor pagination across multiple pages: no dropped rows,
+/// no duplicates; the union of pages equals the full filtered set;
+/// `has_more` is true until the last page then false; `next_cursor` is
+/// present iff `has_more`.
+#[tokio::test]
+async fn new3_cursor_pagination_no_drops_no_dupes() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 10 tagged blocks (the full filtered set) + 1 untagged decoy.
+    let total = 10u32;
+    let mut expected: Vec<String> = Vec::new();
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "row alpha",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        expected.push(id);
+    }
+    insert_block(&pool, &pt_block_id(99), "content", "decoy", None, Some(99)).await;
+    expected.sort();
+
+    let limit = 3i64;
+    let tags = vec![TAG_ULID.to_string()];
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+
+    loop {
+        let page = PageRequest::new(cursor.clone(), Some(limit)).unwrap();
+        let result = search_with_toggles(
+            &pool,
+            "",
+            &page,
+            None,
+            Some(&tags),
+            None,
+            &[],
+            &[],
+            new3_toggles_off(),
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+        )
+        .await
+        .unwrap();
+
+        let remaining = expected.len() - collected.len();
+        if result.has_more {
+            assert_eq!(
+                i64::try_from(result.items.len()).unwrap(),
+                limit,
+                "non-final page must be FULL to limit while more rows remain"
+            );
+            assert!(
+                result.next_cursor.is_some(),
+                "has_more=true page must carry a next_cursor"
+            );
+        } else {
+            assert_eq!(
+                result.items.len(),
+                remaining,
+                "final page returns exactly the remaining rows"
+            );
+            assert!(
+                result.next_cursor.is_none(),
+                "final page must NOT carry a next_cursor"
+            );
+        }
+
+        for item in &result.items {
+            collected.push(item.id.clone().into());
+        }
+
+        pages += 1;
+        if !result.has_more {
+            break;
+        }
+        cursor = result.next_cursor;
+        assert!(pages <= 10, "too many pages — possible infinite loop");
+    }
+
+    let unique: std::collections::HashSet<&str> = collected.iter().map(String::as_str).collect();
+    assert_eq!(
+        collected.len(),
+        expected.len(),
+        "no row dropped and none duplicated across pages"
+    );
+    assert_eq!(
+        unique.len(),
+        expected.len(),
+        "no duplicate row across pages"
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted, expected,
+        "page union must equal the exact filtered set"
+    );
+}
+
+/// NEW-3 (3b) — exact-multiple boundary: when the filtered set size is an
+/// exact multiple of the page limit, the final FULL page must report
+/// `has_more == false` and emit NO cursor. This is the case the
+/// `new3_cursor_pagination_no_drops_no_dupes` fixture (10 rows / limit 3,
+/// final page = 1 row) never exercises: there the DB only ever returns
+/// the `limit + 1` probe (so `rows.len() > limit` cleanly separates more
+/// vs. done) or a short final page. Here the final page's query returns
+/// EXACTLY `limit` rows with nothing older, so `rows.len() == limit`. That
+/// distinguishes the correct `has_more = rows.len() > limit` from the
+/// off-by-one `>=` mutation: `>=` would spuriously flag `has_more` on the
+/// last full page, emit a cursor, and yield a phantom empty page.
+#[tokio::test]
+async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 6 tagged rows, page limit 3 → two FULL pages, exact multiple.
+    let total = 6u32;
+    let mut expected: Vec<String> = Vec::new();
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "exact row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        expected.push(id);
+    }
+    expected.sort();
+
+    let limit = 3i64;
+    let tags = vec![TAG_ULID.to_string()];
+
+    // Page 1 — full, more remains.
+    let page1 = PageRequest::new(None, Some(limit)).unwrap();
+    let r1 = search_with_toggles(
+        &pool,
+        "",
+        &page1,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 3, "page 1 is full");
+    assert!(r1.has_more, "page 1 has more (3 of 6 returned)");
+    let cursor = r1.next_cursor.clone();
+    assert!(cursor.is_some(), "page 1 emits a cursor");
+
+    // Page 2 — the FINAL full page. Exactly `limit` rows, nothing older.
+    let page2 = PageRequest::new(cursor, Some(limit)).unwrap();
+    let r2 = search_with_toggles(
+        &pool,
+        "",
+        &page2,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r2.items.len(),
+        3,
+        "page 2 is full (the exact-multiple tail)"
+    );
+    assert!(
+        !r2.has_more,
+        "final FULL page must report has_more=false (kills the `>=` off-by-one)"
+    );
+    assert!(
+        r2.next_cursor.is_none(),
+        "final FULL page must NOT emit a cursor (no phantom empty page)"
+    );
+
+    // Union of both pages is the exact filtered set, no drops/dupes.
+    let mut collected: Vec<String> = r1
+        .items
+        .iter()
+        .chain(r2.items.iter())
+        .map(|r| r.id.clone().into())
+        .collect();
+    collected.sort();
+    assert_eq!(
+        collected, expected,
+        "two full pages cover the exact filtered set"
+    );
+}
+
+/// NEW-3 (4) — ordering is `id DESC` (most-recent ULID first). `pt_block_id`
+/// zero-pads, so higher index == lexicographically larger == more recent.
+#[tokio::test]
+async fn new3_ordering_is_id_desc() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let total = 5u32;
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "ordered row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+    }
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    let mut expected_desc: Vec<String> = (0..total).map(pt_block_id).collect();
+    expected_desc.sort();
+    expected_desc.reverse(); // id DESC
+    assert_eq!(
+        ids, expected_desc,
+        "filter-only scan must return rows in id-DESC (recency) order"
+    );
+}
+
+/// NEW-3 (5a) — respects `parent_id`: blank query + parent filter returns
+/// only children of that parent.
+#[tokio::test]
+async fn new3_respects_parent_id() {
+    let (pool, _dir) = test_pool().await;
+    let parent = pt_block_id(0);
+    let child_a = pt_block_id(1);
+    let child_b = pt_block_id(2);
+    let other = pt_block_id(3);
+    insert_block(&pool, &parent, "content", "the parent", None, Some(0)).await;
+    insert_block(
+        &pool,
+        &child_a,
+        "content",
+        "child alpha",
+        Some(&parent),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        &child_b,
+        "content",
+        "child bravo",
+        Some(&parent),
+        Some(2),
+    )
+    .await;
+    insert_block(&pool, &other, "content", "elsewhere", None, Some(3)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        Some(&parent),
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids.len(), 2, "only the two children return (got {ids:?})");
+    assert!(ids.contains(child_a.as_str()));
+    assert!(ids.contains(child_b.as_str()));
+    assert!(!ids.contains(other.as_str()), "non-child excluded");
+    assert!(!ids.contains(parent.as_str()), "the parent itself excluded");
+}
+
+/// NEW-3 (5b) — respects `block_type_filter`: blank query + `block_type =
+/// 'page'` returns only page-typed blocks.
+#[tokio::test]
+async fn new3_respects_block_type_filter() {
+    let (pool, _dir) = test_pool().await;
+    let pg = pt_block_id(0);
+    let blk = pt_block_id(1);
+    insert_block(&pool, &pg, "page", "a page title", None, Some(0)).await;
+    insert_block(&pool, &blk, "content", "a content block", None, Some(1)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        Some("page"),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec![pg.as_str()], "only the page-typed block returns");
+}
+
+/// NEW-3 (5c) — respects a metadata predicate (`state:` / `todo_state`):
+/// blank query + a `state_values` filter returns only blocks in that
+/// todo_state.
+#[tokio::test]
+async fn new3_respects_metadata_state_predicate() {
+    let (pool, _dir) = test_pool().await;
+    let todo = pt_block_id(0);
+    let done = pt_block_id(1);
+    let none_state = pt_block_id(2);
+    insert_block(&pool, &todo, "content", "todo item", None, Some(0)).await;
+    insert_block(&pool, &done, "content", "done item", None, Some(1)).await;
+    insert_block(
+        &pool,
+        &none_state,
+        "content",
+        "stateless item",
+        None,
+        Some(2),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind(&todo)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(&done)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let metadata = crate::fts::metadata_filter::MetadataPredicates {
+        state_values: vec!["TODO".to_string()],
+        ..Default::default()
+    };
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &metadata,
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![todo.as_str()],
+        "only the TODO-state block returns (got {ids:?})"
+    );
+}
+
+/// NEW-3 (6a) — mode-independence: blank query + tag filter with
+/// `is_regex = true` returns the filtered set (NOT empty). With no
+/// pattern there is nothing for the regex engine to match, so the
+/// structural scan runs regardless of the toggle.
+#[tokio::test]
+async fn new3_mode_independent_regex_toggle() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let tagged = pt_block_id(0);
+    let untagged = pt_block_id(1);
+    insert_block(&pool, &tagged, "content", "tagged row", None, Some(0)).await;
+    insert_block(&pool, &untagged, "content", "plain row", None, Some(1)).await;
+    new3_tag_block(&pool, &tagged, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged.as_str()],
+        "regex toggle + blank query + tag filter must still return the filtered set"
+    );
+}
+
+/// NEW-3 (6b) — mode-independence: same with `case_sensitive = true`.
+#[tokio::test]
+async fn new3_mode_independent_case_sensitive_toggle() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let tagged = pt_block_id(0);
+    let untagged = pt_block_id(1);
+    insert_block(&pool, &tagged, "content", "tagged row", None, Some(0)).await;
+    insert_block(&pool, &untagged, "content", "plain row", None, Some(1)).await;
+    new3_tag_block(&pool, &tagged, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged.as_str()],
+        "case-sensitive toggle + blank query + tag filter must still return the filtered set"
+    );
+}
+
+/// NEW-3 (7) — partitioned filter-only: the pages partition contains ONLY
+/// `block_type == "page"`; the blocks partition contains ALL matching;
+/// each partition's `has_more` comes from the `limit + 1` probe.
+#[tokio::test]
+async fn new3_partitioned_filter_only_partitions_and_has_more() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 3 tagged pages + 4 tagged content blocks + 1 untagged decoy block.
+    let mut page_ids: Vec<String> = Vec::new();
+    for index in 0..3u32 {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "page",
+            "tagged page",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        page_ids.push(id);
+    }
+    let mut content_ids: Vec<String> = Vec::new();
+    for index in 10..14u32 {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "tagged block",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        content_ids.push(id);
+    }
+    insert_block(&pool, &pt_block_id(99), "content", "decoy", None, Some(99)).await;
+
+    let tags = vec![TAG_ULID.to_string()];
+    // page_limit = 2 (< 3 pages → has_more), block_limit = 50 (>= 7 → not).
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "",
+        2,
+        50,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Pages partition: ONLY page-typed rows, capped to page_limit.
+    assert_eq!(
+        scan.pages.len(),
+        2,
+        "pages partition truncated to page_limit"
+    );
+    for r in &scan.pages {
+        assert_eq!(r.block_type, "page", "pages partition holds only pages");
+    }
+    assert!(
+        scan.pages_has_more,
+        "3 matching pages > page_limit 2 → pages_has_more from the limit+1 probe"
+    );
+
+    // Blocks partition: ALL matching (3 pages + 4 content = 7), no decoy.
+    let block_ids: std::collections::HashSet<&str> =
+        scan.blocks.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        scan.blocks.len(),
+        7,
+        "blocks partition holds all 7 tagged rows (3 pages + 4 content)"
+    );
+    for id in page_ids.iter().chain(content_ids.iter()) {
+        assert!(
+            block_ids.contains(id.as_str()),
+            "blocks partition must contain tagged row {id}"
+        );
+    }
+    assert!(
+        !block_ids.contains(pt_block_id(99).as_str()),
+        "untagged decoy excluded from blocks partition"
+    );
+    assert!(
+        !scan.blocks_has_more,
+        "7 matching <= block_limit 50 → blocks_has_more false"
+    );
+}
+
+/// NEW-3 (7b) — partitioned filter-only `has_more` probe on the BLOCKS
+/// partition: with more matching blocks than `block_limit`, the limit+1
+/// probe flips `blocks_has_more` true and truncates to the limit.
+#[tokio::test]
+async fn new3_partitioned_blocks_has_more_probe() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let total = 5u32;
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "tagged block",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+    }
+
+    let tags = vec![TAG_ULID.to_string()];
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "",
+        50,
+        3, // block_limit < 5 matching → has_more
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        scan.blocks.len(),
+        3,
+        "blocks partition truncated to block_limit"
+    );
+    assert!(
+        scan.blocks_has_more,
+        "5 matching blocks > block_limit 3 → blocks_has_more from the limit+1 probe"
+    );
+    // The pages partition is empty (no page-typed rows) and not has_more.
+    assert!(
+        scan.pages.is_empty(),
+        "no page-typed rows → empty pages partition"
+    );
+    assert!(!scan.pages_has_more);
+}

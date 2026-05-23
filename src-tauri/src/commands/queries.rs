@@ -503,14 +503,11 @@ pub async fn search_blocks_inner(
     limit: Option<i64>,
     filter: SearchFilter,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    if query.trim().is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
-    }
+    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // `fts::search_with_toggles`: a blank query with at least one
+    // structural filter returns the filtered set (recency-ordered),
+    // while a blank query with no filter returns empty. Let the empty
+    // query flow through instead of short-circuiting here.
     let page = pagination::PageRequest::new(cursor, limit)?;
 
     // SQL-A1 (PEND-58f) — align the over-cap contract with the
@@ -986,14 +983,12 @@ pub async fn search_blocks_partitioned_inner(
     filter: SearchFilter,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    // Mirror `search_blocks_inner`'s empty-query short-circuit so callers
-    // observe the same wire shape on empty input.
-    if query.trim().is_empty() {
-        return Ok(PartitionedSearchResponse {
-            pages: empty_partition(),
-            blocks: empty_partition(),
-        });
-    }
+    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // `fts::search_with_toggles_partitioned`: a blank query with at
+    // least one structural filter returns the filtered partitions
+    // (recency-ordered), while a blank query with no filter returns two
+    // empty partitions. Let the empty query flow through instead of
+    // short-circuiting here.
 
     // BE-2 (PEND-58f) — reject an over-limit request instead of silently
     // capping it. The per-partition scan ceiling is `MAX_SEARCH_RESULTS`
@@ -1054,18 +1049,6 @@ pub async fn search_blocks_partitioned_inner(
             total_count: None,
         },
     })
-}
-
-/// Build an empty [`PageResponse`] for the partitioned-search empty-query
-/// short-circuit. Inline because the project doesn't have a generic
-/// `empty_page()` helper today.
-fn empty_partition() -> PageResponse<SearchBlockRow> {
-    PageResponse {
-        items: Vec::new(),
-        next_cursor: None,
-        has_more: false,
-        total_count: None,
-    }
 }
 
 /// Tauri command: PEND-61 partitioned full-text search. Returns two

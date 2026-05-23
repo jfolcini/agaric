@@ -47,6 +47,10 @@ export interface SearchHeaderProps {
   comboboxAttrs?: React.AriaAttributes & { role?: 'combobox' }
   /** UX-1 — open the search help dialog (the `?` toolbar button). */
   onHelpClick?: () => void
+  /** PEND-58g NEW-2 — when true, the input free-text is matched as a
+   *  regular expression. Renders a regex-specific placeholder, a
+   *  monospace input, and an sr-only hint wired via `aria-describedby`. */
+  regexMode?: boolean
 }
 
 export function SearchHeader({
@@ -66,6 +70,7 @@ export function SearchHeader({
   onInputBlur,
   comboboxAttrs,
   onHelpClick,
+  regexMode,
 }: SearchHeaderProps): React.ReactElement {
   return (
     <ViewHeader>
@@ -82,14 +87,22 @@ export function SearchHeader({
           onKeyDown={onInputKeyDown}
           onFocus={onInputFocus}
           onBlur={onInputBlur}
-          placeholder={t('search.searchPlaceholder')}
+          placeholder={
+            regexMode ? t('search.searchPlaceholderRegex') : t('search.searchPlaceholder')
+          }
           aria-label={t('search.searchLabel')}
           aria-invalid={invalid ? true : undefined}
           aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
-          className="flex-1"
+          aria-describedby={regexMode ? 'search-regex-hint' : undefined}
+          className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
           autoFocus
           {...comboboxAttrs}
         />
+        {regexMode ? (
+          <span id="search-regex-hint" className="sr-only">
+            {t('search.regexModeHint')}
+          </span>
+        ) : null}
         {toggleRow}
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           {t('search.searchButton')}

@@ -9,6 +9,14 @@
  * only this small component. SearchPanel learns about open/aria changes
  * via `onStateChange` (infrequent) and delegates the relevant keystrokes
  * through the imperative `handleKeyDown` handle.
+ *
+ * PEND-58g NEW-1 — the anchor is computed unconditionally from the query
+ * and caret; there is no `suppressed` gate. `detectAutocompleteAnchor`
+ * already returns `null` for free-text / quoted / non-prefix tokens, so
+ * the free-text remainder (including the regex remainder in regex mode)
+ * is self-suppressing, while recognized filter prefixes (`tag:`, `path:`,
+ * …) still open the popover — even in regex mode, where those structural
+ * filters apply too.
  */
 import type React from 'react'
 import { useEffect, useImperativeHandle, useMemo, useState } from 'react'
@@ -47,8 +55,6 @@ export interface SearchAutocompleteHandle {
 interface SearchAutocompleteProps {
   inputRef: React.RefObject<HTMLInputElement | null>
   query: string
-  /** Regex mode suppresses the anchor so filter prefixes aren't completed. */
-  suppressed: boolean
   spaceId: string | null
   focused: boolean
   /** Shared with SearchPanel's `setQueryAndCaret`; consumed on query change. */
@@ -64,7 +70,6 @@ interface SearchAutocompleteProps {
 export function SearchAutocomplete({
   inputRef,
   query,
-  suppressed,
   spaceId,
   focused,
   pendingCaretRef,
@@ -80,8 +85,8 @@ export function SearchAutocomplete({
   const [ariaIds, setAriaIds] = useState<AutocompleteAriaIds | null>(null)
 
   const anchor = useMemo<AutocompleteAnchor>(
-    () => (suppressed ? null : detectAutocompleteAnchor(query, caretPos)),
-    [suppressed, query, caretPos],
+    () => detectAutocompleteAnchor(query, caretPos),
+    [query, caretPos],
   )
   const { items, loading } = useAutocompleteSources({ anchor, spaceId })
   const open = focused && !dismissed && anchor != null && (items.length > 0 || loading)

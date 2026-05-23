@@ -99,6 +99,8 @@ Pattern portability between the two surfaces is roughly the intersection of thes
 
 The find-across-pages view supports a small filter vocabulary that mixes freely with free-text and the FTS5 boolean operators. The query string is the canonical model — every chip the UI renders is a projection of the parsed AST, and copy-pasting a query reproduces every filter exactly.
 
+**Filter-only queries.** A query made up of only filter tokens — no free-text and no regex pattern — still searches: it returns every block matching the filters, most-recent first. For example, `tag:#urgent state:TODO` on its own lists the open `#urgent` blocks. This behaves the same in regex mode: with no pattern there is nothing for the regex to match, so only the filters apply.
+
 ### Token vocabulary
 
 | Token | Meaning | Notes |
@@ -121,6 +123,8 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 ### Autocomplete
 
 Typing a recognised filter prefix (`state:`, `priority:`, `due:`, `scheduled:`, `tag:#`, `prop:`, `path:`, `not-path:`) in the search input opens a small popover anchored next to the caret. The popover lists value suggestions filtered by the partial value typed after the prefix. Focus stays in the input throughout — the popover is a passive guide, never a focus trap; typing, deleting, and caret movement all keep working as normal.
+
+Filter-prefix autocomplete works in **regex mode** too: the prefixes are real structural filters there, and only the free-text remainder is the regex. The popover stays closed only when the caret sits in that free-text/regex portion.
 
 | Prefix | Source | Notes |
 |---|---|---|

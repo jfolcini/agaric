@@ -147,10 +147,18 @@ Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 pat
 
 ## PEND-55 — Toggle row pipeline
 
-The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. The dispatch is binary:
+The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. A blank free-text query that carries at least one structural filter is handled first (see *Filter-only search* below); otherwise the dispatch is binary:
 
 - **`is_regex == false`** → `search_fts` (today's FTS5 path) is called first; if `case_sensitive` or `whole_word` is on, the result rows are passed through `apply_post_filter` with a literal-escaped regex. The filter narrows matches and attaches `match_offsets`; rows without a match are dropped.
 - **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs and any structural metadata predicates) returns up to `REGEX_PRE_FILTER_CAP` candidates; each is matched against the user's regex. The numeric value of that cap lives only in the code constant — see `src-tauri/src/fts/toggle_filter.rs`.
+
+### Filter-only search (PEND-58g NEW-3)
+
+A search whose free-text is blank/whitespace but which carries at least one structural filter (`tag:`, `path:`, `state:`, `prop:`, a parent, a block-type, …) is a **filter-only** query. FTS5 MATCH cannot express "match everything", so `search_with_toggles` / `search_with_toggles_partitioned` short-circuit BEFORE the FTS/regex dispatch and run `filter_only_scan` — a plain `b.id DESC` (recency-ordered) scan over `blocks` applying exactly the same structural filters the other paths apply, with no pattern match. It is **mode-independent**: with no pattern there is nothing for FTS or a regex to match, so the `is_regex` / `case_sensitive` / `whole_word` toggles don't change the result.
+
+- The cursor path (`fts_fetch_filter_only_page`) paginates on a strictly-less `b.id < ?cursor` predicate (id-only `Cursor::for_id`), derives `has_more` from a `limit + 1` probe, and keys `next_cursor` on the last *returned* (post-truncate) row.
+- The partitioned path (`fts_fetch_filter_only_partitioned`) runs the pages partition (`block_type = 'page'`) and the unrestricted blocks partition, each with its own `limit + 1` probe; the palette doesn't paginate, so no cursor is emitted.
+- `space_id` is always supplied (FEAT-3p4), so it does NOT count as a user filter — a blank query scoped only to a space still returns empty, never the whole space.
 
 ### Caps (all locked-in via module constants)
 
