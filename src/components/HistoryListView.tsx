@@ -15,6 +15,7 @@ import { entryKey, NON_REVERSIBLE_OPS } from '../hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { HistoryListItem } from './HistoryListItem'
 import { LoadMoreButton } from './LoadMoreButton'
+import { ScrollArea } from './ui/scroll-area'
 
 export interface HistoryListViewProps {
   entries: HistoryEntry[]
@@ -91,14 +92,18 @@ export function HistoryListView({
   return (
     <>
       {entries.length > 0 && (
-        // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for history list — no semantic HTML equivalent for non-tabular interactive grid
-        <div
-          ref={listRef}
-          tabIndex={-1}
-          className="history-list p-0 m-0 focus:outline-none overflow-auto max-h-[calc(100dvh-220px)]"
-          role="grid"
-          aria-label={t('history.entriesLabel')}
-          aria-multiselectable="true"
+        <ScrollArea
+          viewportRef={listRef}
+          viewportClassName="history-list p-0 m-0 focus:outline-none max-h-[calc(100dvh-220px)]"
+          // ARIA grid pattern for history list — no semantic HTML
+          // equivalent for a non-tabular interactive grid. Lives on the
+          // scroll viewport (the focusable element keyboard nav drives).
+          viewportProps={{
+            tabIndex: -1,
+            role: 'grid',
+            'aria-label': t('history.entriesLabel'),
+            'aria-multiselectable': 'true',
+          }}
         >
           {/* Total-size spacer so the scrollbar reflects the full list
               even though only the windowed slice is mounted. */}
@@ -135,7 +140,7 @@ export function HistoryListView({
               )
             })}
           </div>
-        </div>
+        </ScrollArea>
       )}
 
       <LoadMoreButton

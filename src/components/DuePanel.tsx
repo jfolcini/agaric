@@ -34,6 +34,7 @@ import { renderRichContent } from './RichContentRenderer'
 import { UpcomingSection } from './UpcomingSection'
 import { Badge } from './ui/badge'
 import { ListItem } from './ui/list-item'
+import { ScrollArea } from './ui/scroll-area'
 import { SectionGroupHeader } from './ui/section-group-header'
 
 export interface DuePanelProps {
@@ -371,9 +372,9 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                     windowing skip offscreen groups entirely instead of
                     mounting every sub-list. */}
                 {virtualRows.length > 0 && (
-                  <div
-                    ref={scrollParentRef}
-                    className="due-panel-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+                  <ScrollArea
+                    viewportRef={scrollParentRef}
+                    viewportClassName="due-panel-scroll max-h-[calc(100dvh-260px)]"
                   >
                     <ul
                       className="due-panel-blocks relative m-0 p-0 list-none"
@@ -442,7 +443,7 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
                         )
                       })}
                     </ul>
-                  </div>
+                  </ScrollArea>
                 )}
 
                 {/* Projected future occurrences from repeating tasks.
