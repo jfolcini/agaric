@@ -99,7 +99,8 @@ log them. Keep reverts surgical.
 | 19 | 05:00 | SECURITY pass (XSS / path-traversal / injection / secrets) | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 1 MINOR. Strong "verified safe" list: mermaid `securityLevel:strict`, QR SVG backend-only, FTS snippet React-escaped, link *input* validation (denylist), deep-link router allowlist, attachment path-traversal defenses (BUG-35), SQL `format!` sites interpolate only constants, error→FE sanitization, bug-report deny-by-default redaction, CSP `script-src 'self'`. MINOR: render-time link sink (`openUrl`) didn't re-validate href scheme → `javascript:`/`data:` hrefs from markdown-import/sync reached the click sink (CSP+OS-mitigated, not a live exploit) | **FIXED**: gate the link render on the existing `isAllowedUrl()` so blocked-scheme hrefs render as plain text instead of an `openUrl` sink (`RichContentRenderer/marks/text.tsx`) + regression test. tsc+biome+vitest(77) green | `55e336ec` |
 | 20 | 05:15 | FRESH subsystem: journal / agenda / recurrence / dates | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 3 MINOR, **all pre-existing**; recurrence engine + agenda caches + timezone handling "unusually well-hardened" (cache invalidation matrix, 10k expansion caps, leap/DST clamps, repeat-until ISO guard, projected-cache atomicity, local-midnight day boundary FE↔backend all verified). MINOR: date-property default used UTC (`toISOString`) → off-by-one in negative-offset TZs; `list_unfinished_tasks` inclusion-vs-sort-key disagreement; batch todo-state skips recurrence | **FIXED** the UTC date default (`property-save-utils.ts` → canonical `getTodayString()` local helper + aligned the existing test). Other 2 deferred (semantics decisions). tsc+biome+vitest(25) green | `f1354b20` |
 | 21 | 05:30 | FRESH subsystem: settings / preferences / persistence | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 4 MINOR, **all pre-existing**; persistence layer well-engineered (guarded reads, `migrate` placeholders, partialize, hydration-race handling, no PII in localStorage all verified; `search-history.ts` (only in-PR file) is exemplary). MINOR: unguarded `localStorage` writes in tag-colors/starred-pages + unguarded read+write in useWeekStart (read runs during calendar render → white-screen risk in locked-down webviews); `tabs`/`journal` version-without-migrate | **FIXED 3** (try/catch guards mirroring the codebase's own read-catch convention: `tag-colors.ts`, `starred-pages.ts`, `useWeekStart.ts` + 2 throw-resilience regression tests). MINOR-4 (version/migrate) deferred. tsc+biome+vitest green | `7c7d8692` |
-| 22 | 05:45 | FRESH subsystem: attachments lifecycle | subagent verdict CHANGES — 2 CRIT / 1 MAJOR / 1 MINOR, **all pre-existing**; backend storage + sync transfer + GC machinery verified well-engineered & correct (add/delete atomicity, blake3-verified sync with temp-file + atomic rename, orphan sweep, bulk-purge unlink, reverse ops). CRIT C1/C2: attachment upload+render pipeline is UNWIRED end-to-end (no `@tauri-apps/plugin-fs` → FE never copies bytes + passes absolute path the backend rejects; `assetProtocol` disabled w/ empty scope) — verified both premises. MAJOR: single-block `purge_block_inner` leaks files (bulk paths don't). MINOR: FE/BE MIME-list divergence | **LOG-ONLY round** — C1/C2 are a feature-completion task (not a CR fix), pre-existing, NOT a PR #50 regression; MAJOR file-leak is slam-dunk but a destructive backend path best fixed with the cluster. All 4 logged; verify attachments-intent with maintainer | no commit (ledger only) |
+| 22 | 05:45 | FRESH subsystem: attachments lifecycle | subagent verdict CHANGES — 2 CRIT / 1 MAJOR / 1 MINOR, **all pre-existing**; backend storage + sync transfer + GC machinery verified well-engineered & correct (add/delete atomicity, blake3-verified sync with temp-file + atomic rename, orphan sweep, bulk-purge unlink, reverse ops). CRIT C1/C2: attachment upload+render pipeline is UNWIRED end-to-end (no `@tauri-apps/plugin-fs` → FE never copies bytes + passes absolute path the backend rejects; `assetProtocol` disabled w/ empty scope) — verified both premises. MAJOR: single-block `purge_block_inner` leaks files (bulk paths don't). MINOR: FE/BE MIME-list divergence | **LOG-ONLY round** — C1/C2 are a feature-completion task (not a CR fix), pre-existing, NOT a PR #50 regression; MAJOR file-leak is slam-dunk but a destructive backend path best fixed with the cluster. All 4 logged; verify attachments-intent with maintainer | `c620ef83` |
+| 23 | 06:00 | FRESH subsystem: sync transport / session / pairing (security) | subagent verdict CHANGES — 0 CRIT / 1 MAJOR / 3 MINOR, **all pre-existing**; transport verified well-hardened (10MB frame cap + bounded streaming, replay/ordering via TLS+state-machine, reconnection backoff + task/socket teardown, per-peer-mutex concurrency w/ no lock-across-await, cert-hash+CN peer-identity binding, RFC-1918 mDNS, snapshot-stale guard). MAJOR F1: production pairing writes a junk empty-string `peer_refs` row (FE always sends `''`) → ghost peer + daemon wrongly activates; NOT one-line (needs FE to pass real device_id). MINOR: stale "30s" timeout string (180s); cert-pin bypass via no-client-cert (out of threat model); no server-side pairing expiry (deliberate) | **LOG-ONLY round** — F1 is a pairing-contract/wiring fix needing maintainer verification; F2/F4 explicitly outside the documented "no malicious actor" threat model; F3 trivial but out-of-scope. All 4 logged | no commit (ledger only) |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -311,6 +312,33 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   `commands/mod.rs:377-384` permits only image/pdf/text/json/zip/tar) + no FE pre-validation
   of MIME or the 50 MB cap → confusing generic failure toast. Share the allow-list + cap
   with the FE. (Only matters once uploads work per C1.)
+- **[sync/pairing, MAJOR — defer, contract/wiring] Pairing writes a junk `peer_refs`
+  row keyed by the empty string** (`PairingDialog.tsx:297` passes `confirmPairing(passphrase,
+  '')` → `commands/sync_cmds.rs:190-232` `confirm_pairing_inner` has no `is_empty` guard →
+  `upsert_peer_ref(pool, "")`). Effects: a blank ghost peer in `PairingPeersList`;
+  `should_start_active` (`sync_daemon/mod.rs:122`) sees a non-empty peer list and flips the
+  daemon out of dormant mode for a peer that can never sync (the real peer row is created
+  later by the TOFU paths keyed by the real device_id). NOT a one-line fix: the FE *always*
+  sends `''` (the comment claims the id is "derived from the passphrase" but it isn't), so a
+  bare backend `is_empty` reject would make ALL pairing fail — the real fix wires the FE to
+  pass the scanned/typed remote device_id (a pairing-contract change). Orchestrator already
+  hardens empty peer_ids elsewhere (BUG-27, L-66); this creation site is the gap. Verify the
+  pairing flow with the maintainer (uncertain full runtime behavior). Tests miss it (all pass
+  a non-empty `"device-remote"`).
+- **[sync, MINOR — slam-dunk, batch later] `recv` timeout error string says "30s" but
+  `RECV_TIMEOUT` is 180s** (`sync_net/connection.rs:494` vs `:458`) — stale literal misleads
+  hung-sync debugging. Trivial (interpolate the constant); logged not fixed to avoid a Rust
+  CI cycle for a diagnostic string in an out-of-scope file.
+- **[sync/security, MINOR — out of threat model, defer] mTLS cert-hash pin is bypassable
+  by a client that omits its client cert** (`sync_net/tls.rs:94` `client_auth_mandatory=false`;
+  `sync_daemon/server.rs:41-49` skips the pin when `observed_hash` is `None`). A genuine
+  mechanical TOFU-pin bypass, BUT AGENTS.md §Threat Model explicitly assumes "no malicious
+  actor" and that TOFU pinning is convenience, not MITM defense — so the project deliberately
+  does not defend this. Likely moot pending the iroh transport (PEND-10). Report-for-completeness.
+- **[sync/pairing, MINOR — deliberate] Pairing passphrase has no server-side expiry**
+  (`pairing.rs:307-321` `PAIRING_TIMEOUT`/`is_expired` are `#[cfg(test)]`-only; the 5-min
+  countdown is FE-only UX; "pairings are permanent by design"). Acceptable under the
+  no-adversary model; noted because expiry was in scope.
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets
