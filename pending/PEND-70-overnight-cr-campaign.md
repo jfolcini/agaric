@@ -89,7 +89,8 @@ log them. Keep reverts surgical.
 | 9 | 03:45 | security re-check | subagent: **no CRITICAL/MAJOR**. Confirmed safe: no secret/PII leakage (errors→i18n, recovery logs→counters only), server-side bounds enforced (limit/query-len/regex/glob/prop-key all *rejected* not silently capped), no dangerous sinks beyond the sanitized SVG ones, filesystem never touched (`path:` globs are SQL-only string matches), workflows hardened (SHA-pinned, read-only perms, no `pull_request_target`/script-injection). 2 MINOR: raw query logged in alias-resolution warn; help-dialog regex link missing target/rel | **fixed** both (drop query from log context; add `target=_blank rel=noreferrer`) | `552ce584` |
 | 10 | 03:55 | a11y deep-dive | subagent: **no CRITICAL**. 2 MAJOR (capped notice never announced to SR; per-row history delete keyboard-unreachable — tied to R3 dead-`activeIndex`); 4 MINOR (tag combobox `aria-expanded` false while popup shown; `FilterChipRow` missing axe; filter-forms no dedicated test; `PropFilterForm` error should use `aria-errormessage`). Confirmed solid: combobox/listbox/option ARIA, status-region politeness, icon-button labels, coarse-pointer targets | **fixing** capped-announce (`role=status`) + tag aria-expanded + FilterChipRow axe + PropFilterForm aria-errormessage; deferred the history-delete keyboard rework + filter-forms test coverage | `3b5c0664` |
 | 11 | 04:10 | fresh deep re-review (highest-churn files) | subagent second-pass: most hot spots verified SOUND (classify/autocomplete/register/to-search-filter; `toggle_filter` probe/has_more/offset math + space/tag/glob SQL parity with the FTS path; the extracted hooks' memo deps + nav-race guard + Map-identity). 1 MAJOR: cross-mode `InvalidRegex:` leak — a long literal in case/whole-word (non-regex) mode shows the inline "invalid regex" alert (regexError memo ignored `toggles.isRegex`). 1 MINOR: clearing all filters to empty leaves stale results (`debouncedQuery`/items not reset — pre-existing on main) | **fixing** the regexError isRegex gate (subagent) + test; logged the clear-filters desync + the backend message refinement | `fed9cfe6` |
-| 12 | 04:25 | whole-diff holistic ("would I approve?") | senior breadth pass: **APPROVE — no new CRITICAL/MAJOR; nothing that shouldn't ship.** Smell-test clean (no debug code / stray files / TODO; the 2 `.sqlx` artifacts are the legit heal-cursor queries; the 20k-line SESSION-LOG "deletion" is the deliberate 401-800 archival). Verified: recovery/snapshot boot ordering + heal guards correct; merge's non-search frontend (ScrollArea migration + focus-ring) coherent; new e2e specs assert real behavior; PEND-69 hygiene consistent end-to-end. 2 MINOR nits | left the documented `test.skip` (search-results.spec.ts:112) as-is; called out the bundled out-of-scope Linux/UI fixes in the PR description | ledger-only |
+| 12 | 04:25 | whole-diff holistic ("would I approve?") | senior breadth pass: **APPROVE — no new CRITICAL/MAJOR; nothing that shouldn't ship.** Smell-test clean (no debug code / stray files / TODO; the 2 `.sqlx` artifacts are the legit heal-cursor queries; the 20k-line SESSION-LOG "deletion" is the deliberate 401-800 archival). Verified: recovery/snapshot boot ordering + heal guards correct; merge's non-search frontend (ScrollArea migration + focus-ring) coherent; new e2e specs assert real behavior; PEND-69 hygiene consistent end-to-end. 2 MINOR nits | left the documented `test.skip` (search-results.spec.ts:112) as-is; called out the bundled out-of-scope Linux/UI fixes in the PR description | `dffd2642` |
+| 13 | 03:00 | recovery/snapshot DEEP correctness | subagent: replay ordering/idempotency, over-shoot heal, snapshot round-trip + per-space isolation, corrupt-blob degradation, and concurrency all CORRECT — **but found ⚠️ CRITICAL C1/C2** (stale / per-space-missing snapshot leaves engine behind cursor; coarse `COUNT(*)>0` heal gate won't fire → engine wedge "block not found"; newly reachable from this branch's snapshot re-instatement; root cause = no seq watermark in `loro_doc_state`). + M1 (replay cursor can have gaps below it via fg-drop — pre-existing, retry-queue backstop) + m2 (test gap) | **NOT fixed** (schema-migration + heal rework on data-integrity code — unsafe unattended; a botched fix risks data loss). Logged as the TOP follow-up + flagged on the PR | escalate to user |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -97,6 +98,32 @@ These are real but either design-level, on load-bearing/pre-existing paths, or
 codebase-wide patterns — applying speculative unattended fixes risks regressing
 tested behavior. Captured here for a maintainer decision / a follow-up PR.
 
+- **⚠️ [recovery, CRITICAL — RELEASE BLOCKER, decide before releasing] Stale /
+  per-space-missing Loro snapshot wedges the engine after a crash** (`recovery/replay.rs`
+  `heal_orphaned_apply_cursor` + `loro/snapshot.rs` + migration `0052`). **Newly
+  introduced by this branch's snapshot re-instatement (`e702a5b6`).** The apply
+  cursor advances per-op (transactional), but snapshots write only every 5 min / on
+  clean exit and carry NO seq watermark (`0052.op_count` is dead). After a crash with
+  ops applied past the last snapshot (or a per-space snapshot that failed/corrupted),
+  boot loads the behind snapshot, the heal's coarse `COUNT(*) FROM loro_doc_state > 0`
+  gate is true → no reset, and replay walks `seq > cursor` → applies nothing → the
+  engine is permanently missing the post-snapshot op tail → "block not found" on any
+  later edit/move of a block created in that window. It's a data-USABILITY wedge, NOT
+  data loss (op_log is intact; a forced cursor=0 rebuild recovers — but nothing
+  triggers it). **Fix (the proper one):** persist a per-space apply-seq watermark into
+  `loro_doc_state` at each save (revive `op_count`/add a column via a new
+  append-only STRICT migration) and make the heal/replay per-space + watermark-aware
+  (reset cursor to the min behind-watermark, or replay `seq > snapshot_seq` per space).
+  **Deliberately NOT fixed overnight** — schema migration + heal state-machine rework
+  on data-integrity code; a botched fix risks real data loss, so it needs a human +
+  tests. There is no safe non-regressive interim without the watermark (always-reset
+  would full-replay every boot). The existing test `apply_cursor_preserved_when_
+  snapshot_present` currently enshrines the buggy behavior — update it as the repro.
+- **[recovery, MINOR] Replay cursor can have gaps below it** (`materializer/consumer.rs`
+  fg-drop → `handlers.rs` `MAX` cursor advance): a foreground-dropped op advances the
+  cursor past itself, so replay's invariant is "no double-apply", NOT "no skips" —
+  recovery of the skipped op relies on the retry-queue sweeper. Pre-existing (C-2b),
+  documented; noting that the cursor legitimately has gaps below it.
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets
