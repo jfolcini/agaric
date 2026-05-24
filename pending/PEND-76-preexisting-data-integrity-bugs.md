@@ -8,9 +8,13 @@ design-level, destructive-path, or product-decision change that is unsafe to
 apply speculatively. Each carries an empirical repro or a verified premise; file
 refs are as of the campaign snapshot.
 
-Ordered by severity. **F1's headline cascade-wipe + edit-resurrection are FIXED
-(2026-05-24); the remote-change *propagation* residual is deferred — see the F1
-Status block.** F2–F5 are unstarted.
+Ordered by severity. **Status (2026-05-24):** F1 cascade-wipe + edit-resurrection
+FIXED (propagation residual deferred — see F1 block). **F4 FIXED** (orphan-tag
+adoption in `add_tag`). **F3 deferred** with a concrete finding (the empty
+`peer_refs` row is load-bearing for post-pairing daemon activation; removing it
+breaks first-pairing sync — needs a design change, see F3 block). **F5** (wire
+referential cross-space enforcement) and **F2** (complete the attachment feature)
+remain — both are their own focused efforts.
 
 ---
 
@@ -145,6 +149,21 @@ pairing — the real fix wires the FE to pass the scanned/typed remote device_id
 pairing-contract change). Tests miss it (they pass a non-empty `"device-remote"`).
 Verify the pairing flow with the maintainer.
 
+⏳ **DEFERRED (2026-05-24) — the obvious fix breaks pairing.** Investigation
+confirmed the FE genuinely does NOT have the remote device_id at confirm time: the
+QR carries only the passphrase (`pairing.rs:97-112`); mDNS discovery + TOFU cert-pin
+establish the real peer row LATER, on the first authenticated connection
+(`sync_daemon/orchestrator.rs:675`, `sync_daemon/server.rs:176`,
+`sync_protocol/orchestrator.rs:532`). Critically, the empty-string `peer_refs` row
+is **load-bearing**: it's what trips `should_start_active` so the dormant daemon
+wakes and runs that very first sync (see the `dormant_daemon_wakes_on_pair_notification`
+test). So a "skip the empty write" guard would leave `should_start_active` false
+after the first-ever pairing → daemon stays dormant → no first sync → TOFU never
+runs → pairing never completes. The real fix **decouples daemon activation from
+`peer_refs`** (e.g. a pairing-completed wake signal / pending-pairing state that
+activates the daemon without a junk row) and needs runtime verification of the full
+pairing→first-sync handshake. Its own focused effort.
+
 ## F4 — Session-created tags lack a `space` property (MAJOR — needs manual confirm)
 
 `handleCreateTag` (`hooks/useBlockTags.ts:115`) calls
@@ -157,6 +176,16 @@ creating a tag in a non-default space. The FE unit test mocks `add_tag` to succe
 so it doesn't exercise the real guard — needs manual verification in a
 non-default-space context. Fix: set the active space on the new tag block at create
 time, or relax the guard to auto-adopt the source block's space.
+
+✅ **FIXED (2026-05-24) — auto-adopt.** `add_tag_inner` (`commands/tags.rs`) now
+treats an orphan tag (`tag_space == None`) applied to a block in a concrete space
+`S` as adoptable: it emits `SetProperty(tag, space=S)` + materialises the
+`block_properties` row in the same tx (the eager equivalent of
+`migrate_orphan_tags_to_space`) instead of rejecting. Genuine cross-space (both
+assigned to different spaces) is still rejected. No FE change needed — the
+`tags.addFailed` toast no longer fires. Tests:
+`add_tag_adopts_orphan_tag_into_source_space`,
+`add_tag_rejects_genuine_cross_space_tag` (tag_cmd_tests.rs).
 
 ## F5 — Cross-space ref/content validators are dead code (MAJOR — needs product decision)
 

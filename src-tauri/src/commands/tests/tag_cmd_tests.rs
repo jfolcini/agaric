@@ -566,3 +566,72 @@ async fn pend18_query_by_tags_scope_parity() {
     );
     assert_eq!(active_a.items[0].id, "P18_TG_A");
 }
+
+// ======================================================================
+// PEND-76 F4 — orphan-tag adoption on add_tag
+// ======================================================================
+
+/// A tag with no space yet (e.g. created mid-session) applied to a block
+/// in a non-default space is ADOPTED into that space rather than rejected
+/// as cross-space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_adopts_orphan_tag_into_source_space() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    insert_block(&pool, "F4_BLK", "content", "in test space", None, Some(1)).await;
+    assign_to_space(&pool, "F4_BLK", TEST_SPACE_ID).await;
+    // Orphan tag — deliberately no `space` property.
+    insert_block(&pool, "F4_TAG", "tag", "fresh-tag", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "F4_BLK".into(), "F4_TAG".into())
+        .await
+        .expect("add_tag should adopt the orphan tag, not reject it");
+
+    let tagged = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+        "F4_BLK",
+        "F4_TAG"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(tagged.is_some(), "block_tags row must be written");
+
+    // The tag was adopted into the source block's space.
+    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind("F4_TAG")
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        space_ref.as_deref(),
+        Some(TEST_SPACE_ID),
+        "the orphan tag must be adopted into the source block's space"
+    );
+}
+
+/// A tag that already belongs to a *different* space is still rejected —
+/// only orphan (space-less) tags are adopted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_rejects_genuine_cross_space_tag() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    insert_block(&pool, "F4X_BLK", "content", "in space A", None, Some(1)).await;
+    assign_to_space(&pool, "F4X_BLK", TEST_SPACE_ID).await;
+    insert_block(&pool, "F4X_TAG", "tag", "space-B-tag", None, None).await;
+    assign_to_space(&pool, "F4X_TAG", TEST_SPACE_B_ID).await;
+
+    let result = add_tag_inner(&pool, DEV, &mat, "F4X_BLK".into(), "F4X_TAG".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "a tag from a different space must still be rejected, got {result:?}"
+    );
+}
