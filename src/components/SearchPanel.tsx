@@ -563,6 +563,7 @@ export function SearchPanel(): React.ReactElement {
       {/* UX-4 — the 5000-item ceiling was hit silently; tell the user. */}
       {capped && (
         <div
+          role="status"
           data-testid="search-capped-notice"
           className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
         >

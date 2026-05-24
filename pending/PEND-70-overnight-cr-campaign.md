@@ -86,7 +86,8 @@ log them. Keep reverts surgical.
 | 6 | 03:10 | docs accuracy | subagent: SEARCH.md / architecture / SESSION-LOG / PEND-58g/69/70 docs accurate. 2 MAJOR: the merge resurrected the deleted PEND-58 + PEND-58d README index rows and the `PEND-58d.md` file (index/narrative contradiction + D23a double-tracked vs REVIEW-LATER `PAGES-FOLD-MARK`). 2 MINOR: architecture related-files omitted FE-A18 hooks; `docs/features/views.md` Search section stale | **fixed** both MAJORs (removed the 2 stale index rows, re-deleted `PEND-58d.md`) + MINOR-3 (added FE-A18 modules to architecture/search.md); logged views.md | `<docs commit>` |
 | 7 | 03:20 | perf deep-dive (snapshot/recovery + SQL plans) | subagent: **no CRITICAL/MAJOR perf regressions**. Verified: boot replay is delta-only (not full-scan), search SQL bounded everywhere (no missing-index scans), frontend well-memoized (single batched breadcrumb resolve, virtualized window, correct abort). 2 MINOR: exit-save `block_on` has no timeout; periodic snapshot holds the registry mutex across all-space export | logged both (timeout needs a *measured* value; mutex-hold is a deliberate documented trade-off) | no code change |
 | 8 | 03:35 | error-handling + adversarial edge cases | subagent: **no CRITICAL**. 1 MAJOR: `PropFilterForm` silently corrupts the search when key/value has `=`/space/`"` (verbatim serialize → first-`=`/whitespace re-parse) — NEW surface from Batch 5. 2 MINOR: `withAbort` unhandled-rejection on a pre-aborted signal; breadcrumb non-array result silently un-logged. Verified graceful: regex/glob caps, usePaginatedQuery abort/error, empty/boundary states, StrictMode pendingViewQuery one-shot, persisted-state coercion | **fixed** MAJOR (PropFilterForm key/value validation + inline a11y error + 2 i18n keys + 6-test file) + both MINOR (withAbort no-op catch; breadcrumb non-array warn); tsc + 122 vitest green | `CR8` |
-| 9 | 03:45 | security re-check | subagent: **no CRITICAL/MAJOR**. Confirmed safe: no secret/PII leakage (errors→i18n, recovery logs→counters only), server-side bounds enforced (limit/query-len/regex/glob/prop-key all *rejected* not silently capped), no dangerous sinks beyond the sanitized SVG ones, filesystem never touched (`path:` globs are SQL-only string matches), workflows hardened (SHA-pinned, read-only perms, no `pull_request_target`/script-injection). 2 MINOR: raw query logged in alias-resolution warn; help-dialog regex link missing target/rel | **fixed** both (drop query from log context; add `target=_blank rel=noreferrer`) | `<CR9>` |
+| 9 | 03:45 | security re-check | subagent: **no CRITICAL/MAJOR**. Confirmed safe: no secret/PII leakage (errors→i18n, recovery logs→counters only), server-side bounds enforced (limit/query-len/regex/glob/prop-key all *rejected* not silently capped), no dangerous sinks beyond the sanitized SVG ones, filesystem never touched (`path:` globs are SQL-only string matches), workflows hardened (SHA-pinned, read-only perms, no `pull_request_target`/script-injection). 2 MINOR: raw query logged in alias-resolution warn; help-dialog regex link missing target/rel | **fixed** both (drop query from log context; add `target=_blank rel=noreferrer`) | `552ce584` |
+| 10 | 03:55 | a11y deep-dive | subagent: **no CRITICAL**. 2 MAJOR (capped notice never announced to SR; per-row history delete keyboard-unreachable — tied to R3 dead-`activeIndex`); 4 MINOR (tag combobox `aria-expanded` false while popup shown; `FilterChipRow` missing axe; filter-forms no dedicated test; `PropFilterForm` error should use `aria-errormessage`). Confirmed solid: combobox/listbox/option ARIA, status-region politeness, icon-button labels, coarse-pointer targets | **fixing** capped-announce (`role=status`) + tag aria-expanded + FilterChipRow axe + PropFilterForm aria-errormessage; deferred the history-delete keyboard rework + filter-forms test coverage | (CR10) |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -151,6 +152,20 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   `prop:key="value with space"` in `serialize.ts` `tokenSource` + `register.ts`
   `parsePropToken` + the tokenizer (the same verbatim-serialize gap pre-exists for
   `tag:`/`path:` values). Then the form can lift the no-space value restriction.
+- **[a11y, MAJOR] Per-row search-history delete is keyboard-unreachable**
+  (`SearchHistoryDropdown.tsx`): rows are `role="option" tabIndex={-1}` in a listbox
+  with no roving focus / `aria-activedescendant`, so the row's Enter/Space/Delete/
+  Backspace handlers + the per-row delete affordance only fire for a directly-focused
+  row that no keyboard path produces — per-entry delete is mouse-only for AT users
+  (only bulk "Clear history" is keyboard-reachable). Tied to the R3 dead-`activeIndex`
+  finding; fix both together — drive deletion off the input's `activeIndex` cycling
+  handler, or make the listbox a roving-tabindex container. Deferred: focus-model
+  rework needing careful a11y testing, not a safe unattended change.
+- **[test, MINOR] filter-forms lack dedicated test files**
+  (`src/components/search/filter-forms/` — `StateFilterForm`/`PriorityFilterForm`/
+  `DateFilterForm`/`IncludeExcludeToggle`): exercised only transitively via
+  `FilterHelperPopover.test.tsx` (which DOES `axe` each sub-form's mounted state), so
+  coverage exists; a direct test per Radix-Select form would be more robust. Low pri.
 
 ## Stop condition
 

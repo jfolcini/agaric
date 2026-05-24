@@ -95,7 +95,7 @@ export function PropFilterForm({ onAddFilter, onBack }: PropFilterFormProps): Re
             placeholder={t('search.filterHelper.propKeyPlaceholder')}
             aria-label={t('search.filterHelper.propKeyLabel')}
             aria-invalid={showKeyError || undefined}
-            aria-describedby={showKeyError ? keyErrorId : undefined}
+            aria-errormessage={showKeyError ? keyErrorId : undefined}
             autoFocus
           />
           {showKeyError ? (
@@ -112,7 +112,7 @@ export function PropFilterForm({ onAddFilter, onBack }: PropFilterFormProps): Re
             placeholder={t('search.filterHelper.propValuePlaceholder')}
             aria-label={t('search.filterHelper.propValueLabel')}
             aria-invalid={showValueError || undefined}
-            aria-describedby={showValueError ? valueErrorId : undefined}
+            aria-errormessage={showValueError ? valueErrorId : undefined}
           />
           {showValueError ? (
             <p id={valueErrorId} role="alert" className="text-xs text-destructive">

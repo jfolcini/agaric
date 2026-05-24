@@ -199,7 +199,6 @@ export function FilterHelperPopover({
   }
   const backToMenu = () => setMode('menu')
 
-  const tagListExpanded = tagSuggestions.length > 0
   const activeDescendant =
     activeIndex >= 0 && tagSuggestions[activeIndex]
       ? tagOptionId(tagSuggestions[activeIndex].tag_id)
@@ -274,8 +273,11 @@ export function FilterHelperPopover({
               aria-label={t('search.searchTags')}
               role="combobox"
               aria-autocomplete="list"
-              aria-expanded={tagListExpanded}
-              aria-controls={tagListExpanded ? TAG_LISTBOX_ID : undefined}
+              // The `<ul role="listbox">` is always mounted in tag mode (it
+              // renders a loading row / "No tags found" row), so the combobox
+              // must report expanded even while suggestions are loading/empty.
+              aria-expanded={true}
+              aria-controls={TAG_LISTBOX_ID}
               {...(activeDescendant ? { 'aria-activedescendant': activeDescendant } : {})}
               autoFocus
             />
