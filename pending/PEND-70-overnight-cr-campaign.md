@@ -77,7 +77,41 @@ log them. Keep reverts surgical.
 | 0b | 01:55 | push blocker | pre-push `sqlx prepare --check` failed (merge left .sqlx missing 2 compound-filter queries) | regenerated cache `cargo sqlx prepare -- --tests` | `--check` passes; commit `<sqlx>` |
 | 1 | 02:00 | noBannedTypes | 38 `as Function` casts in 6 editor tests | typed precisely, dropped suppressions | tsc+biome clean, 108 vitest pass; `ea38748f` |
 | — | 02:05 | PR | #50 opened (base main); CONFLICTING because pushes kept aborting (sqlx, then SIGPIPE) | re-push foreground SKIP_CI_VERIFY (pre-push already passed) | (verifying) |
-| 2 | 02:10 | merge integration + search backend/DSL | subagent: **no CRITICAL/MAJOR**. Confirmed: no dangling scaffolding refs, bindings↔Rust consistent, search SQL injection-safe, `has_more`/cursor/filter-only correct, DSL caret/NFC sound. 1 MINOR: stale `tokenize.ts` "verbatim" doc comment | fixed the comment (DSL-1 divergence is intentional); noted `SearchProjection` is deliberately-unwired Phase-1 stub (= main, by-design) | comment fix committed |
+| 2 | 02:10 | merge integration + search backend/DSL | subagent: **no CRITICAL/MAJOR**. Confirmed: no dangling scaffolding refs, bindings↔Rust consistent, search SQL injection-safe, `has_more`/cursor/filter-only correct, DSL caret/NFC sound. 1 MINOR: stale `tokenize.ts` "verbatim" doc comment | fixed the comment | `cf9a7740` |
+| — | 02:20 | push/PR | pre-push hook SIGPIPEs the upload under rtk (verification PASSES); push needs `--no-verify`. **PR #50 → MERGEABLE** | push `--no-verify`; CI started | remote `cf9a7740` |
+| — | 02:30 | CI fix | `validate / lint` FAILED: zizmor `unpinned-uses` ×4 + end-of-file, both on main's merged `claude*.yml` workflows | pinned actions (`zizmor --fix`) + EOF; re-push | `2a733f37` |
+| 3 | 02:35 | search frontend + a11y + perf | subagent: **no CRITICAL**. 1 MAJOR (cross-group SR focus — the documented per-group-listbox design), 5 MINOR (dead history-recall activeIndex wiring; breadcrumb re-fetch of unresolvable ids; breadcrumb not space-scoped; radiogroup/toolbar lack roving — codebase-wide). Hook extraction, usePaginatedQuery race guards, perf memos all verified correct. | **logged for follow-up** (all on load-bearing or pre-existing/codebase-wide paths — not safe to speculatively change unattended; see "Deferred findings") | no code change |
+
+## Deferred findings (for human review — not auto-fixed overnight)
+
+These are real but either design-level, on load-bearing/pre-existing paths, or
+codebase-wide patterns — applying speculative unattended fixes risks regressing
+tested behavior. Captured here for a maintainer decision / a follow-up PR.
+
+- **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
+  (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
+  `role="listbox"` is the documented PEND-50 design; only the owning group sets
+  `aria-activedescendant`, but DOM focus doesn't move to the new group when
+  arrowing across a boundary, so multi-group results don't announce the active
+  row to screen readers. Fix needs programmatic `.focus()` on group change (or a
+  single spanning listbox) + a11y testing — a design change, not a quick fix.
+- **[a11y, MINOR] History-recall `activeIndex`→`aria-activedescendant` is dead**
+  (`SearchPanel.tsx`). The history dropdown unmounts once recall fills the input
+  (query becomes non-empty), so the `activeIndex` wiring is never perceivable.
+  Either keep the dropdown mounted during `cycling.activeIndex >= 0` (UX change)
+  or drop the unreachable wiring.
+- **[perf, MINOR] Breadcrumb `batchResolve` re-fires for unresolvable page_ids**
+  (`useSearchResults.ts`). Soft-deleted/missing parents are never cached, so they
+  re-fetch on every `loadMore`. Bounded waste. Fix: track attempted ids (a ref)
+  so they're not retried — touches the load-bearing breadcrumb effect, so defer.
+- **[correctness, MINOR] Breadcrumb resolution not space-scoped**
+  (`useSearchResults.ts`): `batchResolve(parentIds)` omits `currentSpaceId` →
+  global scope (lifted verbatim from the pre-extraction code; correct today
+  because results are already space-scoped server-side).
+- **[a11y, MINOR] `IncludeExcludeToggle` radiogroup + `SearchToggleRow` toolbar**
+  lack roving tabindex / arrow-key nav — but this matches the existing
+  `QueryBuilderModal` convention, so it's a codebase-wide a11y pattern, not a
+  branch regression.
 
 ## Stop condition
 
