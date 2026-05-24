@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+import { getTodayString } from '../../lib/date-utils'
 import { reportIpcError } from '../../lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 
@@ -528,7 +529,10 @@ describe('PagePropertyTable add property flow', () => {
 
     await user.click(screen.getByText('Deadline'))
 
-    const today = new Date().toISOString().slice(0, 10)
+    // Local calendar day — must match the component's `getTodayString()`
+    // (buildInitParams uses it deliberately; `toISOString()` is UTC and goes
+    // off-by-one for negative-offset timezones around midnight).
+    const today = getTodayString()
     await waitFor(() => {
       expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
         blockId: 'PAGE_1',
