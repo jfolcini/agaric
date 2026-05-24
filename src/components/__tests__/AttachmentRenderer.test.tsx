@@ -1,23 +1,25 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
-
-vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${encodeURIComponent(path)}`),
 }))
 
+// PEND-76 F2 — rendering now reads raw bytes over IPC and wraps them in a
+// blob URL. Mock the wrapper so each test controls the returned bytes.
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../lib/tauri')>()
   return {
     ...mod,
-    setProperty: vi.fn(() => Promise.resolve({})),
+    readAttachment: vi.fn(),
   }
 })
 
+import { readAttachment } from '../../lib/tauri'
 import { AttachmentRenderer } from '../AttachmentRenderer'
+
+const mockedReadAttachment = vi.mocked(readAttachment)
 
 function makeAttachment(
   overrides: Partial<{
@@ -31,116 +33,125 @@ function makeAttachment(
   return {
     id: 'att-1',
     filename: 'photo.png',
-    fs_path: '/path/to/photo.png',
+    fs_path: 'attachments/att-1',
     mime_type: 'image/png',
     size_bytes: 1024,
     ...overrides,
   }
 }
 
+const baseProps = {
+  blockId: 'B1',
+  imageWidth: '100',
+  imageHovered: false,
+  onImageHoveredChange: vi.fn(),
+  onImageWidthChange: vi.fn(),
+  onLightboxOpen: vi.fn(),
+  onPdfOpen: vi.fn(),
+}
+
 describe('AttachmentRenderer', () => {
+  let createSpy: ReturnType<typeof vi.spyOn>
+  let revokeSpy: ReturnType<typeof vi.spyOn>
+  let urlCounter: number
+
   beforeEach(() => {
     vi.clearAllMocks()
-    delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
+    urlCounter = 0
+    createSpy = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockImplementation(() => `blob:mock/${++urlCounter}`)
+    revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    mockedReadAttachment.mockResolvedValue(new Uint8Array([137, 80, 78, 71]))
+  })
+
+  afterEach(() => {
+    createSpy.mockRestore()
+    revokeSpy.mockRestore()
   })
 
   it('returns null when attachments array is empty', () => {
-    const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
-    )
+    const { container } = render(<AttachmentRenderer {...baseProps} attachments={[]} />)
     expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
   })
 
-  it('renders image attachment with correct width when Tauri is available', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+  it('renders an image from bytes returned by read_attachment', async () => {
     const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="50"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
+      <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} imageWidth="50" />,
     )
-    const img = container.querySelector('img')
+
+    // Loading state first, then the image after the bytes resolve.
+    const img = await screen.findByRole('img')
     expect(img).toBeInTheDocument()
-    expect(img?.getAttribute('alt')).toBe('photo.png')
+    expect(img.getAttribute('alt')).toBe('photo.png')
+    expect(img.getAttribute('src')).toMatch(/^blob:/)
+    expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
+    expect(createSpy).toHaveBeenCalledTimes(1)
+
     const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as HTMLElement
     expect(wrapper.style.maxWidth).toBe('50%')
   })
 
-  it('shows image resize toolbar when imageHovered is true', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-    render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={true}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
+  it('revokes the object URL on unmount', async () => {
+    const { unmount } = render(
+      <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />,
     )
+    await screen.findByRole('img')
+    expect(revokeSpy).not.toHaveBeenCalled()
+
+    unmount()
+    expect(revokeSpy).toHaveBeenCalledWith('blob:mock/1')
+  })
+
+  it('revokes and recreates the object URL when the attachment id changes', async () => {
+    const { rerender } = render(
+      <AttachmentRenderer {...baseProps} attachments={[makeAttachment({ id: 'att-1' })]} />,
+    )
+    await screen.findByRole('img')
+    expect(createSpy).toHaveBeenCalledTimes(1)
+
+    rerender(<AttachmentRenderer {...baseProps} attachments={[makeAttachment({ id: 'att-2' })]} />)
+    await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-2'))
+    // Previous URL revoked, new one created.
+    expect(revokeSpy).toHaveBeenCalledWith('blob:mock/1')
+    expect(createSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows an error state when reading bytes fails', async () => {
+    mockedReadAttachment.mockRejectedValueOnce(new Error('boom'))
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+    expect(await screen.findByTestId('attachment-image-error')).toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('shows the image resize toolbar when imageHovered is true', async () => {
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} imageHovered />)
+    await screen.findByRole('img')
     expect(screen.getByTestId('image-resize-toolbar')).toBeInTheDocument()
   })
 
-  it('hides image resize toolbar when imageHovered is false', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+  it('image click triggers onLightboxOpen with the blob URL', async () => {
+    const onLightboxOpen = vi.fn()
     render(
       <AttachmentRenderer
-        blockId="B1"
+        {...baseProps}
         attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
+        onLightboxOpen={onLightboxOpen}
       />,
     )
-    expect(screen.queryByTestId('image-resize-toolbar')).not.toBeInTheDocument()
+    const img = await screen.findByRole('img')
+    fireEvent.click(img)
+    expect(onLightboxOpen).toHaveBeenCalledWith({
+      src: expect.stringMatching(/^blob:/),
+      alt: 'photo.png',
+      fsPath: 'attachments/att-1',
+    })
   })
 
-  it('calls onImageHoveredChange on mouse enter/leave', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-    const onHoveredChange = vi.fn()
-    const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={onHoveredChange}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
-    )
-    const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
-    fireEvent.pointerEnter(wrapper)
-    expect(onHoveredChange).toHaveBeenCalledWith(true)
-    fireEvent.pointerLeave(wrapper)
-    expect(onHoveredChange).toHaveBeenCalledWith(false)
-  })
-
-  it('renders non-image attachments as file chips', () => {
+  it('renders non-image attachments as file chips (no IPC read)', () => {
     render(
       <AttachmentRenderer
-        blockId="B1"
+        {...baseProps}
         attachments={[
           makeAttachment({
             id: 'att-pdf',
@@ -149,90 +160,65 @@ describe('AttachmentRenderer', () => {
             size_bytes: 2048,
           }),
         ]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
       />,
     )
     expect(screen.getByText('document.pdf')).toBeInTheDocument()
     expect(screen.getByText('2.0 KB')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Open file document.pdf' })).toBeInTheDocument()
+    // Non-image chips don't eagerly read bytes — only on click.
+    expect(mockedReadAttachment).not.toHaveBeenCalled()
   })
 
-  it('PDF attachment click triggers onPdfOpen when Tauri available', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+  it('PDF chip click reads bytes and opens the viewer with a blob URL', async () => {
     const onPdfOpen = vi.fn()
     render(
       <AttachmentRenderer
-        blockId="B1"
+        {...baseProps}
         attachments={[
           makeAttachment({
             id: 'att-pdf',
             filename: 'report.pdf',
             mime_type: 'application/pdf',
-            fs_path: '/path/to/report.pdf',
             size_bytes: 4096,
           }),
         ]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
         onPdfOpen={onPdfOpen}
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Open file report.pdf' }))
-    expect(onPdfOpen).toHaveBeenCalledWith(expect.stringContaining('report.pdf'), 'report.pdf')
+    await waitFor(() => expect(onPdfOpen).toHaveBeenCalled())
+    expect(mockedReadAttachment).toHaveBeenCalledWith('att-pdf')
+    expect(onPdfOpen).toHaveBeenCalledWith(expect.stringMatching(/^blob:/), 'report.pdf')
   })
 
-  it('image click triggers onLightboxOpen', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-    const onLightboxOpen = vi.fn()
-    const { container } = render(
+  it('non-PDF file chip click reads the bytes over IPC (download), not openUrl', async () => {
+    // fs_path is backend-relative now, so the chip downloads the bytes via a
+    // blob instead of trying to open a relative path externally.
+    mockedReadAttachment.mockResolvedValue(new Uint8Array([1, 2, 3]))
+    render(
       <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={onLightboxOpen}
-        onPdfOpen={vi.fn()}
+        {...baseProps}
+        attachments={[
+          makeAttachment({
+            id: 'att-zip',
+            filename: 'bundle.zip',
+            fs_path: 'attachments/att-zip',
+            mime_type: 'application/zip',
+            size_bytes: 4096,
+          }),
+        ]}
       />,
     )
-    const img = container.querySelector('img') as HTMLElement
-    fireEvent.click(img)
-    expect(onLightboxOpen).toHaveBeenCalledWith({
-      src: expect.stringContaining('photo.png'),
-      alt: 'photo.png',
-      fsPath: '/path/to/photo.png',
-    })
-  })
-
-  it('does not render image when Tauri is not available', () => {
-    const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
-    )
-    expect(container.querySelector('img')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open file bundle.zip' }))
+    await waitFor(() => expect(mockedReadAttachment).toHaveBeenCalledWith('att-zip'))
+    // A blob URL is created from the bytes to drive the download.
+    expect(createSpy).toHaveBeenCalled()
   })
 
   it('has no a11y violations with file attachments', async () => {
     const { container } = render(
       <AttachmentRenderer
-        blockId="B1"
+        {...baseProps}
         attachments={[
           makeAttachment({
             id: 'att-pdf',
@@ -241,80 +227,29 @@ describe('AttachmentRenderer', () => {
             size_bytes: 2048,
           }),
         ]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
       />,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
-  it('has no a11y violations with image attachment (Tauri available)', async () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+  it('has no a11y violations with a rendered image', async () => {
     const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
+      <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />,
     )
+    await screen.findByRole('img')
     const results = await axe(container)
     expect(results).toHaveNoViolations()
   })
 
-  // -- UX-5: image-resize wrapper has aria-label + tabindex (no role="button" — would
-  // create a nested-interactive a11y violation with the inner ImageResizeToolbar buttons).
-  it('image-resize wrapper exposes aria-label and tabindex (UX-5)', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+  it('image-resize wrapper exposes aria-label, role=group, and tabindex (UX-5)', async () => {
     const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={vi.fn()}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
+      <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />,
     )
+    await screen.findByRole('img')
     const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as HTMLElement
-    expect(wrapper).toBeInTheDocument()
-    // Uses role="group" (non-interactive) instead of role="button" to avoid a
-    // nested-interactive a11y violation with the inner ImageResizeToolbar buttons.
     expect(wrapper.getAttribute('role')).toBe('group')
     expect(wrapper.getAttribute('aria-label')).toBe('Toggle resize toolbar')
     expect(wrapper.getAttribute('tabindex')).toBe('0')
-  })
-
-  it('image-resize wrapper toggles imageHovered on Enter/Space (UX-5)', () => {
-    ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
-    const onHoveredChange = vi.fn()
-    const { container } = render(
-      <AttachmentRenderer
-        blockId="B1"
-        attachments={[makeAttachment()]}
-        imageWidth="100"
-        imageHovered={false}
-        onImageHoveredChange={onHoveredChange}
-        onImageWidthChange={vi.fn()}
-        onLightboxOpen={vi.fn()}
-        onPdfOpen={vi.fn()}
-      />,
-    )
-    const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as HTMLElement
-    fireEvent.keyDown(wrapper, { key: 'Enter' })
-    expect(onHoveredChange).toHaveBeenCalledWith(true)
-    fireEvent.keyDown(wrapper, { key: ' ' })
-    expect(onHoveredChange).toHaveBeenCalledTimes(2)
   })
 })

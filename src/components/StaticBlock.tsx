@@ -167,10 +167,25 @@ function StaticBlockInner({
   }, [])
 
   const handlePdfOpen = useCallback((url: string, filename: string) => {
-    setPdfViewerUrl(url)
+    // PEND-76 F2 — the PDF url is now a `blob:` object URL (asset protocol is
+    // disabled). Revoke any previously-opened blob URL before replacing it so
+    // we don't leak across successive opens.
+    setPdfViewerUrl((prev) => {
+      if (prev.startsWith('blob:')) URL.revokeObjectURL(prev)
+      return url
+    })
     setPdfViewerFilename(filename)
     setPdfViewerOpen(true)
   }, [])
+
+  // Revoke the PDF blob URL once the viewer closes (and on unmount) so the
+  // object URL created in AttachmentRenderer doesn't leak.
+  useEffect(() => {
+    if (pdfViewerOpen) return
+    if (!pdfViewerUrl.startsWith('blob:')) return
+    URL.revokeObjectURL(pdfViewerUrl)
+    setPdfViewerUrl('')
+  }, [pdfViewerOpen, pdfViewerUrl])
 
   // MAINT-162: the outer wrapper is a passive container — no role, no
   // tabIndex, no keyboard handler. Inner controls (rich-content link/tag

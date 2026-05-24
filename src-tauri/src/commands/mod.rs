@@ -60,8 +60,10 @@ pub use agenda::{
 #[cfg(test)]
 pub(crate) use agenda::list_projected_agenda_on_the_fly;
 pub use attachments::{
-    add_attachment, add_attachment_inner, delete_attachment, delete_attachment_inner,
-    list_attachments, list_attachments_batch, list_attachments_batch_inner, list_attachments_inner,
+    add_attachment, add_attachment_inner, add_attachment_with_bytes,
+    add_attachment_with_bytes_inner, delete_attachment, delete_attachment_inner, list_attachments,
+    list_attachments_batch, list_attachments_batch_inner, list_attachments_inner, read_attachment,
+    read_attachment_inner,
 };
 pub use blocks::{
     batch_resolve, batch_resolve_inner, count_trash, count_trash_inner, create_block,

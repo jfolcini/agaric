@@ -1900,6 +1900,33 @@ export async function addAttachment(params: {
   )
 }
 
+/**
+ * Add an attachment by passing the file's raw bytes over IPC (PEND-76 F2).
+ * The backend is the sole writer — it persists the bytes under
+ * `$APPDATA/attachments/` and records the row. `bytes` is the file content
+ * (e.g. from `new Uint8Array(await file.arrayBuffer())`).
+ */
+export async function addAttachmentWithBytes(params: {
+  blockId: string
+  filename: string
+  mimeType: string
+  bytes: Uint8Array
+}): Promise<AttachmentRow> {
+  return unwrap(
+    await commands.addAttachmentWithBytes(
+      params.blockId,
+      params.filename,
+      params.mimeType,
+      Array.from(params.bytes),
+    ),
+  )
+}
+
+/** Read an attachment's raw bytes by ID (PEND-76 F2). */
+export async function readAttachment(attachmentId: string): Promise<Uint8Array> {
+  return Uint8Array.from(unwrap(await commands.readAttachment(attachmentId)))
+}
+
 /** Delete an attachment by ID. */
 export async function deleteAttachment(attachmentId: string): Promise<void> {
   unwrap(await commands.deleteAttachment(attachmentId))

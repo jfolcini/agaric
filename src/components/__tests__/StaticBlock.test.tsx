@@ -53,6 +53,10 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
     // width" path without firing a backend round-trip.
     getProperty: vi.fn(() => Promise.resolve(null)),
     setProperty: vi.fn(() => Promise.resolve({})),
+    // PEND-76 F2 — image attachments are rendered from raw bytes read
+    // over IPC and wrapped in a blob URL. Default mock returns a tiny
+    // PNG-ish byte array so the image render path resolves.
+    readAttachment: vi.fn(() => Promise.resolve(new Uint8Array([137, 80, 78, 71]))),
   }
 })
 
@@ -81,9 +85,10 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 
-const { getProperty, setProperty } = await import('../../lib/tauri')
+const { getProperty, setProperty, readAttachment } = await import('../../lib/tauri')
 const mockedGetProperty = vi.mocked(getProperty)
 const mockedSetProperty = vi.mocked(setProperty)
+const mockedReadAttachment = vi.mocked(readAttachment)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
@@ -108,6 +113,11 @@ describe('StaticBlock', () => {
     // null) from the backend's `block_properties` PK lookup.
     mockedGetProperty.mockResolvedValue(null)
     mockedSetProperty.mockResolvedValue({} as never)
+    mockedReadAttachment.mockResolvedValue(new Uint8Array([137, 80, 78, 71]))
+    // happy-dom supports createObjectURL/revokeObjectURL, but stub them so the
+    // image render path produces a deterministic, assertable blob URL.
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock/static-block')
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     mockBatchAttachments([])
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
@@ -818,20 +828,21 @@ describe('StaticBlock', () => {
       }
     }
 
-    it('renders image attachment as <img> when Tauri is available', () => {
-      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+    it('renders image attachment as <img> from bytes (PEND-76 F2)', async () => {
       mockBatchAttachments([makeAttachment()])
 
-      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
-      const img = container.querySelector('img')
+      // Image renders once the bytes resolve and the blob URL is created.
+      const img = await screen.findByRole('img')
       expect(img).toBeInTheDocument()
-      expect(img?.getAttribute('alt')).toBe('photo.png')
-      expect(img?.getAttribute('loading')).toBe('lazy')
-      expect(img?.getAttribute('src')).toContain('photo.png')
-      expect(img?.style.maxWidth).toBe('100%')
-      expect(img?.style.maxHeight).toBe('400px')
-      expect(img?.style.objectFit).toBe('contain')
+      expect(img.getAttribute('alt')).toBe('photo.png')
+      expect(img.getAttribute('loading')).toBe('lazy')
+      expect(img.getAttribute('src')).toMatch(/^blob:/)
+      expect((img as HTMLElement).style.maxWidth).toBe('100%')
+      expect((img as HTMLElement).style.maxHeight).toBe('400px')
+      expect((img as HTMLElement).style.objectFit).toBe('contain')
+      expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
     })
 
     it('renders non-image attachment as file chip', () => {
@@ -867,8 +878,7 @@ describe('StaticBlock', () => {
       expect(container.querySelector('[data-testid="attachment-section"]')).not.toBeInTheDocument()
     })
 
-    it('handles multiple attachments (mix of images and files)', () => {
-      ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
+    it('handles multiple attachments (mix of images and files)', async () => {
       mockBatchAttachments([
         makeAttachment({ id: 'att-1', filename: 'photo.png', mime_type: 'image/png' }),
         makeAttachment({
@@ -885,12 +895,11 @@ describe('StaticBlock', () => {
         }),
       ])
 
-      const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
+      render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
-      // Image renders as <img>
-      const img = container.querySelector('img')
-      expect(img).toBeInTheDocument()
-      expect(img?.getAttribute('alt')).toBe('photo.png')
+      // Image renders as <img> once its bytes resolve.
+      const img = await screen.findByRole('img')
+      expect(img.getAttribute('alt')).toBe('photo.png')
 
       // Non-image files render as chips
       expect(screen.getByText('notes.txt')).toBeInTheDocument()
@@ -899,13 +908,14 @@ describe('StaticBlock', () => {
       expect(screen.getByText('1.0 MB')).toBeInTheDocument()
     })
 
-    it('does not render image when Tauri is not available', () => {
-      // __TAURI_INTERNALS__ is not set (cleaned up by beforeEach)
+    it('shows an error placeholder when image bytes fail to load', async () => {
+      mockedReadAttachment.mockRejectedValueOnce(new Error('read failed'))
       mockBatchAttachments([makeAttachment()])
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
 
-      // Image should not render without Tauri; no attachment section if only images
+      // No <img>; the renderer surfaces an error state instead.
+      expect(await screen.findByTestId('attachment-image-error')).toBeInTheDocument()
       expect(container.querySelector('img')).not.toBeInTheDocument()
     })
 
@@ -976,13 +986,15 @@ describe('StaticBlock', () => {
 
     it('shows resize toolbar on image hover', async () => {
       const user = userEvent.setup()
-      const { container } = renderWithImage()
+      renderWithImage()
+
+      // Wait for the image (and its resize wrapper) to render from bytes.
+      const wrapper = await screen.findByTestId('image-resize-wrapper')
 
       // Toolbar should not be visible initially
       expect(screen.queryByTestId('image-resize-toolbar')).not.toBeInTheDocument()
 
       // Hover over the image wrapper
-      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
       await user.hover(wrapper)
 
       // Toolbar should appear
@@ -996,9 +1008,9 @@ describe('StaticBlock', () => {
     })
 
     it('clicking Small calls setProperty with correct value', async () => {
-      const { container } = renderWithImage()
+      renderWithImage()
 
-      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
+      const wrapper = await screen.findByTestId('image-resize-wrapper')
       fireEvent.pointerEnter(wrapper)
 
       const btn = screen.getByTestId('image-resize-25')
@@ -1056,7 +1068,7 @@ describe('StaticBlock', () => {
       const user = userEvent.setup()
       const { container } = renderWithImage()
 
-      const wrapper = container.querySelector('[data-testid="image-resize-wrapper"]') as Element
+      const wrapper = await screen.findByTestId('image-resize-wrapper')
       await user.hover(wrapper)
 
       // Toolbar visible — run axe
