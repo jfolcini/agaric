@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-30 open items in the summary table; 30 detail entries (FE-* sub-tables don't appear in the summary).
+31 open items in the summary table; 31 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -50,6 +50,7 @@ Items flagged during development that need revisiting. Organized by section with
 | CR-UX | CR | Search-view touch/UX residuals (from PEND-58g): UX-A8 always-visible/long-press toggle-mode explanation for touch (Radix tooltips don't fire on tap; inline labels overflow a narrow row), plus UX-A10/A12/A13 (history dropdown overlay vs inline; capped+error co-render; RTL physical spacing). | S | Design decision + runtime verification |
 | CR-E2E-TAURI | CR | Tauri-driven e2e harness (from PEND-58g E2E-A6/A3) — the web+mock `search_blocks` returns the whole match set in one page and never runs the real Rust FTS/regex pipeline, so `<mark>` highlight, real FTS/regex behavior, and multi-page Load-More are all unreachable on the current Playwright+mock harness. The only way to cover them. | L | — |
 | CR-MINOR | CR | Catch-all CR-campaign trivia: stale `recv` timeout literal "30s" vs `RECV_TIMEOUT=180s` (`sync_net/connection.rs:494`); `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test (`loro/snapshot.rs:266`); `docs/features/views.md` Search section stale (SEARCH.md is source of truth); MCP stale docstrings (`get_block` soft-delete claim, `rmcp_spike` "off by default") + `handle_search` space_id not ULID-normalized; filter-forms lack dedicated test files. | S | — |
+| TEST-PROPTEST-B | TEST | Property-test coverage — Tier B (DB-bound). proptest invariants for `reverse::compute_reverse` (inverse law + `OpType`→inverse mapping), `dag::walk_edit_chain`/`find_lca` (termination within `MAX_LCA_STEPS` / cycle / LCA-commutativity), `soft_delete` cascade/restore (idempotence/inverse/subtree-isolation), and block-descendant/position tree CTEs (closure / soft-delete filtering / position monotonicity). Cost is the shared seeded-DB fixture harness, not the assertions. Tier A (`word_diff` + `space_filter_canonical`) shipped 2026-05-25. Test-only. | M-L (harness is the bulk) | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -242,6 +243,31 @@ is duplicated across `pagination/{hierarchy,tags,links,undated,agenda,trash,prop
 Items in this section are test-quality improvements identified during a thorough backend test review (10 parallel review subagents covering ~80K LOC of test code, 3 verification subagents to filter hallucinations). All items below are verified — known false positives are not listed.
 
 > **Format:** test items use the compact L-style block. None of these are blocking; they are code-quality investments.
+
+### TEST-PROPTEST-B — property-test coverage, Tier B (DB-bound)
+
+Extend `proptest` to the DB-bound, invariant-rich logic that example tests sample
+thinly. Needs a shared **seeded-DB fixture harness** (random valid block trees +
+op chains over an in-memory pool) — that harness is the bulk of the cost; B1–B4
+are small once it exists.
+
+- **B1 `reverse::compute_reverse`** — inverse law (`apply(op)` then
+  `apply(compute_reverse(op))` returns to the prior observable state for reversible
+  op types), determinism, and full `OpType`→inverse mapping (non-reversible variants
+  rejected, not mis-reversed — also catches a future op type added without a reverse).
+- **B2 `dag::walk_edit_chain` / `find_lca`** — termination within `MAX_LCA_STEPS` on
+  any chain (incl. corrupted/cyclic), cycle detection yields the visited prefix,
+  `find_lca` commutativity, monotonic ancestor depth.
+- **B3 `soft_delete` cascade/restore** — cascade idempotence, `restore ∘ cascade ==
+  identity` for a subtree with no independently-deleted descendants, sibling-subtree
+  isolation.
+- **B4 `block_descendants` / `block_positions` CTEs** — descendant closure exactness,
+  the `_active` variant excludes soft-deleted descendants, `next_sibling_position`
+  never reuses an existing sibling position.
+
+Tier A (`word_diff::compute_word_diff` reconstruction + `space_filter_canonical::normalize`
+idempotence/whitespace-equivalence) shipped 2026-05-25. `proptest` is already a
+dev-dependency; no new deps. Test-only, no production changes.
 
 ## PERF — Performance items
 
