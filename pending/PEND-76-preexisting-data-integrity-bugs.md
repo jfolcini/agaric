@@ -10,11 +10,12 @@ refs are as of the campaign snapshot.
 
 Ordered by severity. **Status (2026-05-24):** F1 cascade-wipe + edit-resurrection
 FIXED (propagation residual deferred — see F1 block). **F4 FIXED** (orphan-tag
-adoption in `add_tag`). **F3 deferred** with a concrete finding (the empty
+adoption in `add_tag`). **F5 FIXED** (referential cross-space enforcement wired into
+set_property/create/edit). **F3 deferred** with a concrete finding (the empty
 `peer_refs` row is load-bearing for post-pairing daemon activation; removing it
-breaks first-pairing sync — needs a design change, see F3 block). **F5** (wire
-referential cross-space enforcement) and **F2** (complete the attachment feature)
-remain — both are their own focused efforts.
+breaks first-pairing sync — needs a design change, see F3 block). **F2** (complete
+the attachment feature) remains — its own focused effort. F1's propagation residual
+and F5's bulk-import/sync-ingress gating are documented follow-ups.
 
 ---
 
@@ -200,6 +201,23 @@ inline check). Fix: either wire the validators into `set_property_in_tx` + the
 edit/create content paths, OR — if cross-space non-tag refs are intentionally
 allowed — correct the misleading docs. Wiring enforcement may reject existing data
 → needs a product call.
+
+✅ **FIXED (2026-05-24) — wired enforcement.** The two validators are now called
+before the op emit in `set_property_in_tx` (ref-type `value_ref`), `create_block_in_tx`
+(content, after the INSERT so the new block's space resolves), and `edit_block_inner`
+(content). The validators were refined to take `&mut SqliteConnection` (so all three
+CommandTx/Transaction sites pass `&mut **tx`) and to enforce only when **both** the
+source and the target are assigned to a space — an orphan (unassigned) block is not
+cross-space to anything, so it is tolerated (matches the F4 orphan-tag adoption and
+avoids false rejections of not-yet-spaced blocks at create time). The `space`
+reserved key stays exempt (how blocks move between spaces). This is distinct from
+and complementary to the already-wired PEND-24 MCP `validate_block_in_space`
+access-control check. Tests: `content_scan_orphan_source_is_noop`,
+`content_scan_orphan_target_is_tolerated` (cross_space_validation.rs),
+`set_property_ref_cross_space_rejected` (property_cmd_tests.rs),
+`edit_block_cross_space_content_rejected`, `create_block_cross_space_content_rejected`
+(block_cmd_tests.rs). **Remaining (follow-up):** bulk-import and sync-ingress paths
+are not yet gated.
 
 ---
 

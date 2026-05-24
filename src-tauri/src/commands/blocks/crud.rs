@@ -253,6 +253,16 @@ pub(crate) async fn create_block_in_tx(
     .execute(&mut **tx)
     .await?;
 
+    // PEND-76 F5 — referential cross-space integrity: reject creating a
+    // block whose content references a block in a different space. Runs
+    // after the INSERT so the new block's `page_id` (hence space) is
+    // resolvable; an unparented/orphan block resolves to no space and is
+    // skipped by the validator.
+    crate::spaces::cross_space_validation::validate_content_cross_space_refs(
+        tx, &block_id, &content,
+    )
+    .await?;
+
     // P-4: Inherit parent tags for the new block
     crate::tag_inheritance::inherit_parent_tags(tx, block_id.as_str(), parent_id.as_deref())
         .await?;
@@ -475,6 +485,16 @@ pub async fn edit_block_inner(
     //    helper — same query also used by `flush_draft_inner`; see
     //    MAINT-147 (b)).
     let prev_edit = find_prev_edit_in_tx(&mut tx, &block_id).await?;
+
+    // PEND-76 F5 — referential cross-space integrity: reject an edit that
+    // introduces `[[ULID]]` / `#[ULID]` tokens pointing at a block in a
+    // different space than this one.
+    crate::spaces::cross_space_validation::validate_content_cross_space_refs(
+        &mut tx,
+        &BlockId::from_trusted(&block_id),
+        &to_text,
+    )
+    .await?;
 
     // 3. Build OpPayload
     let block_id_ulid = BlockId::from_trusted(&block_id);
@@ -2429,6 +2449,18 @@ pub(crate) async fn set_property_in_tx(
 
     let existing = existing
         .ok_or_else(|| AppError::NotFound(format!("block '{block_id}' (not found or deleted)")))?;
+
+    // PEND-76 F5 — referential cross-space integrity (PEND-15 Phase 2):
+    // reject a ref-type property whose target lives in a different space
+    // than the source block. No-op when `value_ref` is None (clear) and
+    // exempts the reserved `space` key (how blocks move between spaces).
+    crate::spaces::cross_space_validation::validate_ref_property_cross_space(
+        tx,
+        &BlockId::from_trusted(&block_id),
+        value_ref.as_deref(),
+        key,
+    )
+    .await?;
 
     // 3. Append SetProperty op to the op_log
     let payload = OpPayload::SetProperty(prop_payload);

@@ -5092,3 +5092,88 @@ async fn create_blocks_batch_with_properties() {
         "exactly 3 set_property ops (priority + project for A, todo_state for B)"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn edit_block_cross_space_content_rejected() {
+    // PEND-76 F5: editing a block to reference a block in a different
+    // space is rejected.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    let src = create_block_inner(&pool, DEV, &mat, "content".into(), "src".into(), None, None)
+        .await
+        .unwrap();
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "target".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assign_to_space(&pool, &src.id, TEST_SPACE_ID).await;
+    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+
+    let result = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        src.id.clone(),
+        format!("see [[{}]]", target.id),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "cross-space content edit must be rejected, got {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_cross_space_content_rejected() {
+    // PEND-76 F5: creating a block (under a page in space A) whose content
+    // references a block in space B is rejected.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
+        .await
+        .unwrap();
+    assign_to_space(&pool, &page_a.id, TEST_SPACE_ID).await;
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "target".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+
+    // A child under page_a (resolves to space A) referencing the space-B target.
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", target.id),
+        Some(page_a.id.clone()),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "cross-space content on create must be rejected, got {result:?}"
+    );
+}
