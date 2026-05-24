@@ -93,7 +93,8 @@ log them. Keep reverts surgical.
 | 13 | 03:00 | recovery/snapshot DEEP correctness | subagent: replay ordering/idempotency, over-shoot heal, snapshot round-trip + per-space isolation, corrupt-blob degradation, and concurrency all CORRECT — **but found ⚠️ CRITICAL C1/C2** (stale / per-space-missing snapshot leaves engine behind cursor; coarse `COUNT(*)>0` heal gate won't fire → engine wedge "block not found"; newly reachable from this branch's snapshot re-instatement; root cause = no seq watermark in `loro_doc_state`). + M1 (replay cursor can have gaps below it via fg-drop — pre-existing, retry-queue backstop) + m2 (test gap) | **NOT fixed** (schema-migration + heal rework on data-integrity code — unsafe unattended; a botched fix risks data loss). Logged as the TOP follow-up + flagged on the PR | escalate to user |
 | 14 | 03:30 | op-log apply / materializer / inbound-sync correctness | subagent: local write atomicity, seq allocation, fg-apply cursor advance + idempotency, FIFO ordering, fg-drop→retry-queue, `insert_remote_op` hash/parent checks, snapshot RESET rebuild all CORRECT — **found ⚠️ CRITICAL F1** (inbound `apply_remote` `INSERT OR REPLACE` + CASCADE FKs cascade-wipes tags/props/soft-delete/caches for the whole space per incremental sync, no re-projection; reproduced empirically) + F2/F3 (MINOR, couple w/ F1). **F1 verified PRE-EXISTING on `main`, NOT a PR #50 regression** (projection.rs/loro_sync.rs not in PR diff; only a lint-annotation touch in orchestrator.rs) | **NOT fixed** (design-level projection-contract + orchestrator-wiring change; defer-with-care). Logged F1/F2/F3 to Deferred-findings | escalate to user |
 | 15 | 03:30 | whole-PR-diff final sanity pass (merge-readiness) | subagent verdict **APPROVE** — 0 CRIT / 0 MAJOR / 3 MINOR: (a) `search_blocks` 200→100 cap drift in `safe-limit.ts` (latent — no caller >100), (b) inverted Step 1.4/1.5 comment order in `recovery/boot.rs`, (c) untested `spawn_periodic_snapshot` `#[cfg(test)]` hook. Heal/snapshot re-instatement + PEND-69 hygiene verified correct & merge-ready (known C1/C2/F1-F3 stay deferred) | **FIXED (a)+(b)**: added `searchBlocksLimit` (100-cap) helper + corrected doc, switched the 3 explicit searchBlocks callers (useBlockResolve ×2, CommandPalette tags) off `paginationLimit`; reordered boot.rs heal/replay comments to match code order. (c) logged as deferred. tsc+biome+vitest(366) green | `71dff1f5` |
-| 16 | 04:00 | FRESH subsystem: graph view + PageBrowser | subagent verdict CHANGES — 1 MAJOR + 2 MINOR, **all pre-existing (outside PR diff)**; the PR's own `usePaginatedQuery` AbortSignal hardening verified correct. MAJOR: GraphView `error` state is sticky (never `setError(null)` → a recovered graph still shows "failed to load" after a transient failure + filter/space change). MINOR: `tagFilterIds` fresh `[]` re-fires the fetch effect on unrelated client-side filter toggles; tag catalogue not space-refreshed | **FIXED MAJOR + MINOR-1**: `setError(null)` at fetch-effect top + module-scope stable `EMPTY_TAG_IDS`; added a sticky-error recovery regression test (GraphView.test.tsx 40 green). MINOR-2 (tag catalogue) logged as deferred (needs backend `spaceId` param). tsc+biome+vitest green | pending commit |
+| 16 | 04:00 | FRESH subsystem: graph view + PageBrowser | subagent verdict CHANGES — 1 MAJOR + 2 MINOR, **all pre-existing (outside PR diff)**; the PR's own `usePaginatedQuery` AbortSignal hardening verified correct. MAJOR: GraphView `error` state is sticky (never `setError(null)` → a recovered graph still shows "failed to load" after a transient failure + filter/space change). MINOR: `tagFilterIds` fresh `[]` re-fires the fetch effect on unrelated client-side filter toggles; tag catalogue not space-refreshed | **FIXED MAJOR + MINOR-1**: `setError(null)` at fetch-effect top + module-scope stable `EMPTY_TAG_IDS`; added a sticky-error recovery regression test (GraphView.test.tsx 40 green). MINOR-2 (tag catalogue) logged as deferred (needs backend `spaceId` param). tsc+biome+vitest green | `d39d7e13` |
+| 17 | 04:30 | FRESH subsystem: block editor + draft persistence | subagent verdict CHANGES — 0 CRIT / 2 MAJOR / 3 MINOR + nit, **all pre-existing**; lots verified correct (backend draft atomicity, autosave version-race, blur-guard chain, undo isolation, editor lifecycle, save-failure surfacing). MAJOR-1: draft `flushDraft` fires mid-edit (op-log bloat). MAJOR-2: no IME/composition guard → CJK Enter splits the block instead of confirming the candidate | **FIXED MAJOR-2** (one-line `if (event.isComposing \|\| event.keyCode === 229) return` at the top of the editor keydown handler + 2 IME regression tests; vitest 51 green). MAJOR-1 deferred (risky blur/discard reconciliation) + 3 MINOR/nit logged | pending commit |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -181,6 +182,33 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   add-filter tag dropdown can list the prior/foreign space's tags. The IPC has no
   space parameter, so this is a backend-API scoping choice, not a pure FE bug — defer
   (R16); needs a `spaceId`-aware `list_tags_by_prefix` or a remount-on-space-change.
+- **[editor, MAJOR — defer, risky] Draft `flushDraft` fires mid-edit, not just on
+  blur/unmount** (`hooks/useDraftAutosave.ts:25-54` + `EditableBlock.tsx:141-153`;
+  backend `commands/drafts.rs` / `draft.rs`). The autosave effect's dep array is
+  `[blockId, content]` and its cleanup calls `flushDraft` — but React runs effect
+  cleanup before *every* re-run, not only unmount. `EditableBlock` polls `getMarkdown()`
+  every 500ms into `liveContent`, so each content change re-runs the effect → cleanup
+  appends a real `edit_block` op with the *autosaved (older)* content and deletes the
+  draft row **while the block is still focused**. Result: op-log bloat (every
+  pause/resume cycle duplicates content into the append-only log feeding sync/compaction
+  and the `prev_edit` DAG) and premature commits of stale intermediate content. NOT loss
+  of the final content (blur/unmount still win; boot recovery has a `created_at >
+  updated_at` guard), but it violates the "flush only on blur/unmount" contract.
+  **Deliberately NOT fixed overnight**: the fix (move flush to an unmount-only effect or
+  the blur path) must be reconciled with `useEditorBlur`'s existing `discardDraft()`/
+  `edit()` to avoid a new double-apply — needs a dedicated change + tests.
+- **[editor, MINOR ×3 + nit — defer] Draft-flush consistency gaps**: (a)
+  `flush_all_drafts_inner` (`commands/drafts.rs:157-261`) lacks the `created_at >
+  updated_at` stale-overwrite guard that `recover_single_draft` has — latent only
+  because `recover_at_boot` drains `block_drafts` before the FE boot IPC runs; mirror
+  the guard for defense-in-depth. (b) Enter-to-save (`useBlockKeyboardHandlers.ts:386`)
+  leaves the previous block's draft row behind (harmless via the recovery guard, but
+  asymmetric with the Escape path which `discardDraft`s) — add `discardDraft` after the
+  flush. (c) external-focus/auto-mount flush (`EditableBlock.tsx:169-178` `persistUnmount`)
+  bypasses the inline `[ ]`/`[x]` checkbox→todo conversion that the keyboard-nav flush
+  (`use-block-flush.ts`) does — route through the shared flush body. nit: `discardDraft`
+  isn't memoized (`useDraftAutosave.ts:57`), churning `useEditorBlur`'s `handleBlur`
+  useCallback — wrap in `useCallback([])`.
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets

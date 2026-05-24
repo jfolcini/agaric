@@ -786,3 +786,52 @@ describe('handleBlockKeyDown', () => {
     })
   })
 })
+
+describe('useBlockKeyboard — IME / composition guard', () => {
+  function setup() {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    const callbacks = makeCallbacks()
+    const { unmount } = renderHook(() => useBlockKeyboard(editor, callbacks))
+    const target = editor.view.dom.parentElement as HTMLElement
+    const cleanup = () => {
+      unmount()
+      editor.destroy()
+      element.remove()
+    }
+    return { callbacks, target, cleanup }
+  }
+
+  it('Enter during IME composition does NOT split the block', () => {
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    // jsdom doesn't honour `isComposing` from the init dict, so force it on
+    // the instance (shadows the prototype getter).
+    Object.defineProperty(event, 'isComposing', { value: true })
+    const preventDefaultSpy = vi.spyOn(event, 'preventDefault')
+
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onEnterSave']).toBeUndefined()
+    expect(preventDefaultSpy).not.toHaveBeenCalled()
+
+    cleanup()
+  })
+
+  it('Enter outside composition still triggers onEnterSave (guard does not over-fire)', () => {
+    const { callbacks, target, cleanup } = setup()
+
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    target.dispatchEvent(event)
+
+    expect(callbacks._calls['onEnterSave']).toBe(1)
+
+    cleanup()
+  })
+})
