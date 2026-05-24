@@ -2872,6 +2872,38 @@ async fn should_start_active_returns_true_with_many_peers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn should_start_active_true_when_pairing_pending() {
+    // PEND-76 F3: a just-completed pairing (no real peer yet) must wake the
+    // dormant daemon so it can accept the first inbound connection.
+    let (pool, _dir) = test_pool().await;
+    peer_refs::set_pending_pairing(&pool).await.unwrap();
+
+    let start = SyncDaemon::should_start_active(&pool).await.unwrap();
+    assert!(
+        start,
+        "a pending pairing (no peers yet) must trigger active startup"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn should_start_active_clears_pending_marker_once_a_real_peer_exists() {
+    // Once a real peer is established, the pending-pairing bridge is redundant
+    // and should be cleared (hygiene) while still reporting active.
+    let (pool, _dir) = test_pool().await;
+    peer_refs::set_pending_pairing(&pool).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool, "PEER_REAL")
+        .await
+        .unwrap();
+
+    let start = SyncDaemon::should_start_active(&pool).await.unwrap();
+    assert!(start, "a real peer must trigger active startup");
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "the pending-pairing marker must be cleared once a real peer exists"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_if_peers_exist_spawns_dormant_when_empty() {
     // When no peers are paired, the daemon task should NOT initialize
     // mDNS or the TLS listener. We verify this by:

@@ -228,8 +228,19 @@ pub async fn confirm_pairing_inner(
     // layer derived key — see the `pairing` module-level doc.
     let _session = PairingSession::from_passphrase(&passphrase, device_id, &remote_device_id);
 
-    // Store the peer ref
-    peer_refs::upsert_peer_ref(pool, &remote_device_id).await?;
+    // PEND-76 F3: the FE has no remote device_id at confirm time — the QR
+    // carries only the passphrase, and mDNS + TOFU establish the real peer on
+    // the first authenticated connection. So in the (current) empty case we set
+    // a persistent pending-pairing marker that wakes the dormant daemon to
+    // *accept* that first connection, instead of writing a junk empty-string
+    // `peer_refs` row (which used to be the only thing tripping
+    // `should_start_active`, but showed as a blank ghost peer and lingered
+    // forever). If a real device_id is ever supplied, persist it directly.
+    if remote_device_id.is_empty() {
+        peer_refs::set_pending_pairing(pool).await?;
+    } else {
+        peer_refs::upsert_peer_ref(pool, &remote_device_id).await?;
+    }
 
     // Clear pairing session
     *lock_pairing_state(pairing_state)? = None;

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO app_settings (key, value, updated_at)\n         VALUES (?, '1', CAST(strftime('%s','now') AS INTEGER) * 1000)\n         ON CONFLICT(key) DO UPDATE SET\n             value = '1',\n             updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "254e55524c1ece7f319f6c71d7186c8ccb314a8d32ee3b6b9e66afb8f7adb48c"
+}
