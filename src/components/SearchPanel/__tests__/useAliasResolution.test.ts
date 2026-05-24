@@ -169,10 +169,12 @@ describe('useAliasResolution', () => {
     const { result } = renderHook(() => useAliasResolution('apollo', EMPTY_RESULTS, 'SPACE_A'))
 
     await waitFor(() => {
+      // CR9 (PEND-70): the raw query is intentionally NOT logged (log hygiene);
+      // the context arg is now `undefined`.
       expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
         'SearchPanel',
         'alias resolution failed',
-        { query: 'apollo' },
+        undefined,
         err,
       )
     })

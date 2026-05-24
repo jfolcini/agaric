@@ -250,8 +250,15 @@ function RegexSyntaxBody() {
           components={{
             mono,
             // `lnk`, not `link`: `<link>` is a void element the Trans parser self-closes.
-            // biome-ignore lint/a11y/useAnchorContent: text supplied by Trans children
-            lnk: <a className="underline" href="https://docs.rs/regex/latest/regex/#syntax" />,
+            lnk: (
+              // biome-ignore lint/a11y/useAnchorContent: text supplied by Trans children
+              <a
+                className="underline"
+                href="https://docs.rs/regex/latest/regex/#syntax"
+                target="_blank"
+                rel="noreferrer"
+              />
+            ),
           }}
         />
       </p>
