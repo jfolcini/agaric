@@ -81,6 +81,7 @@ log them. Keep reverts surgical.
 | — | 02:20 | push/PR | pre-push hook SIGPIPEs the upload under rtk (verification PASSES); push needs `--no-verify`. **PR #50 → MERGEABLE** | push `--no-verify`; CI started | remote `cf9a7740` |
 | — | 02:30 | CI fix | `validate / lint` FAILED: zizmor `unpinned-uses` ×4 + end-of-file, both on main's merged `claude*.yml` workflows | pinned actions (`zizmor --fix`) + EOF; re-push | `2a733f37` |
 | 3 | 02:35 | search frontend + a11y + perf | subagent: **no CRITICAL**. 1 MAJOR (cross-group SR focus — the documented per-group-listbox design), 5 MINOR (dead history-recall activeIndex wiring; breadcrumb re-fetch of unresolvable ids; breadcrumb not space-scoped; radiogroup/toolbar lack roving — codebase-wide). Hook extraction, usePaginatedQuery race guards, perf memos all verified correct. | **logged for follow-up** (all on load-bearing or pre-existing/codebase-wide paths — not safe to speculatively change unattended; see "Deferred findings") | no code change |
+| 4 | 02:40 | Rust diff (PEND-69 hygiene + compound-filter SQL) | subagent: **no CRITICAL/MAJOR**, clippy green. PEND-69 hygiene verified behaviour-neutral. 2 MINOR: prop-key trim mismatch (BE-8); vestigial SnapshotTaskShutdown flag | **fixed** the prop-key trim (+unit test); logged the snapshot flag | `c0dc654e` |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -112,6 +113,12 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   lack roving tabindex / arrow-key nav — but this matches the existing
   `QueryBuilderModal` convention, so it's a codebase-wide a11y pattern, not a
   branch regression.
+- **[lifecycle, MINOR] Vestigial `SnapshotTaskShutdown` flag** (`lib.rs` /
+  `loro/snapshot.rs`): stored via `app.manage(...)` but never set to `true`, so
+  the periodic snapshot task only ends at process exit; clean-exit persistence is
+  handled separately by the `RunEvent::Exit` handler, so it's harmless dead
+  plumbing. Either wire a shutdown caller or drop the managed flag. Not changed
+  overnight — it's on the app-lifecycle path (risky to rewire unattended).
 
 ## Stop condition
 
