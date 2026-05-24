@@ -98,7 +98,8 @@ log them. Keep reverts surgical.
 | 18 | 04:45 | FRESH subsystem: tags & properties + inheritance | subagent verdict CHANGES — 0 CRIT / 2 MAJOR / 2 MINOR, **all pre-existing**; lots verified correct (`query_by_property` injection-safe, exactly-one-value invariant ×3 layers, BEGIN IMMEDIATE on all tag/prop mutations, inheritance depth-bounded CTEs, tag-delete cascade, tags_cache rename ordering, sync-replay parity). MAJOR: cross-space ref/content validators are dead code (documented-but-unwired); session-created tags lack a `space` prop → addTag rejected in non-default space. MINOR: transient inheritance-drop (self-healed by rebuild); clear-number/date-via-empty silently fails | **LOG-ONLY round** — both MAJORs are defer-required (product decision / manual confirm); the "slam-dunk" property-clear MINOR isn't actually trivial (reserved-key handling). All 4 logged to Deferred-findings; no code change | `b2b78aec` |
 | 19 | 05:00 | SECURITY pass (XSS / path-traversal / injection / secrets) | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 1 MINOR. Strong "verified safe" list: mermaid `securityLevel:strict`, QR SVG backend-only, FTS snippet React-escaped, link *input* validation (denylist), deep-link router allowlist, attachment path-traversal defenses (BUG-35), SQL `format!` sites interpolate only constants, error→FE sanitization, bug-report deny-by-default redaction, CSP `script-src 'self'`. MINOR: render-time link sink (`openUrl`) didn't re-validate href scheme → `javascript:`/`data:` hrefs from markdown-import/sync reached the click sink (CSP+OS-mitigated, not a live exploit) | **FIXED**: gate the link render on the existing `isAllowedUrl()` so blocked-scheme hrefs render as plain text instead of an `openUrl` sink (`RichContentRenderer/marks/text.tsx`) + regression test. tsc+biome+vitest(77) green | `55e336ec` |
 | 20 | 05:15 | FRESH subsystem: journal / agenda / recurrence / dates | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 3 MINOR, **all pre-existing**; recurrence engine + agenda caches + timezone handling "unusually well-hardened" (cache invalidation matrix, 10k expansion caps, leap/DST clamps, repeat-until ISO guard, projected-cache atomicity, local-midnight day boundary FE↔backend all verified). MINOR: date-property default used UTC (`toISOString`) → off-by-one in negative-offset TZs; `list_unfinished_tasks` inclusion-vs-sort-key disagreement; batch todo-state skips recurrence | **FIXED** the UTC date default (`property-save-utils.ts` → canonical `getTodayString()` local helper + aligned the existing test). Other 2 deferred (semantics decisions). tsc+biome+vitest(25) green | `f1354b20` |
-| 21 | 05:30 | FRESH subsystem: settings / preferences / persistence | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 4 MINOR, **all pre-existing**; persistence layer well-engineered (guarded reads, `migrate` placeholders, partialize, hydration-race handling, no PII in localStorage all verified; `search-history.ts` (only in-PR file) is exemplary). MINOR: unguarded `localStorage` writes in tag-colors/starred-pages + unguarded read+write in useWeekStart (read runs during calendar render → white-screen risk in locked-down webviews); `tabs`/`journal` version-without-migrate | **FIXED 3** (try/catch guards mirroring the codebase's own read-catch convention: `tag-colors.ts`, `starred-pages.ts`, `useWeekStart.ts` + 2 throw-resilience regression tests). MINOR-4 (version/migrate) deferred. tsc+biome+vitest green | pending commit |
+| 21 | 05:30 | FRESH subsystem: settings / preferences / persistence | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 4 MINOR, **all pre-existing**; persistence layer well-engineered (guarded reads, `migrate` placeholders, partialize, hydration-race handling, no PII in localStorage all verified; `search-history.ts` (only in-PR file) is exemplary). MINOR: unguarded `localStorage` writes in tag-colors/starred-pages + unguarded read+write in useWeekStart (read runs during calendar render → white-screen risk in locked-down webviews); `tabs`/`journal` version-without-migrate | **FIXED 3** (try/catch guards mirroring the codebase's own read-catch convention: `tag-colors.ts`, `starred-pages.ts`, `useWeekStart.ts` + 2 throw-resilience regression tests). MINOR-4 (version/migrate) deferred. tsc+biome+vitest green | `7c7d8692` |
+| 22 | 05:45 | FRESH subsystem: attachments lifecycle | subagent verdict CHANGES — 2 CRIT / 1 MAJOR / 1 MINOR, **all pre-existing**; backend storage + sync transfer + GC machinery verified well-engineered & correct (add/delete atomicity, blake3-verified sync with temp-file + atomic rename, orphan sweep, bulk-purge unlink, reverse ops). CRIT C1/C2: attachment upload+render pipeline is UNWIRED end-to-end (no `@tauri-apps/plugin-fs` → FE never copies bytes + passes absolute path the backend rejects; `assetProtocol` disabled w/ empty scope) — verified both premises. MAJOR: single-block `purge_block_inner` leaks files (bulk paths don't). MINOR: FE/BE MIME-list divergence | **LOG-ONLY round** — C1/C2 are a feature-completion task (not a CR fix), pre-existing, NOT a PR #50 regression; MAJOR file-leak is slam-dunk but a destructive backend path best fixed with the cluster. All 4 logged; verify attachments-intent with maintainer | no commit (ledger only) |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -278,6 +279,38 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   for exactly this reason; these two lack it. Fix (defer): add a pass-through/coercing
   `migrate` with the same care as search-history's coercion (not a one-liner). No current
   bug (both at v1).
+- **⚠️ [attachments, CRITICAL — feature appears UNWIRED; verify intent, not a PR #50
+  regression] The attachment upload + render pipeline is incomplete end-to-end.**
+  Backend `add_attachment_inner` (`commands/attachments.rs:78,121-133`) requires `fs_path`
+  to be a *relative* path under `app_data_dir` with the bytes *already written* there
+  (doc says "the frontend writes the bytes via `@tauri-apps/plugin-fs` before invoking").
+  But: (C1) there is **no `@tauri-apps/plugin-fs` dependency** (verified: absent from
+  package.json) and the FE upload sites (`EditableBlock.tsx:55-78`,
+  `useSlashCommandProperty.ts:187-213`) pass the browser's **absolute** `file.path` with
+  no byte-copy → `check_attachment_fs_path_shape` rejects it → every real-build upload
+  fails. (C2) `tauri.conf.json` has **`assetProtocol: { scope: [], enable: false }`**
+  (verified) and `AttachmentRenderer.tsx` feeds a *relative* path to `convertFileSrc`, so
+  even an existing file wouldn't render. Masked in tests by the tauri-mock. **This is a
+  feature-completion task (build the FE byte-copy via plugin-fs + configure an
+  `assetProtocol` scope to `$APPDATA/attachments/**` + resolve fs_path to absolute), not a
+  CR fix, and is pre-existing / out of this PR's scope.** The backend storage, sync
+  transfer, and GC machinery are well-engineered and correct — only the FE↔backend
+  wiring is missing. Confirm whether attachments are intentionally not-yet-shipped.
+- **[attachments, MAJOR — slam-dunk but out-of-scope, logged] Single-block purge leaks
+  attachment files on disk** (`commands/blocks/crud.rs:1278-1303` `purge_block_inner`):
+  deletes attachment *rows* but never collects `fs_path`s / unlinks the files / enqueues
+  `CleanupOrphanedAttachments` — whereas both bulk paths (`purge_blocks_by_ids_inner`
+  `:2108-2205`, `purge_all_deleted_inner` `:1653-...`) do. Reachable from `TrashView`
+  (purge one) + `TagList` (delete tag). Files leak until the boot/post-compaction sweep
+  reclaims them (bounded, not unbounded loss). Fix = mirror the bulk pattern (collect
+  fs_paths pre-delete, `spawn_blocking` unlink post-commit with the `anonymize` guard).
+  Logged (not fixed) because it's a destructive backend path best fixed together with the
+  C1/C2 attachment cluster + needs nextest verification.
+- **[attachments, MINOR] FE MIME guesser produces types the backend rejects**
+  (`lib/file-utils.ts:23-30` allows mp4/mov/mp3/wav/docx/xlsx; backend allow-list
+  `commands/mod.rs:377-384` permits only image/pdf/text/json/zip/tar) + no FE pre-validation
+  of MIME or the 50 MB cap → confusing generic failure toast. Share the allow-list + cap
+  with the FE. (Only matters once uploads work per C1.)
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets
