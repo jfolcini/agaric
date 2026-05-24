@@ -34,5 +34,11 @@ export function toggleStarred(pageId: string): void {
   } else {
     pages.splice(index, 1)
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(pages))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(pages))
+  } catch {
+    // Storage unavailable (private mode / quota / locked-down webview) —
+    // degrade to no-persist rather than throwing into the click handler.
+    // Mirrors the silent fallback in getStarredPages above.
+  }
 }
