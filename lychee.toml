@@ -32,6 +32,14 @@ accept = [
 max_retries = 5
 retry_wait_time = 2
 
+# Per-request timeout. lychee defaults to 20s; flathub.org's homepage (a
+# non-load-bearing "eventual submission target" link in
+# packaging/flathub/README.md) intermittently responds past that and tripped
+# the hook on CI run 26357889108 (391 total, 0 errors, 1 timeout → exit 2).
+# 30s gives headroom for a slow-but-up host without masking real dead links;
+# combined with the 5 retries above it rides out a transient blip.
+timeout = 30
+
 # Skip the request if the URL matches any of these patterns.
 exclude = [
     # Future publish target — agaric-app GitHub org doesn't exist yet (PUB-5).

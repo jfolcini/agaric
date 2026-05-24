@@ -263,22 +263,26 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Releases
 
-The Release workflow (`.github/workflows/release.yml`) fires on tag pushes matching `v*` or `[0-9]*`. The very first job is `verify-version`, which **fails fast** if the tag and the version manifests (`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `package.json`, `package-lock.json`) disagree. **Never** push a release tag without first bumping every manifest in lockstep — the tag will fail at the gate before any build matrix entry spins up, and you'll have to delete the tag and recreate it on a fresh commit.
+Cut a release with one command from a clean `main`:
 
-**Always use the automation; never hand-edit manifests for a release.** Two equivalent entry points share `scripts/bump-version.sh` as the single source of truth:
+```bash
+scripts/release.sh <new-version>        # e.g. scripts/release.sh 0.2.1
+```
 
-- **Local (manual):** `scripts/bump-version.sh <new-version> --commit --tag --push`. Updates the source-of-truth manifests (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`), regenerates the lock files (`package-lock.json` via a two-field `jq` edit — pinned-dependencies-safe; restore `npm install --package-lock-only --ignore-scripts` if a future bump ever requires a dependency-graph change, and `src-tauri/Cargo.lock` via `cargo update -p agaric --precise`), commits, tags, and pushes both `main` and the new tag. Each flag is opt-in: omit `--push` for a dry run; omit `--tag` to stop after the commit; omit `--commit` to just stage the diff for manual review. Refuses to run on a dirty tree (when `--commit` is passed) and refuses to clobber an existing tag.
+`scripts/release.sh` is the single canonical entry point (full guide: [`docs/BUILD.md` § Releasing](docs/BUILD.md#releasing)). It runs a preflight (clean tree, `HEAD` on `main`, local `main` in sync with origin, tag not already taken locally or on origin), then a local release-build check (`scripts/verify-release-build.sh`), then delegates to `scripts/bump-version.sh <version> --commit --tag --push`. The Release workflow (`.github/workflows/release.yml`) fires on the resulting tag push: `verify-version` (the first job — **fails fast** if the tag and the manifests disagree) → `validate` → desktop build matrix → Android APK → provenance/SBOMs → **draft** GitHub Release. The workflow **drafts** the release; a human reviews it and clicks Publish — **do not publish on the maintainer's behalf.**
 
-- **GitHub Actions (one-click):** `gh workflow run release-tag.yml -f version=<new-version>` (or `Actions → "Release Tag" → "Run workflow"` in the UI). The `release-tag` workflow checks out main, sets up Rust + Node, runs the same `scripts/bump-version.sh` with `--commit --tag --push`, and exits. The push of the new tag fires the existing `Release` workflow, which then runs the verify-version → validate → build matrix → desktop bundles → Android APK → draft GitHub Release pipeline. The maintainer types the new version once; everything else is automated.
+**Always use the automation; never hand-edit manifests for a release.** `scripts/bump-version.sh` is the source of truth for the lockstep bump: it updates all 5 manifests (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`), GPG-signs the commit + annotated tag, and pushes `main` + the tag. The `package-lock.json` bump is a two-field `jq` edit (pinned-dependencies-safe; restore `npm install --package-lock-only --ignore-scripts` only if a future bump needs a dependency-graph change). It refuses to run on a dirty tree, off `main`, or over an existing tag. Use its flags to stop short of a full push (`--commit`, `--tag`, `--push` are cumulative), or `scripts/release.sh --dry-run` to bump + tag locally without pushing.
 
-**Direct `git tag X.Y.Z && git push origin X.Y.Z` will reliably fail at the verify-version gate if you forgot to bump the manifests first.** The script + workflow exist to make sure that doesn't happen.
+**There is no CI bump/release button, and you must not add one backed by a PAT.** A bump means pushing a commit to `main`, which needs a branch-ruleset bypass. The in-workflow `GITHUB_TOKEN` is not a bypass actor (and its pushes don't trigger workflows), so a CI bump can't land without a long-lived PAT — rejected on security grounds. The maintainer is an admin bypass actor, so the bump is cut locally. Keep branch protection as-is (1 review + admin bypass).
+
+**Direct `git tag X.Y.Z && git push origin X.Y.Z` will reliably fail at the verify-version gate if you forgot to bump the manifests first.** `scripts/release.sh` exists to make sure that doesn't happen.
 
 The manifest lockstep rule is non-negotiable because:
 1. `verify-version` greps Cargo.lock with `awk '/^name = "agaric"$/{getline; print; exit}'` and compares to the tag.
 2. SemVer drift between manifests would silently produce installers labeled with the wrong version on the artifact page.
 3. The `package-lock.json` mirror of `package.json` is enforced by `npm` itself; pushing a tag without regenerating it leaves the lock at the previous version and `verify-version` fails.
 
-If a release tag fails at `verify-version`: delete it (`git push --delete origin <tag> && git tag -d <tag>`), run `scripts/bump-version.sh <tag> --commit --tag --push` on a clean main, done.
+If a release tag fails at `verify-version`: delete it (`git push --delete origin <tag> && git tag -d <tag>`), then re-cut with `scripts/release.sh <tag>` on a clean main.
 
 ## Testing
 

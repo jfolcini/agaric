@@ -139,11 +139,10 @@ Wall clock on a warm cache: ≈3-4 min (was ≈5-8 min when each hook ran sequen
 
 ### Release pre-flight
 
-Pre-push does NOT run `cargo tauri build` (5-10 min wall clock per push is too slow for daily cadence). Run `scripts/verify-release-build.sh` manually before tagging a release:
+Pre-push does NOT run `cargo tauri build` (5-10 min wall clock per push is too slow for daily cadence). `scripts/release.sh` (see [Releasing](#releasing) below) runs this check for you, but you can also run it standalone:
 
 ```bash
 scripts/verify-release-build.sh                   # local-OS bundle build + path probes
-scripts/bump-version.sh <new-version> --commit --tag --push
 ```
 
 The script does what release.yml does that `_validate.yml` does not: full Tauri bundle build for the current OS, with per-OS artifact path probes (AppImage + .deb on Linux, .dmg + .app on macOS, .msi + .exe on Windows). Cross-OS bundles are inherently un-buildable locally — only the matching CI matrix slot can verify them, but most release-blocker bugs surface in the LOCAL bundle build first.
@@ -164,38 +163,46 @@ Bundles land under `src-tauri/target/release/bundle/`. The exact filenames carry
 
 ## Releasing
 
-Single canonical entry point:
+One command, from a clean `main`:
 
 ```bash
-scripts/bump-version.sh <new-version> --commit --tag --push
+scripts/release.sh <new-version>          # e.g. scripts/release.sh 0.2.1
 ```
 
-The script updates every version manifest in lockstep (Cargo.toml, package.json, tauri.conf.json, Android Gradle, …), commits, tags, and pushes. The pushed tag triggers `.github/workflows/release.yml`.
+`scripts/release.sh` is the single canonical entry point. It:
 
-Alternatively, dispatch the release workflow directly:
+1. **Preflight** — refuses unless the tree is clean, `HEAD` is on `main`, local `main` is in sync with `origin/main`, the required tools are present, and the tag doesn't already exist (locally or on origin).
+2. **Local build check** — runs `scripts/verify-release-build.sh` (full `cargo tauri build` + bundle-path probes for your OS) so release-only failures surface before a CI run is spent. Skip with `--skip-verify-build`.
+3. **Bump + tag + push** — runs `scripts/bump-version.sh` to bump all 5 manifests in lockstep (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`), GPG-sign the commit + annotated tag, and push `main` + the tag.
+4. The pushed tag triggers `.github/workflows/release.yml`, which builds every platform and **drafts** the GitHub Release.
 
-```bash
-gh workflow run release.yml -f version=<new-version>
-```
+Then **review the draft on the [Releases page](https://github.com/jfolcini/agaric/releases) and click Publish** — the workflow drafts, it never auto-publishes.
 
-This runs the same `bump-version.sh` inside CI, then proceeds to the build matrix.
+Useful flags (see `scripts/release.sh --help`):
+
+- `--dry-run` — bump + commit + tag locally but don't push (review with `git show <tag>`).
+- `--skip-verify-build` — skip the ~5-10 min local bundle build (rely on CI).
+- `-y` / `--yes` — skip the confirmation prompt.
+
+> **Why local, and why there's no CI "release" button.** Cutting a release means pushing a bump commit to `main`, which requires bypassing the branch ruleset. The in-workflow `GITHUB_TOKEN` is not a ruleset bypass actor (and its pushes don't trigger workflows anyway), so a CI bump can't land without a long-lived PAT — rejected on security grounds. The maintainer is an admin bypass actor, so the bump is cut locally and only the resulting tag triggers CI. This keeps branch protection intact (1 review + admin bypass) with no PAT. `scripts/bump-version.sh <version> --commit --tag --push` is still available if you want to drive the steps yourself.
 
 ### What `release.yml` does on tag push
 
-1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests.
-2. **`_validate`** — same gate as CI.
-3. **Build matrix** — Linux + Windows + macOS (x86_64 + aarch64).
-4. **Android** — APK + AAB if release-signing secrets are present.
-5. **GH Release** — upload bundles, attach Minisign updater signature.
+1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests (it's the first job; the bump already happened locally).
+2. **`validate`** — same gate as CI (`prek run --all-files`).
+3. **Build matrix** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles.
+4. **Android** — APK if release-signing secrets are present.
+5. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document.
+6. **Draft GitHub Release** — created with auto-generated notes; never auto-published.
 
 ### If a release tag fails at `verify-version`
 
-The manifests are out of sync. To recover:
+The manifests are out of sync with the tag. To recover:
 
 ```bash
 git tag -d <bad-tag>                          # local
 git push --delete origin <bad-tag>            # remote
-scripts/bump-version.sh <correct-version> --commit --tag --push
+scripts/release.sh <correct-version>          # re-cut cleanly
 ```
 
 ## Android signing

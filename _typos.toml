@@ -95,3 +95,7 @@ unparseable = "unparseable"
 contextful = "contextful"
 # macOS 11 codename "Big Sur" — typos otherwise flags `Sur` → `Sure`.
 Sur = "Sur"
+# `intoto` — the in-toto attestation format; `*.intoto.jsonl` is the SLSA
+# provenance filename Scorecard's Signed-Releases probe matches. Appears in
+# `release.yml` and `docs/BUILD.md`. typos otherwise flags it as `into`.
+intoto = "intoto"
