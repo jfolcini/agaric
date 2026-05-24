@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-23 open items in the summary table; 23 detail entries (FE-* sub-tables don't appear in the summary).
+30 open items in the summary table; 30 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -43,6 +43,13 @@ Items flagged during development that need revisiting. Organized by section with
 | CI-R15 | PERF | Vitest pool A/B benchmark — `forks` (default) vs `threads`. Happy-dom suites *may* run faster on threads but threads can leak module state; the actual delta is unknown without measurement. ADOPT if measured speedup >30% on a CI experiment (run one branch each, compare wall times); document either way. | S (one CI run + decision) | Opt-in benchmark cycle |
 | CI-R16 | MAINT | `SKIP_CI_VERIFY` reason-string / safe-glob guard. Habit-creep vs friction-cost is genuinely balanced for a solo workflow. Cheap version (reject `=1`, require non-empty reason string in env var) is ~10 lines bash; rigorous version (safe-glob allowlist) requires git-diff inspection in the pre-push script. | S (cheap) or M (rigorous) | Maintainer decision on cadence-vs-friction |
 | PAGES-FOLD-MARK | MAINT | Fold-aware highlight `<mark>` mis-bounding (ß↔ss) in the Pages view. The fold offset-mapping in `src/lib/fold-for-search.ts` / `PageBrowserRowRenderer.tsx` can mis-place the highlight when a folded character changes length. Low-impact; deferred to avoid churn in the shared search-fold util. (Was PEND-58d D23a; the rest of PEND-58d shipped.) | S | — |
+| CR-A11Y | CR | Search/settings a11y polish + design-level popover/menu semantics — slam-dunk ARIA tweaks (settings error paras `role=alert`; `BlockPropertyEditor` ref-search `aria-label`; `StatusPanel` syncError live role), the keyboard-unreachable per-row search-history delete (tied to the dead history `activeIndex` wiring), the cross-group SR active-descendant on multi-group results, and the hand-rolled `aria-modal` popovers without a focus trap (`JournalCalendarDropdown`/`TemplatePicker`) + `MenuPopoverContent` lacking `role=menu`. All pre-existing; apply as one a11y pass. | M | — |
+| CR-DSL-QUOTE | CR | Search DSL: no quoting for `prop:`/`tag:`/`path:` filter values containing spaces — `serialize.ts tokenSource` emits them verbatim so they can't round-trip; CR8 made `PropFilterForm` reject such input rather than corrupt it (a v1 limitation). Fix: support `prop:key="value with space"` in `serialize.ts` + `register.ts parsePropToken` + the tokenizer, then lift the form restriction. | M | — |
+| CR-PERF | CR | Perf trio (all bounded/by-design today): exit-save `block_on` has no timeout (`lib.rs RunEvent::Exit` — needs a *measured* large-workspace save duration before sizing); periodic snapshot holds the registry mutex across all-space export (`loro/registry.rs` — fine at the 5-min cadence); breadcrumb `batchResolve` re-fires for unresolvable page_ids (`useSearchResults.ts`). | M | Measured exit-save duration |
+| CR-PERSIST | CR | `tabs` + `journal` zustand persist stores set `version` but provide no `migrate` (`stores/tabs.ts:424`, `stores/journal.ts:142`) — the day anyone bumps to `version:2`, the persisted blob is silently discarded to defaults (open tabs / per-space journal dates lost). No current bug (both at v1); `search-history.ts` added a no-op `migrate` placeholder for exactly this. Fix: add a pass-through/coercing `migrate` (not a one-liner — mirror search-history's care). | M | — |
+| CR-UX | CR | Search-view touch/UX residuals (from PEND-58g): UX-A8 always-visible/long-press toggle-mode explanation for touch (Radix tooltips don't fire on tap; inline labels overflow a narrow row), plus UX-A10/A12/A13 (history dropdown overlay vs inline; capped+error co-render; RTL physical spacing). | S | Design decision + runtime verification |
+| CR-E2E-TAURI | CR | Tauri-driven e2e harness (from PEND-58g E2E-A6/A3) — the web+mock `search_blocks` returns the whole match set in one page and never runs the real Rust FTS/regex pipeline, so `<mark>` highlight, real FTS/regex behavior, and multi-page Load-More are all unreachable on the current Playwright+mock harness. The only way to cover them. | L | — |
+| CR-MINOR | CR | Catch-all CR-campaign trivia: stale `recv` timeout literal "30s" vs `RECV_TIMEOUT=180s` (`sync_net/connection.rs:494`); `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test (`loro/snapshot.rs:266`); `docs/features/views.md` Search section stale (SEARCH.md is source of truth); MCP stale docstrings (`get_block` soft-delete claim, `rmcp_spike` "off by default") + `handle_search` space_id not ULID-normalized; filter-forms lack dedicated test files. | S | — |
 
 ### Quick wins (S-cost, ready to grab)
 
@@ -300,3 +307,99 @@ Or a simpler cap: reject filter lists longer than some reasonable limit (e.g., 1
 - **Impact:** N/A.
 - **Decision:** No action. Filed for awareness only.
 - **Status:** Documented as deliberate.
+
+---
+
+## CR — 2026-05-24 review-campaign & search-view deferred (MINOR)
+
+MINOR findings extracted from the 2026-05-24 overnight code-review campaign and the
+PEND-58g search-view review. The CRITICAL/MAJOR clusters from the same campaign live
+in `pending/PEND-76-preexisting-data-integrity-bugs.md`. Everything below is
+pre-existing on `main` and non-blocking. File/line refs are a dated snapshot —
+re-locate before editing.
+
+### CR-A11Y — search/settings a11y polish + popover/menu semantics
+- **Slam-dunk ARIA (each a single attribute, axe-covered):** settings error
+  paragraphs use `role="status"` where `role="alert"` is conventional
+  (`AgentAccessSettingsTab.tsx:271`, `GoogleCalendarSettingsTab.tsx:373`);
+  `BlockPropertyEditor.tsx:278` ref-search `<input>` relies on `placeholder` for its
+  name → add `aria-label`; `StatusPanel.tsx:337` syncError paragraph has no live role.
+- **Keyboard-unreachable per-row history delete** (`SearchHistoryDropdown.tsx`): rows
+  are `role="option" tabIndex={-1}` with no roving focus / `aria-activedescendant`, so
+  the per-row delete is mouse-only for AT users (only bulk "Clear history" is
+  reachable). Tied to the dead history `activeIndex` wiring in `SearchPanel.tsx`.
+- **Cross-group SR active-descendant lost** when arrowing across `role="listbox"`
+  group boundaries (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`) — DOM
+  focus doesn't move to the new group. Needs programmatic `.focus()` on group change
+  (or a single spanning listbox).
+- **Design-level:** hand-rolled popovers claim `aria-modal="true"` without a focus
+  trap (`JournalCalendarDropdown.tsx:194`, `TemplatePicker.tsx:73` — coordinate
+  `JournalCalendarDropdown.test.tsx:147` which asserts `aria-modal`); `MenuPopoverContent`
+  "menus" lack `role="menu"`/`role="menuitem"` + arrow roving (`PageHeaderMenu.tsx:158`).
+- **Cost:** M. **Status:** Deferred — apply as one a11y pass.
+
+### CR-DSL-QUOTE — quoted filter values with spaces
+- `serialize.ts tokenSource` serializes `prop:key=value` (and `tag:`/`path:` values)
+  verbatim, so a value containing whitespace can't round-trip through the query string.
+  CR8 made `PropFilterForm` reject such input rather than corrupt it.
+- **Fix:** support `prop:key="value with space"` in `serialize.ts tokenSource` +
+  `register.ts parsePropToken` + the tokenizer, then lift the form's no-space restriction.
+- **Cost:** M. **Status:** Deferred.
+
+### CR-PERF — exit-save timeout / snapshot mutex / breadcrumb re-fetch
+- **Exit-save `block_on` has no timeout** (`lib.rs RunEvent::Exit`): synchronous
+  multi-MiB snapshot write per space, unbounded → shutdown latency grows with total
+  snapshot bytes. Fix: `tokio::time::timeout` + log-skip (5-min periodic task +
+  next-boot heal cover a missed exit-save). **Needs a measured large-workspace save
+  duration first — do not invent the timeout.**
+- **Periodic snapshot holds the registry mutex across all-space export**
+  (`loro/registry.rs snapshot_all_engines`): O(spaces × export) under the global
+  engine mutex. Fine at the 5-min cadence; the code comment pre-commits to the
+  trade-off. Fix only if multi-space workspaces grow (collect handles under the lock,
+  drop it, then export).
+- **Breadcrumb `batchResolve` re-fires for unresolvable page_ids**
+  (`useSearchResults.ts`): soft-deleted/missing parents are never cached, so they
+  re-fetch on every `loadMore`. Bounded; track attempted ids in a ref.
+- **Cost:** M. **Status:** Deferred (exit-save blocked on measured data).
+
+### CR-PERSIST — tabs/journal persist stores lack `migrate`
+- `tabs` (`stores/tabs.ts:424`) + `journal` (`stores/journal.ts:142`) set `version`
+  but provide no `migrate`; zustand feeds `undefined` to `merge` on a version mismatch
+  → the persisted blob is silently discarded to defaults. No current bug (both at v1),
+  but the day anyone bumps to `version:2` users lose open tabs / per-space journal dates.
+- **Fix:** add a pass-through/coercing `migrate` with the same care as `search-history.ts`'s
+  coercion (not a one-liner).
+- **Cost:** M. **Status:** Deferred — latent, no current bug.
+
+### CR-UX — search touch toggle-mode explanation + runtime-verify items
+- **UX-A8:** an always-visible / long-press toggle-mode explanation for touch — Radix
+  tooltips don't fire on touch-tap and inline labels overflow a narrow phone row, so it
+  needs a real design decision + runtime verification.
+- **UX-A10 / A12 / A13:** history dropdown in normal flow vs overlaid; capped + error
+  co-render; RTL physical spacing — all need runtime verification.
+- **Cost:** S. **Status:** Deferred — needs design decision + runtime verification.
+
+### CR-E2E-TAURI — Tauri-driven e2e harness
+- The web+mock `search_blocks` returns the entire match set in one page (ignores
+  cursor/limit) and never runs the real Rust FTS/regex pipeline, so `<mark>` highlight,
+  real FTS/regex behavior, and multi-page Load-More are unreachable on the current
+  Playwright+mock harness (PEND-58g E2E-A6/A3). The `searchUntil` presence-poll can only
+  assert the IPC payload via `latestFilter`, never the filtered result set.
+- **Fix:** a Tauri-driven e2e harness exercising the real backend.
+- **Cost:** L. **Status:** Deferred.
+
+### CR-MINOR — campaign trivia (docs / test / diagnostic strings)
+- Stale `recv` timeout literal "30s" vs `RECV_TIMEOUT=180s` (`sync_net/connection.rs:494`
+  vs `:458`) — trivial (interpolate the constant).
+- `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test exercises it
+  (`loro/snapshot.rs:266`) — add a smoke test or drop the seam.
+- `docs/features/views.md` Search section stale (missing the inline filter DSL, `+ Filter`
+  builder, toggles, per-space history, mobile escalation); `docs/SEARCH.md` is the source
+  of truth, so this is a low-priority refresh.
+- MCP stale docstrings: `get_block` claims it returns soft-deleted blocks but filters
+  `deleted_at IS NULL` (`tools_ro.rs:567`); `rmcp_spike` "off by default" contradicts
+  wired-on behavior; `handle_search` `space_id` not ULID-normalized (`tools_ro.rs:794`)
+  unlike parent_id/tag_ids → lowercase space ULID silently returns empty.
+- filter-forms (`src/components/search/filter-forms/`) lack dedicated test files
+  (covered transitively via `FilterHelperPopover.test.tsx`).
+- **Cost:** S. **Status:** Deferred.

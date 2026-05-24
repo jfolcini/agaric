@@ -412,12 +412,31 @@ pub async fn project_remove_tag_to_sql(
 ///
 /// Behaviour:
 ///
-/// * `Some(snapshot)` → `INSERT OR REPLACE` the `blocks` row with
-///   `(id, block_type, content, parent_id, position)`. Other columns
-///   (`deleted_at`, reserved-property hot-path columns) are left to
-///   per-op projection helpers running alongside this one — the
-///   scope here is the core block shape that
-///   [`crate::loro::engine::BlockSnapshot`] carries.
+/// * `Some(snapshot)` → **UPSERT** (`INSERT … ON CONFLICT(id) DO
+///   UPDATE`) the `blocks` row, writing only the engine-authoritative
+///   core columns `(block_type, content, parent_id, position)`.
+///
+///   This must NOT be `INSERT OR REPLACE`: REPLACE deletes the
+///   conflicting row first, and with `PRAGMA foreign_keys=ON` the
+///   `ON DELETE CASCADE` FKs then cascade-delete every derived row
+///   (`block_tags`, `block_properties`, `block_links`, `page_aliases`,
+///   `*_cache`, …) and reset the un-listed columns (`deleted_at`,
+///   `todo_state`, `priority`, `due_date`, `scheduled_date`, `page_id`)
+///   to their defaults. Because [`import_with_changed_blocks`] returns
+///   *every* block in the space on each import, a single inbound sync
+///   would wipe the whole space's derived/soft-delete state. The
+///   conflict-update touches only the core columns and leaves the
+///   derived and soft-delete columns intact.
+///
+///   Note `deleted_at` is deliberately preserved, not re-derived from
+///   the engine: the engine's `read_deleted` only marks the delete
+///   *seed* (descendant soft-deletes are an SQL-side CTE fan-out, never
+///   mirrored into the engine), so projecting it per-block here would
+///   resurrect soft-deleted descendants. Remote delete/restore and
+///   tag/property *changes* therefore still require a per-op projection
+///   pass — out of scope for this core-shape upsert (see PEND-76 F1).
+///
+///   [`import_with_changed_blocks`]: crate::loro::engine::LoroEngine::import_with_changed_blocks
 /// * `None` → engine has no record of `block_id`.  The plan
 ///   (`SESSION-LOG.md` Session 699 Phase 3 §3 day 4) defers the
 ///   purge-from-SQL semantics: an absent engine record could mean
@@ -435,9 +454,14 @@ pub async fn project_block_full_to_sql(
     match snapshot {
         Some(snap) => {
             sqlx::query(
-                "INSERT OR REPLACE INTO blocks \
+                "INSERT INTO blocks \
                      (id, block_type, content, parent_id, position) \
-                 VALUES (?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                     block_type = excluded.block_type, \
+                     content = excluded.content, \
+                     parent_id = excluded.parent_id, \
+                     position = excluded.position",
             )
             .bind(&snap.block_id)
             .bind(&snap.block_type)
@@ -1204,5 +1228,203 @@ mod tests {
                 .await
                 .expect("fetch count");
         assert_eq!(count.0, 0);
+    }
+
+    // ---------------------------------------------------------------------
+    // PEND-76 F1 — inbound-sync full-block projection must UPSERT, not
+    // REPLACE (REPLACE cascade-wipes the whole space's derived state).
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn project_block_full_upsert_preserves_derived_and_soft_delete_state() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Seed a block carrying soft-delete + a reserved hot-path column
+        // (todo_state), a non-reserved property, and a tag.
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, deleted_at, todo_state) \
+             VALUES (?, 'content', 'original', NULL, 0, '2026-01-01T00:00:00Z', 'DOING')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Tag-block target for the block_tags FK.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'effort', '3')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(BLOCK_A)
+            .bind(BLOCK_B)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Project an engine snapshot that changes the content + position
+        // (mirrors a remote edit arriving via apply_remote).
+        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let snap = snapshot(BLOCK_A, "content", "edited-by-remote", None, 7);
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_block_full_to_sql(&mut conn, &space, &bid, Some(&snap))
+            .await
+            .expect("project full");
+        drop(conn);
+
+        // Core columns updated from the snapshot.
+        let core: (String, i64) =
+            sqlx::query_as("SELECT content, position FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch core");
+        assert_eq!(core.0, "edited-by-remote", "content must update");
+        assert_eq!(core.1, 7, "position must update");
+
+        // Soft-delete + hot-path column preserved (REPLACE would NULL these).
+        let preserved: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT deleted_at, todo_state FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch preserved cols");
+        assert_eq!(
+            preserved.0.as_deref(),
+            Some("2026-01-01T00:00:00Z"),
+            "deleted_at must survive the upsert (no resurrection)"
+        );
+        assert_eq!(
+            preserved.1.as_deref(),
+            Some("DOING"),
+            "todo_state hot-path column must survive the upsert"
+        );
+
+        // Derived rows preserved (REPLACE would cascade-delete these).
+        let derived: (i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?), \
+                (SELECT COUNT(*) FROM block_tags WHERE block_id = ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch derived counts");
+        assert_eq!(derived.0, 1, "block_properties row must survive the upsert");
+        assert_eq!(derived.1, 1, "block_tags row must survive the upsert");
+    }
+
+    #[tokio::test]
+    async fn project_block_full_reproject_does_not_resurrect_soft_deleted_cohort() {
+        // A soft-deleted parent + descendant share a `deleted_at`
+        // cohort timestamp (the per-op delete fans out to descendants via
+        // an SQL CTE; the engine only marks the seed). An inbound sync
+        // re-projects EVERY block in the space, so it calls this helper
+        // for both the parent and the descendant. The upsert must leave
+        // each one's `deleted_at` intact — re-deriving it from the engine
+        // would resurrect the descendant (engine marks only the seed).
+        let (pool, _dir) = fresh_pool().await;
+        const CHILD: &str = "01HZ00000000000000000000C1";
+        let cohort_ts = "2026-05-10T12:00:00Z";
+
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'parent', NULL, 0, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(cohort_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', 'child', ?, 0, ?)",
+        )
+        .bind(CHILD)
+        .bind(BLOCK_A)
+        .bind(cohort_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Inbound edit to the parent, then the bulk re-projection of the child.
+        let parent_snap = snapshot(BLOCK_A, "content", "parent-edited", None, 0);
+        let child_snap = snapshot(CHILD, "content", "child", Some(BLOCK_A), 0);
+        project_block_full_to_sql(
+            &mut conn,
+            &space,
+            &BlockId::from_trusted(BLOCK_A),
+            Some(&parent_snap),
+        )
+        .await
+        .expect("project parent");
+        project_block_full_to_sql(
+            &mut conn,
+            &space,
+            &BlockId::from_trusted(CHILD),
+            Some(&child_snap),
+        )
+        .await
+        .expect("project child");
+        drop(conn);
+
+        for id in [BLOCK_A, CHILD] {
+            let row: (Option<String>,) =
+                sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch deleted_at");
+            assert_eq!(
+                row.0.as_deref(),
+                Some(cohort_ts),
+                "{id} must stay soft-deleted after re-projection"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn project_block_full_inserts_new_block() {
+        // A block not yet present in SQL (created on a remote peer) is
+        // inserted via the INSERT side of the upsert.
+        let (pool, _dir) = fresh_pool().await;
+        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let snap = snapshot(BLOCK_A, "content", "remote-created", None, 4);
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_block_full_to_sql(&mut conn, &space, &bid, Some(&snap))
+            .await
+            .expect("project full insert");
+        drop(conn);
+
+        let row: (String, String, Option<String>, i64) = sqlx::query_as(
+            "SELECT block_type, content, parent_id, position FROM blocks WHERE id = ?",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch row");
+        assert_eq!(row.0, "content");
+        assert_eq!(row.1, "remote-created");
+        assert_eq!(row.2, None);
+        assert_eq!(row.3, 4);
     }
 }

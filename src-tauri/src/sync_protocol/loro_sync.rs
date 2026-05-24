@@ -268,7 +268,7 @@ pub async fn apply_remote(
     // tx.  This is a per-block read -> per-block write pattern; if a
     // benchmark shows contention it can swap to "snapshot all blocks,
     // drop guard, then write everything" — same correctness shape.
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
     for block_id in &changed_blocks {
         let snapshot_opt = {
             let mut guard = registry.for_space(&space_id, device_id)?;
@@ -496,6 +496,100 @@ mod tests {
         assert_eq!(row.2, "from-A");
         assert_eq!(row.3, None);
         assert_eq!(row.4, 7);
+    }
+
+    /// PEND-76 F1 regression (end-to-end): an inbound sync that
+    /// re-projects an already-materialised block must NOT cascade-wipe
+    /// that block's tags / properties. The bug was `INSERT OR REPLACE`,
+    /// which deletes the `blocks` row first so the `ON DELETE CASCADE`
+    /// FKs delete `block_tags` / `block_properties`; the fix is an
+    /// upsert that updates only the core columns.
+    #[tokio::test]
+    async fn apply_remote_does_not_wipe_existing_block_derived_state() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Pre-seed B's SQL with the state a prior sync had materialised:
+        // block X plus a tag-block, a tag edge, and a property row.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'old', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'tag-X', NULL, 0)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'effort', '3')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(BLOCK_A)
+            .bind(BLOCK_B)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A edits X's content and sends a snapshot.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "edited-by-A", None, 0)
+                .expect("create");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        // B applies the inbound snapshot.
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
+
+        // Content updated from the inbound edit.
+        let content: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch content");
+        assert_eq!(
+            content.0, "edited-by-A",
+            "content must update from the inbound edit"
+        );
+
+        // Tag + property survive (REPLACE would have cascade-deleted them).
+        let derived: (i64, i64) = sqlx::query_as(
+            "SELECT \
+                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?), \
+                (SELECT COUNT(*) FROM block_tags WHERE block_id = ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch derived");
+        assert_eq!(
+            derived.0, 1,
+            "block_properties must survive the inbound sync"
+        );
+        assert_eq!(derived.1, 1, "block_tags must survive the inbound sync");
     }
 
     /// A Snapshot envelope with `protocol_version != 1` must be
