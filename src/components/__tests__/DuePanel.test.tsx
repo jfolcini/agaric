@@ -1405,7 +1405,7 @@ describe('DuePanel', () => {
       // Toast error was shown
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
-          'duePanel.loadAgendaFailed',
+          'Failed to load agenda',
           expect.objectContaining({ id: 'due-panel-load-failed' }),
         )
       })
@@ -1447,7 +1447,7 @@ describe('DuePanel', () => {
       // Toast error was shown for the failed title resolution
       await waitFor(() => {
         expect(mockedToastError).toHaveBeenCalledWith(
-          'duePanel.loadAgendaFailed',
+          'Failed to load agenda',
           expect.objectContaining({ id: 'due-panel-load-failed' }),
         )
       })

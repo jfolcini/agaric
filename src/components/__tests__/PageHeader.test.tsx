@@ -1490,7 +1490,7 @@ describe('PageHeader error paths', () => {
     renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
 
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('pageHeader.loadAliasesFailed')
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to load aliases')
     })
   })
 

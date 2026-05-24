@@ -59,6 +59,7 @@ export const pages: Record<string, string> = {
   'pageHeader.renameFailed': 'Failed to rename page',
   'pageHeader.aliases': 'Also known as:',
   'pageHeader.aliasUpdateFailed': 'Failed to update aliases',
+  'pageHeader.loadAliasesFailed': 'Failed to load aliases',
   'pageHeader.newAliasPlaceholder': 'New alias...',
   'pageHeader.newAliasInput': 'New alias input',
   'pageHeader.addAlias': '+ Add alias',

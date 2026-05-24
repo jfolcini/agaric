@@ -101,6 +101,7 @@ export const agenda: Record<string, string> = {
   'duePanel.loading': 'Loading...',
   'duePanel.loadingMore': 'Loading more agenda items',
   'duePanel.loadMoreLabel': 'Load more agenda items',
+  'duePanel.loadAgendaFailed': 'Failed to load agenda',
   'duePanel.breadcrumbArrow': '\u2192',
   'duePanel.untitled': 'Untitled',
   'duePanel.noItemsForFilter': 'No items match this filter.',
