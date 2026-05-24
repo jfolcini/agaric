@@ -43,17 +43,27 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          # GITHUB_TOKEN's `contents: write` is enough to push commits +
-          # tags back to main. Note: pushes via GITHUB_TOKEN do not
-          # trigger downstream workflow runs by GH design — which is
-          # why the build matrix in this same run (via `needs:`) is the
-          # path that actually produces the release artifacts, not a
-          # second `release.yml` run kicked off by the tag push.
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # zizmor: artipacked baseline entry remains — bump-version
-          # pushes commits + tags back to main, which needs the token
-          # persisted to git config. Setting persist-credentials: false
-          # here would break the push step below.
+          # Push the bump commit + tag with a maintainer PAT (RELEASE_PAT),
+          # NOT GITHUB_TOKEN, for two reasons:
+          #  1. The `main` ruleset requires PRs + status checks for direct
+          #     pushes, and GITHUB_TOKEN (github-actions[bot]) is not in the
+          #     ruleset bypass list, so its push is rejected (GH013). A PAT
+          #     acts as its owner — a repo admin (RepositoryRole 5), which IS
+          #     in the bypass list — so the signed bump push goes through.
+          #  2. A PAT tag push DOES trigger workflows (GITHUB_TOKEN pushes do
+          #     not), so the tag push fires the `on: push: tags` run that
+          #     verifies + builds + drafts the release. This job therefore
+          #     only bumps + tags; verify-version + the build matrix run in
+          #     that tag-triggered run (see verify-version's `if:`), so there
+          #     is exactly one build, not two.
+          # Setup: create a fine-grained PAT (repo: agaric, Contents:
+          # read+write) owned by a repo admin and add it as the RELEASE_PAT
+          # actions secret.
+          token: ${{ secrets.RELEASE_PAT }}
+          # zizmor: artipacked baseline entry remains — bump-version pushes
+          # commits + tags back to main, which needs the token persisted to
+          # git config. Setting persist-credentials: false would break the
+          # push step below.
           persist-credentials: true
       - name: Set up Rust toolchain (for `cargo update`)
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -92,7 +102,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          echo "::notice title=Tagged $INPUT_VERSION::Release pipeline now building $INPUT_VERSION."
+          echo "::notice title=Tagged $INPUT_VERSION::Bump + tag pushed via RELEASE_PAT; the tag push triggers the verify + build + draft run."
 
   # Guard against version drift between the git tag and the in-repo
   # manifests. tauri-action names release bundles + the in-app version
@@ -104,18 +114,20 @@ jobs:
   # job spins up. Tag may be `0.1.14` or `v0.1.14`; strip a leading `v`
   # before comparing.
   verify-version:
-    needs: bump-version
-    # GitHub Actions treats a skipped `needs:` predecessor as "skipped"
-    # for downstream jobs (NOT "success" as the original MAINT-114
-    # comment claimed). Without an explicit `if:`, every release pushed
-    # via tag (the common path) cascade-skips through verify-version →
-    # validate → build-and-release → android-build-and-release and the
-    # release artifacts never publish — that is exactly what happened
-    # to 0.1.17 and 0.1.18 before this fix. Allow the job when its
-    # predecessor either succeeded (workflow_dispatch path) or was
-    # skipped (tag-push path), but block on real failures or
-    # cancellation.
-    if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
+    # Runs ONLY on the tag-push path (`on: push: tags: …`). Release flow:
+    # `workflow_dispatch` → bump-version bumps + tags + pushes via RELEASE_PAT
+    # → that PAT tag push fires a fresh `on: push` run → THIS job + the build
+    # matrix run there, where GITHUB_REF_NAME is the tag and the checkout is
+    # the bumped commit, so the tag↔manifest check is correct.
+    #
+    # Why NOT also run on the dispatch run: there bump-version pushes AFTER
+    # this workflow's triggering SHA, so the default checkout is the PRE-bump
+    # commit and GITHUB_REF_NAME is "main" → the version match always failed
+    # (the dispatch-path bug). Gating on the push event removes that bug and
+    # guarantees a single build. `needs: bump-version` is intentionally
+    # dropped — on the tag run bump-version is skipped, and a `needs:` on a
+    # skipped job would (without `!cancelled()`) cascade-skip this one too.
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-24.04
     # PEND-41 R1 — no historical sample. Trivial jq / grep / awk over the 5
     # manifests + fail-fast comparison; 5-min budget is generous.
