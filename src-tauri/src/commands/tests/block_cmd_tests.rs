@@ -5177,3 +5177,152 @@ async fn create_block_cross_space_content_rejected() {
         "cross-space content on create must be rejected, got {result:?}"
     );
 }
+
+// ======================================================================
+// PEND-76 F2 — bytes-over-IPC attachment add/read
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let bytes: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8];
+    let att = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "photo.png".into(),
+        "image/png".into(),
+        bytes.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(att.block_id, block.id);
+    assert_eq!(att.size_bytes, 8);
+    assert!(
+        att.fs_path.starts_with("attachments/"),
+        "backend-generated path must live under attachments/, got {}",
+        att.fs_path
+    );
+
+    // Bytes were written to disk at the generated path.
+    let on_disk = std::fs::read(app_data_dir.join(&att.fs_path)).unwrap();
+    assert_eq!(on_disk, bytes, "file on disk must match the uploaded bytes");
+
+    // read_attachment returns the same bytes.
+    let read_back = read_attachment_inner(&pool, app_data_dir, att.id.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        read_back, bytes,
+        "read_attachment must return the uploaded bytes"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_rejects_disallowed_mime_without_writing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "x".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let result = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "evil.exe".into(),
+        "application/x-msdownload".into(),
+        vec![0u8; 16],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "disallowed MIME must be rejected, got {result:?}"
+    );
+    assert!(
+        !attachments_dir_has_files(app_data_dir),
+        "a rejected (bad-MIME) upload must not write any file"
+    );
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_cleans_up_when_block_missing() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = _dir.path();
+
+    // No such block → add_attachment_inner returns NotFound *after* the bytes
+    // were written → the wrapper must unlink them (no leak).
+    let result = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        "01HZ0000000000000000NOBLK1".into(),
+        "photo.png".into(),
+        "image/png".into(),
+        vec![9u8; 32],
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "missing block must be NotFound, got {result:?}"
+    );
+    assert!(
+        !attachments_dir_has_files(app_data_dir),
+        "bytes written before a rejected add must be cleaned up"
+    );
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_attachment_missing_id_is_not_found() {
+    let (pool, _dir) = test_pool().await;
+    let app_data_dir = _dir.path();
+    let result =
+        read_attachment_inner(&pool, app_data_dir, "01HZ0000000000000000NOATT1".into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "unknown attachment id must be NotFound, got {result:?}"
+    );
+}
+
+/// True iff `<app_data_dir>/attachments` exists and contains at least one entry.
+fn attachments_dir_has_files(app_data_dir: &std::path::Path) -> bool {
+    let dir = app_data_dir.join("attachments");
+    std::fs::read_dir(&dir)
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false)
+}

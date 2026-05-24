@@ -293,6 +293,83 @@ describe('useSlashCommandProperty — repeat / repeat-limit', () => {
 })
 
 describe('useSlashCommandProperty — attach', () => {
+  // Helper: intercept the hidden file <input> the attach handler creates so we
+  // can drive its `onchange` with a synthetic File. Returns a getter for the
+  // captured input (populated once the handler runs).
+  function interceptFileInput(): { get: () => HTMLInputElement | null; restore: () => void } {
+    let captured: HTMLInputElement | null = null
+    const origCreateElement = document.createElement.bind(document)
+    const spy = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((tag: string, options?: ElementCreationOptions) => {
+        const el = origCreateElement(tag, options)
+        if (tag === 'input') {
+          captured = el as HTMLInputElement
+          vi.spyOn(captured, 'click').mockImplementation(() => {})
+        }
+        return el
+      })
+    return { get: () => captured, restore: () => spy.mockRestore() }
+  }
+
+  it('ships file bytes via add_attachment_with_bytes for an allowed file', async () => {
+    mockedInvoke.mockResolvedValue({
+      id: 'att-1',
+      block_id: 'BLOCK_1',
+      filename: 'photo.png',
+      mime_type: 'image/png',
+      size_bytes: 4,
+      fs_path: 'attachments/att-1',
+      created_at: '2025-01-01',
+    })
+    const input = interceptFileInput()
+    try {
+      const { result } = renderHook(() => useSlashCommandProperty())
+      const { ctx } = makeSyntheticCtx()
+      result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+
+      const el = input.get()
+      expect(el).not.toBeNull()
+      const file = new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' })
+      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(el).not.toBeNull() above
+      Object.defineProperty(el!, 'files', { value: [file] })
+      // biome-ignore lint/style/noNonNullAssertion: guarded above
+      await el!.onchange?.(new Event('change'))
+
+      expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
+        blockId: 'BLOCK_1',
+        filename: 'photo.png',
+        mimeType: 'image/png',
+        bytes: [1, 2, 3, 4],
+      })
+    } finally {
+      input.restore()
+    }
+  })
+
+  it('rejects a disallowed file type: no add IPC, surfaces an error toast', async () => {
+    const input = interceptFileInput()
+    try {
+      const { result } = renderHook(() => useSlashCommandProperty())
+      const { ctx } = makeSyntheticCtx()
+      result.current.exact['attach']?.(ctx, { id: 'attach', label: 'ATTACH' })
+
+      const el = input.get()
+      const file = new File([new Uint8Array([0, 1])], 'evil.exe', {
+        type: 'application/x-msdownload',
+      })
+      // biome-ignore lint/style/noNonNullAssertion: input is created by the handler
+      Object.defineProperty(el!, 'files', { value: [file] })
+      // biome-ignore lint/style/noNonNullAssertion: guarded above
+      await el!.onchange?.(new Event('change'))
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.attachmentTypeNotAllowed')
+    } finally {
+      input.restore()
+    }
+  })
+
   it('FE-M-6: surfaces toast + logger.warn when input.click() throws', async () => {
     const originalClick = HTMLInputElement.prototype.click
     const clickMock = vi.fn(() => {

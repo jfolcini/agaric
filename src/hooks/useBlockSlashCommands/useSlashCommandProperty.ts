@@ -10,11 +10,11 @@
 
 import { useMemo } from 'react'
 import { notify } from '@/lib/notify'
-import { guessMimeType } from '../../lib/file-utils'
+import { guessMimeType, isAttachmentAllowed, readFileBytes } from '../../lib/file-utils'
 import { logger } from '../../lib/logger'
 import { formatRepeatLabel } from '../../lib/repeat-utils'
 import {
-  addAttachment,
+  addAttachmentWithBytes,
   deleteProperty,
   setPriority as setPriorityCmd,
   setProperty,
@@ -193,18 +193,18 @@ function handleAttach(ctx: SlashCommandContext): void {
     const filename = file.name
     const sizeBytes = file.size
     const mimeType = file.type || guessMimeType(filename)
-    const fsPath = (file as File & { path?: string }).path
-    if (!fsPath) {
-      notify.error(ctx.t('blockTree.filePathReadFailed'))
+    const allowed = isAttachmentAllowed(mimeType, sizeBytes)
+    if (!allowed.ok) {
+      notify.error(ctx.t(allowed.reason))
       return
     }
     try {
-      await addAttachment({
+      const bytes = await readFileBytes(file)
+      await addAttachmentWithBytes({
         blockId: ctx.blockId,
         filename,
         mimeType,
-        sizeBytes,
-        fsPath,
+        bytes,
       })
       notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
     } catch {

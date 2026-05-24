@@ -73,13 +73,13 @@ vi.mock('../StaticBlock', () => ({
 const mockSaveDraft = vi.fn().mockResolvedValue(undefined)
 const mockDeleteDraft = vi.fn().mockResolvedValue(undefined)
 const mockFlushDraft = vi.fn().mockResolvedValue(undefined)
-const mockAddAttachment = vi.fn().mockResolvedValue({
+const mockAddAttachmentWithBytes = vi.fn().mockResolvedValue({
   id: 'ATT_1',
   block_id: 'BLK_1',
   filename: 'test.png',
   mime_type: 'image/png',
   size_bytes: 7,
-  fs_path: '/tmp/test.png',
+  fs_path: 'attachments/ATT_1',
   created_at: '2024-01-01T00:00:00Z',
 })
 vi.mock('@/lib/tauri', async () => {
@@ -89,7 +89,7 @@ vi.mock('@/lib/tauri', async () => {
     saveDraft: (...args: unknown[]) => mockSaveDraft(...args),
     deleteDraft: (...args: unknown[]) => mockDeleteDraft(...args),
     flushDraft: (...args: unknown[]) => mockFlushDraft(...args),
-    addAttachment: (...args: unknown[]) => mockAddAttachment(...args),
+    addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
   }
 })
 
@@ -1457,10 +1457,12 @@ describe('EditableBlock', () => {
   // ── F-27: Drag-and-drop and paste file attachments ─────────────────
 
   describe('drag-and-drop and paste file attachments', () => {
-    function makeFileWithPath(name: string, type: string, path: string): File {
-      const file = new File(['content'], name, { type })
-      Object.defineProperty(file, 'path', { value: path, writable: false })
-      return file
+    // PEND-76 F2 — the upload path reads the file to bytes and ships them over
+    // IPC; the browser file's absolute path is no longer used. Files carry
+    // real byte content (`'content'` → 7 bytes) so we can assert on the bytes.
+    const CONTENT_BYTES = [99, 111, 110, 116, 101, 110, 116]
+    function makeFile(name: string, type: string): File {
+      return new File(['content'], name, { type })
     }
 
     it('shows drag-over styling when files are dragged over', () => {
@@ -1504,7 +1506,7 @@ describe('EditableBlock', () => {
       expect(wrapper.className).not.toContain('ring-2')
     })
 
-    it('calls addAttachment on file drop', async () => {
+    it('calls addAttachmentWithBytes on file drop', async () => {
       const { container } = render(
         <EditableBlock
           blockId="BLK_1"
@@ -1514,7 +1516,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const file = makeFile('test.png', 'image/png')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1523,13 +1525,14 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'test.png',
         mimeType: 'image/png',
-        sizeBytes: 7,
-        fsPath: '/tmp/test.png',
+        bytes: expect.any(Uint8Array),
       })
+      const arg = mockAddAttachmentWithBytes.mock.calls[0]?.[0] as { bytes: Uint8Array }
+      expect(Array.from(arg.bytes)).toEqual(CONTENT_BYTES)
     })
 
     it('shows success toast after file drop', async () => {
@@ -1542,7 +1545,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const file = makeFile('test.png', 'image/png')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1554,7 +1557,7 @@ describe('EditableBlock', () => {
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('test.png'))
     })
 
-    it('shows error toast when file path is missing', async () => {
+    it('rejects a disallowed file type without calling the add IPC', async () => {
       const { container } = render(
         <EditableBlock
           blockId="BLK_1"
@@ -1564,8 +1567,8 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // File without .path property (no Tauri path)
-      const file = new File(['content'], 'test.png', { type: 'image/png' })
+      // Disallowed MIME type (not on the backend allow-list).
+      const file = makeFile('evil.exe', 'application/x-msdownload')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1574,12 +1577,12 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('file path'))
-      expect(mockAddAttachment).not.toHaveBeenCalled()
+      expect(mockToastError).toHaveBeenCalled()
+      expect(mockAddAttachmentWithBytes).not.toHaveBeenCalled()
     })
 
-    it('shows error toast on addAttachment failure', async () => {
-      mockAddAttachment.mockRejectedValueOnce(new Error('backend error'))
+    it('shows error toast on addAttachmentWithBytes failure', async () => {
+      mockAddAttachmentWithBytes.mockRejectedValueOnce(new Error('backend error'))
 
       const { container } = render(
         <EditableBlock
@@ -1590,7 +1593,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file = makeFileWithPath('test.png', 'image/png', '/tmp/test.png')
+      const file = makeFile('test.png', 'image/png')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1599,12 +1602,11 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'test.png',
         mimeType: 'image/png',
-        sizeBytes: 7,
-        fsPath: '/tmp/test.png',
+        bytes: expect.any(Uint8Array),
       })
       expect(mockToastError).toHaveBeenCalledWith(expect.stringContaining('attach file'))
     })
@@ -1619,7 +1621,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file = makeFileWithPath('screenshot.png', 'image/png', '/tmp/screenshot.png')
+      const file = makeFile('screenshot.png', 'image/png')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1628,12 +1630,11 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'screenshot.png',
         mimeType: 'image/png',
-        sizeBytes: 7,
-        fsPath: '/tmp/screenshot.png',
+        bytes: expect.any(Uint8Array),
       })
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining('screenshot.png'))
     })
@@ -1656,8 +1657,8 @@ describe('EditableBlock', () => {
         })
       })
 
-      // No files in clipboard — addAttachment should NOT be called
-      expect(mockAddAttachment).not.toHaveBeenCalled()
+      // No files in clipboard — the add IPC should NOT be called
+      expect(mockAddAttachmentWithBytes).not.toHaveBeenCalled()
     })
 
     it('passes axe audit in drag-over state (ring-2 feedback)', async () => {
@@ -1683,36 +1684,7 @@ describe('EditableBlock', () => {
       expect(await axe(container)).toHaveNoViolations()
     })
 
-    it('calls addAttachment for each file in a multi-file drop', async () => {
-      mockAddAttachment
-        .mockResolvedValueOnce({
-          id: 'ATT_1',
-          block_id: 'BLK_1',
-          filename: 'photo.jpg',
-          mime_type: 'image/jpeg',
-          size_bytes: 7,
-          fs_path: '/tmp/photo.jpg',
-          created_at: '2024-01-01T00:00:00Z',
-        })
-        .mockResolvedValueOnce({
-          id: 'ATT_2',
-          block_id: 'BLK_1',
-          filename: 'notes.pdf',
-          mime_type: 'application/pdf',
-          size_bytes: 7,
-          fs_path: '/tmp/notes.pdf',
-          created_at: '2024-01-01T00:00:00Z',
-        })
-        .mockResolvedValueOnce({
-          id: 'ATT_3',
-          block_id: 'BLK_1',
-          filename: 'data.csv',
-          mime_type: 'text/csv',
-          size_bytes: 7,
-          fs_path: '/tmp/data.csv',
-          created_at: '2024-01-01T00:00:00Z',
-        })
-
+    it('calls addAttachmentWithBytes for each file in a multi-file drop', async () => {
       const { container } = render(
         <EditableBlock
           blockId="BLK_1"
@@ -1722,9 +1694,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file1 = makeFileWithPath('photo.jpg', 'image/jpeg', '/tmp/photo.jpg')
-      const file2 = makeFileWithPath('notes.pdf', 'application/pdf', '/tmp/notes.pdf')
-      const file3 = makeFileWithPath('data.csv', 'text/csv', '/tmp/data.csv')
+      const file1 = makeFile('photo.jpg', 'image/jpeg')
+      const file2 = makeFile('notes.pdf', 'application/pdf')
+      const file3 = makeFile('data.csv', 'text/csv')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1733,42 +1705,30 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalledTimes(3)
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledTimes(3)
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'photo.jpg',
         mimeType: 'image/jpeg',
-        sizeBytes: 7,
-        fsPath: '/tmp/photo.jpg',
+        bytes: expect.any(Uint8Array),
       })
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'notes.pdf',
         mimeType: 'application/pdf',
-        sizeBytes: 7,
-        fsPath: '/tmp/notes.pdf',
+        bytes: expect.any(Uint8Array),
       })
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: 'data.csv',
         mimeType: 'text/csv',
-        sizeBytes: 7,
-        fsPath: '/tmp/data.csv',
+        bytes: expect.any(Uint8Array),
       })
       expect(mockToastSuccess).toHaveBeenCalledTimes(3)
     })
 
     it('handles drop of file with special characters in name', async () => {
       const specialName = 'café résumé (2).pdf'
-      mockAddAttachment.mockResolvedValueOnce({
-        id: 'ATT_SP',
-        block_id: 'BLK_1',
-        filename: specialName,
-        mime_type: 'application/pdf',
-        size_bytes: 7,
-        fs_path: `/tmp/${specialName}`,
-        created_at: '2024-01-01T00:00:00Z',
-      })
 
       const { container } = render(
         <EditableBlock
@@ -1779,7 +1739,7 @@ describe('EditableBlock', () => {
         />,
       )
 
-      const file = makeFileWithPath(specialName, 'application/pdf', `/tmp/${specialName}`)
+      const file = makeFile(specialName, 'application/pdf')
       const wrapper = container.querySelector('.block-editor') as HTMLElement
 
       await act(async () => {
@@ -1788,12 +1748,11 @@ describe('EditableBlock', () => {
         })
       })
 
-      expect(mockAddAttachment).toHaveBeenCalledWith({
+      expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith({
         blockId: 'BLK_1',
         filename: specialName,
         mimeType: 'application/pdf',
-        sizeBytes: 7,
-        fsPath: `/tmp/${specialName}`,
+        bytes: expect.any(Uint8Array),
       })
       expect(mockToastSuccess).toHaveBeenCalledWith(expect.stringContaining(specialName))
       expect(mockToastError).not.toHaveBeenCalled()

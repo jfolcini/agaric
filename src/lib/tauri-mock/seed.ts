@@ -37,6 +37,11 @@ export const pageAliases: Map<string, string[]> = new Map()
 // Attachment store: attachment_id → AttachmentRow-like object
 export const attachments: Map<string, Record<string, unknown>> = new Map()
 
+// Attachment raw bytes store: attachment_id → byte array (PEND-76 F2). Lets the
+// `add_attachment_with_bytes` / `read_attachment` mock handlers round-trip
+// content so the FE upload→render flow is exercisable under the web mock.
+export const attachmentBytes: Map<string, number[]> = new Map()
+
 // Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
 // computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
 // (it is NOT a `blocks` column), so the mock keeps it in a dedicated store

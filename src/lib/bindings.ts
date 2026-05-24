@@ -420,6 +420,16 @@ export const commands = {
 	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
 	addAttachment: (blockId: string, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
+	/**
+	 *  Tauri command: add an attachment from raw bytes. Delegates to
+	 *  [`add_attachment_with_bytes_inner`].
+	 */
+	addAttachmentWithBytes: (blockId: string, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
+	/**
+	 *  Tauri command: read an attachment's raw bytes. Delegates to
+	 *  [`read_attachment_inner`].
+	 */
+	readAttachment: (attachmentId: string) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
 	/**  Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`]. */
 	deleteAttachment: (attachmentId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
 	/**  Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`]. */

@@ -15,6 +15,7 @@ import { matchesSearchFolded } from '../fold-for-search'
 import { logger } from '../logger'
 import { applyRevertForOp } from './revert'
 import {
+  attachmentBytes,
   attachments,
   blocks,
   blockTags,
@@ -2780,9 +2781,37 @@ export const HANDLERS: Record<string, Handler> = {
     return row
   },
 
+  // PEND-76 F2 — bytes-over-IPC add. Stores the raw bytes so `read_attachment`
+  // can round-trip them; fs_path is backend-generated under attachments/.
+  add_attachment_with_bytes: (args) => {
+    const a = args as Record<string, unknown>
+    const bytes = (a['bytes'] as number[]) ?? []
+    const id = fakeId()
+    const row = {
+      id,
+      block_id: a['blockId'] as string,
+      filename: a['filename'] as string,
+      mime_type: a['mimeType'] as string,
+      size_bytes: bytes.length,
+      fs_path: `attachments/${id}`,
+      created_at: new Date().toISOString(),
+    }
+    attachments.set(id, row)
+    attachmentBytes.set(id, bytes)
+    return row
+  },
+
+  // PEND-76 F2 — bytes-over-IPC read. Returns the stored byte array.
+  read_attachment: (args) => {
+    const a = args as Record<string, unknown>
+    return attachmentBytes.get(a['attachmentId'] as string) ?? []
+  },
+
   delete_attachment: (args) => {
     const a = args as Record<string, unknown>
-    attachments.delete(a['attachmentId'] as string)
+    const id = a['attachmentId'] as string
+    attachments.delete(id)
+    attachmentBytes.delete(id)
     return null
   },
 

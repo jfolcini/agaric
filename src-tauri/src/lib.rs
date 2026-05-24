@@ -186,6 +186,8 @@ macro_rules! agaric_commands {
             $crate::commands::pages::import_markdown,
             // Attachments (F-7)
             $crate::commands::attachments::add_attachment,
+            $crate::commands::attachments::add_attachment_with_bytes,
+            $crate::commands::attachments::read_attachment,
             $crate::commands::attachments::delete_attachment,
             $crate::commands::attachments::list_attachments,
             $crate::commands::attachments::list_attachments_batch,

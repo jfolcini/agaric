@@ -18,8 +18,8 @@ import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
-import { extractFileInfo } from '../lib/file-utils'
-import { addAttachment } from '../lib/tauri'
+import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '../lib/file-utils'
+import { addAttachmentWithBytes } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
 import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
@@ -50,22 +50,25 @@ function persistUnmount(
 
 /**
  * Shared attachment-processing loop used by both handleDrop and handlePaste.
- * Extracts file info, calls addAttachment, and shows success/error toasts.
+ * Validates MIME + size, reads the file to bytes, calls
+ * `addAttachmentWithBytes` (PEND-76 F2 — backend is the sole writer), and
+ * shows success/error toasts.
  */
 async function processFileAttachments(files: File[], blockId: string, t: TFunction): Promise<void> {
   for (const file of files) {
     const info = extractFileInfo(file)
-    if (!info.fsPath) {
-      notify.error(t('blockTree.filePathReadFailed'))
+    const allowed = isAttachmentAllowed(info.mimeType, info.sizeBytes)
+    if (!allowed.ok) {
+      notify.error(t(allowed.reason))
       continue
     }
     try {
-      await addAttachment({
+      const bytes = await readFileBytes(file)
+      await addAttachmentWithBytes({
         blockId,
         filename: info.filename,
         mimeType: info.mimeType,
-        sizeBytes: info.sizeBytes,
-        fsPath: info.fsPath,
+        bytes,
       })
       notify.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
     } catch (err) {

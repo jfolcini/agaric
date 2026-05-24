@@ -4581,7 +4581,7 @@ describe('BlockTree /attach slash command', () => {
     vi.restoreAllMocks()
   })
 
-  it('/attach calls addAttachment on file selection with path', async () => {
+  it('/attach calls add_attachment_with_bytes on file selection', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
@@ -4592,7 +4592,7 @@ describe('BlockTree /attach slash command', () => {
       filename: 'test.pdf',
       mime_type: 'application/pdf',
       size_bytes: 1024,
-      fs_path: '/tmp/test.pdf',
+      fs_path: 'attachments/att-1',
       created_at: '2025-01-01',
     })
 
@@ -4622,9 +4622,11 @@ describe('BlockTree /attach slash command', () => {
 
     expect(capturedInput).not.toBeNull()
 
-    // Simulate a file selection with a Tauri-style File that has a .path property
-    const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
-    Object.defineProperty(mockFile, 'path', { value: '/tmp/test.pdf' })
+    // PEND-76 F2 — the upload path now reads the file to bytes and ships them
+    // over IPC; the browser file's absolute path is no longer used.
+    const mockFile = new File([new Uint8Array([1, 2, 3, 4])], 'test.pdf', {
+      type: 'application/pdf',
+    })
     // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
@@ -4633,18 +4635,17 @@ describe('BlockTree /attach slash command', () => {
       capturedInput!.onchange?.(new Event('change'))
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
       blockId: 'A',
       filename: 'test.pdf',
       mimeType: 'application/pdf',
-      sizeBytes: 7,
-      fsPath: '/tmp/test.pdf',
+      bytes: [1, 2, 3, 4],
     })
 
     vi.restoreAllMocks()
   })
 
-  it('/attach shows error toast when file has no path', async () => {
+  it('/attach rejects a disallowed file type without calling the add IPC', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
@@ -4677,8 +4678,10 @@ describe('BlockTree /attach slash command', () => {
       capturedOnSlashCommand?.({ id: 'attach', label: 'ATTACH — Attach file to block' })
     })
 
-    // Simulate a file selection WITHOUT .path (regular browser environment)
-    const mockFile = new File(['content'], 'test.pdf', { type: 'application/pdf' })
+    // Disallowed MIME type (not on the backend allow-list).
+    const mockFile = new File([new Uint8Array([0, 1])], 'evil.exe', {
+      type: 'application/x-msdownload',
+    })
     // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
@@ -4687,8 +4690,8 @@ describe('BlockTree /attach slash command', () => {
       capturedInput!.onchange?.(new Event('change'))
     })
 
-    // Should NOT call add_attachment since there's no fsPath
-    expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment', expect.anything())
+    // Should NOT ship bytes for a disallowed type.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
 
     vi.restoreAllMocks()
   })
@@ -4732,8 +4735,7 @@ describe('BlockTree /attach slash command', () => {
     })
 
     // File with no type — guessMimeType should be used
-    const mockFile = new File(['data'], 'photo.png', { type: '' })
-    Object.defineProperty(mockFile, 'path', { value: '/tmp/photo.png' })
+    const mockFile = new File([new Uint8Array([9, 9, 9, 9])], 'photo.png', { type: '' })
     // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
@@ -4742,12 +4744,11 @@ describe('BlockTree /attach slash command', () => {
       capturedInput!.onchange?.(new Event('change'))
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
       blockId: 'A',
       filename: 'photo.png',
       mimeType: 'image/png',
-      sizeBytes: 4,
-      fsPath: '/tmp/photo.png',
+      bytes: [9, 9, 9, 9],
     })
 
     vi.restoreAllMocks()

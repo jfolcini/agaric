@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { extractFileInfo, guessMimeType } from '../file-utils'
+import {
+  extractFileInfo,
+  guessMimeType,
+  isAttachmentAllowed,
+  MAX_ATTACHMENT_BYTES,
+  readFileBytes,
+} from '../file-utils'
 
 describe('guessMimeType', () => {
   it('returns correct MIME type for common image extensions', () => {
@@ -91,5 +97,66 @@ describe('extractFileInfo', () => {
     const file = new File(['data'], 'doc.txt', { type: 'text/html' })
     const info = extractFileInfo(file)
     expect(info.mimeType).toBe('text/html')
+  })
+})
+
+describe('isAttachmentAllowed', () => {
+  it('accepts image/* subtypes', () => {
+    expect(isAttachmentAllowed('image/png', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('image/jpeg', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('image/svg+xml', 1024)).toEqual({ ok: true })
+  })
+
+  it('accepts text/* subtypes', () => {
+    expect(isAttachmentAllowed('text/plain', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('text/markdown', 1024)).toEqual({ ok: true })
+  })
+
+  it('accepts the exact application allow-list', () => {
+    expect(isAttachmentAllowed('application/pdf', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('application/json', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('application/zip', 1024)).toEqual({ ok: true })
+    expect(isAttachmentAllowed('application/x-tar', 1024)).toEqual({ ok: true })
+  })
+
+  it('rejects disallowed MIME types with a reason', () => {
+    const result = isAttachmentAllowed('application/octet-stream', 1024)
+    expect(result.ok).toBe(false)
+    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTypeNotAllowed' })
+  })
+
+  it('rejects other disallowed application subtypes', () => {
+    expect(isAttachmentAllowed('application/x-msdownload', 1024).ok).toBe(false)
+    expect(isAttachmentAllowed('video/mp4', 1024).ok).toBe(false)
+    expect(isAttachmentAllowed('audio/mpeg', 1024).ok).toBe(false)
+  })
+
+  it('accepts a file exactly at the size cap', () => {
+    expect(isAttachmentAllowed('image/png', MAX_ATTACHMENT_BYTES)).toEqual({ ok: true })
+  })
+
+  it('rejects oversize files (over 50 MB) with a reason', () => {
+    const result = isAttachmentAllowed('image/png', MAX_ATTACHMENT_BYTES + 1)
+    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTooLarge' })
+  })
+
+  it('checks MIME before size (disallowed + oversize reports type reason)', () => {
+    const result = isAttachmentAllowed('video/mp4', MAX_ATTACHMENT_BYTES + 1)
+    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTypeNotAllowed' })
+  })
+})
+
+describe('readFileBytes', () => {
+  it('reads a File into a Uint8Array of its bytes', async () => {
+    const file = new File([new Uint8Array([1, 2, 3, 4])], 'data.bin')
+    const bytes = await readFileBytes(file)
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    expect(Array.from(bytes)).toEqual([1, 2, 3, 4])
+  })
+
+  it('reads text content as UTF-8 bytes', async () => {
+    const file = new File(['AB'], 'note.txt', { type: 'text/plain' })
+    const bytes = await readFileBytes(file)
+    expect(Array.from(bytes)).toEqual([65, 66])
   })
 })

@@ -13,9 +13,11 @@ FIXED (propagation residual deferred — see F1 block). **F4 FIXED** (orphan-tag
 adoption in `add_tag`). **F5 FIXED** (referential cross-space enforcement wired into
 set_property/create/edit). **F3 deferred** with a concrete finding (the empty
 `peer_refs` row is load-bearing for post-pairing daemon activation; removing it
-breaks first-pairing sync — needs a design change, see F3 block). **F2** (complete
-the attachment feature) remains — its own focused effort. F1's propagation residual
-and F5's bulk-import/sync-ingress gating are documented follow-ups.
+breaks first-pairing sync — needs a design change, see F3 block). **F2** (attachment
+feature) — done via **bytes-over-IPC** (backend + IPC plumbing + FE wiring); needs a
+real-Tauri smoke test, and the purge file-leak + large-file IPC efficiency are
+deferred follow-ups (see F2 block). **F3 remains.** F1's propagation residual and
+F5's bulk-import/sync-ingress gating are documented follow-ups.
 
 ---
 
@@ -136,6 +138,41 @@ not-yet-shipped.** Sub-items if pursued:
   mp4/mov/mp3/wav/docx/xlsx; backend allow-list (`commands/mod.rs:377-384`) permits
   only image/pdf/text/json/zip/tar, with no FE pre-validation of MIME or the 50 MB
   cap → confusing generic failure. Share the allow-list + cap with the FE.
+
+**Status (2026-05-24) — approach: bytes-over-IPC (not plugin-fs).** Decided with the
+maintainer: rather than the originally-sketched plugin-fs + assetProtocol path, the
+backend is the **sole writer** and bytes cross the IPC boundary. This avoids a new
+native dep + Tauri capability/assetProtocol config, keeps all attachment storage in
+one place, and is testable (no runtime-only config).
+
+✅ **Backend + IPC plumbing DONE.** New commands `add_attachment_with_bytes`
+(FE → bytes → backend writes under `attachments/<ULID>` then delegates to
+`add_attachment_inner`; cleans up the file on any rejection) and `read_attachment`
+(returns the raw bytes; the render path wraps them in a `blob:` URL — CSP already
+allows `blob:`). Registered in `lib.rs`, exposed via `bindings.ts` + `tauri.ts`
+wrappers (`addAttachmentWithBytes`/`readAttachment`) + tauri-mock handlers. Tests:
+`add_attachment_with_bytes_writes_persists_and_reads_back`,
+`add_attachment_with_bytes_rejects_disallowed_mime_without_writing`,
+`add_attachment_with_bytes_cleans_up_when_block_missing`,
+`read_attachment_missing_id_is_not_found` (block_cmd_tests.rs).
+
+🔧 **FE UI wiring (in this batch).** Upload sites (`EditableBlock`,
+`useSlashCommandProperty`) read the file to bytes + pre-validate MIME/size (closes
+the MIME-divergence MINOR) → `addAttachmentWithBytes`; `AttachmentRenderer` renders
+via `readAttachment` + a revoked `blob:` URL.
+
+⚠️ **Needs a real-Tauri smoke test.** The web/vitest harness mocks IPC, so the
+actual upload→write→read→render round-trip in a packaged build (real
+`app_data_dir`, real file bytes) must be confirmed manually before relying on it.
+
+⏳ **Deferred follow-ups:** (a) **single-block purge file-leak** — the *correct* fix
+threads `app_data_dir` into `purge_block_inner` (~22 callers) and uses
+`app_data_dir.join(&fs_path)` like `delete_attachment_inner`; "mirror the bulk
+pattern" is itself suspect because the bulk unlink does a relative `remove_file`
+(no `app_data_dir` join) that only works if CWD == app_data_dir — its own cleanup,
+ideally reconciling all purge paths. (b) **large-file IPC efficiency** — bytes go
+over IPC as a JSON `number[]`; fine for typical images, heavy near the 50 MB cap.
+A later optimization could use Tauri's raw `ipc::Request`/`Response`.
 
 ## F3 — Pairing writes a junk empty-string `peer_refs` row (MAJOR — contract/wiring)
 

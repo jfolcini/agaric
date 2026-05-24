@@ -53,3 +53,59 @@ export function extractFileInfo(file: File): {
     fsPath: (file as File & { path?: string }).path ?? null,
   }
 }
+
+/**
+ * Maximum attachment size accepted by the backend (PEND-76 F2) — 50 MB.
+ * Mirrors the Rust-side cap; keep the two in sync.
+ */
+export const MAX_ATTACHMENT_BYTES = 52_428_800
+
+/**
+ * MIME types the backend accepts for bytes-over-IPC attachments (PEND-76 F2).
+ * Anything outside this allow-list is rejected server-side; we mirror the
+ * check client-side so the UI can fail fast with a clear message instead of
+ * round-tripping bytes only to have the IPC reject them.
+ *
+ * Prefix entries (ending in `/`) match any subtype under that top-level type.
+ */
+const ALLOWED_MIME_PREFIXES = ['image/', 'text/'] as const
+const ALLOWED_MIME_EXACT = [
+  'application/pdf',
+  'application/json',
+  'application/zip',
+  'application/x-tar',
+] as const
+
+/** Whether a MIME type is on the backend attachment allow-list. */
+function isMimeAllowed(mimeType: string): boolean {
+  return (
+    ALLOWED_MIME_PREFIXES.some((prefix) => mimeType.startsWith(prefix)) ||
+    (ALLOWED_MIME_EXACT as readonly string[]).includes(mimeType)
+  )
+}
+
+/**
+ * Pure validator mirroring the backend attachment allow-list + size cap
+ * (PEND-76 F2). Returns a discriminated result so callers can surface the
+ * `reason` directly in a toast.
+ *
+ * The `reason` strings are i18n keys (resolved by the caller via `t()`),
+ * not user-facing English.
+ */
+export function isAttachmentAllowed(
+  mimeType: string,
+  sizeBytes: number,
+): { ok: true } | { ok: false; reason: string } {
+  if (!isMimeAllowed(mimeType)) {
+    return { ok: false, reason: 'blockTree.attachmentTypeNotAllowed' }
+  }
+  if (sizeBytes > MAX_ATTACHMENT_BYTES) {
+    return { ok: false, reason: 'blockTree.attachmentTooLarge' }
+  }
+  return { ok: true }
+}
+
+/** Read a browser `File` into a `Uint8Array` for bytes-over-IPC upload. */
+export async function readFileBytes(file: File): Promise<Uint8Array> {
+  return new Uint8Array(await file.arrayBuffer())
+}

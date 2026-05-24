@@ -165,6 +165,139 @@ pub async fn add_attachment_inner(
     })
 }
 
+/// Add an attachment by passing the raw file bytes over IPC (PEND-76 F2).
+///
+/// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
+/// them to this command; the **backend is the sole writer** — it generates the
+/// storage path, writes the bytes under `app_data_dir/attachments/`, then
+/// delegates to [`add_attachment_inner`] for the size/MIME/existence validation
+/// + op-log + row insert. This avoids the FE-writes-then-backend-stats handshake
+/// (and the orphaned-file-on-rejection race) of a filesystem-plugin design.
+///
+/// On any failure from the delegate, the freshly-written bytes are unlinked so a
+/// rejected upload never leaks a file on disk.
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
+/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
+/// - [`AppError::Io`] — writing the bytes to disk failed
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer, app_data_dir, bytes), err)]
+pub async fn add_attachment_with_bytes_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    app_data_dir: &Path,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+) -> Result<AttachmentRow, AppError> {
+    let size_bytes = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+
+    // Pre-validate size + MIME BEFORE writing anything, so a rejected upload
+    // never touches the disk. `add_attachment_inner` re-checks (cheap).
+    if size_bytes > MAX_ATTACHMENT_SIZE {
+        return Err(AppError::Validation(format!(
+            "attachment size {} bytes exceeds maximum {} bytes (50 MB)",
+            size_bytes, MAX_ATTACHMENT_SIZE
+        )));
+    }
+    if !is_mime_allowed(&mime_type) {
+        return Err(AppError::Validation(format!(
+            "MIME type '{}' is not allowed; permitted: image/*, application/pdf, text/*, \
+             application/json, application/zip, application/x-tar",
+            mime_type
+        )));
+    }
+
+    // Backend-generated relative storage path — the FE never supplies one.
+    let storage_id = ulid::Ulid::new().to_string().to_uppercase();
+    let fs_path = format!("attachments/{storage_id}");
+
+    // Write the bytes first (creates the attachments dir). `write_attachment_file`
+    // is synchronous std::fs; run it on the blocking pool so a large write does
+    // not stall the async runtime (PEND-20 H rationale).
+    {
+        let dir = app_data_dir.to_path_buf();
+        let path = fs_path.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::sync_files::write_attachment_file(&dir, &path, &bytes)
+        })
+        .await
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
+    }
+
+    // Delegate for validation + op-log + row insert. On ANY failure, unlink the
+    // bytes we just wrote so a rejected upload leaves nothing behind.
+    match add_attachment_inner(
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        block_id,
+        filename,
+        mime_type,
+        size_bytes,
+        fs_path.clone(),
+    )
+    .await
+    {
+        Ok(row) => Ok(row),
+        Err(e) => {
+            let full_path = app_data_dir.join(&fs_path);
+            match tokio::fs::remove_file(&full_path).await {
+                Ok(()) => {}
+                Err(unlink_err) if unlink_err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(unlink_err) => {
+                    tracing::warn!(
+                        path = %full_path.display(),
+                        error = %unlink_err,
+                        "failed to clean up attachment bytes after add_attachment rejection; \
+                         will be reconciled by the GC pass"
+                    );
+                }
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Read an attachment's raw bytes by ID (PEND-76 F2).
+///
+/// The render path calls this and wraps the bytes in a `blob:` URL (the CSP
+/// permits `blob:`), avoiding the asset protocol entirely.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — attachment row does not exist
+/// - [`AppError::Io`] — the file is missing on disk or unreadable
+/// - [`AppError::Validation`] — the stored `fs_path` is malformed (BUG-35 guard)
+#[instrument(skip(pool, app_data_dir), err)]
+pub async fn read_attachment_inner(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    attachment_id: String,
+) -> Result<Vec<u8>, AppError> {
+    let fs_path = sqlx::query_scalar!(
+        "SELECT fs_path FROM attachments WHERE id = ?",
+        attachment_id
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("attachment '{attachment_id}'")))?;
+
+    // Synchronous std::fs read on the blocking pool (PEND-20 H).
+    let dir = app_data_dir.to_path_buf();
+    let (bytes, _hash) = tokio::task::spawn_blocking(move || {
+        crate::sync_files::read_attachment_file(&dir, &fs_path)
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
+    Ok(bytes)
+}
+
 /// Delete an attachment by its ID.
 ///
 /// Validates the attachment exists, appends a `DeleteAttachment` op (carrying
@@ -394,6 +527,59 @@ pub async fn add_attachment(
     )
     .await
     .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: add an attachment from raw bytes. Delegates to
+/// [`add_attachment_with_bytes_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+#[allow(clippy::too_many_arguments)]
+pub async fn add_attachment_with_bytes(
+    app: tauri::AppHandle,
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_id: String,
+    filename: String,
+    mime_type: String,
+    bytes: Vec<u8>,
+) -> Result<AttachmentRow, AppError> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    add_attachment_with_bytes_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        &app_data_dir,
+        block_id,
+        filename,
+        mime_type,
+        bytes,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: read an attachment's raw bytes. Delegates to
+/// [`read_attachment_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn read_attachment(
+    app: tauri::AppHandle,
+    pool: State<'_, ReadPool>,
+    attachment_id: String,
+) -> Result<Vec<u8>, AppError> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
+    read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`].
