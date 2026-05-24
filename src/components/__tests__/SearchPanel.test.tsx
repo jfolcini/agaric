@@ -729,6 +729,119 @@ describe('SearchPanel', () => {
     })
   })
 
+  // FE-4 — `navGenerationRef` guard. Clicking result B while result A's
+  // `getBlock(parent_id)` is still in flight must let B win: when A's
+  // (older) lookup finally resolves it is superseded and must NOT navigate
+  // nor clobber the spinner. Determinism comes from controlled deferreds —
+  // A's `get_block` is resolved *after* B's and only after B has already
+  // navigated, so there's no timing race.
+  it('a stale result click does not supersede a newer one (navGenerationRef guard)', async () => {
+    const user = userEvent.setup()
+
+    // Two results in two distinct pages so both rows render and each owns a
+    // separate parent lookup.
+    mockedInvoke.mockImplementationOnce(async () => ({
+      items: [
+        makeSearchResult({
+          id: 'CHILD_A',
+          parent_id: 'PARENT_A',
+          page_id: 'PARENT_A',
+          content: 'content A',
+          block_type: 'content',
+        }),
+        makeSearchResult({
+          id: 'CHILD_B',
+          parent_id: 'PARENT_B',
+          page_id: 'PARENT_B',
+          content: 'content B',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+
+    // Controlled deferreds for the two parent lookups, keyed by blockId.
+    let resolveA!: (v: unknown) => void
+    let resolveB!: (v: unknown) => void
+    const pendingA = new Promise((res) => {
+      resolveA = res
+    })
+    const pendingB = new Promise((res) => {
+      resolveB = res
+    })
+    const parentA = {
+      id: 'PARENT_A',
+      block_type: 'page',
+      content: 'Parent A Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+    }
+    const parentB = {
+      id: 'PARENT_B',
+      block_type: 'page',
+      content: 'Parent B Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'get_block') {
+        const blockId = (args as { blockId?: string } | undefined)?.blockId
+        if (blockId === 'PARENT_A') return pendingA
+        if (blockId === 'PARENT_B') return pendingB
+      }
+      return emptyPage
+    })
+
+    // Count navigations by wrapping the store action the hook reads at render.
+    const realNavigate = useTabsStore.getState().navigateToPage
+    const navigateSpy = vi.fn(realNavigate)
+    useTabsStore.setState({ navigateToPage: navigateSpy })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'content')
+
+    await waitFor(() => {
+      expect(screen.getByText(textContent('content A'))).toBeInTheDocument()
+      expect(screen.getByText(textContent('content B'))).toBeInTheDocument()
+    })
+
+    // Click A (gen 1) then B (gen 2). Both parent lookups are now in flight.
+    await user.click(screen.getByText(textContent('content A')))
+    await user.click(screen.getByText(textContent('content B')))
+
+    // Resolve B (the newer click) first — it owns the latest generation.
+    await act(async () => {
+      resolveB(parentB)
+      await pendingB
+    })
+
+    await waitFor(() => {
+      expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT_B')
+    })
+
+    // Now resolve A (the stale click) — its generation is superseded, so it
+    // must NOT navigate (page stack stays on B) nor re-trigger navigation.
+    await act(async () => {
+      resolveA(parentA)
+      await pendingA
+    })
+
+    // Give any (incorrect) follow-up navigation a chance to land.
+    await Promise.resolve()
+
+    // Exactly one navigation occurred, and it landed on B's parent.
+    expect(navigateSpy).toHaveBeenCalledTimes(1)
+    expect(navigateSpy).toHaveBeenCalledWith('PARENT_B', 'Parent B Title', 'CHILD_B')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT_B')
+  })
+
   // =========================================================================
   // REVIEW-LATER #58: Edge-case tests for SearchPanel
   // =========================================================================

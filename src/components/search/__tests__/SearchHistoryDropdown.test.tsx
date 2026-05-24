@@ -74,14 +74,16 @@ describe('SearchHistoryDropdown', () => {
     expect(onClear).toHaveBeenCalled()
   })
 
-  it('Enter / Space on a row triggers onPick', () => {
+  it('Enter / Space on a row triggers onPick', async () => {
+    const user = userEvent.setup()
     const onPick = vi.fn()
     renderDropdown({ entries: ['alpha'], onPick })
     const row = screen.getByTestId('search-history-entry-0')
     row.focus()
-    // userEvent's keyboard sends Enter to focused element — match the
-    // dispatch behaviour expected by listbox option a11y.
-    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    // userEvent's keyboard sends Enter to the focused element — match the
+    // dispatch behaviour expected by listbox option a11y, consistent with
+    // the other userEvent-based interaction tests in this file.
+    await user.keyboard('{Enter}')
     expect(onPick).toHaveBeenCalledWith('alpha')
   })
 

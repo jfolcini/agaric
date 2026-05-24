@@ -176,3 +176,36 @@ describe('coerceBySpace', () => {
     expect(coerceBySpace({ A: many })['A']).toHaveLength(MAX_HISTORY)
   })
 })
+
+// FE-14 — `migrate` hydration seam. The persist `migrate` callback runs
+// before merge on every load; it must coerce `bySpace` *and* fall back to
+// `historyEnabled: true` for corrupt / missing persisted toggle values
+// (and preserve a legitimate `false`).
+describe('persist migrate — historyEnabled fallback', () => {
+  // `migrate` is wired into the persist middleware (not exported), so we
+  // reach it through the same public seam zustand uses on rehydrate.
+  const migrate = useSearchHistoryStore.persist.getOptions().migrate
+
+  it('is wired into the persist options', () => {
+    expect(typeof migrate).toBe('function')
+  })
+
+  it('falls back to true when persisted historyEnabled is a non-boolean', () => {
+    const result = migrate?.({ bySpace: {}, historyEnabled: 'yes' }, 0) as {
+      historyEnabled: boolean
+    }
+    expect(result.historyEnabled).toBe(true)
+  })
+
+  it('falls back to true when historyEnabled is missing from the blob', () => {
+    const result = migrate?.({ bySpace: {} }, 0) as { historyEnabled: boolean }
+    expect(result.historyEnabled).toBe(true)
+  })
+
+  it('preserves a legitimately-persisted historyEnabled: false', () => {
+    const result = migrate?.({ bySpace: {}, historyEnabled: false }, 0) as {
+      historyEnabled: boolean
+    }
+    expect(result.historyEnabled).toBe(false)
+  })
+})
