@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
 import { cn } from '@/lib/utils'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
@@ -385,9 +386,9 @@ export function AgendaResults({
             keeps the listitem axe rule happy in both flat and grouped
             modes without re-wrapping `BlockListItem` in an extra `<li>`
             (which would also have failed the rule for nested `<li>`s). */}
-        <div
-          ref={scrollParentRef}
-          className="agenda-results-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+        <ScrollArea
+          viewportRef={scrollParentRef}
+          viewportClassName="agenda-results-scroll max-h-[calc(100dvh-260px)]"
         >
           <ul
             className="agenda-results-list relative m-0 p-0 list-none"
@@ -442,7 +443,7 @@ export function AgendaResults({
               return renderItem(row.block, row.flatItemIndex, virtualRow)
             })}
           </ul>
-        </div>
+        </ScrollArea>
 
         {/* Load more */}
         <LoadMoreButton

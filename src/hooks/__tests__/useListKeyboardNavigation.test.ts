@@ -430,6 +430,107 @@ describe('useListKeyboardNavigation', () => {
     expect(result.current.focusedIndex).toBe(0)
   })
 
+  // FE-A8 — with a `resetKey` (the logical-list identity, e.g. the search
+  // query), a plain `itemCount` change must CLAMP focus into the new range
+  // rather than snapping it back to 0. Only a `resetKey` change resets to 0.
+  describe('resetKey (FE-A8): query-change reset vs itemCount clamp', () => {
+    it('clamps (does NOT reset) focusedIndex when itemCount shrinks — group collapse', () => {
+      const { result, rerender } = renderHook(
+        ({ itemCount }) => useListKeyboardNavigation({ itemCount, resetKey: 'query-1' }),
+        { initialProps: { itemCount: 10 } },
+      )
+
+      // Move focus to index 7.
+      act(() => {
+        for (let i = 0; i < 7; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(7)
+
+      // A group collapses → itemCount shrinks to 5 (query unchanged).
+      // Focus must clamp to the new last index (4), NOT reset to 0.
+      rerender({ itemCount: 5 })
+      expect(result.current.focusedIndex).toBe(4)
+    })
+
+    it('retains focusedIndex when itemCount grows — Load-More', () => {
+      const { result, rerender } = renderHook(
+        ({ itemCount }) => useListKeyboardNavigation({ itemCount, resetKey: 'query-1' }),
+        { initialProps: { itemCount: 5 } },
+      )
+
+      // Move focus to index 3.
+      act(() => {
+        for (let i = 0; i < 3; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(3)
+
+      // Load-More appends rows → itemCount grows to 12 (query unchanged).
+      // Focus stays exactly where the user left it (3), not reset to 0.
+      rerender({ itemCount: 12 })
+      expect(result.current.focusedIndex).toBe(3)
+    })
+
+    it('resets focusedIndex to 0 when the resetKey (query) changes', () => {
+      const { result, rerender } = renderHook(
+        ({ itemCount, resetKey }) => useListKeyboardNavigation({ itemCount, resetKey }),
+        { initialProps: { itemCount: 10, resetKey: 'query-1' } },
+      )
+
+      // Move focus to index 6.
+      act(() => {
+        for (let i = 0; i < 6; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(6)
+
+      // New query → resetKey changes → reset to 0 (even though itemCount
+      // also changes here, as it does on a real new search).
+      rerender({ itemCount: 8, resetKey: 'query-2' })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('does not reset on the initial render even though resetKey is set', () => {
+      const { result } = renderHook(() =>
+        useListKeyboardNavigation({ itemCount: 5, resetKey: 'query-1' }),
+      )
+      // Initial focus is 0; the resetKey effect must not fight that.
+      expect(result.current.focusedIndex).toBe(0)
+      act(() => {
+        result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(1)
+    })
+
+    it('clamp parks focus at 0 when itemCount drops to 0 (keyed)', () => {
+      const { result, rerender } = renderHook(
+        ({ itemCount }) => useListKeyboardNavigation({ itemCount, resetKey: 'query-1' }),
+        { initialProps: { itemCount: 5 } },
+      )
+      act(() => {
+        for (let i = 0; i < 3; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(3)
+
+      rerender({ itemCount: 0 })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+
+    it('without resetKey, itemCount change still resets to 0 (legacy contract preserved)', () => {
+      // Guards the in-place-filter consumers (CodeLanguageSelector,
+      // HistoryView) that rely on reset-to-0 and pass NO resetKey.
+      const { result, rerender } = renderHook(
+        ({ itemCount }) => useListKeyboardNavigation({ itemCount }),
+        { initialProps: { itemCount: 10 } },
+      )
+      act(() => {
+        for (let i = 0; i < 4; i++) result.current.handleKeyDown(keyEvent('ArrowDown'))
+      })
+      expect(result.current.focusedIndex).toBe(4)
+
+      rerender({ itemCount: 6 })
+      expect(result.current.focusedIndex).toBe(0)
+    })
+  })
+
   describe('horizontal mode', () => {
     it('ArrowRight increments in horizontal mode', () => {
       const { result } = renderHook(() =>

@@ -115,7 +115,10 @@ pub struct SyncOrchestrator {
     /// [`crate::sync_protocol::loro_sync::apply_remote`] (which writes
     /// the SQL projection inside its own tx) and does not need to
     /// enqueue materializer tasks.
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "held for API stability; the loro-sync receiver path applies engine state directly and never enqueues materializer tasks"
+    )]
     materializer: Materializer,
     pub(crate) state: SyncState,
     session: SyncSession,

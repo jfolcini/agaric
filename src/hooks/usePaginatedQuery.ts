@@ -63,7 +63,7 @@ export interface UsePaginatedQueryResult<T> {
 }
 
 export function usePaginatedQuery<T>(
-  queryFn: (cursor?: string) => Promise<PaginatedResponse<T>>,
+  queryFn: (cursor?: string, signal?: AbortSignal) => Promise<PaginatedResponse<T>>,
   options?: UsePaginatedQueryOptions,
 ): UsePaginatedQueryResult<T> {
   const [items, setItems] = useState<T[]>([])
@@ -74,6 +74,13 @@ export function usePaginatedQuery<T>(
   const [capped, setCapped] = useState(false)
   const [totalCount, setTotalCount] = useState<number | undefined>(undefined)
   const requestIdRef = useRef(0)
+  // PEND-58f FE-2 — controller for the in-flight request. Each `load()`
+  // aborts the previous controller so a superseded search (newer
+  // keystroke, filter change, `loadMore` race) stops waiting on its IPC
+  // and any AbortSignal-aware `queryFn` can drop the prior request. The
+  // request-id guard above already discards stale *values*; this aborts
+  // the stale *promise* so it never resolves into the catch as an error.
+  const abortRef = useRef<AbortController | null>(null)
 
   // Store options in a ref so `load` only depends on `queryFn`.
   const optionsRef = useRef(options)
@@ -82,9 +89,14 @@ export function usePaginatedQuery<T>(
   const load = useCallback(
     async (cursor?: string) => {
       const rid = ++requestIdRef.current
+      // Abort whatever was in flight, then arm a fresh controller for
+      // this request and hand its signal to the query.
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
       setLoading(true)
       try {
-        const resp = await queryFn(cursor)
+        const resp = await queryFn(cursor, controller.signal)
         if (requestIdRef.current !== rid) return
         if (cursor) {
           const maxItems = optionsRef.current?.maxItems ?? 5000
@@ -132,6 +144,18 @@ export function usePaginatedQuery<T>(
   // Only call load() when enabled — this lets callers gate auto-fetch.
   const enabled = options?.enabled ?? true
   useEffect(() => {
+    // FE-1 — invalidate any in-flight request whenever deps change or
+    // `enabled` flips. Without this, disabling the query (e.g. the user
+    // cleared the input) skips `load()`, so `requestIdRef` is never
+    // bumped and the prior request's late response still passes its
+    // stale-id guard and repopulates the just-cleared list.
+    requestIdRef.current++
+    // PEND-58f FE-2 — alongside the request-id bump, abort the prior
+    // in-flight request so its IPC stops being awaited. `load()` (when
+    // `enabled`) arms a fresh controller; the `!enabled` early-return
+    // below leaves it aborted, which is correct — there is nothing to
+    // wait for once the query is disabled.
+    abortRef.current?.abort()
     setNextCursor(null)
     setHasMore(false)
     setCapped(false)
@@ -139,9 +163,24 @@ export function usePaginatedQuery<T>(
     // previous queryFn doesn't briefly drive an "X of Y" chip
     // against a fresh, unrelated result set.
     setTotalCount(undefined)
-    if (!enabled) return
+    if (!enabled) {
+      // The discarded in-flight request's `finally` won't clear loading
+      // (its rid no longer matches), so clear it here.
+      setLoading(false)
+      return
+    }
     load()
   }, [load, enabled])
+
+  // PEND-58f FE-2 — abort the in-flight request on unmount. Kept in its
+  // own mount-only effect (empty deps) so it does NOT tear down the
+  // controller that the deps-change effect above just armed; that effect
+  // already aborts the prior request before re-arming.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+    }
+  }, [])
 
   const loadMore = useCallback(() => {
     if (nextCursor && !loading) load(nextCursor)

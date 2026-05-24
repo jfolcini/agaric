@@ -27,6 +27,10 @@
  * a coordinated change rather than a silent drift):
  *
  *   - `listBlocks`              → 100  (`list_blocks_inner`)
+ *   - `searchBlocks`            → 100  (`search_blocks_inner`; SQL-A1
+ *                                       hard-rejects `> MAX_SEARCH_RESULTS`
+ *                                       even though `PageRequest::new` would
+ *                                       accept up to 200)
  *   - `queryByProperty`,
  *     `listUnfinishedTasks`,
  *     `listUndatedTasks`,
@@ -55,12 +59,24 @@ export type SafeLimit = number & {
 export const LIST_BLOCKS_MAX = 100
 
 /**
+ * Backend cap for `search_blocks_inner`. Although `PageRequest::new`
+ * accepts up to {@link PAGINATION_MAX}, SQL-A1 rejects any
+ * `search_blocks` limit above `MAX_SEARCH_RESULTS` (the FTS scan
+ * ceiling), so the effective cap is 100.
+ */
+export const SEARCH_BLOCKS_MAX = 100
+
+/**
  * Backend cap for every IPC routed through `pagination::PageRequest::new`
  * (`query_by_property`, `list_unfinished_tasks`, `list_undated_tasks`,
  * `list_tags_by_prefix`, `list_backlinks` and its grouped/unlinked
  * variants, `list_page_history`, `get_block_history`,
- * `list_page_aliases_by_prefix`, `list_property_defs`, `search_blocks`,
+ * `list_page_aliases_by_prefix`, `list_property_defs`,
  * `query_by_tags`, `filtered_blocks_query`).
+ *
+ * NOTE: `search_blocks` is NOT in this group — it routes through
+ * `PageRequest::new` (1..=200) but then SQL-A1 hard-rejects any limit
+ * above `MAX_SEARCH_RESULTS` (100). Use {@link searchBlocksLimit}.
  */
 export const PAGINATION_MAX = 200
 
@@ -85,6 +101,11 @@ export function safeLimit(n: number, max: number): SafeLimit {
 /** Shorthand for {@link safeLimit}`(n, LIST_BLOCKS_MAX)`. */
 export function listBlocksLimit(n: number): SafeLimit {
   return safeLimit(n, LIST_BLOCKS_MAX)
+}
+
+/** Shorthand for {@link safeLimit}`(n, SEARCH_BLOCKS_MAX)`. */
+export function searchBlocksLimit(n: number): SafeLimit {
+  return safeLimit(n, SEARCH_BLOCKS_MAX)
 }
 
 /** Shorthand for {@link safeLimit}`(n, PAGINATION_MAX)`. */

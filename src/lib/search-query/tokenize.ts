@@ -5,9 +5,14 @@
  * tokens. The classifier (`classify.ts`) is responsible for mapping
  * each raw token to a `FilterToken` (or to free-text).
  *
- * Quoting / boolean operator behaviour is preserved verbatim from
- * `src-tauri/src/fts/search.rs::tokenize_query` so the parser doesn't
- * accidentally pre-process FTS5 syntax.
+ * Quoting / boolean operator behaviour started as a port of
+ * `src-tauri/src/fts/search.rs::tokenize_query` (so the parser doesn't
+ * accidentally pre-process FTS5 syntax), but DSL-1 deliberately diverges
+ * on the closing-quote rule: this tokeniser is boundary-aware (a quote
+ * only closes at a token boundary) because it drives chip projection +
+ * caret autocomplete, whereas the Rust `tokenize_query` closes on the
+ * first `"` (it only builds the FTS5 query string). The two roles differ,
+ * so the divergence is intentional — do not "re-sync" them.
  */
 
 /** A raw lexical token. */
@@ -44,8 +49,26 @@ export function tokenize(input: string): RawToken[] {
     }
     const start = i
     if (ch === '"') {
-      // Try to find closing `"`. If none, fall through to word-handling.
-      const close = input.indexOf('"', i + 1)
+      // DSL-1 — find a *closing* `"` that sits at a token boundary
+      // (followed by whitespace or end-of-input). A `"` glued to more
+      // text (e.g. `"a"b`) is not a clean phrase close, so we keep
+      // scanning; if none qualifies, fall through to word-handling so
+      // the stray quote degrades to a word instead of fragmenting the
+      // rest of the query into a phantom phrase.
+      let close = input.indexOf('"', i + 1)
+      while (close !== -1) {
+        const after = input[close + 1]
+        if (
+          after === undefined ||
+          after === ' ' ||
+          after === '\t' ||
+          after === '\n' ||
+          after === '\r'
+        ) {
+          break
+        }
+        close = input.indexOf('"', close + 1)
+      }
       if (close !== -1) {
         tokens.push({
           kind: 'quoted',

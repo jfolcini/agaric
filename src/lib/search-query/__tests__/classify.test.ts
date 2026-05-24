@@ -54,6 +54,51 @@ describe('classify / parse', () => {
     expect(ast.freeText).toBe('baz')
   })
 
+  it('keeps a pasted URL as free text rather than an invalid chip (DSL-10)', () => {
+    // `http:` matches the unknown-prefix shape, but the `//` right after
+    // the colon means it is a URL, not a filter — it must survive in
+    // free text instead of being consumed (and dropped) as an invalid
+    // chip.
+    for (const url of ['http://example.com', 'https://example.com/a?b=c', 'file:///tmp/x']) {
+      const ast = parse(url)
+      expect(ast.filters).toEqual([])
+      expect(ast.freeText).toBe(url)
+    }
+  })
+
+  it('accepts due:/scheduled: NONE case-insensitively, normalised to "none" (DSL-3)', () => {
+    for (const raw of ['due:NONE', 'due:none', 'due:None']) {
+      const ast = parse(raw)
+      expect(ast.filters[0]).toMatchObject({ kind: 'due', value: { kind: 'named', name: 'none' } })
+    }
+    expect(parse('scheduled:NONE').filters[0]).toMatchObject({
+      kind: 'scheduled',
+      value: { kind: 'named', name: 'none' },
+    })
+  })
+
+  it('collapses internal whitespace in free text (DSL-4 contract)', () => {
+    // Documented lossy round-trip: runs of whitespace between free-text
+    // words collapse to a single space.
+    const ast = parse('foo    bar\t\tbaz')
+    expect(ast.freeText).toBe('foo bar baz')
+  })
+
+  it('flags an earlier shadowed due: token as invalid (DSL-5)', () => {
+    const ast = parse('due:today due:this-week')
+    expect(ast.filters).toHaveLength(2)
+    // The first (shadowed) token is marked invalid so its chip reflects
+    // that it does not apply; the last due: stays valid.
+    expect(ast.filters[0]).toMatchObject({ kind: 'invalid', source: 'due:today' })
+    if (ast.filters[0]?.kind === 'invalid') {
+      expect(ast.filters[0].error).toContain('shadowed')
+    }
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'this-week' },
+    })
+  })
+
   it('flags malformed glob as invalid with InvalidGlob: prefix', () => {
     const ast = parse('path:[unclosed')
     expect(ast.filters).toHaveLength(1)
@@ -96,6 +141,59 @@ describe('classify / parse', () => {
     expect(ast.filters).toHaveLength(1)
     expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'x' })
     expect(ast.freeText).toContain('exact phrase')
+  })
+
+  it('preserves multiple internal spaces inside a quoted phrase (DSL-A1)', () => {
+    // A quoted phrase is matched exactly, so the free-text collapse must
+    // NOT touch whitespace inside the quotes.
+    const ast = parse('"two  spaces   here"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"two  spaces   here"')
+  })
+
+  it('collapses whitespace outside quotes while preserving it inside (DSL-A1)', () => {
+    const ast = parse('alpha    "two  spaces"    beta')
+    expect(ast.filters).toEqual([])
+    // Outside the quotes: runs collapse to one space. Inside: verbatim.
+    expect(ast.freeText).toBe('alpha "two  spaces" beta')
+  })
+
+  it('preserves intra-quote whitespace alongside a consumed filter (DSL-A1)', () => {
+    const ast = parse('tag:#x   "keep  the   gaps"   word')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'x' })
+    expect(ast.freeText).toBe('"keep  the   gaps" word')
+  })
+
+  it('handles two quoted phrases each preserving internal spacing (DSL-A1)', () => {
+    const ast = parse('"a  b"   "c   d"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"a  b" "c   d"')
+  })
+
+  it('treats an unterminated quote as a word and collapses normally (DSL-A1)', () => {
+    // No closing quote at a token boundary → the tokeniser degrades the
+    // stray quote to a word, so the run is plain free text and collapses.
+    const ast = parse('foo  "bar  baz')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('foo "bar baz')
+  })
+
+  it('keeps an empty quoted phrase and collapses around it (DSL-A1)', () => {
+    // An empty `""` is a zero-length quoted range; it must survive while
+    // the whitespace on either side still collapses.
+    const ast = parse('a ""  b')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('a "" b')
+  })
+
+  it('shields a colon inside a quoted phrase from filter recognition (DSL-A1)', () => {
+    // `due:today` would normally be consumed as a filter, but inside quotes
+    // the whole phrase is verbatim free text — the colon must NOT be parsed
+    // as a filter key, and the internal spacing is preserved.
+    const ast = parse('"due:today  is  fine"')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('"due:today  is  fine"')
   })
 
   it('does not treat boolean operators as filters', () => {
@@ -160,29 +258,21 @@ describe('classify / parse', () => {
   })
 
   it('recognises due: bucket keywords', () => {
-    const ast = parse('due:today due:this-week due:overdue due:none')
-    expect(ast.filters).toHaveLength(4)
-    expect(ast.filters[0]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'today' },
-    })
-    expect(ast.filters[1]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'this-week' },
-    })
-    expect(ast.filters[3]).toMatchObject({
-      kind: 'due',
-      value: { kind: 'named', name: 'none' },
-    })
+    // Each keyword tested in isolation — multiple due: tokens in one
+    // query now shadow all but the last (DSL-5), so recognition is a
+    // per-token unit assertion.
+    for (const name of ['today', 'this-week', 'overdue', 'none'] as const) {
+      const ast = parse(`due:${name}`)
+      expect(ast.filters[0]).toMatchObject({ kind: 'due', value: { kind: 'named', name } })
+    }
   })
 
   it('recognises scheduled: comparison form', () => {
-    const ast = parse('scheduled:>=2026-01-01 scheduled:<2026-06-01')
-    expect(ast.filters[0]).toMatchObject({
+    expect(parse('scheduled:>=2026-01-01').filters[0]).toMatchObject({
       kind: 'scheduled',
       value: { kind: 'op', op: '>=', date: '2026-01-01' },
     })
-    expect(ast.filters[1]).toMatchObject({
+    expect(parse('scheduled:<2026-06-01').filters[0]).toMatchObject({
       kind: 'scheduled',
       value: { kind: 'op', op: '<', date: '2026-06-01' },
     })

@@ -115,8 +115,11 @@ export function indexOfFolded(haystack: string, needle: string): number {
   while (originalCursor <= haystack.length) {
     if (foldedSoFar === foldedPrefix) return originalCursor
     if (originalCursor === haystack.length) break
-    // biome-ignore lint/style/noNonNullAssertion: bounds checked above
-    const nextChar = haystack[originalCursor]!
+    // `charAt` returns `string` (not `string | undefined`); the
+    // `originalCursor === haystack.length` break above guarantees we're in
+    // bounds, so this reads the same code unit as `haystack[originalCursor]`
+    // without a non-null assertion.
+    const nextChar = haystack.charAt(originalCursor)
     foldedSoFar += foldForSearch(nextChar)
     originalCursor++
   }

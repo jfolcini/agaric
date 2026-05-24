@@ -12,8 +12,14 @@ const STORAGE_KEY = 'week-start-preference'
 type WeekStartDay = 0 | 1
 
 function getSnapshot(): WeekStartDay {
-  const stored = localStorage.getItem(STORAGE_KEY)
-  if (stored === '0') return 0
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored === '0') return 0
+  } catch {
+    // Storage unavailable (private mode / locked-down webview). This runs as
+    // the useSyncExternalStore snapshot AND backs getWeekStartDay() during
+    // calendar/agenda render, so a throw here must not break the view.
+  }
   return 1 // default: Monday
 }
 
@@ -36,9 +42,15 @@ export function useWeekStart(): {
   const weekStartsOn = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
   const setWeekStart = useCallback((day: WeekStartDay) => {
-    const oldValue = localStorage.getItem(STORAGE_KEY)
     const newValue = String(day)
-    localStorage.setItem(STORAGE_KEY, newValue)
+    let oldValue: string | null = null
+    try {
+      oldValue = localStorage.getItem(STORAGE_KEY)
+      localStorage.setItem(STORAGE_KEY, newValue)
+    } catch {
+      // Storage unavailable — degrade to no-persist and skip the sync event.
+      return
+    }
     // Dispatch storage event for same-tab listeners
     window.dispatchEvent(
       new StorageEvent('storage', {

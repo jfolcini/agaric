@@ -11,8 +11,9 @@
  * auto-focus.
  */
 
-import type { TFunction } from 'i18next'
+import { HelpCircle } from 'lucide-react'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
@@ -25,7 +26,6 @@ export interface SearchHeaderProps {
   onSubmit: (e: React.SubmitEvent<HTMLFormElement>) => void
   searchLoading: boolean
   typing: boolean
-  t: TFunction
   /** PEND-55 — onKeyDown handler that consumes `↑`/`↓` for history recall. */
   onInputKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
   /** PEND-55 — toggle row rendered next to the input. */
@@ -44,6 +44,12 @@ export interface SearchHeaderProps {
    *  aria-activedescendant / aria-autocomplete / aria-haspopup).
    *  Computed by the orchestrator from autocomplete-popover state. */
   comboboxAttrs?: React.AriaAttributes & { role?: 'combobox' }
+  /** UX-1 — open the search help dialog (the `?` toolbar button). */
+  onHelpClick?: () => void
+  /** PEND-58g NEW-2 — when true, the input free-text is matched as a
+   *  regular expression. Renders a regex-specific placeholder, a
+   *  monospace input, and an sr-only hint wired via `aria-describedby`. */
+  regexMode?: boolean
 }
 
 export function SearchHeader({
@@ -53,7 +59,6 @@ export function SearchHeader({
   onSubmit,
   searchLoading,
   typing,
-  t,
   onInputKeyDown,
   toggleRow,
   historyDropdown,
@@ -62,7 +67,10 @@ export function SearchHeader({
   onInputFocus,
   onInputBlur,
   comboboxAttrs,
+  onHelpClick,
+  regexMode,
 }: SearchHeaderProps): React.ReactElement {
+  const { t } = useTranslation()
   return (
     <ViewHeader>
       {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
@@ -78,18 +86,39 @@ export function SearchHeader({
           onKeyDown={onInputKeyDown}
           onFocus={onInputFocus}
           onBlur={onInputBlur}
-          placeholder={t('search.searchPlaceholder')}
+          placeholder={
+            regexMode ? t('search.searchPlaceholderRegex') : t('search.searchPlaceholder')
+          }
           aria-label={t('search.searchLabel')}
           aria-invalid={invalid ? true : undefined}
           aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
-          className="flex-1"
+          aria-describedby={regexMode ? 'search-regex-hint' : undefined}
+          className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
           autoFocus
           {...comboboxAttrs}
         />
+        {regexMode ? (
+          <span id="search-regex-hint" className="sr-only">
+            {t('search.regexModeHint')}
+          </span>
+        ) : null}
         {toggleRow}
         <Button type="submit" variant="outline" disabled={!query.trim()}>
           {t('search.searchButton')}
         </Button>
+        {onHelpClick ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onHelpClick}
+            aria-label={t('search.helpButtonLabel')}
+            title={t('search.helpButtonLabel')}
+            data-testid="search-help-button"
+          >
+            <HelpCircle className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        ) : null}
         {searchLoading ? (
           <span
             className="flex items-center gap-1.5 text-xs text-muted-foreground"

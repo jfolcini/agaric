@@ -131,7 +131,7 @@ function DaySectionInner({
     <section
       id={`journal-${entry.dateStr}`}
       aria-label={t('journal.dayAriaLabel', { date: entry.displayDate })}
-      className={cn(isToday && 'bg-accent/[0.08] border-l-2 border-accent px-3 py-2 -mx-3')}
+      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (

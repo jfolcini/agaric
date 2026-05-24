@@ -79,7 +79,10 @@ export const references: Record<string, string> = {
   'graph.filter.priorityValue.1': 'High (1)',
   'graph.filter.priorityValue.2': 'Medium (2)',
   'graph.filter.priorityValue.3': 'Low (3)',
-  'search.minCharsHint': 'Search requires at least 3 characters',
+  // UX-7 — search actually fires at 1 char; this is a soft hint (the
+  // FTS trigram index matches whole words of 3+ chars best), not a hard
+  // requirement, so the copy must not promise a gate that doesn't exist.
+  'search.minCharsHint': 'Tip: words of 3+ characters return the best matches.',
   'search.parentPage': 'in: {{title}}',
   'tags.loadFailed': 'Failed to load tags',
   'tags.nameTooLong': 'Tag name must be under 100 characters',
@@ -165,8 +168,11 @@ export const references: Record<string, string> = {
   'search.failed': 'Failed to search',
   'search.loadResultsFailed': 'Failed to load search results',
   'search.noParentPage': 'This block has no parent page',
-  'search.searchPlaceholder': 'Search blocks (3+ chars)...',
+  'search.searchPlaceholder': 'Search blocks...',
+  'search.searchPlaceholderRegex': 'Search with a regular expression...',
   'search.searchLabel': 'Search blocks',
+  'search.regexModeHint':
+    'Free-text is matched as a regular expression. Filters like tag: and path: still apply.',
   'search.cjkNoteLabel': 'Note:',
   'search.cjkLimitationNote':
     'CJK search is limited in v1. Some results may be incomplete. Try queries of 3 or more characters for the best matches.',
@@ -184,6 +190,12 @@ export const references: Record<string, string> = {
   'search.filterCategory.tag': 'Tag',
   'search.filterCategory.pathInclude': 'Page path (include)',
   'search.filterCategory.pathExclude': 'Page path (exclude)',
+  // PEND-58g UX-A5 — structural filter builder categories.
+  'search.filterCategory.state': 'State',
+  'search.filterCategory.priority': 'Priority',
+  'search.filterCategory.due': 'Due date',
+  'search.filterCategory.scheduled': 'Scheduled date',
+  'search.filterCategory.prop': 'Property',
   'search.filterCategoryTip': 'Type `tag:` or `path:` directly to skip this menu',
   'search.removeFilter': 'Remove filter {{token}}',
   'search.autocompleteListLabel': 'Filter suggestions',
@@ -194,8 +206,35 @@ export const references: Record<string, string> = {
   'search.searchTags': 'Search tags...',
   'search.searchPages': 'Search pages...',
   'search.noTagsFound': 'No tags found',
+  // UX-A3 — filter-helper popover navigation + path-entry strings.
+  'search.filterHelper.back': 'Back',
+  'search.filterHelper.add': 'Add',
+  'search.filterHelper.tagResultsLabel': 'Tag suggestions',
+  'search.filterHelper.pathPlaceholder': 'Journal/2026-*',
+  // PEND-58g UX-A5 — structural filter builder form strings.
+  'search.filterHelper.matchMode': 'Match mode',
+  'search.filterHelper.include': 'Include',
+  'search.filterHelper.exclude': 'Exclude',
+  'search.filterHelper.stateValueLabel': 'State value',
+  'search.filterHelper.priorityValueLabel': 'Priority value',
+  'search.filterHelper.dateShapeLabel': 'Date filter shape',
+  'search.filterHelper.dateShapeBucket': 'Named range',
+  'search.filterHelper.dateShapeOp': 'Comparison',
+  'search.filterHelper.dateBucketLabel': 'Named date range',
+  'search.filterHelper.dateOpLabel': 'Comparison operator',
+  'search.filterHelper.dateValueLabel': 'Date',
+  'search.filterHelper.propKeyLabel': 'Property key',
+  'search.filterHelper.propKeyPlaceholder': 'area',
+  'search.filterHelper.propValueLabel': 'Property value',
+  'search.filterHelper.propValuePlaceholder': 'value',
+  // PEND-70 CR8 MAJOR-1 — round-trip guards (the prop DSL has no quoting,
+  // so the form rejects keys/values it can't serialise back unambiguously).
+  'search.filterHelper.propKeyInvalid': "Key can't contain spaces, = or quotes",
+  'search.filterHelper.propValueInvalid': "Value can't contain spaces or quotes",
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
+  // UX-8 — accessible name for the alias-match card region.
+  'search.aliasMatchRegion': 'Alias match',
   'search.typing': 'Typing\u2026',
   'search.searching': 'Searching\u2026',
   'tags.addFailed': 'Failed to add tag',
@@ -242,6 +281,14 @@ export const references: Record<string, string> = {
   'search.groupCollapsedLabel': 'Show matches in {{pageTitle}}',
   'search.groupExpandedLabel': 'Hide matches in {{pageTitle}}',
   'search.helpButtonLabel': 'Search help',
+  // UX-1/UX-3 — search help dialog (structural strings; the dense
+  // token reference inside each section is monospace code, not prose).
+  'search.help.description': 'Search basics: paginated full-text search across blocks and pages.',
+  'search.help.section.filterSyntax': 'Filter syntax',
+  'search.help.section.toggles': 'Toggles',
+  'search.help.section.regexSyntax': 'Regex syntax',
+  'search.help.section.booleanOperators': 'Boolean operators',
+  'search.help.section.tips': 'Tips',
   // PEND-55 — toggle row (`Aa` / `Ab|` / `.*`) + search history.
   'search.toggle.caseSensitive': 'Case-sensitive (Aa)',
   'search.toggle.wholeWord': 'Whole word (Ab|)',
@@ -251,7 +298,19 @@ export const references: Record<string, string> = {
   'search.history.empty': 'No recent searches',
   'search.history.clear': 'Clear history',
   'search.history.entryLabel': 'Run search: {{query}}',
+  'search.history.removeEntry': 'Remove "{{query}}" from recent searches',
+  'search.history.disable': 'Disable search history',
+  'search.history.enable': 'Enable search history',
+  'search.history.disabledNotice': 'Search history is off',
+  'search.filterGroupLabel': 'Filter: {{value}}',
   'search.invalidRegex': '{{message}}',
+  // UX-2 — generic (non-regex) search failure: announced in the live
+  // region and shown as a visible inline error state.
+  'search.statusError': 'Search failed',
+  'search.errorTitle': 'Search failed',
+  'search.errorBody': 'Something went wrong running your search. Try again.',
+  // UX-4 — result cap notice (the 5000-item ceiling was hit silently).
+  'search.cappedNotice': 'Showing the first results — refine your search to narrow them down.',
   // PEND-51 — Cmd+K palette dialog.
   'palette.dialogLabel': 'Quick search',
   'palette.dialogTitle': 'Search palette',
@@ -333,4 +392,105 @@ export const references: Record<string, string> = {
   'palette.copyIdSuccess': 'ULID copied to clipboard',
   'palette.copyLinkSuccess': 'Block link copied to clipboard',
   'palette.copyFailed': 'Could not access clipboard',
+  // UX-3 — search help body
+  //
+  // Prose for the five SearchHelpDialog body sections (Filter syntax,
+  // Toggles, Regex syntax, Boolean operators, Tips). Monospace code
+  // identifiers (filter prefixes, regex syntax, examples) stay verbatim
+  // inside `<mono>…</mono>` tags so they render as code regardless of
+  // locale; only the surrounding prose is translatable. Tags map to the
+  // inline elements supplied via `<Trans components={{…}}>`.
+  // -- Filter syntax --
+  'search.help.filter.intro':
+    'Filters can be typed directly in the search input or added via the <mono>+ Filter ▾</mono> button. Filters AND-combine with the free-text portion.',
+  'search.help.filter.col.token': 'Token',
+  'search.help.filter.col.meaning': 'Meaning',
+  'search.help.filter.cell.tagName': 'Block carries the tag `name`. Repeats AND.',
+  'search.help.filter.cell.bareTag': 'Bare alias for tag:#name.',
+  'search.help.filter.cell.path': 'Page-name glob include. Comma-separated values OR-combine.',
+  'search.help.filter.cell.notPath': 'Page-name glob exclude.',
+  'search.help.filter.cell.state':
+    "Block's todo_state = VALUE. Repeats OR-combine. state:none = IS NULL.",
+  'search.help.filter.cell.priority':
+    "Block's priority = VALUE. Repeats OR-combine. priority:none = IS NULL.",
+  'search.help.filter.cell.due':
+    'Bucket (today, this-week, overdue, …), ISO date, or comparison form (>=2026-01-01).',
+  'search.help.filter.cell.scheduled': 'Same shape as due: but on scheduled_date.',
+  'search.help.filter.cell.prop':
+    'Block has property KEY with value VALUE. Empty value = key-presence-only.',
+  'search.help.filter.cell.notProp': 'Block does NOT have that property/value.',
+  'search.help.filter.cell.phrase': 'Quoted phrase — passed to FTS5 verbatim.',
+  'search.help.filter.cell.boolean': 'Boolean operators (uppercase) — passed to FTS5.',
+  'search.help.filter.datePredicates':
+    '<strong>Date predicates</strong>: bucket keywords are <mono>today</mono>, <mono>yesterday</mono>, <mono>overdue</mono>, <mono>this-week</mono>, <mono>this-month</mono>, <mono>next-week</mono>, <mono>older</mono>, <mono>none</mono>. Weeks start on Monday.',
+  'search.help.filter.propertyFilters':
+    '<strong>Property filters</strong>: <mono>prop:KEY=VALUE</mono> matches a stored property value; an empty value (<mono>prop:KEY=</mono>) matches key-presence only. Property keys are <strong>case-sensitive</strong>.',
+  'search.help.filter.globs':
+    'Glob filters are <strong>case-insensitive</strong> and match against the page title. A bare token like <mono>path:Journal</mono> wraps to <mono>*Journal*</mono> (substring match); add <mono>*</mono>, <mono>?</mono>, or <mono>[...]</mono> for explicit glob syntax. <mono>{{brace}}</mono> brace-expansion is supported (no nesting).',
+  'search.help.filter.examplesIntro': 'Examples:',
+  'search.help.filter.example.todo':
+    '<mono>TODO path:Journal/2026-* tag:#urgent</mono> — TODOs on January 2026 journal pages tagged urgent.',
+  'search.help.filter.example.meeting':
+    '<mono>tag:#meeting not-path:Archive/**</mono> — meetings outside the archive.',
+  'search.help.filter.example.brace':
+    '<mono>path:{{brace}}/*</mono> — match pages in either Journal or Notes.',
+  // -- Toggles --
+  'search.help.toggles.intro':
+    'Three pressable buttons sit to the right of the input. Click a toggle to flip its mode (icon glows when active). State persists across sessions in localStorage.',
+  'search.help.toggles.col.icon': 'Icon',
+  'search.help.toggles.col.mode': 'Mode',
+  'search.help.toggles.col.notes': 'Notes',
+  'search.help.toggles.mode.caseSensitive': 'Case-sensitive',
+  'search.help.toggles.mode.wholeWord': 'Whole word',
+  'search.help.toggles.mode.regex': 'Regex',
+  'search.help.toggles.notes.caseSensitive':
+    'Forces a post-FTS pass — has a cost even when other toggles are off.',
+  'search.help.toggles.notes.wholeWord': 'ASCII-only word boundary. CJK content does not match.',
+  'search.help.toggles.notes.regex':
+    'Bypasses the FTS index — the free-text remainder becomes a Rust regex pattern; structural filters (tag:, path:, …) still apply.',
+  // -- Regex syntax --
+  'search.help.regex.intro':
+    'Regex mode uses the Rust <mono>regex</mono> crate (linear-time, no backtracking).',
+  // The `(?<=…)`, `(?<!…)`, `\k<name>` and `(?u:\b)` code tokens contain
+  // angle brackets / backslashes that the `<Trans>` HTML parser would
+  // mangle if written as inline text. They are supplied verbatim via
+  // self-closing placeholder tags (`<m0/>`, `<m1/>`, …) whose React
+  // children carry the literal token; only the surrounding prose is here.
+  'search.help.regex.noLookaround':
+    '<strong>No lookaround</strong>: <m0/>, <m1/>, <m2/>, <m3/> are not supported.',
+  'search.help.regex.noBackrefs':
+    '<strong>No backreferences</strong>: <m0/>, <m1/> are not supported.',
+  'search.help.regex.asciiBoundaries':
+    '<strong>ASCII boundaries by default</strong>: <m0/> only asserts between ASCII word chars. Use <m1/> for Unicode word boundaries.',
+  'search.help.regex.inlineFlags':
+    'Inline flags <mono>(?i)</mono> / <mono>(?m)</mono> / <mono>(?s)</mono> / <mono>(?x)</mono> are supported.',
+  'search.help.regex.caps':
+    'Bounded by design: the pattern length, compiled program size, DFA cache, match-offsets per block, and pre-filter row count are all capped (see the regex constants in the backend; the limits are intentionally not duplicated here).',
+  'search.help.regex.bypassesFts':
+    'Regex mode <strong>bypasses the FTS index</strong>: wall-time scales with the structurally-filtered block count, not the FTS candidate count. Anchor your regex (<mono>^foo</mono>, <mono>bar$</mono>, <mono>\\bword\\b</mono>) for tight queries.',
+  // `lnk` (not `link`) is intentional: `<link>` is a void HTML element,
+  // so the Trans HTML parser would self-close it and drop the inner text.
+  'search.help.regex.seeAlso':
+    "See <lnk>Rust regex syntax</lnk> for the full grammar. The in-page find (<mono>Ctrl+F</mono>) uses JavaScript's native <mono>RegExp</mono> instead — patterns may behave differently between the two surfaces; see <mono>docs/SEARCH.md</mono> for the cross-link.",
+  // -- Boolean operators --
+  'search.help.boolean.intro':
+    'Non-regex queries support three FTS5 boolean operators (uppercase on the wire, case-insensitive on input):',
+  'search.help.boolean.and': '<mono>AND</mono> — explicit intersection (the default).',
+  'search.help.boolean.or': '<mono>OR</mono> — union, e.g. <mono>cats OR dogs</mono>.',
+  'search.help.boolean.not': '<mono>NOT</mono> — negation, <mono>meeting NOT cancelled</mono>.',
+  'search.help.boolean.phrases':
+    'Quoted phrases bypass the trigram length filter: <mono>"sprint plan"</mono> matches the literal phrase including 2-char tokens.',
+  'search.help.boolean.regexNote':
+    'Boolean operators do NOT apply inside regex mode (everything is treated as the regex).',
+  // -- Tips --
+  'search.help.tips.recall':
+    '<strong>Recall recent queries with</strong> <kbd>↑</kbd> / <kbd>↓</kbd> when the input is empty.',
+  'search.help.tips.dedupe':
+    'History dedupes — re-submitting the same query moves it to the front.',
+  'search.help.tips.perSpace': 'Per-space partitioning — recall stays inside the current space.',
+  'search.help.tips.dropdown':
+    'The dropdown surfaces the last 20 submitted queries; pressing past the newest entry clears the input.',
+  'search.help.tips.clear':
+    'Clear the per-space history via the footer button below the dropdown — other spaces stay untouched.',
+  'search.help.tips.toggleState': 'Toggle state survives reloads (stored in localStorage).',
 }

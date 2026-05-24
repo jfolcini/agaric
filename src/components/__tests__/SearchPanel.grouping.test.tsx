@@ -18,6 +18,31 @@ import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
 
+// PEND-58f FE-3 — the per-group result listbox is now virtualized
+// (`@tanstack/react-virtual`). jsdom gives the scroll container zero
+// height, which would collapse the virtual window to zero rows; mirror the
+// AgendaResults / HistoryView test mock so the virtualizer yields every row
+// and the existing role/option/`aria-activedescendant` assertions still see
+// the full list. `measureElement` is a no-op (jsdom can't measure layout).
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
+    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    let start = 0
+    const items = sizes.map((size, index) => {
+      const item = { index, key: index, start, size, end: start + size }
+      start += size
+      return item
+    })
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => start,
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      measureElement: vi.fn(),
+    }
+  },
+}))
+
 vi.mock('../../lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../lib/tauri')>()
   return {
@@ -513,5 +538,75 @@ describe('PEND-50 Phase 1 — SearchPanel page grouping', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // FE-A8 — `resetKey={debouncedQuery}` wires the query-change signal into
+  // `useListKeyboardNavigation`: a plain `itemCount` change (Load-More
+  // append) must CLAMP the existing focus rather than snap it back to row 0,
+  // while a NEW query resets focus to the first row.
+  it('FE-A8 — keeps result focus across Load-More and resets it on a new query', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'search_blocks') {
+        const cursor = (args as { cursor?: string | null } | undefined)?.cursor ?? null
+        if (cursor == null) {
+          return {
+            items: [
+              makeSearchRow({ id: 'B1', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+              makeSearchRow({ id: 'B2', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+            ],
+            next_cursor: 'C1',
+            has_more: true,
+            total_count: null,
+          }
+        }
+        return {
+          items: [
+            makeSearchRow({ id: 'B3', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+            makeSearchRow({ id: 'B4', page_id: 'PAGE_A', snippet: '<mark>x</mark>' }),
+          ],
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }
+      }
+      if (cmd === 'batch_resolve') {
+        return [{ id: 'PAGE_A', title: 'A', block_type: 'page', deleted: false }]
+      }
+      return emptyPage
+    })
+
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'x')
+
+    // Initial focus parks on the first row.
+    const listbox = await screen.findByRole('listbox')
+    await waitFor(() => {
+      expect(listbox).toHaveAttribute('aria-activedescendant', 'search-result-B1')
+    })
+
+    // Move focus down to the 2nd row (index 1).
+    fireEvent.keyDown(listbox, { key: 'ArrowDown' })
+    await waitFor(() => {
+      expect(listbox).toHaveAttribute('aria-activedescendant', 'search-result-B2')
+    })
+
+    // Load-More appends B3/B4 (itemCount 2 → 4, query unchanged). Focus must
+    // be RETAINED on B2, not reset to B1 (the pre-FE-A8 regression).
+    await user.click(await screen.findByRole('button', { name: /Load more/i }))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /Load more/i })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole('listbox')).toHaveAttribute('aria-activedescendant', 'search-result-B2')
+
+    // A NEW query resets focus to the first row.
+    typeAndSubmit(input, 'y')
+    await waitFor(() => {
+      expect(screen.getByRole('listbox')).toHaveAttribute(
+        'aria-activedescendant',
+        'search-result-B1',
+      )
+    })
   })
 })

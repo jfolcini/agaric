@@ -37,10 +37,15 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
   // Track the spans we "consumed" as filters so we can reconstruct
   // free-text by stripping them out of the original input.
   const consumedSpans: Array<[number, number]> = []
+  // DSL-A1 — track quoted phrase spans so the free-text whitespace
+  // collapse can skip over them. A quoted phrase is matched exactly,
+  // so internal runs of whitespace MUST survive verbatim.
+  const quotedSpans: Array<[number, number]> = []
 
   for (const tok of tokens) {
     if (tok.kind === 'quoted') {
       // Quoted phrases pass through to free-text verbatim.
+      quotedSpans.push(tok.span)
       continue
     }
     const matched = recognise(tok.text, tok.span)
@@ -57,6 +62,9 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
       continue
     }
     // Token shaped like `xxx:yyy` but unregistered → invalid chip.
+    // DSL-10: `looksLikeUnknownPrefix` returns null for `key://…`
+    // (pasted URLs), so those fall through to free-text below instead of
+    // being consumed as an invalid chip and silently dropped.
     const unk = looksLikeUnknownPrefix(tok.text)
     if (unk) {
       filters.push({
@@ -70,22 +78,99 @@ export function classify(tokens: RawToken[], input: string): SearchQueryAST {
     // Everything else is free-text.
   }
 
-  const freeText = stripSpans(input, consumedSpans).trim().replace(/\s+/g, ' ')
+  // DSL-5 — only the LAST due:/scheduled: token reaches the backend
+  // (see astToFilterProjection's "last wins"). Flag the earlier,
+  // shadowed tokens as invalid so the rendered chips agree with the
+  // effective query instead of showing filters that silently don't apply.
+  for (const kind of ['due', 'scheduled'] as const) {
+    const indices: number[] = []
+    for (let i = 0; i < filters.length; i++) {
+      if (filters[i]?.kind === kind) indices.push(i)
+    }
+    if (indices.length > 1) {
+      for (const i of indices.slice(0, -1)) {
+        const shadowed = filters[i]
+        if (!shadowed) continue
+        filters[i] = {
+          kind: 'invalid',
+          source: input.slice(shadowed.span[0], shadowed.span[1]),
+          error: `shadowed by a later ${kind}: — only the last ${kind}: filter applies`,
+          span: shadowed.span,
+        }
+      }
+    }
+  }
+
+  const freeText = buildFreeText(input, consumedSpans, quotedSpans)
   return { filters, freeText }
 }
 
-/** Remove the given spans from `input` and return the surviving text. */
-function stripSpans(input: string, spans: Array<[number, number]>): string {
-  if (spans.length === 0) return input
-  // Sort by start ascending — the tokeniser already emits in order,
-  // but be defensive.
-  const ordered = [...spans].sort((a, b) => a[0] - b[0])
-  let out = ''
+/**
+ * Reconstruct the free-text by removing the consumed (filter) spans from
+ * `input`, then collapsing runs of whitespace — but ONLY outside quoted
+ * phrases.
+ *
+ * DSL-A1 — whitespace inside a `"…"` quoted span is preserved verbatim
+ * because a quoted phrase is meant to match exactly; a global
+ * `.replace(/\s+/g, ' ')` would silently rewrite the phrase. We walk the
+ * surviving (non-consumed) text segment-by-segment against `input`,
+ * collapsing only the segments that lie outside any quoted span.
+ */
+function buildFreeText(
+  input: string,
+  consumed: Array<[number, number]>,
+  quoted: Array<[number, number]>,
+): string {
+  // Sort defensively — the tokeniser emits in order, but don't rely on it.
+  const consumedOrdered = [...consumed].sort((a, b) => a[0] - b[0])
+  const quotedOrdered = [...quoted].sort((a, b) => a[0] - b[0])
+
+  // First pass: strip the consumed (filter) spans, building the surviving
+  // text AND mapping each quoted span into the *output* coordinate space so
+  // the collapse pass below knows which output ranges to leave verbatim.
+  let stripped = ''
+  const quotedOut: Array<[number, number]> = []
+  let qi = 0
   let cursor = 0
-  for (const [s, e] of ordered) {
-    if (s > cursor) out += input.slice(cursor, s)
-    cursor = e
+
+  // Append input[from, to) to `stripped`, recording any quoted spans that
+  // fall in that range as output-coordinate ranges.
+  const append = (from: number, to: number) => {
+    while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from) {
+      qi++
+    }
+    let q = quotedOrdered[qi]
+    while (q && q[0] < to) {
+      const qs = Math.max(q[0], from)
+      const qe = Math.min(q[1], to)
+      const base = stripped.length + (qs - from)
+      quotedOut.push([base, base + (qe - qs)])
+      if (q[1] <= to) {
+        qi++
+        q = quotedOrdered[qi]
+      } else {
+        break
+      }
+    }
+    stripped += input.slice(from, to)
   }
-  if (cursor < input.length) out += input.slice(cursor)
-  return out
+
+  for (const [s, e] of consumedOrdered) {
+    if (s > cursor) append(cursor, s)
+    cursor = Math.max(cursor, e)
+  }
+  if (cursor < input.length) append(cursor, input.length)
+
+  // Second pass: collapse runs of whitespace, but copy quoted ranges
+  // verbatim so intra-phrase whitespace survives (DSL-A1).
+  let out = ''
+  let pos = 0
+  for (const [qs, qe] of quotedOut) {
+    if (qs > pos) out += stripped.slice(pos, qs).replace(/\s+/g, ' ')
+    out += stripped.slice(qs, qe)
+    pos = qe
+  }
+  if (pos < stripped.length) out += stripped.slice(pos).replace(/\s+/g, ' ')
+
+  return out.trim()
 }

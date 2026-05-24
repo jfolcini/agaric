@@ -1,0 +1,41 @@
+-- PEND-70 C1/C2 — per-space apply-seq watermark for `loro_doc_state`.
+--
+-- ## Problem (the C1/C2 snapshot-wedge)
+--
+-- `loro_doc_state` holds one engine snapshot per space, refreshed only by
+-- the ~5-minute periodic scheduler / clean-exit save. The materializer's
+-- `materializer_apply_cursor.materialized_through_seq` (a single global
+-- row) advances per-op. After a crash, a space's snapshot can be *behind*
+-- the cursor — the engine state captured in the blob reflects ops up to
+-- some seq N, but the cursor says M > N. Boot rehydrates the behind
+-- snapshot, the old heal (`heal_orphaned_apply_cursor`) saw a NON-empty
+-- `loro_doc_state` and did nothing, and replay (`seq > cursor`) applied
+-- nothing — leaving the engine permanently missing ops (N, M], which
+-- surfaces as "block not found" on any later edit of a block created in
+-- that window. The op_log is intact, but nothing triggers a rebuild.
+--
+-- ## Fix
+--
+-- Persist, per space, the apply-cursor seq the snapshot blob is known to
+-- reflect (`applied_through_seq`). The save path writes `cursor - 1` (a
+-- safe lower bound: the engine dispatch runs post-commit, so the engine
+-- is guaranteed to reflect every op <= cursor-1, and the foreground
+-- queue is serial). Boot's heal resets the global cursor down to
+-- MIN(applied_through_seq) when the cursor is ahead, forcing replay to
+-- re-apply the unmaterialized tail onto the behind/missing engines
+-- (every apply handler is idempotent, so re-applying over caught-up
+-- engines + already-materialized SQL is safe).
+--
+-- The pre-existing dead `op_count` column is left in place (unused).
+--
+-- ## STRICT
+--
+-- `ADD COLUMN` to the existing STRICT `loro_doc_state` table; the new
+-- column has an explicit INTEGER type + NOT NULL DEFAULT, so STRICT is
+-- preserved. Existing rows backfill to 0, which the heal treats as
+-- "stale" — the first boot after this migration does one full replay
+-- (cursor reset to 0), after which the next periodic save writes real
+-- watermarks. Safe one-time cost.
+
+ALTER TABLE loro_doc_state
+    ADD COLUMN applied_through_seq INTEGER NOT NULL DEFAULT 0;

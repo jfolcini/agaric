@@ -24,6 +24,7 @@ export const sync: Record<string, string> = {
   'pairing.scanOrEnterInstruction': 'Scan the QR code or enter the passphrase on the other device.',
   'pairing.sessionExpiresIn': 'Session expires in',
   'pairing.sessionExpired': 'Session expired',
+  'pairing.retryButton': 'Retry',
   'pairing.orSeparator': 'OR',
   'pairing.typePassphraseButton': 'Type Passphrase',
   'pairing.scanQrCodeButton': 'Scan QR Code',

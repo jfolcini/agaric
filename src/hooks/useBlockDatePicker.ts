@@ -1,3 +1,4 @@
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
@@ -18,8 +19,7 @@ import { useUndoStore } from '../stores/undo'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-type TFn = (...args: any[]) => any
+type TFn = TFunction
 
 export interface UseBlockDatePickerParams {
   focusedBlockId: string | null

@@ -148,8 +148,14 @@ describe('BlockLinkPicker input rule — alias disambiguation (PEND-34)', () => 
     ])
     const ext = BlockLinkPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -201,8 +207,14 @@ describe('BlockLinkPicker input rule — alias disambiguation (PEND-34)', () => 
     ])
     const ext = BlockLinkPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -250,8 +262,14 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
     const inputRules = ext.config.addInputRules
     expect(inputRules).toBeDefined()
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (inputRules as Function).call({
+    const rules = (
+      inputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -300,8 +318,14 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
     const mockOnCreate = vi.fn().mockResolvedValue('NEW_ULID')
 
     const ext = BlockLinkPicker.configure({ items: mockItems, onCreate: mockOnCreate })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -341,8 +365,14 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
     const mockItems = vi.fn().mockResolvedValue([])
 
     const ext = BlockLinkPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -378,8 +408,14 @@ describe('BlockLinkPicker input rule uses insertContentAt (race-condition fix)',
     const mockItems = vi.fn().mockRejectedValue(new Error('network error'))
 
     const ext = BlockLinkPicker.configure({ items: mockItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -436,8 +472,14 @@ describe('BlockLinkPicker stale-insertPos guard (FE-M-15)', () => {
       .mockResolvedValue([{ id: 'ULID_1', label: 'My Page', isCreate: false }])
     const ext = BlockLinkPicker.configure({ items: mockItems })
 
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const rules = (ext.config.addInputRules as Function).call({
+    const rules = (
+      ext.config.addInputRules as unknown as (
+        ...args: unknown[]
+      ) => [
+        { handler: (...a: unknown[]) => unknown },
+        ...{ handler: (...a: unknown[]) => unknown }[],
+      ]
+    ).call({
       options: ext.options,
       editor: mockEditor,
     })
@@ -465,8 +507,11 @@ describe('resolveBlockLinkFromSelection command', () => {
   function getCommand(ext: ReturnType<typeof BlockLinkPicker.configure>) {
     const addCommands = ext.config.addCommands
     expect(addCommands).toBeDefined()
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    const commands = (addCommands as Function).call({ options: ext.options })
+    const commands = (
+      addCommands as unknown as (...args: unknown[]) => {
+        resolveBlockLinkFromSelection: () => (...a: unknown[]) => unknown
+      }
+    ).call({ options: ext.options })
     return commands.resolveBlockLinkFromSelection
   }
 
@@ -643,8 +688,7 @@ describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
     }))
     const mod = await import('../extensions/block-link-picker')
     const ext = mod.BlockLinkPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -707,8 +751,7 @@ describe('BlockLinkPicker suggestion command chain (UX-232)', () => {
     const mod = await import('../extensions/block-link-picker')
     const onCreate = vi.fn().mockResolvedValue('CREATED_ULID')
     const ext = mod.BlockLinkPicker.configure({ items: () => [], onCreate })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })

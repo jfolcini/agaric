@@ -330,8 +330,12 @@ export const common: Record<string, string> = {
   'searchSheet.segmentAllPages': 'All pages',
   'searchSheet.emptyInPage': 'No page open yet — try All pages instead.',
   'searchSheet.emptyInPageSwitchCta': 'Switch to All pages',
-  // Same shape as `palette.escalateLabel` but without the
-  // Ctrl+Shift+F suffix — touch users on the mobile sheet have no
-  // keyboard. Ellipsis hints that the link leads somewhere.
-  'searchSheet.escalateLabel': 'Find in all pages…',
+  // PEND-58g UX-A1 — the mobile escalation is a prominent, two-line
+  // CTA (title + hint) rather than a muted footer row, so touch users
+  // discover that filters / regex / history live in the full search
+  // view. `escalateLabel` is the descriptive aria-label for the button;
+  // `escalateCtaTitle` / `escalateCtaHint` are the visible two lines.
+  'searchSheet.escalateCtaHint': 'Open full search',
+  'searchSheet.escalateCtaTitle': 'Filters & regex',
+  'searchSheet.escalateLabel': 'Open full search for filters, regex, and history',
 }

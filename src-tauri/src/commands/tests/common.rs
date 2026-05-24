@@ -1,6 +1,4 @@
 // Shared test helpers for command tests
-#![allow(unused_imports)]
-use super::*;
 use crate::db::init_pool;
 pub use crate::db::ReadPool;
 use crate::materializer::Materializer;

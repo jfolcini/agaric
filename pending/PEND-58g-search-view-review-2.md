@@ -1,0 +1,217 @@
+# PEND-58g — Search-view deep-review findings, round 2 (post-verification)
+
+Branch: `pend-58f-search-view-hardening`.
+
+**This is the single search-view plan of record.** It supersedes PEND-58f (fully
+shipped). The original round-2 review was a read-only deep review by 7 specialist
+subagents + 3 anti-hallucination verifiers; the full verification ledger and the
+"dropped / down-ranked" notes are in git history (Session 814/815 era).
+
+Scope: the full **search view** — FTS/SQL layer, backend command/IPC, the client
+search-query DSL, the SearchPanel/SearchSheet UI tree (incl. `<SearchAutocomplete>`
+and results virtualization), stores/hooks, docs, and e2e/test coverage.
+
+## Batch 1 — shipped (Session 815)
+
+Closed: **DSL-A8 / UX-A4** (cluster 1 — regex mode now applies structural filters;
+it was a frontend-only bug, the backend `regex_mode_query` already bound every
+filter), **FE-A5 / FE-A7 / FE-A8** (cluster 3 — virtualization a11y), **DSL-A1**
+(quoted-phrase whitespace), **DOC-A1 / A2 / A3 / A5 / A6**, **BE-A4 / SQL-A4 /
+SQL-A5 / SQL-A6** (regex-path robustness), and **FE-A13 / FE-A12 / UX-A11 / UX-A2**.
+
+Cluster-1 contract (decided with the user): regex mode is symmetric with non-regex
+mode — filter tokens are parsed out and applied as SQL filters; the free-text
+remainder is the regex pattern (matched against raw `blocks.content`).
+
+## Batch 2 — shipped (Session 816)
+
+Closed: **Cluster 2 — pagination/`has_more`** (SQL-A1 cursor over-cap now rejects to
+mirror BE-2; SQL-A2 regex partitioned `has_more` correct at the cap; SQL-A3/BE-A1
+filter-aware over-fetch so post-filtered pages don't under-fill or drop rows;
+**BE-A10** tests), the **FilterHelperPopover hardening** (FE-A20 debounce+latest-wins
+race guard; UX-A3 i18n; UX-A6 combobox/listbox a11y), and **DOC-A4 / A7 / A8 / A9**.
+Also fixed **NEW-4** (priority autocomplete suggested stale `A/B/C` — now derives
+from the configurable `usePriorityLevels()`; surfaced by the DOC-A7 work).
+
+## Batch 3 — shipped (Session 817)
+
+Closed the cluster-1 follow-ups: **NEW-3** (filter-only search) — a blank free-text
+query carrying ≥1 structural filter now returns the filtered blocks (recency-ordered,
+`b.id DESC`) instead of empty, in BOTH the cursor and partitioned paths and
+mode-independent. FTS5 MATCH can't express "match all", so a new `filter_only_scan`
+(+ `fts_fetch_filter_only_page` cursor and `fts_fetch_filter_only_partitioned`)
+bypasses FTS/regex; the old blank-query short-circuits in `search_blocks_inner` /
+`search_blocks_partitioned_inner` were removed (the decision moved into
+`search_with_toggles*`). `space_id` is excluded from the "has filters" test (it's
+always supplied), so a space-only blank query still returns empty. **NEW-1**
+(regex-mode prefix autocomplete) — the over-broad `suppressed={isRegex}` gate is
+gone; the caret anchor detector already returns null for free-text, so filter
+prefixes (`tag:`, `state:`, …) now autocomplete in regex mode while the free-text
+regex remainder stays suppressed. **NEW-2** (regex visual cue) — the input gains a
+regex placeholder + monospace + an sr-only `aria-describedby` hint when regex mode
+is on. Backend reviewed with empirical mutation testing (cursor `<`/`has_more`
+boundaries) which caught + fixed an exact-multiple `has_more` test gap.
+
+## Batch 4 — shipped (Session 818)
+
+Closed the mobile/touch/a11y polish cluster. **UX-A1** (mobile escalation
+discoverability) — per the product decision ("better escalation only"), the mobile
+all-pages palette now shows an always-visible, prominent two-line "Filters & regex /
+Open full search" CTA (replacing the muted, query-gated footer), so toggles, filters,
+regex, and history are discoverable from the sheet via the full search view (a new
+`showMobileEscalation` gate; desktop inline footer unchanged). **UX-A7** — the history
+rows, Clear-history, and the enable/disable toggle gained coarse-pointer 44px
+(`min-h-11`) targets (the per-row delete already had one). **UX-A9** — the search help
+dialog's Toggles "Icon" column now renders the same `CaseSensitive` / `WholeWord` /
+`Regex` lucide icons the toolbar shows, instead of `Aa` / `Ab|` / `.*` text glyphs.
+
+**UX-A8 deferred** (kept open): an always-visible/long-press toggle-mode explanation
+for touch needs a real design decision (Radix tooltips don't fire on touch-tap; inline
+labels overflow a narrow phone row) plus runtime verification — not shipped to avoid a
+half-baked touch affordance.
+
+## Batch 5 — shipped (Session 819)
+
+Closed **UX-A5** — the `+ Filter` builder now offers the remaining structural
+categories (`state` / `priority` / `due` / `scheduled` / `prop`), each with an
+include/exclude toggle covering the `not-` variants, via new sub-forms under
+`src/components/search/filter-forms/`. The popover builds a `FilterToken` and
+routes through the existing `addFilter` → `serialize` path, so the DSL was
+untouched (purely additive UI). Vocabulary is shared with the caret autocomplete:
+state + date-bucket forms reuse the now-exported `STATE_VALUES` /
+`DATE_BUCKET_VALUES`, priority reuses `usePriorityLevels()` — no divergent
+hardcoded lists. Forms manage focus-on-open (Radix `SelectTrigger` swallows
+`autoFocus`, so a `ref`+effect is used) and meet the coarse-pointer 44px target
+convention.
+
+Also closed the DSL low-priority cleanups: **DSL-A6** — `isInsideQuote` now
+delegates to `tokenize()`, so the autocomplete's "caret inside a quoted phrase"
+decision can't drift from the parser's quote model (fixes wrong suppression on
+glued/stray/unterminated quotes). **DSL-A7** — removed the dead `tag:#`
+autocomplete arm (subsumed by the earlier `startsWith('tag:#')` branch).
+**DSL-A4** — NFC-normalise tag names at the `astToFilterProjection` funnel so
+composed-vs-decomposed Unicode tags match the NFC-indexed backend (chip /
+serialized form stays verbatim). **DSL-A3** — the `expandBraces` / `EXPANSION_CAP`
+glob scaffold is by-design parity with the Rust expander (both truncate, never
+error) and has no production caller; pinned the truncate-not-error contract with a
+test + banner rather than churning the unused public API.
+
+## Batch 6 — shipped (Session 820)
+
+Closed the verifiable E2E coverage gaps. **E2E-A1** (negated filters → IPC:
+`not-state:`→`excludedStateFilter`, `not-priority:`→`excludedPriorityFilter`,
+`not-prop:`→`excludedPropertyFilters`), **E2E-A2** (`scheduled:` → `scheduledFilter`,
+both named-bucket and comparison-op shapes), **E2E-A11** (`not-path:` →
+`excludePageGlobs`), and **E2E-A8** (`prop:key=` empty value → `propertyFilters`
+`{key, value:''}` key-presence contract) were added to the E2E-6 IPC-marshalling
+block in `search-filters.spec.ts`. **E2E-A7** (priority / due / scheduled
+autocomplete anchors) added to `autocomplete.spec.ts`. **E2E-A10** (search-history
+per-space isolation, via a pre-boot `localStorage` seed of a foreign space) added to
+`search-history.spec.ts`.
+
+Also fixed a **pre-existing broken e2e test**: `search-filters.spec.ts`'s "adds a tag
+filter via the tag picker" queried `getByRole('button', { name: '#work' })`, but the
+Batch-2 UX-A6 a11y work made the tag items `role="option"`, so the stale assertion
+timed out. It had gone unnoticed because the Playwright browser wasn't installed in
+the dev environment (verified by reverting to the pre-Batch-5 component — it failed
+identically, ruling out a regression). Switched to `getByRole('option', …)`. The full
+search e2e suite (`search-filters`, `autocomplete`, `search-results`,
+`search-history`) is now green — **47 tests**.
+
+**E2E-A3 (Load-More) reclassified as a harness blind spot:** the web+mock
+`search_blocks` returns the entire match set in one page (`has_more:false`, ignores
+cursor/limit), so multi-page Load-More is unreachable here. The added
+`search-results.spec.ts` test pins the single-page contract (rows render, no spurious
+Load-More control); the append-on-load-more path stays covered at the
+`usePaginatedQuery` unit layer. True pagination needs a Tauri-driven harness (E2E-A6).
+
+## Batch 7 — shipped (Session 821)
+
+Closed the maintainability cluster. **FE-A18** — decomposed the ~996-line
+`SearchPanel.tsx` god-component (continues FE-9). The results pipeline (AST→IPC
+projection, `usePaginatedQuery`, the inline regex-error derive, breadcrumb
+page-title resolution, page grouping + collapse state, the roving
+`useListKeyboardNavigation` model, and result/recent-page navigation) moved into
+a new `useSearchResults` hook; the per-space search-history surface (store
+wiring, `useSearchHistoryCycling`, the listbox id, and the recall/clear/remove/
+toggle handlers) moved into `useSearchHistoryControls`; and the filter-param
+projection (`SearchFilterParams` + `astFilterParams`) moved to its own pure
+`searchFilterParams.ts` module (now unit-tested). Behaviour-preserving lift —
+every memo/effect dependency array is unchanged; the integration suite
+(`SearchPanel.*` + `SearchResultGroups`) stayed green. `SearchPanel.tsx` dropped
+from 996 to 625 lines (the remainder is mostly the JSX tree, which stays in the
+orchestrator). **FE-A19** — converged the search subtree on the
+dominant `useTranslation()` convention: removed the drilled `t: TFunction` prop
+from `SearchHeader`, `SearchStatusRegion`, `SearchResultGroups` (each now calls
+`useTranslation()` itself) and from the new `useSearchResults` hook. The pure
+`getSearchStatusText` helper still takes `t` as a param (exported for direct
+testing); only the React components/hooks own the `useTranslation()` call.
+
+## Batch 8 — shipped (Session 822)
+
+Closed the verifiable test-coverage gaps. **E2E-A4** (capped 5000-result
+notice) and **E2E-A5** (palette→panel `pendingViewQuery` handoff) had no test at
+any layer; both are now covered at the SearchPanel integration layer (jsdom can't
+hit the 5000-row cap or a viewport, so these live in vitest, not e2e):
+`SearchPanel.capped.test.tsx` mocks `usePaginatedQuery` to assert the
+`search-capped-notice` renders iff `capped` (the cap arithmetic itself stays
+unit-covered in `usePaginatedQuery.test.ts`), and `SearchPanel.handoff.test.tsx`
+asserts the mount effect seeds the input + fires `search_blocks` for a non-empty
+seed and clears the slot in both the non-empty and empty-string (PEND-61 CR)
+cases. **E2E-A9** (full SearchPanel at a mobile viewport) — new
+`search-view-mobile.spec.ts` reaches the full find-in-files panel via the mobile
+search-sheet escalation footer (the desktop sidebar is `hidden` below `md`) and
+asserts the panel lays out + functions at iPhone width (grouped results + row→page
+navigation). **Weak result-assertions** — the three `search-results.spec.ts`
+navigation checks that only asserted *a* page-title region was visible now assert
+the *specific* destination ("Getting Started"), matching the `hasText` pattern
+already used in `inner-links.spec.ts`.
+
+Also fixed **two pre-existing failures** in `search-toggles.spec.ts` surfaced by
+the full-suite regression run (the spec wasn't in the Batch 3–6 run sets, so they
+had gone unnoticed). Both located the input via `getByPlaceholder('Search
+blocks...')` *after* clicking the regex toggle — but NEW-2 (Batch 3) swaps the
+placeholder to a regex-specific string in regex mode, so the lookup timed out;
+switched to the mode-agnostic `getByRole('combobox', { name: 'Search blocks' })`.
+The "regex toggle forwards the raw query and drops structured filters" test also
+encoded the obsolete pre-cluster-1 contract; rewrote it to assert the current
+**symmetric** behavior (DSL-A8 / UX-A4: a `state:` token is parsed out and
+applied as `stateFilter`, only the free-text remainder is the regex pattern) and
+corrected the stale file-header comment.
+
+---
+
+## Remaining — Performance / robustness (backend)
+
+- **BE-A5 (Low)** `commands/queries.rs`. The detached partitioned task holds a
+  read-pool connection until its next cancel checkpoint (≤200ms). Bounded; note
+  only if pool saturation is observed.
+
+## Remaining — Product / UX / a11y
+
+- **UX-A8 (Low)** add an always-visible/long-press toggle-mode explanation for touch.
+  Deferred from Batch 4: needs a design decision (Radix tooltips don't fire on
+  touch-tap; inline labels overflow a narrow phone row) + runtime verification.
+- **UX-A10 / UX-A12 / UX-A13 (uncertain)** history dropdown in normal flow vs
+  overlaid; capped + error co-render; RTL physical spacing — verify at runtime.
+
+## Remaining — Maintainability
+
+- **BE-A7 (Low, by-design)** `filters/primitive.rs`. `SearchProjection` / `compile_*`
+  are dead at runtime (1=1 placeholders) — intentional Phase-2 scaffolding behind a
+  clear banner. Either finish the wiring or keep the banner.
+
+## Remaining — E2E / test coverage
+
+- **Harness blind spot (E2E-A6, incl. E2E-A3 pagination):** `<mark>` highlight, the
+  real Rust FTS/regex pipeline, and multi-page Load-More are unreachable on the
+  web+mock harness; would need a Tauri-driven e2e harness. (The `searchUntil`
+  presence-poll likewise can only assert the IPC payload via `latestFilter`, never
+  the filtered result set, because the mock ignores the filter struct.)
+
+## Suggested action order (remaining)
+
+1. **Low-priority UX** (UX-A8 touch toggle-mode explanation; UX-A10/A12/A13 need
+   runtime verification) + the by-design backend items (BE-A5, BE-A7).
+2. **Tauri-driven harness** (E2E-A3/A6) — the only way to cover `<mark>`, the real
+   FTS/regex pipeline, and multi-page Load-More.

@@ -170,7 +170,11 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     expect(await axe(container)).toHaveNoViolations()
   })
 
-  it('regex mode disables the popover', async () => {
+  // PEND-58g NEW-1 — regex mode still applies structural filters, so the
+  // filter-prefix autocomplete must keep working there; only the free-text
+  // (= the regex remainder) is self-suppressing because the anchor detector
+  // returns null for non-prefix tokens.
+  it('regex mode still completes a filter prefix (placeholder reads regex)', async () => {
     render(<SearchPanel />)
     // Flip the regex toggle.
     const regexToggle = screen.getByRole('button', {
@@ -178,15 +182,36 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     })
     fireEvent.click(regexToggle)
 
-    const input = getInput()
+    // In regex mode the input gets the regex-specific placeholder.
+    const input = screen.getByPlaceholderText(
+      t('search.searchPlaceholderRegex'),
+    ) as HTMLInputElement
     input.focus()
     typeFull(input, 'state:')
 
-    // The popover gate hangs off `currentAnchor`, which becomes null
-    // synchronously when `toggles.isRegex` is true — no popover should
-    // ever render. Assert absence after the input dispatch has flushed.
+    // The recognized filter prefix opens the popover even in regex mode.
+    const popover = await screen.findByTestId('autocomplete-popover')
+    expect(popover).toBeInTheDocument()
+    expect(screen.getByTestId('autocomplete-item-TODO')).toBeInTheDocument()
+  })
+
+  it('regex mode does NOT complete a free-text (regex remainder) token', async () => {
+    render(<SearchPanel />)
+    const regexToggle = screen.getByRole('button', {
+      name: new RegExp(t('search.toggle.regex'), 'i'),
+    })
+    fireEvent.click(regexToggle)
+
+    const input = screen.getByPlaceholderText(
+      t('search.searchPlaceholderRegex'),
+    ) as HTMLInputElement
+    input.focus()
+    // `^TODO` is free text (the regex remainder), not a recognized filter
+    // prefix, so `detectAutocompleteAnchor` returns null and no popover opens.
+    typeFull(input, '^TODO')
+
     await waitFor(() => {
-      expect(input.value).toBe('state:')
+      expect(input.value).toBe('^TODO')
     })
     expect(screen.queryByTestId('autocomplete-popover')).not.toBeInTheDocument()
   })
@@ -201,7 +226,9 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     fireEvent.keyDown(input, { key: 'Tab' })
 
     await waitFor(() => {
-      expect(input.value).toBe('priority:A ')
+      // NEW-4 — priority autocomplete now offers the numeric levels
+      // (DEFAULT_PRIORITY_LEVELS = ['1','2','3']), not the stale 'A'/'B'/'C'.
+      expect(input.value).toBe('priority:1 ')
     })
   })
 

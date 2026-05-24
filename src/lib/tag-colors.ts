@@ -58,14 +58,24 @@ export function getTagColor(tagId: string): string | undefined {
 export function setTagColor(tagId: string, color: string): void {
   const colors = getTagColors()
   colors[tagId] = color
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
+  } catch {
+    // Storage unavailable (private mode / quota / locked-down webview) —
+    // degrade to no-persist rather than throwing into the click handler.
+    // Mirrors the silent fallback in getTagColors above.
+  }
 }
 
 /** Remove the color for a tag from localStorage. */
 export function clearTagColor(tagId: string): void {
   const colors = getTagColors()
   delete colors[tagId]
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(colors))
+  } catch {
+    // Storage unavailable — degrade to no-persist (see setTagColor).
+  }
 }
 
 /**

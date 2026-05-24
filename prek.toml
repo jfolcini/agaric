@@ -12,7 +12,7 @@ hooks = [
     { id = "check-merge-conflict" },
     { id = "check-added-large-files", args = ["--maxkb=500"], exclude = "^docs/session-log/" },
     { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
-    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$" },
+    { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/" },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
     # because Rust's inner-attribute syntax `#![...]` looks like a shebang to this builtin and gives
@@ -601,6 +601,14 @@ types = ["toml"]
 # across cores via background jobs instead of letting prek serialize
 # per-hook. Total wall clock on a warm cache: ≈3-4 min (was ≈5-8 min
 # when each hook ran sequentially via prek).
+#
+# PREFERRED PUSH PATH: `scripts/push.sh` runs this verification BEFORE
+# `git push` opens any SSH connection, then pushes with
+# `SKIP_CI_VERIFY=1` so this hook short-circuits and the fresh
+# connection is used immediately. Plain `git push` still auto-verifies
+# here, but holds the SSH connection open for the whole run — on a slow
+# verify GitHub closes the idle connection and the pack send fails
+# ("Connection closed by remote host"). Use `scripts/push.sh`.
 #
 # Escape hatch: `SKIP_CI_VERIFY=1 git push` short-circuits the
 # script. Use sparingly — for docs-only typo fixes that obviously

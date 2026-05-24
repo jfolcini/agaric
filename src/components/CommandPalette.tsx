@@ -74,7 +74,7 @@ import {
 } from '@/lib/recent-pages'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import type { SearchBlockRow } from '@/lib/tauri'
-import { paginationLimit, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksLimit, searchBlocksPartitioned } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -901,6 +901,13 @@ export function PaletteBody({
     !loading &&
     trimmedQuery.length > 0 &&
     (groups.length > 0 || showNoResults)
+  // PEND-58g UX-A1 — the mobile all-pages sheet ALWAYS surfaces the
+  // escalation CTA, independent of query text / results. The full
+  // search view is where filters, regex, and history live; gating the
+  // CTA on a non-empty query hid it exactly when a cold-open user most
+  // needs to discover those features. Mobile-only — desktop keeps the
+  // query-gated inline cmdk footer (`showEscalationFooter`).
+  const showMobileEscalation = mode === 'search' && !linkMode && isMobile
 
   return (
     // shouldFilter={false} — debounced FTS + Rust-side ranking already
@@ -1100,23 +1107,31 @@ export function PaletteBody({
           </>
         )}
       </CommandList>
-      {showEscalationFooter && isMobile && (
-        /* Mobile escalation pinned beneath the CommandList so it
-           stays visible when 8 page-groups push the inline cmdk row
-           below the iOS soft keyboard. Chrome matches the cmdk row
-           pattern (px/py + hover bg + chevron + min-h-11 touch
-           target) so it doesn't read as an orphan footer. Sibling-
-           after-list placement loses cmdk's Enter-to-select binding,
-           but touch users tap. */
+      {showMobileEscalation && (
+        /* PEND-58g UX-A1 — prominent, always-visible escalation CTA
+           pinned beneath the CommandList. Styled as a bordered,
+           elevated box (not a muted footer row) so the path to the
+           full search view — filters, regex, history — is discoverable
+           even on a cold open with an empty query. Two lines: an
+           emphasized title with a trailing chevron + a muted hint.
+           Sibling-after-list placement loses cmdk's Enter-to-select
+           binding, but touch users tap. */
         <button
           type="button"
           onClick={() => escalate(trimmedQuery)}
           data-testid="palette-escalation-footer"
           aria-label={t('searchSheet.escalateLabel')}
-          className="flex min-h-11 w-full items-center gap-2 border-t border-border bg-background px-3 py-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
+          className="m-3 flex min-h-11 items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-left shadow-sm hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-ring-visible"
         >
-          <span className="flex-1 truncate">{t('searchSheet.escalateLabel')}</span>
-          <ChevronRight aria-hidden className="size-4 shrink-0" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex items-center gap-1 text-sm font-medium text-foreground">
+              <span className="truncate">{t('searchSheet.escalateCtaTitle')}</span>
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {t('searchSheet.escalateCtaHint')}
+            </span>
+          </span>
+          <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         </button>
       )}
       {mode === 'search' && !linkMode && <PaletteFooterHint t={t} />}
@@ -1618,7 +1633,7 @@ function TagsModeBody({
     searchBlocks({
       query: debouncedQuery,
       blockTypeFilter: 'tag',
-      limit: paginationLimit(TAGS_QUERY_LIMIT),
+      limit: searchBlocksLimit(TAGS_QUERY_LIMIT),
       spaceId: currentSpaceId ?? '',
     })
       .then((resp) => {

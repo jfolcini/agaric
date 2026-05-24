@@ -84,6 +84,19 @@ describe('SearchToggleRow', () => {
     }
   })
 
+  it('renders a non-colour active indicator only on pressed toggles (UX-15)', () => {
+    render(
+      <SearchToggleRow
+        toggles={{ caseSensitive: true, wholeWord: false, isRegex: false }}
+        onChange={vi.fn()}
+      />,
+    )
+    // The pressed toggle gets a shape-only dot; the others do not.
+    expect(screen.getByTestId('search-toggle-case-sensitive-active-dot')).toBeInTheDocument()
+    expect(screen.queryByTestId('search-toggle-whole-word-active-dot')).toBeNull()
+    expect(screen.queryByTestId('search-toggle-regex-active-dot')).toBeNull()
+  })
+
   it('has no axe violations', async () => {
     const { container } = render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
     // biome-ignore lint/suspicious/noExplicitAny: axe types loose in vitest-axe.

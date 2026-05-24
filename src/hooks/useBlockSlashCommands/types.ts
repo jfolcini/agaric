@@ -11,6 +11,7 @@
  * `biome-ignore useExhaustiveDependencies` needed.
  */
 
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import type { StoreApi } from 'zustand'
 import type { PickerItem } from '../../editor/SuggestionList'
@@ -19,8 +20,7 @@ import type { PageBlockState } from '../../stores/page-blocks'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-export type TFn = (...args: any[]) => any
+export type TFn = TFunction
 
 /**
  * Immutable, dispatcher-only snapshot of the hook state used by a single

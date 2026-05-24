@@ -203,7 +203,7 @@ impl CancellationRegistry {
     pub fn insert(&self, request_id: String, guard: Arc<CancellationGuard>) {
         self.inner
             .lock()
-            .expect("CancellationRegistry mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(request_id, guard);
     }
 
@@ -213,7 +213,7 @@ impl CancellationRegistry {
         let removed = self
             .inner
             .lock()
-            .expect("CancellationRegistry mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(request_id);
         if let Some(guard) = removed {
             guard.cancel();
@@ -228,7 +228,7 @@ impl CancellationRegistry {
     pub fn len(&self) -> usize {
         self.inner
             .lock()
-            .expect("CancellationRegistry mutex poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .len()
     }
 

@@ -1,0 +1,186 @@
+/**
+ * E2E — PEND-58f search-view toggles (E2E-1) + invalid-regex inline error
+ * (E2E-2).
+ *
+ * The web+mock harness has no real Rust FTS/regex pipeline, so "exercise the
+ * toggles against the real backend" (the literal E2E-1 wording) is not
+ * achievable here. Instead we assert the contract the UI is responsible for:
+ *
+ *   - clicking each toggle flips its `aria-pressed` + `data-state`;
+ *   - the toggle state is reflected in the IPC payload (`filter.caseSensitive`
+ *     / `wholeWord` / `isRegex`) the panel sends to `search_blocks`;
+ *   - regex mode is symmetric with normal mode (PEND-58g cluster-1): structured
+ *     tokens are parsed out and applied as filter params, only the free-text
+ *     remainder is the regex pattern;
+ *   - an invalid regex surfaces inline (`search-inline-error`) and a
+ *     non-regex backend error renders the visible error state (E2E-2).
+ *
+ * The IPC recorder (helpers `installIpcRecorder` / `getInvokeCalls`) wraps the
+ * live mock `invoke` so we can read the filter flags the real backend would
+ * receive.
+ */
+
+import {
+  clearConsoleErrors,
+  clearInvokeCalls,
+  expect,
+  getInvokeCalls,
+  installIpcRecorder,
+  openSearchView,
+  test,
+} from './helpers'
+
+interface MockErrorWindow extends Window {
+  __injectMockError?: (command: string, message: string) => void
+  __clearMockErrors?: () => void
+}
+
+/** Fire a query and wait until at least one `search_blocks` IPC is recorded. */
+async function searchAndAwaitIpc(page: import('@playwright/test').Page, query: string) {
+  await clearInvokeCalls(page)
+  const input = page.getByRole('combobox', { name: 'Search blocks' })
+  await input.fill(query)
+  await input.press('Enter')
+  await expect
+    .poll(async () => (await getInvokeCalls(page, 'search_blocks')).length)
+    .toBeGreaterThan(0)
+}
+
+test.describe('Search toggles (PEND-58f E2E-1)', () => {
+  test.beforeEach(async ({ page }) => {
+    await openSearchView(page)
+    await installIpcRecorder(page)
+  })
+
+  test('case / word / regex toggles flip aria-pressed and data-state', async ({ page }) => {
+    const toggleRow = page.getByTestId('search-toggle-row')
+    await expect(toggleRow).toHaveAttribute('role', 'toolbar')
+
+    for (const testId of [
+      'search-toggle-case-sensitive',
+      'search-toggle-whole-word',
+      'search-toggle-regex',
+    ]) {
+      const btn = page.getByTestId(testId)
+      await expect(btn).toHaveAttribute('aria-pressed', 'false')
+      await expect(btn).toHaveAttribute('data-state', 'off')
+      await btn.click()
+      await expect(btn).toHaveAttribute('aria-pressed', 'true')
+      await expect(btn).toHaveAttribute('data-state', 'on')
+      // UX-15 — shape-only active dot renders when pressed.
+      await expect(page.getByTestId(`${testId}-active-dot`)).toBeVisible()
+      // Reset so toggles don't interact across the loop.
+      await btn.click()
+      await expect(btn).toHaveAttribute('aria-pressed', 'false')
+    }
+  })
+
+  test('default search sends all-false filter flags', async ({ page }) => {
+    await searchAndAwaitIpc(page, 'Welcome')
+    const calls = await getInvokeCalls(page, 'search_blocks')
+    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    expect(filter['caseSensitive']).toBe(false)
+    expect(filter['wholeWord']).toBe(false)
+    expect(filter['isRegex']).toBe(false)
+  })
+
+  test('case-sensitive toggle sets filter.caseSensitive on the IPC payload', async ({ page }) => {
+    await page.getByTestId('search-toggle-case-sensitive').click()
+    await searchAndAwaitIpc(page, 'Welcome')
+    const calls = await getInvokeCalls(page, 'search_blocks')
+    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    expect(filter['caseSensitive']).toBe(true)
+    expect(filter['wholeWord']).toBe(false)
+    expect(filter['isRegex']).toBe(false)
+  })
+
+  test('whole-word toggle sets filter.wholeWord on the IPC payload', async ({ page }) => {
+    await page.getByTestId('search-toggle-whole-word').click()
+    await searchAndAwaitIpc(page, 'Welcome')
+    const calls = await getInvokeCalls(page, 'search_blocks')
+    const filter = calls[calls.length - 1]?.['filter'] as Record<string, unknown>
+    expect(filter['wholeWord']).toBe(true)
+    expect(filter['caseSensitive']).toBe(false)
+    expect(filter['isRegex']).toBe(false)
+  })
+
+  test('regex mode parses structured filters out of the pattern (symmetric with normal mode)', async ({
+    page,
+  }) => {
+    await page.getByTestId('search-toggle-regex').click()
+    // PEND-58g cluster-1 (DSL-A8 / UX-A4, decided with the user) — regex mode is
+    // SYMMETRIC with normal mode: a structured token (`state:`) is parsed out of
+    // the input and applied as a SQL filter; only the free-text remainder
+    // ('W.*come') is forwarded as the regex pattern. This replaced the original
+    // PEND-58f contract (regex forwarded the raw string verbatim and dropped
+    // filters), which this test used to assert. A `state:` token is used (not a
+    // tag) so the assertion is synchronous — no async tag-id resolution to race.
+    await searchAndAwaitIpc(page, 'W.*come state:TODO')
+    const calls = await getInvokeCalls(page, 'search_blocks')
+    const last = calls[calls.length - 1]
+    const filter = last?.['filter'] as Record<string, unknown>
+    expect(filter['isRegex']).toBe(true)
+    // The `state:` token is stripped from the regex pattern…
+    expect(last?.['query']).toBe('W.*come')
+    // …and applied as a filter param instead (symmetric with normal mode).
+    expect(filter['stateFilter']).toContain('TODO')
+  })
+})
+
+test.describe('Search backend-error surface (PEND-58f E2E-2)', () => {
+  test.afterEach(async ({ page }) => {
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__clearMockErrors?.()
+    })
+    // The injected backend failure flows through logger.error → console.error;
+    // clear the captured buffer so the global no-console-errors gate passes
+    // (documented opt-out in helpers.ts).
+    clearConsoleErrors(page)
+  })
+
+  // E2E-2 — an invalid regex surfaces inline. The raw `InvalidRegex:` IPC
+  // message now reaches the panel (SearchPanel no longer passes `onError`
+  // to usePaginatedQuery, which used to overwrite the raw message), so the
+  // `regexError` parser lights up `search-inline-error` and the body
+  // error-state is suppressed.
+  test('invalid regex shows the inline error (search-inline-error)', async ({ page }) => {
+    await openSearchView(page)
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__injectMockError?.(
+        'search_blocks',
+        'InvalidRegex: unclosed group at position 0',
+      )
+    })
+
+    await page.getByTestId('search-toggle-regex').click()
+    const input = page.getByRole('combobox', { name: 'Search blocks' })
+    await input.fill('(unclosed')
+    await input.press('Enter')
+
+    const inlineError = page.getByTestId('search-inline-error')
+    await expect(inlineError).toBeVisible()
+    await expect(inlineError).toContainText('unclosed group')
+    // The inline regex error owns the failure; the body error-state stays out.
+    await expect(page.getByTestId('search-error-state')).toHaveCount(0)
+  })
+
+  test('a non-regex backend error renders a visible error state (UX-2)', async ({ page }) => {
+    await openSearchView(page)
+    await page.evaluate(() => {
+      ;(window as unknown as MockErrorWindow).__injectMockError?.(
+        'search_blocks',
+        'database is locked',
+      )
+    })
+
+    const input = page.getByRole('combobox', { name: 'Search blocks' })
+    await input.fill('anything')
+    await input.press('Enter')
+
+    // UX-2 — generic (non-regex) failures previously left the panel blank;
+    // they now render a visible, role="alert" error state.
+    const errorState = page.getByTestId('search-error-state')
+    await expect(errorState).toBeVisible()
+    await expect(errorState).toHaveAttribute('role', 'alert')
+  })
+})

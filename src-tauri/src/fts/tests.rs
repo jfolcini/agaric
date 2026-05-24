@@ -1,6 +1,7 @@
 use super::strip::strip_for_fts_with_maps;
 use super::*;
 use crate::db::init_pool;
+use crate::error::AppError;
 use crate::pagination::{Cursor, PageRequest};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -5012,24 +5013,24 @@ async fn concurrent_pool_starvation_bound_500ms() {
 }
 
 #[tokio::test]
-async fn partitioned_long_query_returns_empty_via_short_circuit() {
-    // A 100KB query of `"a a a a …"` — every token is a single-character
-    // word (sub-trigram length). The sanitizer drops sub-trigram word
-    // tokens (per `sanitize_fts_query`'s `TRIGRAM_MIN_LEN = 3` filter),
-    // which leaves the post-sanitised query empty. `search_fts` then
-    // short-circuits to an empty `PageResponse` rather than passing the
-    // empty MATCH expression to SQLite (which would error).
+async fn partitioned_over_long_query_is_rejected() {
+    // SQL-4 (PEND-58f) — a 100KB query now exceeds `MAX_QUERY_LEN`
+    // (4 KiB) and is REJECTED up front with a validation error, before
+    // any tokenise / sanitise work. This supersedes the pre-PEND-58f
+    // behaviour where a long sub-trigram-only query was tokenised,
+    // sanitised to empty, and short-circuited to an empty response. The
+    // sub-trigram empty-short-circuit itself is still covered by
+    // `partitioned_sub_trigram_only_under_cap_short_circuits` below for
+    // queries that fit under the length cap.
     let (pool, _dir) = test_pool().await;
     seed_partitioned_fixture(&pool, 3, 3).await;
 
-    // 50_000 alternating chars + spaces ≈ 100KB UTF-8 (each char is 2
-    // bytes including the space). The exact size isn't load-bearing —
-    // any sub-trigram-only input >> bytecode buffer exercises the
-    // path. We pick 100K to match the plan's stated size.
+    // 50_000 alternating chars + spaces ≈ 100KB UTF-8 — well over the
+    // 4 KiB `MAX_QUERY_LEN` cap.
     let huge: String = "a ".repeat(50_000);
     assert!(huge.len() >= 100_000, "fixture must be at least 100KB");
 
-    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
         &pool,
         huge,
         10,
@@ -5038,15 +5039,49 @@ async fn partitioned_long_query_returns_empty_via_short_circuit() {
         None,
     )
     .await
-    .expect("long sub-trigram-only query must short-circuit, not error");
+    .expect_err("over-long query must be rejected, not short-circuited");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long query must surface AppError::Validation, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
+    // A sub-trigram-only query that fits UNDER `MAX_QUERY_LEN`: every
+    // token is a single-character word (sub-trigram length). The
+    // sanitizer drops sub-trigram word tokens (per `sanitize_fts_query`'s
+    // `TRIGRAM_MIN_LEN = 3` filter), leaving the post-sanitised query
+    // empty. The partitioned path then short-circuits to two empty
+    // partitions rather than passing an empty MATCH expression to SQLite.
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    // "a a a …" — comfortably under the 4 KiB cap.
+    let short: String = "a ".repeat(100);
+    assert!(
+        short.len() < super::search::MAX_QUERY_LEN,
+        "fixture must fit under MAX_QUERY_LEN"
+    );
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        short,
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect("sub-trigram-only query must short-circuit, not error");
 
     assert!(
         resp.pages.items.is_empty(),
-        "long sub-trigram-only query must yield empty pages partition"
+        "sub-trigram-only query must yield empty pages partition"
     );
     assert!(
         resp.blocks.items.is_empty(),
-        "long sub-trigram-only query must yield empty blocks partition"
+        "sub-trigram-only query must yield empty blocks partition"
     );
     assert!(!resp.pages.has_more);
     assert!(!resp.blocks.has_more);
@@ -6322,4 +6357,2095 @@ async fn fts_index_consistency_check_flags_missing_rows() {
         vec!["01HQFTSC03BLK00000000B03CC".to_string()],
         "the helper must catch a block that was inserted without FTS indexing"
     );
+}
+
+// ======================================================================
+// PEND-58f — SQL/BE hardening regression tests
+// ======================================================================
+
+/// SQL-1 (PEND-58f) — duplicate tag IDs in the "ALL tags" filter must
+/// NOT silently zero out the result on the FTS path. Before the dedup
+/// fix, `tag_ids = [T, T]` made `COUNT(DISTINCT tag_id) = 1` compare
+/// against the bound list length `2`, so the predicate could never hold.
+#[tokio::test]
+async fn fts_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQDUPTAG0000000000000T01";
+    let blk = "01HQDUPTAG000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "duptag", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        &format!("dup-tag candidate referencing #[{tag_id}]"),
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    // The duplicate id appears twice in the caller-supplied list.
+    let dup_tags = vec![tag_id.to_string(), tag_id.to_string()];
+    let resp = search_fts(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&dup_tags),
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&blk),
+        "duplicate tag ids must still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-1 (PEND-58f) — same dedup guarantee on the regex-mode path.
+#[tokio::test]
+async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQDUPRGX0000000000000T01";
+    let blk = "01HQDUPRGX000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "duprgx", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        "regex-dup candidate alpha",
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let dup_tags = vec![tag_id.to_string(), tag_id.to_string()];
+    let resp = search_with_toggles(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&dup_tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(&blk),
+        "regex-mode duplicate tag ids must still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-A6 (PEND-58f) — a MIXED-CASE duplicate tag id must dedup so the
+/// "ALL tags" predicate still matches. `block_tags.tag_id` stores the
+/// canonical UPPERCASE ULID; before normalising the dedup set, the same
+/// id arriving once lower-case and once upper-case survived byte-exact
+/// dedup, inflated the bound list length to 2 against an achievable
+/// `COUNT(DISTINCT) = 1`, and silently zeroed out the regex scan.
+#[tokio::test]
+async fn regex_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() {
+    let (pool, _dir) = test_pool().await;
+
+    // Canonical (uppercase) stored tag id + tagged block.
+    let tag_id = "01HQMIXTAG0000000000000T01";
+    let blk = "01HQMIXTAG000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "mixtag", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        "mixed-case dup candidate alpha",
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    // Same logical id, supplied once upper-case and once lower-case —
+    // a byte-exact dedup would keep both and break the predicate.
+    let mixed = vec![tag_id.to_string(), tag_id.to_ascii_lowercase()];
+    let resp = search_with_toggles(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&mixed),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![blk],
+        "mixed-case duplicate tag ids must dedup to one and still match the tagged block (got {ids:?})"
+    );
+}
+
+/// SQL-A6 (PEND-58f) — same mixed-case dedup guarantee on the FTS path.
+#[tokio::test]
+async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQMIXFTS0000000000000T01";
+    let blk = "01HQMIXFTS000000000000BLK1";
+    insert_block(&pool, tag_id, "tag", "mixfts", None, Some(0)).await;
+    insert_block(
+        &pool,
+        blk,
+        "content",
+        &format!("mixed-case fts candidate referencing #[{tag_id}]"),
+        None,
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(blk)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let mixed = vec![tag_id.to_string(), tag_id.to_ascii_lowercase()];
+    let resp = search_fts(
+        &pool,
+        "candidate",
+        &page,
+        None,
+        Some(&mixed),
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![blk],
+        "FTS mixed-case duplicate tag ids must dedup and still match (got {ids:?})"
+    );
+}
+
+/// SQL-A4 (PEND-58f) — an over-long RAW regex pattern is rejected up
+/// front (before NFC-normalise / compile) with a validation error,
+/// mirroring the FTS path's `MAX_QUERY_LEN` guard. The raw guard fires
+/// at `MAX_QUERY_LEN` bytes, well below the `MAX_PATTERN_LEN` (1 KiB)
+/// composed-pattern cap, so it is the first guard a giant raw input hits.
+#[tokio::test]
+async fn regex_over_long_raw_pattern_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    // One byte past the FTS query cap — the up-front raw guard must
+    // reject this before any normalise/compile work.
+    let huge = "a".repeat(super::search::MAX_QUERY_LEN + 1);
+    let err = search_with_toggles(
+        &pool,
+        &huge,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .expect_err("over-long raw regex pattern must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long raw regex pattern must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-A4 (PEND-58f) — the regex branch of the partitioned scan now
+/// honours the cancellation token. A pre-cancelled token must short-
+/// circuit the regex dispatch with `AppError::Cancelled` rather than
+/// running the two parallel scans to completion. The existing
+/// `partitioned_pre_cancelled_token_returns_cancelled` test only
+/// exercises the FTS branch (default filter); this one drives the
+/// `is_regex = true` path that previously ignored the token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partitioned_regex_pre_cancelled_token_returns_cancelled() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let guard = crate::cancellation::CancellationGuard::new();
+    let token = guard.token();
+    // Fire the cancel signal before the search runs.
+    drop(guard);
+
+    let result = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partition".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        Some(token),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Cancelled)),
+        "a pre-cancelled token on the regex branch must yield AppError::Cancelled, got {result:?}"
+    );
+}
+
+/// Cluster-1 (PEND-58f) — REGRESSION CONTRACT: the regex path APPLIES
+/// structural filters. A concurrent frontend change relies on regex
+/// mode respecting a `tag_ids` filter, so this locks the contract:
+/// seed two blocks whose content both match the regex but only one
+/// carries the tag, search with `is_regex = true` + that tag filter,
+/// and assert only the tagged block is returned.
+#[tokio::test]
+async fn regex_path_applies_tag_filter() {
+    let (pool, _dir) = test_pool().await;
+
+    let tag_id = "01HQRGXFLT0000000000000T01";
+    let tagged = "01HQRGXFLT00000000000TAGD1";
+    let untagged = "01HQRGXFLT0000000000UNTAG1";
+    insert_block(&pool, tag_id, "tag", "rgxfilter", None, Some(0)).await;
+    // Both blocks contain "filterme" so the regex /filter.*/ matches both.
+    insert_block(
+        &pool,
+        tagged,
+        "content",
+        "filterme tagged variant",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        untagged,
+        "content",
+        "filterme untagged variant",
+        None,
+        Some(2),
+    )
+    .await;
+    // Only the `tagged` block carries the tag.
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(tagged)
+        .bind(tag_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![tag_id.to_string()];
+    let resp = search_with_toggles(
+        &pool,
+        "filter.*", // regex matches both blocks' content
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged],
+        "regex mode must apply the tag_ids filter — only the tag-carrying \
+         match may survive, despite both blocks matching the pattern (got {ids:?})"
+    );
+}
+
+/// Cluster-1 sanity sibling: WITHOUT the tag filter the same regex
+/// matches BOTH blocks — proves the filter (not the pattern) is what
+/// narrowed the result above.
+#[tokio::test]
+async fn regex_path_without_tag_filter_matches_all() {
+    let (pool, _dir) = test_pool().await;
+
+    let tagged = "01HQRGXALL00000000000TAGD1";
+    let untagged = "01HQRGXALL0000000000UNTAG1";
+    insert_block(
+        &pool,
+        tagged,
+        "content",
+        "filterme tagged variant",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        untagged,
+        "content",
+        "filterme untagged variant",
+        None,
+        Some(2),
+    )
+    .await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let resp = search_with_toggles(
+        &pool,
+        "filter.*",
+        &page,
+        None,
+        None, // no tag filter
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut ids: Vec<&str> = resp.items.iter().map(|r| r.id.as_str()).collect();
+    ids.sort_unstable();
+    let mut expected = vec![tagged, untagged];
+    expected.sort_unstable();
+    assert_eq!(
+        ids, expected,
+        "without a tag filter the regex must match BOTH blocks (got {ids:?})"
+    );
+}
+
+/// SQL-4 (PEND-58f) — an over-long FTS query is rejected up front with a
+/// validation error rather than tokenised + bound into a MATCH.
+#[tokio::test]
+async fn fts_over_long_query_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let huge = "a".repeat(super::search::MAX_QUERY_LEN + 1);
+    let err = search_fts(
+        &pool,
+        &huge,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .expect_err("over-long query must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-long query must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// SQL-4 (PEND-58f) — a query at exactly the cap is accepted (boundary).
+#[tokio::test]
+async fn fts_query_at_exactly_the_cap_is_accepted() {
+    let (pool, _dir) = test_pool().await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let at_cap = "a".repeat(super::search::MAX_QUERY_LEN);
+    // No matching content — an empty result is fine; the point is that
+    // the length guard does NOT reject a query at exactly the cap.
+    let resp = search_fts(
+        &pool,
+        &at_cap,
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await;
+    assert!(
+        resp.is_ok(),
+        "query at exactly MAX_QUERY_LEN must not be rejected: {resp:?}"
+    );
+}
+
+/// SQL-3 (PEND-58f) — `has_more` must be TRUE at exactly the
+/// `MAX_SEARCH_RESULTS` (100) cap when more rows exist. Before the fix,
+/// `limit_plus_one_capped(100)` collapsed to `100`, so the probe could
+/// never see the 101st row and `has_more` was stuck false at the cap.
+#[tokio::test]
+async fn partitioned_has_more_is_true_at_exactly_the_cap() {
+    let (pool, _dir) = test_pool().await;
+
+    // Seed > 100 matching content rows under a single root page so the
+    // blocks partition's scan overflows the cap.
+    let root = pt_block_id(0);
+    insert_block(&pool, &root, "page", "cap boundary root", None, Some(0)).await;
+    let mut tx = pool.begin().await.unwrap();
+    for i in 1..=130u32 {
+        let id = pt_block_id(i);
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(format!("capboundary row {i}"))
+        .bind(&root)
+        .bind(i64::from(i))
+        .bind(&root)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // Request the page/block limits at exactly the cap (100).
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "capboundary".to_string(),
+        100,
+        100,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        resp.blocks.items.len(),
+        100,
+        "blocks partition must fill to the 100 cap"
+    );
+    assert!(
+        resp.blocks.has_more,
+        "blocks.has_more must be TRUE at the cap when >100 rows matched"
+    );
+}
+
+/// BE-2 (PEND-58f) — the partitioned command rejects an over-limit
+/// request (mirrors the cursor path's `PageRequest::new` reject contract)
+/// instead of silently capping it.
+#[tokio::test]
+async fn partitioned_over_limit_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    // page_limit over the cap.
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        101,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect_err("page_limit over the cap must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-limit page_limit must surface AppError::Validation, got {err:?}"
+    );
+
+    // block_limit over the cap.
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        101,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await
+    .expect_err("block_limit over the cap must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-limit block_limit must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-2 (PEND-58f) — limits at exactly the cap are accepted (boundary).
+#[tokio::test]
+async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        100,
+        100,
+        crate::commands::queries::SearchFilter::default(),
+        None,
+    )
+    .await;
+    assert!(
+        resp.is_ok(),
+        "limits at exactly MAX_SEARCH_RESULTS must be accepted: {resp:?}"
+    );
+}
+
+/// BE-6 (PEND-58f) — fail-fast: an invalid regex routed through the
+/// partitioned inner surfaces a validation error (not a partial / empty
+/// response). Exercises the command-layer error envelope.
+#[tokio::test]
+async fn partitioned_invalid_regex_fails_fast_with_validation() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "(unclosed".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect_err("invalid regex must fail fast");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "invalid regex must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-6 (PEND-58f) — cancellation envelope: a pre-cancelled token makes
+/// the partitioned inner return `AppError::Cancelled` rather than running
+/// the scan to completion.
+#[tokio::test]
+async fn partitioned_pre_cancelled_token_returns_cancelled() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 3, 3).await;
+
+    let guard = crate::cancellation::CancellationGuard::new();
+    let token = guard.token();
+    // Fire the cancel signal before the search runs.
+    drop(guard);
+
+    let result = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter::default(),
+        Some(token),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Cancelled)),
+        "a pre-cancelled token must yield AppError::Cancelled, got {result:?}"
+    );
+}
+
+/// BE-8 (PEND-58f) — an empty `prop:` key is rejected at the command
+/// layer (mirrors `query_by_property_inner`'s contract) instead of
+/// composing a `bp.key = ''` clause that silently matches nothing.
+#[tokio::test]
+async fn search_empty_property_key_is_rejected() {
+    let (pool, _dir) = test_pool().await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+
+    let err = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            property_filters: vec![crate::commands::queries::SearchPropertyFilter {
+                key: "   ".to_string(),
+                value: "x".to_string(),
+            }],
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect_err("empty prop: key must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "empty prop: key must surface AppError::Validation, got {err:?}"
+    );
+}
+
+/// BE-9 (PEND-58f) — `space_id: Some("")` is the "match nothing"
+/// space-isolation invariant. A search scoped to the empty space must
+/// return zero rows even when matching content exists in real spaces.
+#[tokio::test]
+async fn search_empty_space_id_matches_nothing() {
+    let (pool, _dir) = test_pool().await;
+    // Seed a real space + a matching page assigned to it, so without the
+    // empty-space guard the row would otherwise be reachable.
+    insert_space_block_for_fts(&pool, FTS_SPACE_A_ID, "Personal").await;
+    seed_partitioned_fixture(&pool, 1, 1).await;
+    assign_to_space_for_fts(&pool, PT_PAGE_IDS[0], FTS_SPACE_A_ID).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "partitioned".to_string(),
+        10,
+        10,
+        crate::commands::queries::SearchFilter {
+            space_id: Some(String::new()),
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("empty space_id search must succeed (returning nothing)");
+
+    assert_eq!(
+        resp.pages.items.len(),
+        0,
+        "space_id=\"\" must match no pages"
+    );
+    assert_eq!(
+        resp.blocks.items.len(),
+        0,
+        "space_id=\"\" must match no blocks"
+    );
+}
+
+// ======================================================================
+// PEND-58f BE-A10 — filter-aware pagination (SQL-A1/A2/A3) verification
+// ======================================================================
+//
+// These tests exercise the Cluster-2 pagination fixes:
+//   - SQL-A3 / BE-A1 — `fts_fetch_post_filtered_page`: the case/word
+//     toggle cursor path must return FULL pages up to `limit`, never drop
+//     a survivor across pages, never duplicate one, and report `has_more`
+//     from the SURVIVOR set (not the pre-filter window).
+//   - SQL-A2 — partitioned regex `has_more` correct at exactly the cap.
+//   - SQL-A1 — `search_blocks_inner` rejects `limit > MAX_SEARCH_RESULTS`.
+//   - POST_FILTER_MAX_WINDOWS — a pathologically selective filter stops at
+//     the window bound and reports `has_more = false` without hanging.
+//
+// Design note (rank determinism): the case-sensitive post-filter lets a
+// survivor ("Cat …") and a drop ("cat …") share IDENTICAL FTS tokens and
+// length — the trigram tokenizer is `case_sensitive 0`, so both produce
+// the same trigrams and therefore the same bm25 rank. With ranks tied,
+// the `(rank ASC, id ASC)` keyset collapses to pure `id` order, so the
+// `pt_block_id(index)` zero-padded index fully determines pagination
+// order and the assertions are deterministic.
+
+/// Seed `count` blocks alternating between case-sensitive SURVIVORS
+/// (content `"Cat row …"`) and DROPS (content `"cat row …"`). All blocks
+/// are FTS candidates for the keyword `cat` (trigram tokenizer is
+/// case-insensitive); under `case_sensitive = true` searching `"Cat"`
+/// only the capitalised rows survive the post-filter.
+///
+/// `survivor(index)` is `index % 2 == 0`. IDs are `pt_block_id(index)`
+/// (lex-sortable by index). Returns the survivor IDs in id-ascending
+/// order so callers can assert the exact survivor union.
+async fn seed_case_toggle_corpus(pool: &SqlitePool, count: u32) -> Vec<String> {
+    let mut survivors: Vec<String> = Vec::new();
+    for index in 0..count {
+        let id = pt_block_id(index);
+        // Identical token shape + length across survivor/drop so bm25
+        // ranks tie and the keyset reduces to pure `id` order.
+        let prefix = if index % 2 == 0 { "Cat" } else { "cat" };
+        let content = format!("{prefix} row alpha bravo");
+        insert_block(pool, &id, "content", &content, None, Some(i64::from(index))).await;
+        if index % 2 == 0 {
+            survivors.push(id);
+        }
+    }
+    rebuild_fts_index(pool).await.unwrap();
+    survivors
+}
+
+/// BE-A10 (1) — SQL-A3 cursor pagination: full pages, no under-fill, no
+/// dropped rows, no duplicates across pages.
+///
+/// Seed 20 blocks; 10 survive the case-sensitive post-filter, 10 drop.
+/// Page through with `limit = 3`. While more survivors remain each page
+/// must be FULL (== limit) and `has_more = true`; the union across all
+/// pages must equal the 10 survivors EXACTLY ONCE.
+#[tokio::test]
+async fn be_a10_sqla3_cursor_pagination_full_pages_no_drops_no_dupes() {
+    let (pool, _dir) = test_pool().await;
+    let expected_survivors = seed_case_toggle_corpus(&pool, 20).await;
+    assert_eq!(
+        expected_survivors.len(),
+        10,
+        "fixture invariant: 10 survivors"
+    );
+
+    let limit = 3;
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+
+    loop {
+        let page = PageRequest::new(cursor.clone(), Some(limit)).unwrap();
+        let result = search_with_toggles(
+            &pool,
+            "Cat",
+            &page,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            SearchToggles {
+                case_sensitive: true,
+                whole_word: false,
+                is_regex: false,
+            },
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+        )
+        .await
+        .unwrap();
+
+        let remaining = expected_survivors.len() - collected.len();
+        if result.has_more {
+            // While more survivors remain the page MUST be full to limit —
+            // this is the under-fill regression guard.
+            assert_eq!(
+                result.items.len(),
+                usize::try_from(limit).unwrap(),
+                "page {pages} must be FULL to limit while more survivors remain"
+            );
+            assert!(
+                result.next_cursor.is_some(),
+                "has_more=true page must carry a next_cursor"
+            );
+        } else {
+            // Final page: at most `limit`, and exactly the leftover count.
+            assert_eq!(
+                result.items.len(),
+                remaining,
+                "final page must return exactly the remaining survivors"
+            );
+            assert!(
+                result.next_cursor.is_none(),
+                "final page must NOT carry a next_cursor"
+            );
+        }
+
+        // Every returned row must be a real survivor (post-filter kept the
+        // right rows) and must carry match offsets / no snippet.
+        for item in &result.items {
+            assert!(
+                item.match_offsets.iter().any(|o| o.end > o.start),
+                "survivor must carry a non-empty match offset"
+            );
+            assert!(
+                item.snippet.is_none(),
+                "post-filter survivor must have its FTS snippet cleared"
+            );
+            collected.push(item.id.clone().into());
+        }
+
+        pages += 1;
+        if !result.has_more {
+            break;
+        }
+        cursor = result.next_cursor;
+        assert!(pages <= 10, "too many pages — possible infinite loop");
+    }
+
+    // Union across pages == every survivor exactly once: none dropped,
+    // none duplicated.
+    let unique: std::collections::HashSet<&str> = collected.iter().map(String::as_str).collect();
+    assert_eq!(
+        collected.len(),
+        expected_survivors.len(),
+        "no survivor dropped and none duplicated across pages"
+    );
+    assert_eq!(
+        unique.len(),
+        expected_survivors.len(),
+        "no duplicate survivor across pages"
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted, expected_survivors,
+        "page union must equal the exact survivor set"
+    );
+}
+
+/// BE-A10 (2) — SQL-A3 boundary: survivors exactly == `limit` →
+/// `has_more == false` and `next_cursor == None`.
+///
+/// Seed 6 blocks (3 survivors, 3 drops) and request `limit = 3`. The
+/// single page must hold all 3 survivors, report `has_more = false`, and
+/// emit no cursor (the `limit + 1`-th survivor probe finds nothing past
+/// the candidate window).
+#[tokio::test]
+async fn be_a10_sqla3_boundary_survivors_equal_limit_no_more() {
+    let (pool, _dir) = test_pool().await;
+    let expected_survivors = seed_case_toggle_corpus(&pool, 6).await;
+    assert_eq!(
+        expected_survivors.len(),
+        3,
+        "fixture invariant: 3 survivors"
+    );
+
+    let page = PageRequest::new(None, Some(3)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        3,
+        "boundary page returns all 3 survivors"
+    );
+    assert!(
+        !result.has_more,
+        "survivors == limit must report has_more = false"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "survivors == limit must emit no next_cursor"
+    );
+    let mut ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    ids.sort();
+    assert_eq!(
+        ids, expected_survivors,
+        "exact survivor set on the boundary page"
+    );
+}
+
+/// BE-A10 (2b) — SQL-A3 multi-window fill: when survivors are SPARSER than
+/// the candidate window, a single page must scan SUCCESSIVE windows to
+/// fill (or exhaust). Seeds 250 candidates (all FTS-match `cat`) but only
+/// two case-sensitive survivors at indices 120 and 245 — past the first
+/// `POST_FILTER_WINDOW` (100) candidates, so window 1 yields zero
+/// survivors and the loop MUST advance to windows 2 and 3 to find them.
+/// Without the windowed over-fetch this page would render empty.
+#[tokio::test]
+async fn be_a10_sqla3_multi_window_fill_finds_sparse_survivors() {
+    let (pool, _dir) = test_pool().await;
+    let survivor_indices = [120u32, 245u32];
+    let count: u32 = 250;
+    for index in 0..count {
+        let id = pt_block_id(index);
+        // Only the two designated indices are capitalised survivors; the
+        // rest are lowercase drops. All match the FTS `cat` trigram.
+        let prefix = if survivor_indices.contains(&index) {
+            "Cat"
+        } else {
+            "cat"
+        };
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("{prefix} row alpha bravo"),
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let expected: Vec<String> = survivor_indices.iter().map(|i| pt_block_id(*i)).collect();
+
+    // limit = 2 (== survivor count): the loop must walk window 1 (empty),
+    // window 2 (survivor #1), window 3 (survivor #2 + FTS exhaustion).
+    let page = PageRequest::new(None, Some(2)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    ids.sort();
+    assert_eq!(
+        ids, expected,
+        "multi-window scan must surface both sparse survivors (not under-fill)"
+    );
+    assert!(
+        !result.has_more,
+        "exactly the two survivors exist → has_more = false"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "no more survivors → no cursor"
+    );
+}
+
+/// BE-A10 (3) — FTS plain `has_more` correct at exactly
+/// `limit == MAX_SEARCH_RESULTS`.
+///
+/// Seed `MAX_SEARCH_RESULTS + 1` matching blocks and request a page of
+/// `MAX_SEARCH_RESULTS` (all toggles off → straight FTS path). The page
+/// must fill to the cap and report `has_more = true` (the `limit + 1`
+/// candidate probe sees the extra row).
+#[tokio::test]
+async fn be_a10_fts_plain_has_more_at_exactly_max_search_results() {
+    let (pool, _dir) = test_pool().await;
+    let n = u32::try_from(MAX_SEARCH_RESULTS + 1).unwrap();
+    for index in 0..n {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "ceiling probe keyword",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let limit = MAX_SEARCH_RESULTS;
+    let page = PageRequest::new(None, Some(limit)).unwrap();
+    let result = search_fts(
+        &pool,
+        "keyword",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        i64::try_from(result.items.len()).unwrap(),
+        MAX_SEARCH_RESULTS,
+        "page fills exactly to MAX_SEARCH_RESULTS"
+    );
+    assert!(
+        result.has_more,
+        "has_more must be true at exactly limit == MAX_SEARCH_RESULTS when one more row exists"
+    );
+    assert!(
+        result.next_cursor.is_some(),
+        "has_more=true must carry a next_cursor"
+    );
+}
+
+/// BE-A10 (4) — SQL-A2: partitioned REGEX search with exactly
+/// `MAX_SEARCH_RESULTS + 1` matching rows → `has_more == true` and
+/// `<= MAX_SEARCH_RESULTS` returned.
+///
+/// The partitioned regex caller passes a `limit + 1` PROBE to
+/// `regex_mode_query`, whose clamp is `MAX_SEARCH_RESULTS + 1` (SQL-A2).
+/// At `block_limit == MAX_SEARCH_RESULTS` the probe is `MAX_SEARCH_RESULTS
+/// + 1`, so the (cap+1)-th survivor is seen and `has_more` flips true —
+/// the bug the previous `clamp(1, 100)` masked.
+#[tokio::test]
+async fn be_a10_sqla2_partitioned_regex_has_more_at_cap() {
+    let (pool, _dir) = test_pool().await;
+    let n = u32::try_from(MAX_SEARCH_RESULTS + 1).unwrap();
+    for index in 0..n {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "regexcap candidate row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let cap = u32::try_from(MAX_SEARCH_RESULTS).unwrap();
+    let resp = crate::commands::queries::search_blocks_partitioned_inner(
+        &pool,
+        "regexcap".to_string(),
+        cap,
+        cap,
+        crate::commands::queries::SearchFilter {
+            is_regex: true,
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        i64::try_from(resp.blocks.items.len()).unwrap(),
+        MAX_SEARCH_RESULTS,
+        "blocks partition returns at most MAX_SEARCH_RESULTS rows"
+    );
+    assert!(
+        resp.blocks.has_more,
+        "SQL-A2: has_more must be true with MAX_SEARCH_RESULTS + 1 matching rows at the cap"
+    );
+}
+
+/// BE-A10 (5) — SQL-A1: cursor `search_blocks_inner` rejects
+/// `limit > MAX_SEARCH_RESULTS` with `AppError::Validation`, while
+/// `limit == MAX_SEARCH_RESULTS` and the default (`None`) limit succeed.
+#[tokio::test]
+async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "content", "sqla1 probe", None, Some(0)).await;
+    rebuild_fts_index(&pool).await.unwrap();
+
+    // limit = MAX_SEARCH_RESULTS + 1 (101) — accepted by PageRequest::new
+    // (<= MAX_PAGE_SIZE = 200) but rejected by the SQL-A1 guard.
+    let over = MAX_SEARCH_RESULTS + 1;
+    let err = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        Some(over),
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await
+    .expect_err("limit > MAX_SEARCH_RESULTS must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "over-cap limit must surface AppError::Validation, got {err:?}"
+    );
+
+    // limit = MAX_SEARCH_RESULTS (100) — accepted.
+    let ok_cap = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        Some(MAX_SEARCH_RESULTS),
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await;
+    assert!(
+        ok_cap.is_ok(),
+        "limit == MAX_SEARCH_RESULTS must be accepted, got {:?}",
+        ok_cap.err()
+    );
+    assert_eq!(
+        ok_cap.unwrap().items.len(),
+        1,
+        "the one matching block returns"
+    );
+
+    // Default (None) limit = DEFAULT_PAGE_SIZE (50) <= MAX_SEARCH_RESULTS —
+    // accepted. Guards the None/default path against the SQL-A1 reject.
+    let ok_default = crate::commands::queries::search_blocks_inner(
+        &pool,
+        "sqla1".to_string(),
+        None,
+        None,
+        crate::commands::queries::SearchFilter::default(),
+    )
+    .await;
+    assert!(
+        ok_default.is_ok(),
+        "default (None) limit must be accepted, got {:?}",
+        ok_default.err()
+    );
+    assert_eq!(
+        ok_default.unwrap().items.len(),
+        1,
+        "default-limit search returns the block"
+    );
+}
+
+/// BE-A10 (6) — POST_FILTER_MAX_WINDOWS bound: a pathologically selective
+/// filter stops at the window bound and reports `has_more = false` without
+/// hanging — AND a survivor sitting *beyond* the bound's reach is NOT
+/// surfaced (the best-effort contract: matches past the scan ceiling are
+/// invisible).
+///
+/// Seed more candidates than the scan ceiling can reach
+/// (`POST_FILTER_WINDOW * POST_FILTER_MAX_WINDOWS` = 100 * 10 = 1000): 1050
+/// blocks that all FTS-match `"cat"`. All are lowercase (drop under the
+/// case-sensitive `"Cat"` post-filter) EXCEPT one capitalised survivor at
+/// index 1040 — which sits past candidate #1000, so the bound stops the
+/// scan BEFORE reaching it. The keyset order is `id ASC` = index order
+/// (`pt_block_id` zero-pads), so candidate position == index here.
+///
+/// This pins the BOUND specifically: if the bound were removed (or
+/// enlarged), the loop would walk to index 1040 and surface the survivor,
+/// flipping `items.len()` to 1 — so this test fails the moment the ceiling
+/// stops being enforced. (An all-drop corpus alone could not distinguish
+/// the bound from plain FTS exhaustion, which also yields an empty page.)
+#[tokio::test]
+async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
+    let (pool, _dir) = test_pool().await;
+    // 1050 > POST_FILTER_WINDOW (100) * POST_FILTER_MAX_WINDOWS (10) = 1000.
+    // The lone survivor at index 1040 sits past the 1000-candidate ceiling.
+    let n: u32 = 1050;
+    let survivor_index: u32 = 1040;
+    for index in 0..n {
+        let id = pt_block_id(index);
+        // All lowercase (drop vs "Cat") except the out-of-reach survivor.
+        let prefix = if index == survivor_index {
+            "Cat"
+        } else {
+            "cat"
+        };
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            &format!("{prefix} lowercase only row"),
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+    }
+    rebuild_fts_index(&pool).await.unwrap();
+
+    let page = PageRequest::new(None, Some(5)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "Cat",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        0,
+        "survivor at index 1040 is past the 1000-candidate bound → empty page"
+    );
+    assert!(
+        !result.has_more,
+        "window-bound exhaustion must report has_more = false (best-effort contract)"
+    );
+    assert!(
+        result.next_cursor.is_none(),
+        "no survivors surfaced → no next_cursor"
+    );
+}
+
+// ======================================================================
+// PEND-58g NEW-3 — filter-only search (blank free-text + structural
+// filters). A blank query bypasses FTS/regex entirely and runs a
+// recency-ordered (`id DESC`) structural scan; with NO filter it stays
+// empty (never the whole DB). Mode-independent.
+// ======================================================================
+
+/// Default (all-off) toggles — the common case for these tests.
+fn new3_toggles_off() -> SearchToggles {
+    SearchToggles {
+        case_sensitive: false,
+        whole_word: false,
+        is_regex: false,
+    }
+}
+
+/// Seed the `TAG_ULID` tag as a `tag`-typed block so `block_tags.tag_id`'s
+/// FK to `blocks(id)` is satisfied. Call once per test before tagging.
+async fn new3_seed_tag(pool: &SqlitePool) {
+    insert_block(pool, TAG_ULID, "tag", "urgent", None, None).await;
+}
+
+/// Tag a block via a direct `block_tags` row (canonical UPPERCASE id).
+/// Requires the tag block to already exist (see [`new3_seed_tag`]).
+async fn new3_tag_block(pool: &SqlitePool, block_id: &str, tag_id: &str) {
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// NEW-3 (1) — filter-only by tag: a blank query plus one tag filter
+/// returns ONLY blocks carrying that tag; an untagged block is excluded.
+#[tokio::test]
+async fn new3_filter_only_by_tag_returns_tagged_excludes_untagged() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    let tagged_a = pt_block_id(0);
+    let tagged_b = pt_block_id(1);
+    let untagged = pt_block_id(2);
+    insert_block(&pool, &tagged_a, "content", "tagged alpha", None, Some(0)).await;
+    insert_block(&pool, &tagged_b, "content", "tagged bravo", None, Some(1)).await;
+    insert_block(
+        &pool,
+        &untagged,
+        "content",
+        "untagged charlie",
+        None,
+        Some(2),
+    )
+    .await;
+    new3_tag_block(&pool, &tagged_a, TAG_ULID).await;
+    new3_tag_block(&pool, &tagged_b, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "   ", // blank free-text (whitespace only)
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids.len(),
+        2,
+        "exactly the two tagged blocks return (got {ids:?})"
+    );
+    assert!(ids.contains(tagged_a.as_str()), "tagged_a must be present");
+    assert!(ids.contains(tagged_b.as_str()), "tagged_b must be present");
+    assert!(
+        !ids.contains(untagged.as_str()),
+        "untagged block must be excluded"
+    );
+    // No pattern → no highlight offsets, no snippet.
+    for item in &result.items {
+        assert!(
+            item.match_offsets.is_empty(),
+            "filter-only row carries no match offsets"
+        );
+        assert!(item.snippet.is_none(), "filter-only row carries no snippet");
+    }
+}
+
+/// NEW-3 (2) — blank query + NO filter → empty (preserved), cursor path.
+#[tokio::test]
+async fn new3_empty_query_no_filter_returns_empty_cursor() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "content", "anything at all", None, Some(0)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        Some("01HQSPACE0000000000000SP01"), // space_id is NOT a user filter
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        result.items.is_empty(),
+        "blank query + no filter must return empty (never the whole DB)"
+    );
+    assert!(!result.has_more, "empty result has no more");
+    assert!(result.next_cursor.is_none(), "empty result emits no cursor");
+}
+
+/// NEW-3 (2b) — blank query + NO filter → two empty partitions
+/// (preserved), partitioned path. `space_id` supplied is not a filter.
+#[tokio::test]
+async fn new3_empty_query_no_filter_returns_empty_partitioned() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, BLOCK_A, "page", "some page", None, Some(0)).await;
+    insert_block(&pool, BLOCK_B, "content", "some block", None, Some(1)).await;
+
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "  ",
+        50,
+        50,
+        None,
+        None,
+        Some("01HQSPACE0000000000000SP01"),
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(scan.pages.is_empty(), "no-filter pages partition is empty");
+    assert!(
+        scan.blocks.is_empty(),
+        "no-filter blocks partition is empty"
+    );
+    assert!(!scan.pages_has_more);
+    assert!(!scan.blocks_has_more);
+}
+
+/// NEW-3 (3) — cursor pagination across multiple pages: no dropped rows,
+/// no duplicates; the union of pages equals the full filtered set;
+/// `has_more` is true until the last page then false; `next_cursor` is
+/// present iff `has_more`.
+#[tokio::test]
+async fn new3_cursor_pagination_no_drops_no_dupes() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 10 tagged blocks (the full filtered set) + 1 untagged decoy.
+    let total = 10u32;
+    let mut expected: Vec<String> = Vec::new();
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "row alpha",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        expected.push(id);
+    }
+    insert_block(&pool, &pt_block_id(99), "content", "decoy", None, Some(99)).await;
+    expected.sort();
+
+    let limit = 3i64;
+    let tags = vec![TAG_ULID.to_string()];
+    let mut collected: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+
+    loop {
+        let page = PageRequest::new(cursor.clone(), Some(limit)).unwrap();
+        let result = search_with_toggles(
+            &pool,
+            "",
+            &page,
+            None,
+            Some(&tags),
+            None,
+            &[],
+            &[],
+            new3_toggles_off(),
+            None,
+            &crate::fts::metadata_filter::MetadataPredicates::default(),
+        )
+        .await
+        .unwrap();
+
+        let remaining = expected.len() - collected.len();
+        if result.has_more {
+            assert_eq!(
+                i64::try_from(result.items.len()).unwrap(),
+                limit,
+                "non-final page must be FULL to limit while more rows remain"
+            );
+            assert!(
+                result.next_cursor.is_some(),
+                "has_more=true page must carry a next_cursor"
+            );
+        } else {
+            assert_eq!(
+                result.items.len(),
+                remaining,
+                "final page returns exactly the remaining rows"
+            );
+            assert!(
+                result.next_cursor.is_none(),
+                "final page must NOT carry a next_cursor"
+            );
+        }
+
+        for item in &result.items {
+            collected.push(item.id.clone().into());
+        }
+
+        pages += 1;
+        if !result.has_more {
+            break;
+        }
+        cursor = result.next_cursor;
+        assert!(pages <= 10, "too many pages — possible infinite loop");
+    }
+
+    let unique: std::collections::HashSet<&str> = collected.iter().map(String::as_str).collect();
+    assert_eq!(
+        collected.len(),
+        expected.len(),
+        "no row dropped and none duplicated across pages"
+    );
+    assert_eq!(
+        unique.len(),
+        expected.len(),
+        "no duplicate row across pages"
+    );
+    let mut sorted = collected.clone();
+    sorted.sort();
+    assert_eq!(
+        sorted, expected,
+        "page union must equal the exact filtered set"
+    );
+}
+
+/// NEW-3 (3b) — exact-multiple boundary: when the filtered set size is an
+/// exact multiple of the page limit, the final FULL page must report
+/// `has_more == false` and emit NO cursor. This is the case the
+/// `new3_cursor_pagination_no_drops_no_dupes` fixture (10 rows / limit 3,
+/// final page = 1 row) never exercises: there the DB only ever returns
+/// the `limit + 1` probe (so `rows.len() > limit` cleanly separates more
+/// vs. done) or a short final page. Here the final page's query returns
+/// EXACTLY `limit` rows with nothing older, so `rows.len() == limit`. That
+/// distinguishes the correct `has_more = rows.len() > limit` from the
+/// off-by-one `>=` mutation: `>=` would spuriously flag `has_more` on the
+/// last full page, emit a cursor, and yield a phantom empty page.
+#[tokio::test]
+async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 6 tagged rows, page limit 3 → two FULL pages, exact multiple.
+    let total = 6u32;
+    let mut expected: Vec<String> = Vec::new();
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "exact row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        expected.push(id);
+    }
+    expected.sort();
+
+    let limit = 3i64;
+    let tags = vec![TAG_ULID.to_string()];
+
+    // Page 1 — full, more remains.
+    let page1 = PageRequest::new(None, Some(limit)).unwrap();
+    let r1 = search_with_toggles(
+        &pool,
+        "",
+        &page1,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(r1.items.len(), 3, "page 1 is full");
+    assert!(r1.has_more, "page 1 has more (3 of 6 returned)");
+    let cursor = r1.next_cursor.clone();
+    assert!(cursor.is_some(), "page 1 emits a cursor");
+
+    // Page 2 — the FINAL full page. Exactly `limit` rows, nothing older.
+    let page2 = PageRequest::new(cursor, Some(limit)).unwrap();
+    let r2 = search_with_toggles(
+        &pool,
+        "",
+        &page2,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        r2.items.len(),
+        3,
+        "page 2 is full (the exact-multiple tail)"
+    );
+    assert!(
+        !r2.has_more,
+        "final FULL page must report has_more=false (kills the `>=` off-by-one)"
+    );
+    assert!(
+        r2.next_cursor.is_none(),
+        "final FULL page must NOT emit a cursor (no phantom empty page)"
+    );
+
+    // Union of both pages is the exact filtered set, no drops/dupes.
+    let mut collected: Vec<String> = r1
+        .items
+        .iter()
+        .chain(r2.items.iter())
+        .map(|r| r.id.clone().into())
+        .collect();
+    collected.sort();
+    assert_eq!(
+        collected, expected,
+        "two full pages cover the exact filtered set"
+    );
+}
+
+/// NEW-3 (4) — ordering is `id DESC` (most-recent ULID first). `pt_block_id`
+/// zero-pads, so higher index == lexicographically larger == more recent.
+#[tokio::test]
+async fn new3_ordering_is_id_desc() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let total = 5u32;
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "ordered row",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+    }
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<String> = result.items.iter().map(|r| r.id.clone().into()).collect();
+    let mut expected_desc: Vec<String> = (0..total).map(pt_block_id).collect();
+    expected_desc.sort();
+    expected_desc.reverse(); // id DESC
+    assert_eq!(
+        ids, expected_desc,
+        "filter-only scan must return rows in id-DESC (recency) order"
+    );
+}
+
+/// NEW-3 (5a) — respects `parent_id`: blank query + parent filter returns
+/// only children of that parent.
+#[tokio::test]
+async fn new3_respects_parent_id() {
+    let (pool, _dir) = test_pool().await;
+    let parent = pt_block_id(0);
+    let child_a = pt_block_id(1);
+    let child_b = pt_block_id(2);
+    let other = pt_block_id(3);
+    insert_block(&pool, &parent, "content", "the parent", None, Some(0)).await;
+    insert_block(
+        &pool,
+        &child_a,
+        "content",
+        "child alpha",
+        Some(&parent),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        &child_b,
+        "content",
+        "child bravo",
+        Some(&parent),
+        Some(2),
+    )
+    .await;
+    insert_block(&pool, &other, "content", "elsewhere", None, Some(3)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        Some(&parent),
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids.len(), 2, "only the two children return (got {ids:?})");
+    assert!(ids.contains(child_a.as_str()));
+    assert!(ids.contains(child_b.as_str()));
+    assert!(!ids.contains(other.as_str()), "non-child excluded");
+    assert!(!ids.contains(parent.as_str()), "the parent itself excluded");
+}
+
+/// NEW-3 (5b) — respects `block_type_filter`: blank query + `block_type =
+/// 'page'` returns only page-typed blocks.
+#[tokio::test]
+async fn new3_respects_block_type_filter() {
+    let (pool, _dir) = test_pool().await;
+    let pg = pt_block_id(0);
+    let blk = pt_block_id(1);
+    insert_block(&pool, &pg, "page", "a page title", None, Some(0)).await;
+    insert_block(&pool, &blk, "content", "a content block", None, Some(1)).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        Some("page"),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, vec![pg.as_str()], "only the page-typed block returns");
+}
+
+/// NEW-3 (5c) — respects a metadata predicate (`state:` / `todo_state`):
+/// blank query + a `state_values` filter returns only blocks in that
+/// todo_state.
+#[tokio::test]
+async fn new3_respects_metadata_state_predicate() {
+    let (pool, _dir) = test_pool().await;
+    let todo = pt_block_id(0);
+    let done = pt_block_id(1);
+    let none_state = pt_block_id(2);
+    insert_block(&pool, &todo, "content", "todo item", None, Some(0)).await;
+    insert_block(&pool, &done, "content", "done item", None, Some(1)).await;
+    insert_block(
+        &pool,
+        &none_state,
+        "content",
+        "stateless item",
+        None,
+        Some(2),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET todo_state = 'TODO' WHERE id = ?")
+        .bind(&todo)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE blocks SET todo_state = 'DONE' WHERE id = ?")
+        .bind(&done)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let metadata = crate::fts::metadata_filter::MetadataPredicates {
+        state_values: vec!["TODO".to_string()],
+        ..Default::default()
+    };
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        None,
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &metadata,
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![todo.as_str()],
+        "only the TODO-state block returns (got {ids:?})"
+    );
+}
+
+/// NEW-3 (6a) — mode-independence: blank query + tag filter with
+/// `is_regex = true` returns the filtered set (NOT empty). With no
+/// pattern there is nothing for the regex engine to match, so the
+/// structural scan runs regardless of the toggle.
+#[tokio::test]
+async fn new3_mode_independent_regex_toggle() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let tagged = pt_block_id(0);
+    let untagged = pt_block_id(1);
+    insert_block(&pool, &tagged, "content", "tagged row", None, Some(0)).await;
+    insert_block(&pool, &untagged, "content", "plain row", None, Some(1)).await;
+    new3_tag_block(&pool, &tagged, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: false,
+            whole_word: false,
+            is_regex: true,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged.as_str()],
+        "regex toggle + blank query + tag filter must still return the filtered set"
+    );
+}
+
+/// NEW-3 (6b) — mode-independence: same with `case_sensitive = true`.
+#[tokio::test]
+async fn new3_mode_independent_case_sensitive_toggle() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let tagged = pt_block_id(0);
+    let untagged = pt_block_id(1);
+    insert_block(&pool, &tagged, "content", "tagged row", None, Some(0)).await;
+    insert_block(&pool, &untagged, "content", "plain row", None, Some(1)).await;
+    new3_tag_block(&pool, &tagged, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "",
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        SearchToggles {
+            case_sensitive: true,
+            whole_word: false,
+            is_regex: false,
+        },
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec![tagged.as_str()],
+        "case-sensitive toggle + blank query + tag filter must still return the filtered set"
+    );
+}
+
+/// NEW-3 (7) — partitioned filter-only: the pages partition contains ONLY
+/// `block_type == "page"`; the blocks partition contains ALL matching;
+/// each partition's `has_more` comes from the `limit + 1` probe.
+#[tokio::test]
+async fn new3_partitioned_filter_only_partitions_and_has_more() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    // 3 tagged pages + 4 tagged content blocks + 1 untagged decoy block.
+    let mut page_ids: Vec<String> = Vec::new();
+    for index in 0..3u32 {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "page",
+            "tagged page",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        page_ids.push(id);
+    }
+    let mut content_ids: Vec<String> = Vec::new();
+    for index in 10..14u32 {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "tagged block",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+        content_ids.push(id);
+    }
+    insert_block(&pool, &pt_block_id(99), "content", "decoy", None, Some(99)).await;
+
+    let tags = vec![TAG_ULID.to_string()];
+    // page_limit = 2 (< 3 pages → has_more), block_limit = 50 (>= 7 → not).
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "",
+        2,
+        50,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Pages partition: ONLY page-typed rows, capped to page_limit.
+    assert_eq!(
+        scan.pages.len(),
+        2,
+        "pages partition truncated to page_limit"
+    );
+    for r in &scan.pages {
+        assert_eq!(r.block_type, "page", "pages partition holds only pages");
+    }
+    assert!(
+        scan.pages_has_more,
+        "3 matching pages > page_limit 2 → pages_has_more from the limit+1 probe"
+    );
+
+    // Blocks partition: ALL matching (3 pages + 4 content = 7), no decoy.
+    let block_ids: std::collections::HashSet<&str> =
+        scan.blocks.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        scan.blocks.len(),
+        7,
+        "blocks partition holds all 7 tagged rows (3 pages + 4 content)"
+    );
+    for id in page_ids.iter().chain(content_ids.iter()) {
+        assert!(
+            block_ids.contains(id.as_str()),
+            "blocks partition must contain tagged row {id}"
+        );
+    }
+    assert!(
+        !block_ids.contains(pt_block_id(99).as_str()),
+        "untagged decoy excluded from blocks partition"
+    );
+    assert!(
+        !scan.blocks_has_more,
+        "7 matching <= block_limit 50 → blocks_has_more false"
+    );
+}
+
+/// NEW-3 (7b) — partitioned filter-only `has_more` probe on the BLOCKS
+/// partition: with more matching blocks than `block_limit`, the limit+1
+/// probe flips `blocks_has_more` true and truncates to the limit.
+#[tokio::test]
+async fn new3_partitioned_blocks_has_more_probe() {
+    let (pool, _dir) = test_pool().await;
+    new3_seed_tag(&pool).await;
+    let total = 5u32;
+    for index in 0..total {
+        let id = pt_block_id(index);
+        insert_block(
+            &pool,
+            &id,
+            "content",
+            "tagged block",
+            None,
+            Some(i64::from(index)),
+        )
+        .await;
+        new3_tag_block(&pool, &id, TAG_ULID).await;
+    }
+
+    let tags = vec![TAG_ULID.to_string()];
+    let scan = search_with_toggles_partitioned(
+        &pool,
+        "",
+        50,
+        3, // block_limit < 5 matching → has_more
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        scan.blocks.len(),
+        3,
+        "blocks partition truncated to block_limit"
+    );
+    assert!(
+        scan.blocks_has_more,
+        "5 matching blocks > block_limit 3 → blocks_has_more from the limit+1 probe"
+    );
+    // The pages partition is empty (no page-typed rows) and not has_more.
+    assert!(
+        scan.pages.is_empty(),
+        "no page-typed rows → empty pages partition"
+    );
+    assert!(!scan.pages_has_more);
 }

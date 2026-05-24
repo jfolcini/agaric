@@ -12,6 +12,7 @@
  * effect rather than at the top of BlockTree's render.
  */
 
+import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
 import { notify } from '@/lib/notify'
 import { logger } from '../../lib/logger'
@@ -19,8 +20,7 @@ import { createBlock } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'
 import type { usePageBlockStoreApi } from '../../stores/page-blocks'
 
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-type TFn = (...args: any[]) => any
+type TFn = TFunction
 
 export interface UseBlockAutoCreateFirstBlockParams {
   /** When false, the effect is a no-op (e.g. weekly/monthly journal views). */

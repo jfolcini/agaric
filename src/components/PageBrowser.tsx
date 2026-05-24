@@ -867,7 +867,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     return () => el.removeEventListener('scroll', handleScroll)
     // Empty deps + refs above: listener attaches once per mount, and
     // the refs always carry the latest hasMore/loading/loadMore.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Document-level keydown: skip if user is typing in input/select/textarea

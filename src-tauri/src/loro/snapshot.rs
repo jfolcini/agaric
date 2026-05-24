@@ -82,12 +82,37 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// The apply-cursor seq a snapshot taken *now* is guaranteed to reflect
+/// (PEND-70 C1/C2 watermark).
+///
+/// `materializer_apply_cursor.materialized_through_seq` advances in the
+/// same tx as the SQL projection, but the per-space `LoroEngine` dispatch
+/// runs *after* that commit (see `materializer::apply_op`), so an engine
+/// can lag the committed cursor by the single in-flight op. The foreground
+/// apply queue is serial, so every op `<= cursor - 1` has finished its
+/// engine dispatch. `cursor - 1` (clamped at 0) is therefore a safe lower
+/// bound on what every engine reflects; boot replay re-applies the small
+/// idempotent tail above it. A read error degrades to `0` (a conservative
+/// full rebuild next boot) rather than risking a watermark that overshoots
+/// the engine state.
+async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    (cursor - 1).max(0)
+}
+
 /// Persist the engine's current snapshot to `loro_doc_state`.
 ///
 /// Replaces any existing row for `space_id` (`INSERT OR REPLACE`).
 /// `op_count` resets to 0 on every save — the column is reserved for
 /// a future "snapshot every N ops" cadence and is currently unused by
-/// the time-driven scheduler.
+/// the time-driven scheduler. `applied_through_seq` records the apply
+/// cursor the blob reflects (see [`snapshot_watermark`]) so boot can
+/// detect a stale snapshot.
 pub async fn save_snapshot(
     pool: &SqlitePool,
     space_id: &SpaceId,
@@ -95,14 +120,16 @@ pub async fn save_snapshot(
 ) -> Result<(), AppError> {
     let bytes = engine.export_snapshot()?;
     let updated_at = now_ms();
+    let applied_through_seq = snapshot_watermark(pool).await;
     sqlx::query(
         "INSERT OR REPLACE INTO loro_doc_state \
-         (space_id, snapshot, updated_at, op_count) \
-         VALUES (?, ?, ?, 0)",
+         (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES (?, ?, ?, 0, ?)",
     )
     .bind(space_id.as_str())
     .bind(bytes)
     .bind(updated_at)
+    .bind(applied_through_seq)
     .execute(pool)
     .await?;
     Ok(())
@@ -205,6 +232,11 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // typing, the engine is rarely contended, and the alternative
     // (clone the whole `HashMap`, drop the lock, snapshot each
     // engine) would double the peak memory.
+    // PEND-70 C1/C2: read the watermark BEFORE acquiring the engine lock,
+    // so it is a safe lower bound for every engine exported in this pass —
+    // the lock-time cursor can only be >= this value, and each engine
+    // reflects all ops <= (lock-time cursor - 1) >= this watermark.
+    let applied_through_seq = snapshot_watermark(pool).await;
     let pairs = registry.snapshot_all_engines();
 
     let mut ok = 0usize;
@@ -223,12 +255,13 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
         let updated_at = now_ms();
         let res = sqlx::query(
             "INSERT OR REPLACE INTO loro_doc_state \
-             (space_id, snapshot, updated_at, op_count) \
-             VALUES (?, ?, ?, 0)",
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, ?, ?, 0, ?)",
         )
         .bind(space_id.as_str())
         .bind(bytes)
         .bind(updated_at)
+        .bind(applied_through_seq)
         .execute(pool)
         .await;
         match res {
@@ -243,6 +276,61 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
         }
     }
     ok
+}
+
+/// Default cadence for the periodic snapshot task (5 minutes).
+///
+/// Restored after the PEND-09 parity flush task — which hosted the
+/// `save_all_engines` call on its tick — was deleted, leaving snapshots
+/// unpersisted (the resulting empty `loro_doc_state` + advancing apply
+/// cursor wedged the materializer). The engine applies at human-typing
+/// rates, so a 5-minute snapshot bounds the boot-replay tail to a
+/// handful of ops while keeping the snapshot cost negligible.
+pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
+
+/// Spawn the periodic Loro snapshot task.
+///
+/// Every `interval_secs` it walks the process-global engine registry and
+/// persists each engine's snapshot into `loro_doc_state`, so the next
+/// boot rehydrates without replaying the full op-log. The task runs for
+/// the app's lifetime and stops once `shutdown` flips. Per-space errors
+/// are caught + logged inside [`save_all_engines`], so a transient
+/// SQL/Loro failure never crashes the app.
+pub fn spawn_periodic_snapshot(
+    pool: SqlitePool,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    interval_secs: u64,
+) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    #[cfg(not(test))]
+    let spawn_fn = tauri::async_runtime::spawn;
+    #[cfg(test)]
+    let spawn_fn = tokio::spawn;
+
+    // Fire-and-forget: the task lives for the process lifetime and stops
+    // when `shutdown` flips. The JoinHandle is intentionally discarded.
+    let _handle = spawn_fn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+        // Skip the immediate first tick — `tokio::time::interval` fires
+        // once at construction. Boot rehydrate just ran, so there is
+        // nothing new to persist yet.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            let Some(state) = crate::loro::shared::get() else {
+                continue;
+            };
+            let saved = save_all_engines(&pool, &state.registry).await;
+            if saved > 0 {
+                tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
+            }
+        }
+    });
 }
 
 #[cfg(test)]

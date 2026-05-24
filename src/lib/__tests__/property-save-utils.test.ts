@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedInvoke = vi.mocked(invoke)
 
+import { getTodayString } from '../date-utils'
 import {
   buildInitParams,
   buildPropertyParams,
@@ -155,10 +156,11 @@ describe('buildInitParams', () => {
     expect(result).toEqual({ blockId: 'B1', key: 'weight', valueNum: 0 })
   })
 
-  it('returns today as valueDate for date type', () => {
-    const today = new Date().toISOString().slice(0, 10)
+  it('returns today (local calendar day) as valueDate for date type', () => {
+    // Must be the local day, not the UTC day — otherwise users in
+    // negative-offset timezones get tomorrow's date by default.
     const result = buildInitParams('B1', makeDef('due', 'date'))
-    expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: today })
+    expect(result).toEqual({ blockId: 'B1', key: 'due', valueDate: getTodayString() })
   })
 
   it('returns valueRef null for ref type', () => {

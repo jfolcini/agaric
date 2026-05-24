@@ -9,7 +9,7 @@ Agaric ships with three complementary search surfaces:
 
 For the across-pages surface: open the panel from the sidebar (or with `Ctrl+Shift+F`), type a query of three or more characters, and results stream in grouped by page. Matches inside snippets are highlighted; the page header doubles as a navigation target so you can jump straight to the parent. Structured filters can be typed directly into the input (`tag:#urgent path:Journal/*`) or added via the `+ Filter ▾` button above the chip row — see [Filter syntax](#filter-syntax) below.
 
-For an in-app reference, click the `?` button in the search toolbar — it opens a help dialog mirroring the section list below.
+For an in-app reference, click the `?` button in the search toolbar — it opens a help dialog covering the find-across-pages sections (Filter syntax, Toggles, Regex syntax, Boolean operators, and Tips). The Quick palette, In-page find, and Mobile sections below are documentation-only.
 
 ## Quick palette
 
@@ -88,7 +88,7 @@ The in-page find toolbar and the find-across-pages view use different regex engi
   - Supports backreferences (`\1`, `\k<name>`).
   - `\b` / `\d` / `\w` are Unicode-aware by default (we set the `u` flag).
   - Backtracking-based — the caps above bound worst-case time.
-- **Find across pages** uses the Rust `regex` crate (when PEND-55's regex mode lands):
+- **Find across pages** uses the Rust `regex` crate (PEND-55's regex mode):
   - Linear-time guaranteed (no catastrophic backtracking).
   - **No lookaround**, **no backreferences**.
   - `\b` is ASCII-only by default; use `(?u:\b)` for Unicode word boundaries.
@@ -98,6 +98,8 @@ Pattern portability between the two surfaces is roughly the intersection of thes
 ## Filter syntax
 
 The find-across-pages view supports a small filter vocabulary that mixes freely with free-text and the FTS5 boolean operators. The query string is the canonical model — every chip the UI renders is a projection of the parsed AST, and copy-pasting a query reproduces every filter exactly.
+
+**Filter-only queries.** A query made up of only filter tokens — no free-text and no regex pattern — still searches: it returns every block matching the filters, most-recent first. For example, `tag:#urgent state:TODO` on its own lists the open `#urgent` blocks. This behaves the same in regex mode: with no pattern there is nothing for the regex to match, so only the filters apply.
 
 ### Token vocabulary
 
@@ -122,10 +124,12 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 
 Typing a recognised filter prefix (`state:`, `priority:`, `due:`, `scheduled:`, `tag:#`, `prop:`, `path:`, `not-path:`) in the search input opens a small popover anchored next to the caret. The popover lists value suggestions filtered by the partial value typed after the prefix. Focus stays in the input throughout — the popover is a passive guide, never a focus trap; typing, deleting, and caret movement all keep working as normal.
 
+Filter-prefix autocomplete works in **regex mode** too: the prefixes are real structural filters there, and only the free-text remainder is the regex. The popover stays closed only when the caret sits in that free-text/regex portion.
+
 | Prefix | Source | Notes |
 |---|---|---|
 | `state:` / `not-state:` | Static: `TODO`, `DOING`, `DONE`, `WAITING`, `CANCELLED`, `none` | Same vocabulary the parser accepts. |
-| `priority:` / `not-priority:` | Static: `A`, `B`, `C`, `none` | Same. |
+| `priority:` / `not-priority:` | The active priority levels (`DEFAULT_PRIORITY_LEVELS` = `1`, `2`, `3`; user-configurable via the `priority` property definition), plus `none` | Same vocabulary the parser accepts. |
 | `due:` / `scheduled:` | Static bucket list: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none` | Bucket keywords only — explicit ISO dates and comparison operators aren't suggested. |
 | `tag:#` / `#` | `listTagsByPrefix` IPC (150 ms debounce) | Returns up to 20 tags matching the typed prefix. |
 | `prop:` / `not-prop:` (key side) | Shared property-keys cache — `block_properties` `DISTINCT key`s for the current space | Lazily fetched on first `prop:` open per session+space; invalidates on `block:properties-changed`. |
@@ -142,7 +146,7 @@ Keyboard model:
 
 `↑` / `↓` cycle through search history only when the input is empty AND the popover is closed. The popover wins when both conditions could apply.
 
-When the `.*` toggle is on, autocomplete is disabled: the user's input is the regex pattern verbatim, so `state:` and friends inside a regex don't trigger value suggestions.
+When the `.*` toggle is on, the value-suggestion popover is disabled. Structural filters still parse and apply in regex mode (only the remaining free text is the regex pattern — see [Regex mode and structural filters](#regex-mode-and-structural-filters)), but the `state:` / `priority:` / etc. value popover stays closed so it never collides with regex metacharacters in the free-text portion.
 
 The input declares ARIA 1.1 combobox-with-listbox semantics:
 
@@ -150,7 +154,7 @@ The input declares ARIA 1.1 combobox-with-listbox semantics:
 - `aria-expanded` toggles with the popover's visibility.
 - `aria-controls` references the live listbox id; `aria-activedescendant` follows the highlighted option's id. Both ids are generated by `cmdk` (the underlying combobox library) and surfaced via a small bridge so the input stays the canonical accessible name for the combobox.
 
-Caret-anchored autocomplete renders on all platforms today, but the caret-tracking math is desktop-tuned; iOS Safari / Android touch UX will get a dedicated review in PEND-62 (unified mobile search).
+Caret-anchored autocomplete is desktop-tuned — the caret-tracking math assumes a pointer-and-keyboard layout. Touch devices reach search through the mobile Sheet (see [Mobile](#mobile) below), whose "Across all pages" segment uses the palette surface and carries no filter-value popover, so the caret-tracking path doesn't run there.
 
 The popover anchors at the start of the value portion (the character after the prefix's colon or `#`), so it stays put as the user types more characters. Moving the caret outside the active token closes the popover.
 
@@ -219,13 +223,9 @@ Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `
 
 Invalid chips render with destructive styling, an `aria-invalid` marker, and the typed error as the hover tooltip. The frontend keys on the `InvalidGlob:` prefix returned by the backend so the same message can also originate from a server-side rejection.
 
-### Migrating from the old chip UI
+### `path:` is title-substring, not exact-page
 
-PEND-54 replaced the legacy `+ Page` and `+ Tag` popover chips. There is one **documented behavioural change**:
-
-- The old `+ Page` chip filtered by a single exact page ULID. The new `path:` filter matches against the page **title** with substring semantics by default. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. To preserve exact-page-filter semantics, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
-
-The new model is a strict superset of every other previous use case — copy-paste of a query string round-trips, and the chip row is recomputed from the AST on every keystroke.
+`path:` matches against the page **title** with substring semantics by default, not a single exact page. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. For an exact-page filter, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
 
 ## Toggles
 
@@ -235,7 +235,7 @@ The toggle row sits to the right of the search input — three pressable buttons
 |---|---|---|
 | **Case-sensitive** | `Aa` | The post-FTS filter narrows results to case-sensitive matches. The FTS5 trigram index is `case_sensitive 0`, so enabling this toggle forces a regex pass over the candidate set even when no other toggle is on — i.e. it has a non-zero cost on every keystroke. |
 | **Whole word** | `Ab\|` | The post-FTS filter wraps the query in ASCII word boundaries (`(?-u:\b)`). **CJK content does NOT match** — CJK characters are not ASCII word characters, so the boundary never asserts. Documented v1 limitation. |
-| **Regex** | `.*` | The query string is treated as a Rust [`regex`] pattern verbatim. The FTS5 MATCH path is **bypassed entirely** — there's no FTS-index acceleration; wall-time scales with the structurally-filtered block count. |
+| **Regex** | `.*` | The free-text portion of the query is treated as a Rust [`regex`] pattern verbatim (structural filter tokens are still parsed out and applied — see [Regex mode and structural filters](#regex-mode-and-structural-filters)). The FTS5 MATCH path is **bypassed entirely** — there's no FTS-index acceleration; wall-time scales with the structurally-filtered block count. |
 
 Toggle state persists in `localStorage` (`agaric:searchToggles:v1`) so opening a fresh window restores your preference. State does NOT survive a save — a saved search is `(query, toggles)`, not just `(query)`.
 
@@ -252,21 +252,35 @@ The find-across-pages view uses the Rust [`regex`] crate. Key differences from J
 
 ### Regex caps
 
-To bound worst-case compile time and matched-output size, the backend applies four caps:
-
-| Cap | Value | Reason |
-|---|---|---|
-| Pattern length | 1 KiB | Rejected up-front before invoking `RegexBuilder`. Surfaces as `AppError::Validation("InvalidRegex: pattern length N exceeds cap 1024")`. |
-| `RegexBuilder::size_limit` | 10 MiB | Bounds the compiled regex's in-memory size. Surfaces as `AppError::Validation("InvalidRegex: …")`. |
-| `RegexBuilder::dfa_size_limit` | 10 MiB | Bounds the lazy-DFA cache at runtime. |
-| Match offsets per block | 50 | Caps per-row IPC payload. A `.` regex against a long block returns the first 50 matches; trailing matches are silently dropped. |
-| Pre-filter row count | 1000 | Bounds the regex-mode SQL scan. Most-recent-first ordering by `b.id DESC` (ULID prefixes are time-sortable; the `blocks` table doesn't carry `created_at`). |
+To bound worst-case compile time and matched-output size, the backend applies a
+set of caps: a pattern-length limit (over-long patterns reject up front with
+`AppError::Validation("InvalidRegex: …")`), the `RegexBuilder` size and
+DFA-size limits, a per-block match-offset cap (surplus matches are silently
+dropped), and a regex-mode pre-filter row count that bounds the SQL scan
+(most-recent-first ordering by `b.id DESC`, since ULID prefixes are time-sortable
+and `blocks` carries no `created_at`). The exact values and their rationale are
+the documented `pub const`s in `src-tauri/src/fts/toggle_filter.rs`
+(`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
+`MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`) — read them from the code rather
+than a number here, which would drift.
 
 Regex compile errors surface inline next to the input with a red border; the error message follows the `InvalidRegex:` prefix.
 
+### Regex mode and structural filters
+
+In regex mode, structural filters **still apply**. The filter tokens (`tag:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:`) are parsed out of the query and applied as structural SQL filters on the pre-filter scan; only the remaining free text is treated as the regex pattern, matched against block content. So `tag:#urgent ^TODO` with the `.*` toggle on runs the regex `^TODO` only over blocks tagged `#urgent`. What the FTS5 boolean operators (`AND` / `OR` / `NOT`) and the trigram length floor lose in regex mode is the *full-text* path — the structural narrowing survives.
+
+### Regex matches raw content, not the stripped FTS text
+
+The regex runs against the **raw block content** — the same text you typed, before the markup-stripping and reference-resolution that the full-text index applies. This has three practical consequences:
+
+- **Tag/page references by name.** A regex on a tag or page *name* will not match a block that only references it via the underlying reference token (FTS resolves the reference to its name; the raw content keeps the token). Use the `tag:` filter for reference-aware tag matching.
+- **Raw markup is matchable by regex only.** Link syntax and formatting markers that full-text search strips out are still present in the raw content, so a regex can match them.
+- **Unicode normalisation.** Content pasted in a decomposed Unicode form (NFD — common from macOS) may not match a regex written in the composed form (NFC), even though full-text search (which normalises to NFC) would match it.
+
 ### Regex-mode trade-off
 
-In regex mode the FTS5 candidate set is unused; the SQL scan returns the 1000 most-recent blocks (within the structural filters: tags, paths, space) and the regex is applied to each. **Recommend a literal seed term (≥3 chars) for tight queries.** Without a seed, the regex runs over the full 1000 candidates.
+In regex mode the FTS5 candidate set is unused; the SQL scan returns the most-recent blocks (within the structural filters above) and the regex is applied to each, up to a fixed candidate cap. **Recommend a literal seed term (≥3 chars) for tight queries** — the structural filters above are the most effective way to keep the candidate set small.
 
 ### Regex differences between surfaces
 
@@ -287,7 +301,7 @@ Non-regex queries pass through the FTS5 sanitiser, which preserves three operato
 
 Quoted phrases bypass the trigram length filter: `"sprint plan"` matches the exact phrase, including 2-char tokens (`OR`, `2x`) that would otherwise be dropped.
 
-Boolean operators **don't work inside regex mode** — there the entire query is the regex pattern; `AND` / `OR` are matched as literal text.
+Boolean operators **don't work inside regex mode** — there the free-text remainder is the regex pattern; `AND` / `OR` in it are matched as literal text. (Structural filters like `tag:` / `path:` still apply — see [Regex mode and structural filters](#regex-mode-and-structural-filters).)
 
 ## Tips
 
@@ -296,7 +310,7 @@ Boolean operators **don't work inside regex mode** — there the entire query is
 - **Clear history.** The dropdown's footer wipes the per-space MRU list. Other spaces stay untouched.
 - **Toggle state persists, history is per-space.** A `tag:` reference is space-specific, so cross-space recall would silently no-match. Toggle preferences are global because their effect (case / whole-word / regex semantics) is space-agnostic.
 - **Filter syntax is sanitiser-friendly.** `tag:#name` survives a literal-mode round-trip; recalling a `tag:` query from history rebuilds the chip row exactly.
-- **Inline filter syntax is not regex-aware.** In regex mode, `tag:#urgent` is interpreted as a literal regex pattern (the `:` is a literal colon). Filter chips and regex compose at the *query* level, not inside the regex pattern. To use filters + regex together, type the filters first, then prepend the regex (e.g. `tag:#urgent ^TODO` with the `.*` toggle on — the FTS bypass keeps the `tag:` filter ineffective, **the structural filters still apply via the regex-mode SQL path**; this is a known sharp edge).
+- **Filters compose with regex at the query level, not inside the pattern.** In regex mode the filter tokens are still parsed out and applied as structural SQL filters; only the *remaining free text* becomes the regex pattern. So `tag:#urgent ^TODO` with the `.*` toggle on applies the `tag:#urgent` filter and runs the regex `^TODO` over those blocks — the filter is **not** part of the regex. Type the filters anywhere in the query and keep the regex to the free-text remainder.
 
 ## Mobile
 

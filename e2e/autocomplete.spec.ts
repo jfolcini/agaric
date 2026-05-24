@@ -23,7 +23,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('opens the popover with state values when typing `state:`', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -36,7 +36,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('clicking a value inserts it with a trailing space', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -49,7 +49,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('keyboard ArrowDown + Enter applies the second value', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -69,7 +69,7 @@ test.describe('Autocomplete (PEND-60)', () => {
   })
 
   test('Escape closes the popover and keeps focus on the input', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
     await input.fill('state:')
 
@@ -82,8 +82,116 @@ test.describe('Autocomplete (PEND-60)', () => {
     await expect(input).toBeFocused()
   })
 
+  // ── PEND-58f E2E-10 — dynamic autocomplete sources ──────────────────
+  //
+  // The `state:` happy path above covers the static source. These cover the
+  // three *dynamic* sources the audit flagged as untested e2e: tag names via
+  // the `list_tags_by_prefix` IPC, the `path:` MRU history, and property keys
+  // via `list_property_keys`.
+
+  test('tag: anchor lists seed tag names from the list_tags_by_prefix IPC', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    // Bare `tag:` (no leading hash) is a valid anchor; the value drives the
+    // server-side prefix filter.
+    await input.fill('tag:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    // Seed tags: work / personal / idea.
+    for (const name of ['work', 'personal', 'idea']) {
+      await expect(page.getByTestId(`autocomplete-item-${name}`)).toBeVisible()
+    }
+  })
+
+  test('tag: anchor narrows to the typed prefix', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('tag:#wo')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-work')).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-personal')).toHaveCount(0)
+  })
+
+  test('prop: anchor lists property keys from list_property_keys', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('prop:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    // Seed property keys include `context` and `project`.
+    await expect(page.getByTestId('autocomplete-item-context')).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-project')).toBeVisible()
+  })
+
+  test('path: anchor surfaces the per-space MRU after a submit records it', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    // Submit a query carrying a path: token — `recordPathHistory` writes the
+    // glob to the per-space MRU on submit.
+    await input.fill('hello path:Journal/2026-*')
+    await input.press('Enter')
+
+    // Now re-anchor on `path:` with a matching prefix; the MRU entry surfaces.
+    await input.fill('path:J')
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+    await expect(page.getByTestId('autocomplete-item-Journal/2026-*')).toBeVisible()
+  })
+
+  // ── PEND-58g E2E-A7 — static value anchors beyond `state:` ──────────
+  //
+  // `priority:`, `due:`, and `scheduled:` share the same static-projection
+  // path as `state:` but expose distinct vocabularies (numeric priority
+  // levels + `none`; the shared DATE_BUCKET_VALUES for both date anchors).
+  // These guard against the popover failing to surface those sources e2e.
+
+  test('priority: anchor lists the numeric priority levels and none', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('priority:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    // Default priority levels are the numeric 1/2/3, with `none` appended
+    // to mirror the cycle.
+    for (const value of ['1', '2', '3', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
+  test('due: anchor lists the shared date-bucket values', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('due:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    for (const value of ['today', 'yesterday', 'overdue', 'this-week', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
+  test('scheduled: anchor lists the shared date-bucket values', async ({ page }) => {
+    const input = page.getByPlaceholder('Search blocks...')
+    await input.click()
+    await input.fill('scheduled:')
+
+    const popover = page.getByTestId('autocomplete-popover')
+    await expect(popover).toBeVisible()
+
+    for (const value of ['today', 'overdue', 'this-week', 'next-week', 'none']) {
+      await expect(page.getByTestId(`autocomplete-item-${value}`)).toBeVisible()
+    }
+  })
+
   test('wires ARIA combobox attrs to the live cmdk listbox / option ids', async ({ page }) => {
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.click()
 
     // Pre-open ARIA snapshot. The combobox role + supporting attrs are

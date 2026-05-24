@@ -69,6 +69,11 @@ function withShortcut(label: string, shortcutId: string): string {
   return keys ? `${label} (${keys})` : label
 }
 
+// Stable reference for the "no tag filter" case so the fetch effect's
+// `tagFilterIds` dependency doesn't change identity on every unrelated
+// (client-side) filter toggle and re-fire the graph fetch.
+const EMPTY_TAG_IDS: string[] = []
+
 export function GraphView(): React.ReactElement {
   const { t } = useTranslation()
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
@@ -85,7 +90,7 @@ export function GraphView(): React.ReactElement {
   // Every other filter is applied client-side via `applyGraphFilters`.
   const tagFilterIds = useMemo((): string[] => {
     const tagFilter = filters.find((f) => f.type === 'tag')
-    return tagFilter && tagFilter.type === 'tag' ? tagFilter.tagIds : []
+    return tagFilter && tagFilter.type === 'tag' ? tagFilter.tagIds : EMPTY_TAG_IDS
   }, [filters])
 
   // Stable-ish key to trigger refetch when the tag set or active space
@@ -106,6 +111,12 @@ export function GraphView(): React.ReactElement {
   // Fetch data with stale-while-revalidate caching (UX-113)
   useEffect(() => {
     let cancelled = false
+
+    // Clear any stale error from a prior failed load: the `if (error)`
+    // render guard sits before the populated-graph branch, so without this
+    // a successful refetch (tag/space change) would stay masked by the old
+    // "failed to load" screen until a full remount.
+    setError(null)
 
     const graphCache = graphCacheMap.get(tagCacheKey) ?? null
 

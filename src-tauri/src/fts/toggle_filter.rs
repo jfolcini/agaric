@@ -135,11 +135,22 @@ pub async fn search_with_toggles(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    if toggles.is_regex {
-        // Regex-mode bypasses FTS entirely — empty query short-circuits
-        // here to avoid compiling an empty pattern (which would match
-        // every row).
-        if query.trim().is_empty() {
+    // PEND-58g NEW-3 — a blank free-text query has nothing for FTS5
+    // MATCH (cannot express "match all") or the regex engine (an empty
+    // pattern matches everything) to act on, so dispatch BEFORE the
+    // mode branch: with at least one STRUCTURAL filter, return the
+    // structurally-filtered blocks recency-ordered (mode-independent);
+    // with NO filter, preserve the prior behaviour of returning empty
+    // (never the whole DB). `space_id` is always supplied (FEAT-3p4) so
+    // it is NOT a user filter and is excluded from `has_filters`.
+    if query.trim().is_empty() {
+        let has_filters = parent_id.is_some()
+            || tag_ids.is_some_and(|t| !t.is_empty())
+            || !include_page_globs.is_empty()
+            || !exclude_page_globs.is_empty()
+            || block_type_filter.is_some()
+            || !metadata.is_empty();
+        if !has_filters {
             return Ok(PageResponse {
                 items: vec![],
                 next_cursor: None,
@@ -147,6 +158,21 @@ pub async fn search_with_toggles(
                 total_count: None,
             });
         }
+        return fts_fetch_filter_only_page(
+            pool,
+            page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        )
+        .await;
+    }
+
+    if toggles.is_regex {
         // PEND-69 F2 — `block_type_filter` is now pushed into the
         // regex SQL builder so we don't drag the full 1000-row
         // pre-filter window through Rust just to discard non-matching
@@ -169,8 +195,36 @@ pub async fn search_with_toggles(
         return Ok(response);
     }
 
-    // FTS5 candidate set (today's path).
-    let mut response = super::search::search_fts(
+    if !toggles.any() {
+        // All toggles off → straight FTS path verbatim (zero overhead).
+        return super::search::search_fts(
+            pool,
+            query,
+            page,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+        )
+        .await;
+    }
+
+    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // on. The previous shape called `search_fts` (which fixed
+    // `has_more` / `next_cursor` on a `limit + 1` candidate window) and
+    // THEN dropped non-matching rows, which under-filled the page and
+    // permanently lost survivors dropped inside the window (the next
+    // page's cursor pointed past them). Instead use
+    // `fts_fetch_post_filtered_page`, which walks candidate windows,
+    // applies the post-filter per row, and computes `has_more` /
+    // `next_cursor` from the SURVIVOR set so the page is full up to
+    // `limit` and no survivor is skipped across pages.
+    let pattern = compose_literal_pattern(query, toggles);
+    let re = build_regex(&pattern)?;
+    super::search::fts_fetch_post_filtered_page(
         pool,
         query,
         page,
@@ -181,20 +235,9 @@ pub async fn search_with_toggles(
         exclude_page_globs,
         block_type_filter,
         metadata,
+        |row| post_filter_row(row, &re),
     )
-    .await?;
-
-    if !toggles.any() {
-        // All toggles off → return the FTS path verbatim (zero overhead).
-        return Ok(response);
-    }
-
-    // `case_sensitive` and/or `whole_word` on → compile a post-filter
-    // regex from the literal query and narrow the FTS candidate set.
-    let pattern = compose_literal_pattern(query, toggles);
-    let re = build_regex(&pattern)?;
-    apply_post_filter(&mut response.items, &re);
-    Ok(response)
+    .await
 }
 
 /// PEND-61 Phase 1 / PEND-69 F1 — partitioned sibling of
@@ -219,10 +262,12 @@ pub async fn search_with_toggles(
 /// Returns a [`FtsPartitionedScan`] with per-partition `has_more`.
 ///
 /// PEND-70 — `cancel` is an optional cancellation token threaded into
-/// the FTS path. The regex-mode branch does not currently honour the
-/// token (the regex pre-filter is bounded by `REGEX_PRE_FILTER_CAP`
-/// and runs in process; bursty-typing saturation on that branch is
-/// not a measured pain point).
+/// the FTS path. BE-A4 (PEND-58f) — the regex-mode branch now honours
+/// the same token: it checks `is_cancelled()` up front (mirroring
+/// `fts_fetch_rows`' early-cancel) and races the two parallel regex
+/// scans against `cancel.cancelled()` via a `biased` `tokio::select!`,
+/// returning [`AppError::Cancelled`] when the signal fires — the exact
+/// outcome the FTS path returns.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn search_with_toggles_partitioned(
     pool: &SqlitePool,
@@ -238,17 +283,55 @@ pub(crate) async fn search_with_toggles_partitioned(
     metadata: &MetadataPredicates,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<super::search::FtsPartitionedScan, AppError> {
-    if toggles.is_regex {
-        // Regex-mode bypasses FTS entirely — empty query short-circuits
-        // here to avoid compiling an empty pattern (which would match
-        // every row).
-        if query.trim().is_empty() {
+    // PEND-58g NEW-3 — blank free-text query dispatch (mode-independent),
+    // mirroring `search_with_toggles`. This path has NO `block_type_filter`
+    // param (partitioning handles block_type), so it is excluded from
+    // `has_filters`; `space_id` is always supplied (FEAT-3p4) and excluded
+    // too. With NO user filter, preserve the prior empty-partitions
+    // behaviour; with at least one filter, return the structurally-
+    // filtered partitions recency-ordered.
+    if query.trim().is_empty() {
+        let has_filters = parent_id.is_some()
+            || tag_ids.is_some_and(|t| !t.is_empty())
+            || !include_page_globs.is_empty()
+            || !exclude_page_globs.is_empty()
+            || !metadata.is_empty();
+        if !has_filters {
             return Ok(super::search::FtsPartitionedScan {
                 pages: Vec::new(),
                 blocks: Vec::new(),
                 pages_has_more: false,
                 blocks_has_more: false,
             });
+        }
+        if let Some(ref token) = cancel {
+            if token.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
+        }
+        return fts_fetch_filter_only_partitioned(
+            pool,
+            page_limit,
+            block_limit,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            metadata,
+        )
+        .await;
+    }
+
+    if toggles.is_regex {
+        // BE-A4 (PEND-58f) — early-cancel before launching the scans,
+        // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
+        // The palette's next-keystroke pattern fires fresh IPCs faster
+        // than the scans can start, so bail before doing any work.
+        if let Some(ref token) = cancel {
+            if token.is_cancelled() {
+                return Err(AppError::Cancelled);
+            }
         }
         // PEND-69 F1 — two parallel regex scans, each with a
         // `limit + 1` probe. The pages scan pushes
@@ -282,7 +365,32 @@ pub(crate) async fn search_with_toggles_partitioned(
             None,
             metadata,
         );
-        let (pages_resp, blocks_resp) = tokio::try_join!(pages_future, blocks_future)?;
+        // BE-A4 (PEND-58f) — race the two parallel scans against the
+        // cancel signal so an in-flight regex burst bails the same way
+        // the FTS path does (`fts_fetch_rows` uses the identical
+        // `biased` `tokio::select!` shape). The `try_join!` is kept as a
+        // *future* (not awaited yet) so the scans run concurrently with
+        // the cancel watcher; `biased;` polls the cancel arm first each
+        // tick so a fast-fire from the next keystroke wins against an
+        // already-ready join. When the cancel arm fires, the joined
+        // future is dropped, cancelling both underlying SQL statements
+        // at their next yield point, and we return
+        // [`AppError::Cancelled`] — the exact outcome the FTS path
+        // returns. When `cancel` is `None` we preserve the pre-BE-A4
+        // behaviour (plain `try_join!`).
+        let join_future = async { tokio::try_join!(pages_future, blocks_future) };
+        let (pages_resp, blocks_resp) = match cancel {
+            Some(mut token) => {
+                tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        return Err(AppError::Cancelled);
+                    }
+                    res = join_future => res?,
+                }
+            }
+            None => join_future.await?,
+        };
 
         let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
         let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
@@ -303,42 +411,79 @@ pub(crate) async fn search_with_toggles_partitioned(
         });
     }
 
-    // PEND-69 F5 — when the toggle bundle will trigger the post-filter
-    // sweep, the snippets emitted by `snippet(fts_blocks, …)` are
-    // clobbered to `None` by `apply_post_filter`. Omit the SQL
-    // function call entirely in that case so SQLite skips the per-row
-    // tokenizer walk.
-    let with_snippet = !toggles.any();
+    if !toggles.any() {
+        // All toggles off → straight FTS partitioned scan, snippets kept
+        // (zero overhead).
+        return super::search::search_fts_partitioned(
+            pool,
+            query,
+            page_limit,
+            block_limit,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            metadata,
+            true,
+            cancel,
+        )
+        .await;
+    }
 
-    // FTS5 candidate set — two parallel scans (page-only + unrestricted).
+    // SQL-A3 / BE-A1 (PEND-58f) — `case_sensitive` and/or `whole_word`
+    // on. This path has NO cursor (the palette doesn't paginate), so it
+    // cannot fetch successive windows like the cursor path. The previous
+    // shape fetched only `limit + 1` candidates per partition and then
+    // dropped non-matching rows, which under-filled each partition AND
+    // derived `has_more` from the pre-filter count (so a partition could
+    // report `has_more = true` while rendering far fewer than `limit`
+    // survivors). Instead OVER-FETCH up to the `MAX_SEARCH_RESULTS`
+    // ceiling per partition BEFORE the post-filter, then truncate to the
+    // partition limit and derive `has_more` from the SURVIVOR count.
+    //
+    // This is best-effort within the over-fetch ceiling: lacking a
+    // cursor, if a partition's survivors are sparser than `limit` within
+    // the newest `MAX_SEARCH_RESULTS` candidates, matches beyond that
+    // ceiling are not surfaced (documented trade-off, same spirit as the
+    // regex-mode `REGEX_PRE_FILTER_CAP`).
+    let overfetch = u32::try_from(super::search::MAX_SEARCH_RESULTS).unwrap_or(u32::MAX);
+
+    // PEND-69 F5 — snippets are clobbered to `None` by the post-filter,
+    // so omit the SQL `snippet()` call (skips the per-row tokenizer walk).
     let mut scan = super::search::search_fts_partitioned(
         pool,
         query,
-        page_limit,
-        block_limit,
+        overfetch,
+        overfetch,
         parent_id,
         tag_ids,
         space_id,
         include_page_globs,
         exclude_page_globs,
         metadata,
-        with_snippet,
+        false,
         cancel,
     )
     .await?;
 
-    if !toggles.any() {
-        // All toggles off → return the FTS path verbatim (zero overhead).
-        return Ok(scan);
-    }
-
-    // `case_sensitive` and/or `whole_word` on → compile a post-filter
-    // regex from the literal query and narrow each partition's
-    // candidate set.
     let pattern = compose_literal_pattern(query, toggles);
     let re = build_regex(&pattern)?;
     apply_post_filter(&mut scan.pages, &re);
     apply_post_filter(&mut scan.blocks, &re);
+
+    // Derive `has_more` from the SURVIVOR count against the caller's real
+    // per-partition limit, then truncate to that limit. `limit == 0` is a
+    // degenerate ask (mirrors the FTS path's guard) — nothing to "have
+    // more" of.
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    let pages_has_more = page_limit_usize > 0 && scan.pages.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && scan.blocks.len() > block_limit_usize;
+    scan.pages.truncate(page_limit_usize);
+    scan.blocks.truncate(block_limit_usize);
+    scan.pages_has_more = pages_has_more;
+    scan.blocks_has_more = blocks_has_more;
     Ok(scan)
 }
 
@@ -356,8 +501,14 @@ fn probe_limit_i64(limit: u32) -> i64 {
 /// The user input is escaped via [`regex::escape`] so the FTS-mode
 /// path never interprets metacharacters; only the regex-mode path
 /// accepts metacharacters verbatim.
+///
+/// SQL-5 (PEND-58f) — the input is NFC-normalised before escaping so a
+/// pasted NFD literal matches the same way the FTS path's NFC query
+/// would (the post-filter still runs against the raw FTS row content;
+/// see the contract note in [`regex_mode_query`]).
 fn compose_literal_pattern(query: &str, toggles: SearchToggles) -> String {
-    let escaped = regex::escape(query);
+    let normalised = super::strip::nfc_normalise(query);
+    let escaped = regex::escape(&normalised);
     let prefix = if toggles.case_sensitive {
         "(?-i)"
     } else {
@@ -393,31 +544,41 @@ pub(crate) fn build_regex(pattern: &str) -> Result<Regex, AppError> {
 /// set to only those rows whose `content` matches, and attaches
 /// UTF-16 match offsets.
 fn apply_post_filter(rows: &mut Vec<SearchBlockRow>, re: &Regex) {
-    rows.retain_mut(|row| {
-        let Some(content) = row.content.as_deref() else {
-            // No content → cannot match a post-filter regex. Drop.
-            return false;
-        };
-        let byte_matches: Vec<(usize, usize)> = re
-            .find_iter(content)
-            // Drop zero-width matches — they don't produce a
-            // meaningful highlight (locked in by the plan).
-            .filter(|m| m.end() > m.start())
-            .take(MAX_OFFSETS_PER_BLOCK)
-            .map(|m| (m.start(), m.end()))
-            .collect();
-        if byte_matches.is_empty() {
-            return false;
-        }
-        let utf16 = byte_to_utf16_offsets(content, &byte_matches);
-        row.match_offsets = utf16;
-        // Clear the FTS snippet — the frontend prefers offsets when
-        // present, but clearing the snippet means a pre-PEND-55
-        // frontend bundle won't double-render the highlight via two
-        // paths.
-        row.snippet = None;
-        true
-    });
+    rows.retain_mut(|row| post_filter_row(row, re));
+}
+
+/// SQL-A3 / BE-A1 (PEND-58f) — per-row post-filter predicate, extracted
+/// from [`apply_post_filter`] so the filter-aware cursor pagination loop
+/// ([`super::search::fts_fetch_post_filtered_page`]) can apply the same
+/// logic one row at a time while tracking each survivor's rank.
+///
+/// Returns `true` to KEEP the row (after mutating its `match_offsets` and
+/// clearing `snippet`) and `false` to DROP it (no content, or no
+/// non-zero-width match).
+fn post_filter_row(row: &mut SearchBlockRow, re: &Regex) -> bool {
+    let Some(content) = row.content.as_deref() else {
+        // No content → cannot match a post-filter regex. Drop.
+        return false;
+    };
+    let byte_matches: Vec<(usize, usize)> = re
+        .find_iter(content)
+        // Drop zero-width matches — they don't produce a
+        // meaningful highlight (locked in by the plan).
+        .filter(|m| m.end() > m.start())
+        .take(MAX_OFFSETS_PER_BLOCK)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    if byte_matches.is_empty() {
+        return false;
+    }
+    let utf16 = byte_to_utf16_offsets(content, &byte_matches);
+    row.match_offsets = utf16;
+    // Clear the FTS snippet — the frontend prefers offsets when
+    // present, but clearing the snippet means a pre-PEND-55
+    // frontend bundle won't double-render the highlight via two
+    // paths.
+    row.snippet = None;
+    true
 }
 
 /// Convert `(byte_start, byte_end)` pairs into UTF-16 code-unit offsets.
@@ -486,6 +647,54 @@ async fn regex_mode_query(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    // SQL-5 (PEND-58f) — **contract**: regex mode runs the user's
+    // pattern against the **raw `blocks.content`** column, NOT against
+    // the stripped / reference-resolved / NFC-normalised text that the
+    // FTS5 index (`fts_blocks.stripped`, written by
+    // `strip_for_fts_with_maps`) matches. The two search modes therefore
+    // see DIFFERENT text for the same block, with three concrete
+    // consequences the caller must understand:
+    //
+    //   1. **Reference tokens are visible to regex, invisible to FTS.**
+    //      A `#[ULID]` tag/page reference is left verbatim in
+    //      `blocks.content` but resolved to its target name in the FTS
+    //      index. A regex on a tag/page *name* will MISS a block that
+    //      only references that name via `#[ULID]`; FTS would match it.
+    //   2. **Raw markdown is matchable by regex only.** Markup the FTS
+    //      strip pass removes (link syntax, formatting markers) is still
+    //      present in `blocks.content`, so a regex can match it.
+    //   3. **NFC/NFD.** `blocks.content` is stored as the user typed it
+    //      (may be NFD, e.g. a macOS paste); the FTS index is NFC. We
+    //      NFC-normalise the *pattern* below (cheap, safe) so an
+    //      NFC-typed pattern reaches NFC content consistently, but we do
+    //      NOT normalise the stored content on this path — a regex
+    //      against NFD-stored content can still diverge from FTS.
+    //
+    // Changing the column scanned (stripped vs raw) is a behaviour change
+    // deliberately out of scope here; this comment is the documented
+    // contract. See `docs/SEARCH.md`'s regex-mode section.
+
+    // SQL-A4 (PEND-58f) — reject an over-long RAW pattern up front,
+    // BEFORE the NFC-normalise + regex-compile walk. Mirrors the FTS
+    // path's `MAX_QUERY_LEN` guard (`search_fts` / `search_fts_partitioned`)
+    // so a pathological multi-megabyte raw input is rejected before we
+    // pay to normalise it. `build_regex` already caps the *composed*
+    // pattern at `MAX_PATTERN_LEN`, but that check runs only after
+    // normalisation; this up-front guard bounds the normalise work too.
+    // Same byte-length basis and error shape as the FTS path.
+    if query.len() > super::search::MAX_QUERY_LEN {
+        return Err(AppError::Validation(format!(
+            "search query is too long ({} bytes); maximum is {} bytes",
+            query.len(),
+            super::search::MAX_QUERY_LEN
+        )));
+    }
+
+    // NFC-normalise the user pattern so a composed pattern (e.g. a paste
+    // containing NFD diacritics) is canonical before regex compilation.
+    let query_nfc = super::strip::nfc_normalise(query);
+    let query: &str = &query_nfc;
+
     // Compose the final regex. `case_sensitive` flips the (?i) flag;
     // `whole_word` wraps in `(?-u:\b)`. The user's input is the regex
     // pattern verbatim (NOT escaped).
@@ -515,8 +724,21 @@ async fn regex_mode_query(
     // applied. We do not use cursor pagination on this path (the
     // candidate set is bounded by `REGEX_PRE_FILTER_CAP`); the
     // `next_cursor` field returns `None`.
-    let limit = page.limit.clamp(1, 100);
-    let _ = limit; // for future per-page slicing; today's response is single-page
+    //
+    // SQL-A2 (PEND-58f) — the upper clamp is `MAX_SEARCH_RESULTS + 1`,
+    // NOT `MAX_SEARCH_RESULTS`. The partitioned regex caller
+    // (`search_with_toggles_partitioned`) passes a `limit + 1` PROBE
+    // (`probe_limit_i64`) so it can detect overflow against its own
+    // per-partition cap. With the previous `clamp(1, 100)` that probe
+    // collapsed back to 100 at the cap, so a partition could return at
+    // most 100 survivors and `items.len() > page_limit` (100 > 100) was
+    // never true — `has_more` was dead at exactly `MAX_SEARCH_RESULTS`.
+    // Allowing one extra row through lets the probe see the (cap+1)th
+    // match. The cursor regex path (via `search_with_toggles`) is still
+    // capped at `MAX_SEARCH_RESULTS`: its `page.limit` is the validated
+    // user limit, which SQL-A1 rejects above 100, so the clamp never
+    // lifts it past the cap there.
+    let limit = page.limit.clamp(1, super::search::MAX_SEARCH_RESULTS + 1);
 
     let mut sql = String::from(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
@@ -535,7 +757,34 @@ async fn regex_mode_query(
         i
     });
 
-    let tag_ids_active: &[String] = tag_ids.filter(|t| !t.is_empty()).unwrap_or(&[]);
+    // SQL-1 (PEND-58f) — dedupe `tag_ids` before binding, mirroring the
+    // FTS path in `fts::search::fts_fetch_rows`. The "ALL tags" predicate
+    // compares `COUNT(DISTINCT bt.tag_id)` against the bound list length;
+    // a duplicate id makes that length unachievable and the regex scan
+    // silently returns zero rows. Order is preserved for deterministic
+    // placeholder/bind indices.
+    //
+    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // ULID form BEFORE inserting into the dedup set (and bind the
+    // normalised form). `block_tags.tag_id` stores the canonical
+    // uppercase Crockford-base32 ULID (`BlockId`/`ActiveBlockId` both
+    // normalise via `to_ascii_uppercase`), so a mixed-case duplicate
+    // (e.g. the same id arriving lower- and upper-case from two FE code
+    // paths) would otherwise survive byte-exact dedup, inflate the bound
+    // list length past the achievable `COUNT(DISTINCT)`, and silently
+    // zero out the ALL-tags predicate. Uppercasing collapses the
+    // duplicate AND aligns the bound `IN (...)` values with the stored
+    // canonical form.
+    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
+        Some(ids) => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let tag_start = if !tag_ids_active.is_empty() {
         let start = next_param;
         let placeholders: Vec<String> = (0..tag_ids_active.len())
@@ -634,7 +883,7 @@ async fn regex_mode_query(
     if let Some(pid) = parent_id {
         db_query = db_query.bind(pid);
     }
-    for tid in tag_ids_active {
+    for tid in &tag_ids_active {
         db_query = db_query.bind(tid);
     }
     if !tag_ids_active.is_empty() {
@@ -664,6 +913,28 @@ async fn regex_mode_query(
     db_query = db_query.bind(REGEX_PRE_FILTER_CAP);
 
     let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
+
+    // SQL-8 (PEND-58f) — the SQL scan returns at most the newest
+    // `REGEX_PRE_FILTER_CAP` (1000) structurally-filtered rows, ordered
+    // `b.id DESC` (recency). If the scan returns *exactly* the cap, there
+    // were at least that many candidate rows and OLDER matches beyond the
+    // window are silently invisible — yet this path always reports
+    // `has_more: false` (it emits no cursor; the candidate set is
+    // intentionally bounded). We cannot surface a richer truncation
+    // signal without changing the `PageResponse` wire type (which would
+    // force a `bindings.ts` regen, out of scope here), so for now we emit
+    // a `warn!` breadcrumb when the window is saturated. Wiring a typed
+    // truncation flag onto the wire is DEFERRED to a follow-up that
+    // touches the IPC surface.
+    let prefilter_cap_usize = usize::try_from(REGEX_PRE_FILTER_CAP).unwrap_or(usize::MAX);
+    if rows.len() >= prefilter_cap_usize {
+        tracing::warn!(
+            prefilter_cap = REGEX_PRE_FILTER_CAP,
+            "regex-mode pre-filter window saturated — matches older than the \
+             newest {REGEX_PRE_FILTER_CAP} structurally-filtered blocks are not \
+             scanned (has_more reported false; no truncation signal on the wire)"
+        );
+    }
 
     // Run the regex post-filter. Trim to `limit` survivors.
     let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
@@ -728,6 +999,348 @@ struct RegexScanRow {
     due_date: Option<String>,
     scheduled_date: Option<String>,
     page_id: Option<String>,
+}
+
+/// PEND-58g NEW-3 — filter-only structural scan (NO free-text pattern).
+///
+/// A blank query has nothing for FTS5 MATCH (which cannot express
+/// "match all") or the regex engine (an empty pattern matches every
+/// row) to act on. When the caller still supplies at least one
+/// STRUCTURAL filter (`tag:`, `parent_id`, page globs, `block_type`, a
+/// metadata predicate), the intent is "give me the blocks that match
+/// those filters", recency-ordered. This helper builds the SAME
+/// structural-filter SQL as [`regex_mode_query`] (deduped/UPPERCASE tag
+/// ids with the `COUNT(DISTINCT)` ALL-tags predicate, space_id,
+/// include/exclude page globs, [`append_metadata_sql`], optional
+/// `block_type`) but:
+///
+///   * compiles NO regex and applies NO post-filter — every
+///     structurally-matching row is returned;
+///   * supports id-DESC cursor pagination via `after_id` (`AND b.id < ?`);
+///     ULIDs sort lexicographically by recency, so `id DESC` is
+///     recency-descending.
+///   * emits `snippet: None` / `match_offsets: vec![]` (no pattern → no
+///     highlight offsets).
+///
+/// The `fetch_limit` cap is bound to the `LIMIT` placeholder; callers
+/// pass `effective_limit + 1` so a one-row overflow probe can drive
+/// `has_more`.
+#[allow(clippy::too_many_arguments)]
+async fn filter_only_scan(
+    pool: &SqlitePool,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+    after_id: Option<&str>,
+    fetch_limit: i64,
+) -> Result<Vec<SearchBlockRow>, AppError> {
+    let mut sql = String::from(
+        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+                  b.deleted_at, b.todo_state, b.priority, b.due_date,
+                  b.scheduled_date, b.page_id
+           FROM blocks b
+           WHERE b.deleted_at IS NULL
+             AND b.content IS NOT NULL"#,
+    );
+
+    let mut next_param = 1;
+    let parent_idx = parent_id.map(|_| {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.parent_id = ?{i}"));
+        next_param += 1;
+        i
+    });
+
+    // SQL-1 / SQL-A6 (PEND-58f) — dedupe + UPPERCASE-normalise tag ids
+    // before binding, exactly as `regex_mode_query` does, so the
+    // `COUNT(DISTINCT)` ALL-tags predicate is achievable and a
+    // mixed-case duplicate can't silently zero the scan.
+    let tag_ids_active: Vec<String> = match tag_ids.filter(|t| !t.is_empty()) {
+        Some(ids) => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    let tag_start = if !tag_ids_active.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..tag_ids_active.len())
+            .map(|i| format!("?{}", start + i))
+            .collect();
+        next_param += tag_ids_active.len();
+        let count_idx = next_param;
+        next_param += 1;
+        sql.push_str(&format!(
+            "\n             AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN ({})) = ?{count_idx}",
+            placeholders.join(", ")
+        ));
+        Some((start, count_idx))
+    } else {
+        None
+    };
+
+    let space_idx = space_id.map(|_| {
+        let i = next_param;
+        sql.push_str(&format!(
+            "\n             AND b.page_id IN (\
+              SELECT bp.block_id FROM block_properties bp \
+              WHERE bp.key = 'space' AND bp.value_ref = ?{i})"
+        ));
+        next_param += 1;
+        i
+    });
+
+    let include_start = if !include_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..include_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n             AND b.page_id IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += include_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
+    let exclude_start = if !exclude_page_globs.is_empty() {
+        let start = next_param;
+        let placeholders: Vec<String> = (0..exclude_page_globs.len())
+            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
+            .collect();
+        sql.push_str(&format!(
+            "\n             AND b.page_id NOT IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
+            placeholders.join(" OR ")
+        ));
+        next_param += exclude_page_globs.len();
+        Some(start)
+    } else {
+        None
+    };
+
+    // PEND-53 — metadata predicates (same shape as `regex_mode_query`).
+    let metadata_binds =
+        super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
+
+    let block_type_idx = if block_type_filter.is_some() {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.block_type = ?{i}"));
+        next_param += 1;
+        Some(i)
+    } else {
+        None
+    };
+
+    // id-DESC cursor pagination — ULID prefixes sort lexicographically by
+    // recency, so `b.id < ?` resumes strictly after the previous page's
+    // last (oldest) returned row.
+    let after_idx = if after_id.is_some() {
+        let i = next_param;
+        sql.push_str(&format!("\n             AND b.id < ?{i}"));
+        next_param += 1;
+        Some(i)
+    } else {
+        None
+    };
+
+    let cap_idx = next_param;
+    sql.push_str(&format!(
+        "\n           ORDER BY b.id DESC\n           LIMIT ?{cap_idx}"
+    ));
+
+    let _ = (
+        parent_idx,
+        tag_start,
+        space_idx,
+        include_start,
+        exclude_start,
+        block_type_idx,
+        after_idx,
+    );
+
+    let mut db_query = sqlx::query_as::<_, RegexScanRow>(&sql);
+    if let Some(pid) = parent_id {
+        db_query = db_query.bind(pid);
+    }
+    for tid in &tag_ids_active {
+        db_query = db_query.bind(tid);
+    }
+    if !tag_ids_active.is_empty() {
+        let count: i64 = i64::try_from(tag_ids_active.len()).unwrap_or(i64::MAX);
+        db_query = db_query.bind(count);
+    }
+    if let Some(sid) = space_id {
+        db_query = db_query.bind(sid);
+    }
+    for pat in include_page_globs {
+        db_query = db_query.bind(pat);
+    }
+    for pat in exclude_page_globs {
+        db_query = db_query.bind(pat);
+    }
+    for v in &metadata_binds {
+        db_query = v.bind(db_query);
+    }
+    if let Some(bt) = block_type_filter {
+        db_query = db_query.bind(bt);
+    }
+    if let Some(aid) = after_id {
+        db_query = db_query.bind(aid);
+    }
+    db_query = db_query.bind(fetch_limit);
+
+    let rows = db_query.fetch_all(pool).await.map_err(AppError::Database)?;
+
+    let out: Vec<SearchBlockRow> = rows
+        .into_iter()
+        .map(|r| SearchBlockRow {
+            id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
+            block_type: r.block_type,
+            content: r.content,
+            parent_id: r.parent_id,
+            position: r.position,
+            deleted_at: r.deleted_at,
+            todo_state: r.todo_state,
+            priority: r.priority,
+            due_date: r.due_date,
+            scheduled_date: r.scheduled_date,
+            page_id: r.page_id,
+            snippet: None,
+            match_offsets: vec![],
+        })
+        .collect();
+
+    Ok(out)
+}
+
+/// PEND-58g NEW-3 — cursor-paginated filter-only page (mode-independent;
+/// no free-text pattern). Drives [`filter_only_scan`] with a `limit + 1`
+/// overflow probe and emits an id-DESC `next_cursor` so the palette /
+/// search view can page through the structurally-filtered set without
+/// dropping or duplicating a row.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fts_fetch_filter_only_page(
+    pool: &SqlitePool,
+    page: &PageRequest,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+) -> Result<PageResponse<SearchBlockRow>, AppError> {
+    let effective_limit = page.limit.min(super::search::MAX_SEARCH_RESULTS);
+    let fetch_limit = effective_limit + 1;
+    let after_id = page.after.as_ref().map(|c| c.id.as_str());
+
+    let mut rows = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        block_type_filter,
+        metadata,
+        after_id,
+        fetch_limit,
+    )
+    .await?;
+
+    let effective_limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > effective_limit_usize;
+    rows.truncate(effective_limit_usize);
+
+    let next_cursor = if has_more {
+        // `next_cursor` keys on the LAST RETURNED (post-truncate) row's id;
+        // the next page resumes with `b.id < that_id`. The cursor stores
+        // the raw String id, matching `SearchBlockRow.id` (an
+        // `ActiveBlockId` whose `as_str()` is the canonical ULID).
+        let last = rows
+            .last()
+            .expect("has_more implies at least `limit` rows (limit >= 1)");
+        Some(crate::pagination::Cursor::for_id(last.id.as_str().to_string()).encode()?)
+    } else {
+        None
+    };
+
+    Ok(PageResponse {
+        items: rows,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
+/// PEND-58g NEW-3 — partitioned filter-only scan (mode-independent; no
+/// free-text pattern). Mirrors [`search_with_toggles_partitioned`]'s two
+/// partitions: a pages partition (`block_type = 'page'`) and an
+/// unrestricted blocks partition, each with a `limit + 1` overflow probe
+/// driving its `has_more`. No cursor — the palette doesn't paginate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fts_fetch_filter_only_partitioned(
+    pool: &SqlitePool,
+    page_limit: u32,
+    block_limit: u32,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    metadata: &MetadataPredicates,
+) -> Result<super::search::FtsPartitionedScan, AppError> {
+    let mut pages = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        Some("page"),
+        metadata,
+        None,
+        i64::from(page_limit) + 1,
+    )
+    .await?;
+    let mut blocks = filter_only_scan(
+        pool,
+        parent_id,
+        tag_ids,
+        space_id,
+        include_page_globs,
+        exclude_page_globs,
+        None,
+        metadata,
+        None,
+        i64::from(block_limit) + 1,
+    )
+    .await?;
+
+    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
+    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    // `limit == 0` — same degenerate-ask guard as the FTS / regex paths;
+    // the caller asked for nothing, so don't claim there's more.
+    let pages_has_more = page_limit_usize > 0 && pages.len() > page_limit_usize;
+    let blocks_has_more = block_limit_usize > 0 && blocks.len() > block_limit_usize;
+    pages.truncate(page_limit_usize);
+    blocks.truncate(block_limit_usize);
+
+    Ok(super::search::FtsPartitionedScan {
+        pages,
+        blocks,
+        pages_has_more,
+        blocks_has_more,
+    })
 }
 
 // ---------------------------------------------------------------------------

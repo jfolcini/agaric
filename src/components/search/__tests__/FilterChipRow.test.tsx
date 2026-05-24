@@ -5,6 +5,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 import type { FilterToken } from '@/lib/search-query'
 import { FilterChipRow } from '../FilterChipRow'
 
@@ -24,6 +25,13 @@ describe('FilterChipRow', () => {
     render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
     expect(screen.getByText('tag:#urgent')).toBeInTheDocument()
     expect(screen.getByText('path:Journal/*')).toBeInTheDocument()
+  })
+
+  it('labels a valid chip group via i18n, not a hardcoded string (UX-10)', () => {
+    const filters: FilterToken[] = [{ kind: 'tag', value: 'urgent', span: [0, 11] }]
+    render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
+    // The translated `search.filterGroupLabel` resolves to "Filter: …".
+    expect(screen.getByRole('group', { name: 'Filter: tag:#urgent' })).toBeInTheDocument()
   })
 
   it('calls onRemove(index) when × is clicked', async () => {
@@ -109,5 +117,23 @@ describe('FilterChipRow', () => {
     render(<FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />)
     expect(screen.getByText('prop:status=done')).toBeInTheDocument()
     expect(screen.getByText('not-prop:archived=true')).toBeInTheDocument()
+  })
+
+  it('has no a11y violations', async () => {
+    const filters: FilterToken[] = [
+      { kind: 'tag', value: 'urgent', span: [0, 11] },
+      {
+        kind: 'invalid',
+        source: 'path:[unclosed',
+        error: 'InvalidGlob: unbalanced bracket',
+        span: [12, 26],
+      },
+    ]
+    const { container } = render(
+      <FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />,
+    )
+    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    const results = await axe(container as any)
+    expect(results).toHaveNoViolations()
   })
 })

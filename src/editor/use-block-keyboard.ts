@@ -276,6 +276,14 @@ export function useBlockKeyboard(editor: Editor | null, callbacks: BlockKeyboard
     (event: KeyboardEvent) => {
       if (!editor) return
 
+      // IME / composition guard: while a CJK (or other) input-method
+      // candidate is open, Enter confirms the candidate, Backspace/Arrows
+      // navigate it, etc. Intercepting those here would split/merge/navigate
+      // blocks instead of editing the composition. Defer entirely to the
+      // browser + ProseMirror until the composition commits. `keyCode === 229`
+      // is the legacy signal for engines that don't set `isComposing`.
+      if (event.isComposing || event.keyCode === 229) return
+
       // When a suggestion popup is visible, let Enter, Escape, and
       // Backspace pass through to ProseMirror so the Suggestion plugin can
       // handle them: Enter → select item, Escape → dismiss popup,

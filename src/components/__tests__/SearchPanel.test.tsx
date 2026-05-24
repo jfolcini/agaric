@@ -24,9 +24,35 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { addRecentPage } from '../../lib/recent-pages'
 import { useNavigationStore } from '../../stores/navigation'
+import { useSearchHistoryStore } from '../../stores/search-history'
 import { useSpaceStore } from '../../stores/space'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { SearchPanel } from '../SearchPanel'
+
+// PEND-58f FE-3 — the per-group result listbox is now virtualized
+// (`@tanstack/react-virtual`). jsdom gives the scroll container zero
+// height, which would collapse the virtual window to zero rows; mirror the
+// AgendaResults / HistoryView test mock so the virtualizer yields every row
+// and the existing `getAllByRole('option')` / keyboard-roving assertions
+// (which capture `options` once and index into them) still see every row.
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
+    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    let start = 0
+    const items = sizes.map((size, index) => {
+      const item = { index, key: index, start, size, end: start + size }
+      start += size
+      return item
+    })
+    return {
+      getVirtualItems: () => items,
+      getTotalSize: () => start,
+      scrollToIndex: vi.fn(),
+      scrollToOffset: vi.fn(),
+      measureElement: vi.fn(),
+    }
+  },
+}))
 
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
@@ -68,6 +94,11 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  // The search-history store is a module singleton; its in-memory state
+  // leaks across tests (localStorage.clear() only drops the persisted
+  // copy). Reset it so a prior test's searches don't render the history
+  // dropdown over an auto-focused empty input.
+  useSearchHistoryStore.setState({ bySpace: {}, historyEnabled: true })
   // FEAT-3 Phase 2 — SearchPanel now gates on `useSpaceStore.isReady`
   // and passes `currentSpaceId` to `searchBlocks`. Seed the store so
   // tests exercise the real code path (not the loading skeleton).
@@ -120,10 +151,12 @@ describe('SearchPanel', () => {
 
   // UX-338 — placeholder must mention the 3-character minimum so users see
   // the requirement before they type, not only after.
-  it('placeholder mentions the 3-character minimum', () => {
+  it('placeholder does not promise a hard character minimum (UX-7)', () => {
     render(<SearchPanel />)
     const input = screen.getByLabelText(t('search.searchLabel')) as HTMLInputElement
-    expect(input.placeholder).toMatch(/3\+\s*chars/i)
+    expect(input.placeholder).toBe(t('search.searchPlaceholder'))
+    // Search fires at 1 char, so the placeholder must not advertise a gate.
+    expect(input.placeholder).not.toMatch(/3\+/)
   })
 
   it('shows no results before first search', () => {
@@ -192,7 +225,7 @@ describe('SearchPanel', () => {
     const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
     fireEvent.change(input, { target: { value: 'query' } })
 
-    const searchBtn = screen.getByRole('button', { name: /Search/i })
+    const searchBtn = screen.getByRole('button', { name: t('search.searchButton') })
     await user.click(searchBtn)
 
     await waitFor(() => {
@@ -478,8 +511,18 @@ describe('SearchPanel', () => {
   it('disables search button when input is empty', () => {
     render(<SearchPanel />)
 
-    const searchBtn = screen.getByRole('button', { name: /Search/i })
+    const searchBtn = screen.getByRole('button', { name: t('search.searchButton') })
     expect(searchBtn).toBeDisabled()
+  })
+
+  it('opens the search help dialog from the ? button (UX-1)', async () => {
+    const user = userEvent.setup()
+    render(<SearchPanel />)
+    expect(screen.queryByTestId('search-help-dialog')).toBeNull()
+    await user.click(screen.getByTestId('search-help-button'))
+    expect(await screen.findByTestId('search-help-dialog')).toBeInTheDocument()
+    // The help content is reachable (filter-syntax section heading).
+    expect(screen.getByText(t('search.help.section.filterSyntax'))).toBeInTheDocument()
   })
 
   it('does not search for whitespace-only input', () => {
@@ -506,9 +549,11 @@ describe('SearchPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledOnce()
     })
 
-    // Should show error toast
+    // UX-2 / E2E-2 — generic errors now render a visible error state
+    // (the raw message reaches `error` so the regex parser can work; no
+    // toast clobbering it).
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(t('search.failed'))
+      expect(screen.getByTestId('search-error-state')).toBeInTheDocument()
     })
 
     // No results shown
@@ -682,6 +727,119 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(t('search.loadResultsFailed'))
     })
+  })
+
+  // FE-4 — `navGenerationRef` guard. Clicking result B while result A's
+  // `getBlock(parent_id)` is still in flight must let B win: when A's
+  // (older) lookup finally resolves it is superseded and must NOT navigate
+  // nor clobber the spinner. Determinism comes from controlled deferreds —
+  // A's `get_block` is resolved *after* B's and only after B has already
+  // navigated, so there's no timing race.
+  it('a stale result click does not supersede a newer one (navGenerationRef guard)', async () => {
+    const user = userEvent.setup()
+
+    // Two results in two distinct pages so both rows render and each owns a
+    // separate parent lookup.
+    mockedInvoke.mockImplementationOnce(async () => ({
+      items: [
+        makeSearchResult({
+          id: 'CHILD_A',
+          parent_id: 'PARENT_A',
+          page_id: 'PARENT_A',
+          content: 'content A',
+          block_type: 'content',
+        }),
+        makeSearchResult({
+          id: 'CHILD_B',
+          parent_id: 'PARENT_B',
+          page_id: 'PARENT_B',
+          content: 'content B',
+          block_type: 'content',
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }))
+
+    // Controlled deferreds for the two parent lookups, keyed by blockId.
+    let resolveA!: (v: unknown) => void
+    let resolveB!: (v: unknown) => void
+    const pendingA = new Promise((res) => {
+      resolveA = res
+    })
+    const pendingB = new Promise((res) => {
+      resolveB = res
+    })
+    const parentA = {
+      id: 'PARENT_A',
+      block_type: 'page',
+      content: 'Parent A Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+    }
+    const parentB = {
+      id: 'PARENT_B',
+      block_type: 'page',
+      content: 'Parent B Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'get_block') {
+        const blockId = (args as { blockId?: string } | undefined)?.blockId
+        if (blockId === 'PARENT_A') return pendingA
+        if (blockId === 'PARENT_B') return pendingB
+      }
+      return emptyPage
+    })
+
+    // Count navigations by wrapping the store action the hook reads at render.
+    const realNavigate = useTabsStore.getState().navigateToPage
+    const navigateSpy = vi.fn(realNavigate)
+    useTabsStore.setState({ navigateToPage: navigateSpy })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'content')
+
+    await waitFor(() => {
+      expect(screen.getByText(textContent('content A'))).toBeInTheDocument()
+      expect(screen.getByText(textContent('content B'))).toBeInTheDocument()
+    })
+
+    // Click A (gen 1) then B (gen 2). Both parent lookups are now in flight.
+    await user.click(screen.getByText(textContent('content A')))
+    await user.click(screen.getByText(textContent('content B')))
+
+    // Resolve B (the newer click) first — it owns the latest generation.
+    await act(async () => {
+      resolveB(parentB)
+      await pendingB
+    })
+
+    await waitFor(() => {
+      expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT_B')
+    })
+
+    // Now resolve A (the stale click) — its generation is superseded, so it
+    // must NOT navigate (page stack stays on B) nor re-trigger navigation.
+    await act(async () => {
+      resolveA(parentA)
+      await pendingA
+    })
+
+    // Give any (incorrect) follow-up navigation a chance to land.
+    await Promise.resolve()
+
+    // Exactly one navigation occurred, and it landed on B's parent.
+    expect(navigateSpy).toHaveBeenCalledTimes(1)
+    expect(navigateSpy).toHaveBeenCalledWith('PARENT_B', 'Parent B Title', 'CHILD_B')
+    expect(selectPageStack(useTabsStore.getState())[0]?.pageId).toBe('PARENT_B')
   })
 
   // =========================================================================

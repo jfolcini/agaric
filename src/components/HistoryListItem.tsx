@@ -104,7 +104,7 @@ function HistoryListItemInner({
       className={cn(
         'history-item flex flex-col gap-2 rounded-lg border p-4 cursor-pointer transition-colors',
         isSelected ? 'bg-accent/50 border-accent' : 'bg-card hover:bg-accent/30',
-        isFocused && 'ring-2 ring-ring',
+        isFocused && 'ring-2 ring-inset ring-ring',
         isNonReversible && 'opacity-50',
       )}
       onClick={(e) => onRowClick(index, e)}

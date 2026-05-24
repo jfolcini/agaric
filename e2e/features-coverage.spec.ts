@@ -81,7 +81,7 @@ test.describe('Search', () => {
     await expect(page.locator('[data-testid="header-label"]', { hasText: 'Search' })).toBeVisible()
 
     // Type a query matching seed data and submit
-    const input = page.getByPlaceholder('Search blocks (3+ chars)...')
+    const input = page.getByPlaceholder('Search blocks...')
     await input.fill('Welcome')
     await input.press('Enter')
 

@@ -5,6 +5,7 @@
  * duplicated type-based dispatch and validation when saving properties.
  */
 
+import { getTodayString } from './date-utils'
 import type { PropertyDefinition, PropertyRow } from './tauri'
 import { deleteProperty, getProperties, setProperty } from './tauri'
 
@@ -61,7 +62,10 @@ export function buildInitParams(
     case 'number':
       return { blockId, key: def.key, valueNum: 0 }
     case 'date':
-      return { blockId, key: def.key, valueDate: new Date().toISOString().slice(0, 10) }
+      // Local calendar day (matches getTodayString / formatDate used
+      // everywhere else); `toISOString()` would be UTC → off-by-one for
+      // users in negative-offset timezones.
+      return { blockId, key: def.key, valueDate: getTodayString() }
     case 'text':
     case 'select':
       return { blockId, key: def.key, valueText: '' }

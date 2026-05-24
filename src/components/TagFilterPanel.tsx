@@ -396,7 +396,7 @@ export function TagFilterPanel(): React.ReactElement {
                   tabIndex={-1}
                   className={cn(
                     'flex items-center justify-between rounded-md px-2 py-1.5 text-sm hover:bg-accent/50 active:bg-accent/70',
-                    isFocused && 'ring-2 ring-ring/50 bg-accent/30',
+                    isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
                   )}
                 >
                   {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
@@ -475,7 +475,7 @@ export function TagFilterPanel(): React.ReactElement {
                   aria-selected={isFocused}
                   data-result-item
                   tabIndex={-1}
-                  className={cn(isFocused && 'ring-2 ring-ring/50 rounded-lg')}
+                  className={cn(isFocused && 'ring-2 ring-inset ring-ring/50 rounded-lg')}
                 >
                   {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
                   {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner ResultCard */}

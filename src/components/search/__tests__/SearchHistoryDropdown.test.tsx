@@ -28,6 +28,9 @@ function renderDropdown(
     visible: true,
     onPick: vi.fn(),
     onClear: vi.fn(),
+    onRemoveEntry: vi.fn(),
+    historyEnabled: true,
+    onToggleEnabled: vi.fn(),
     listboxId: 'lb',
     activeIndex: -1,
   }
@@ -71,15 +74,67 @@ describe('SearchHistoryDropdown', () => {
     expect(onClear).toHaveBeenCalled()
   })
 
-  it('Enter / Space on a row triggers onPick', () => {
+  it('Enter / Space on a row triggers onPick', async () => {
+    const user = userEvent.setup()
     const onPick = vi.fn()
     renderDropdown({ entries: ['alpha'], onPick })
     const row = screen.getByTestId('search-history-entry-0')
     row.focus()
-    // userEvent's keyboard sends Enter to focused element — match the
-    // dispatch behaviour expected by listbox option a11y.
-    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    // userEvent's keyboard sends Enter to the focused element — match the
+    // dispatch behaviour expected by listbox option a11y, consistent with
+    // the other userEvent-based interaction tests in this file.
+    await user.keyboard('{Enter}')
     expect(onPick).toHaveBeenCalledWith('alpha')
+  })
+
+  // UX-11 — per-row delete + record-history toggle.
+  it('per-row delete affordance calls onRemoveEntry without picking the row', async () => {
+    const user = userEvent.setup()
+    const onRemoveEntry = vi.fn()
+    const onPick = vi.fn()
+    renderDropdown({ entries: ['alpha', 'beta'], onRemoveEntry, onPick })
+    await user.click(screen.getByTestId('search-history-remove-1'))
+    expect(onRemoveEntry).toHaveBeenCalledWith('beta')
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('footer toggle calls onToggleEnabled and labels by state', async () => {
+    const user = userEvent.setup()
+    const onToggleEnabled = vi.fn()
+    const { rerender } = renderDropdown({
+      entries: ['alpha'],
+      historyEnabled: true,
+      onToggleEnabled,
+    })
+    const toggle = screen.getByTestId('search-history-toggle')
+    expect(toggle).toHaveTextContent(/Disable/i)
+    await user.click(toggle)
+    expect(onToggleEnabled).toHaveBeenCalled()
+
+    rerender(
+      <SearchHistoryDropdown
+        entries={[]}
+        visible
+        onPick={vi.fn()}
+        onClear={vi.fn()}
+        onRemoveEntry={vi.fn()}
+        historyEnabled={false}
+        onToggleEnabled={vi.fn()}
+        listboxId="lb"
+        activeIndex={-1}
+      />,
+    )
+    expect(screen.getByTestId('search-history-toggle')).toHaveTextContent(/Enable/i)
+    expect(screen.getByTestId('search-history-disabled-notice')).toBeInTheDocument()
+    // No empty-state message while disabled — the notice replaces it.
+    expect(screen.queryByTestId('search-history-empty')).toBeNull()
+  })
+
+  it('has no axe violations when disabled with no entries', async () => {
+    const { container } = renderDropdown({ entries: [], historyEnabled: false })
+    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    const results = await axe(container as any)
+    expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations with entries', async () => {
@@ -122,5 +177,20 @@ describe('SearchHistoryDropdown', () => {
     for (const row of rows) {
       expect(row).toHaveAttribute('aria-selected', 'false')
     }
+  })
+
+  // UX-A7 — the per-row delete affordance already had a coarse-pointer 44px
+  // target; the row body, Clear-history, and the enable/disable toggle did not.
+  it('gives the rows and footer controls a coarse-pointer 44px target', () => {
+    renderDropdown({ entries: ['alpha', 'beta'] })
+    expect(screen.getByTestId('search-history-entry-0')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
+    expect(screen.getByTestId('search-history-clear')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
+    expect(screen.getByTestId('search-history-toggle')).toHaveClass(
+      '[@media(pointer:coarse)]:min-h-11',
+    )
   })
 })

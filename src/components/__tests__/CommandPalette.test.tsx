@@ -50,10 +50,19 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
   }
 })
 
+// PEND-58g UX-A1 — pin the viewport boolean so mobile-escalation tests
+// can flip it. Default `false` matches jsdom's 1024px innerWidth, so
+// the desktop suite keeps the query-gated inline cmdk footer.
+vi.mock('../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { searchBlocks, searchBlocksPartitioned } from '../../lib/tauri'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 type PartitionedResp = Awaited<ReturnType<typeof searchBlocksPartitioned>>
 type SearchRow = PartitionedResp['pages']['items'][number]
@@ -120,6 +129,9 @@ function partitionedResp(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // `clearAllMocks` wipes the mock implementation, so re-pin the
+  // default desktop viewport (PEND-58g UX-A1). Mobile tests override.
+  mockedUseIsMobile.mockReturnValue(false)
   localStorage.clear()
   resetStore()
   useTabsStore.setState({
@@ -228,7 +240,6 @@ describe('CommandPalette — recents pinning (PEND-67 Phase 4)', () => {
     const fresh = await screen.findByTestId('palette-recent-PAGE_NEW')
     // The pinned row's DOM ordering comes before the unpinned one
     // (compareDocumentPosition: 4 == DOCUMENT_POSITION_FOLLOWING).
-    // eslint-disable-next-line no-bitwise
     expect(old.compareDocumentPosition(fresh) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(old.getAttribute('data-pinned')).toBe('true')
     expect(fresh.getAttribute('data-pinned')).toBeNull()
@@ -619,6 +630,78 @@ describe('CommandPalette — escalation footer', () => {
     expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('escalate')
     expect(useNavigationStore.getState().currentView).toBe('search')
     expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+})
+
+// ───────────────────────────────────────────────────────────────────
+// PEND-58g UX-A1 — mobile "Filters & regex" escalation CTA
+// ───────────────────────────────────────────────────────────────────
+
+describe('CommandPalette — mobile escalation CTA (PEND-58g UX-A1)', () => {
+  it('renders the always-visible CTA in the all-pages sheet with an EMPTY query', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    render(<CommandPalette />)
+    openPalette()
+    // No keystroke — the query is empty (cold open). The CTA must
+    // still surface so touch users discover filters / regex / history.
+    const cta = await screen.findByTestId('palette-escalation-footer')
+    expect(cta).toBeInTheDocument()
+    expect(screen.getByText('Filters & regex')).toBeInTheDocument()
+    expect(screen.getByText('Open full search')).toBeInTheDocument()
+    expect(cta).toHaveAttribute('aria-label', 'Open full search for filters, regex, and history')
+  })
+
+  it('tapping the CTA hands off the (possibly empty) query, flips the view, and closes', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const user = userEvent.setup()
+    render(<CommandPalette />)
+    openPalette()
+    const cta = await screen.findByTestId('palette-escalation-footer')
+    await user.click(cta)
+    expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('')
+    expect(useNavigationStore.getState().currentView).toBe('search')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('forwards a typed query when the CTA is tapped on mobile', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input')
+    fireEvent.change(input, { target: { value: 'todo' } })
+    const cta = await screen.findByTestId('palette-escalation-footer')
+    fireEvent.click(cta)
+    expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('todo')
+    expect(useNavigationStore.getState().currentView).toBe('search')
+  })
+
+  it('does NOT leak the mobile CTA onto desktop — the inline footer stays query-gated', async () => {
+    // Desktop default (useIsMobile=false). With an empty query there is
+    // no escalation affordance at all; the inline cmdk footer only
+    // appears once a query yields results / a no-results state.
+    render(<CommandPalette />)
+    openPalette()
+    expect(screen.queryByTestId('palette-escalation-footer')).toBeNull()
+    expect(screen.queryByText('Filters & regex')).toBeNull()
+    // Type a query → the desktop inline footer (the muted cmdk row,
+    // NOT the mobile two-line box) appears.
+    const input = screen.getByTestId('command-palette-input')
+    fireEvent.change(input, { target: { value: 'escalate' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-escalation-footer')).toBeInTheDocument()
+    })
+    // The desktop footer never renders the mobile CTA title/hint.
+    expect(screen.queryByText('Filters & regex')).toBeNull()
+    expect(screen.queryByText('Open full search')).toBeNull()
+  })
+
+  it('passes a vitest-axe scan with the mobile CTA rendered (empty query)', async () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const { container } = render(<CommandPalette />)
+    openPalette()
+    await screen.findByTestId('palette-escalation-footer')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })
 

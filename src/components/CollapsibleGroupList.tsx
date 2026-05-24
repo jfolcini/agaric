@@ -75,6 +75,19 @@ export interface CollapsibleGroupListProps<G extends GroupItem> {
    * a content-less group is in the result set.
    */
   formatCount?: (group: G) => string
+  /**
+   * PEND-58f FE-3 — full override for an expanded group's list body.
+   * When provided, it REPLACES the default `<ul>…renderBlock…</ul>`
+   * entirely (the `list*` props above are then ignored — the override
+   * owns the `<ul role="listbox">`, its `aria-*`, and its children).
+   *
+   * Search supplies this to render a *virtualized* listbox per group:
+   * the virtualizer hook must live in a child component (one per group),
+   * which a render-prop allows but the in-`map` default `<ul>` does not.
+   * Default consumers (LinkedReferences / UnlinkedReferences) leave this
+   * unset and keep the eager `<ul>` path unchanged.
+   */
+  renderGroupList?: (group: G, title: string) => React.ReactNode
 }
 
 export function CollapsibleGroupList<G extends GroupItem>({
@@ -95,6 +108,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
   listOnKeyDown,
   listDataTestId,
   formatCount,
+  renderGroupList,
 }: CollapsibleGroupListProps<G>): React.ReactElement {
   const { t } = useTranslation()
   return (
@@ -141,22 +155,29 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 {title} {countLabel}
               </button>
             )}
-            {isExpanded && (
-              // biome-ignore lint/a11y/useAriaPropsSupportedByRole: `aria-activedescendant` is gated on `listRole === 'listbox'` at runtime; biome can't see the conditional. PEND-50 sets `listRole="listbox"` on search-result lists; other consumers leave `listRole` unset and never receive the attribute.
-              <ul
-                className={listClassName ?? 'ml-4 mt-1 space-y-1'}
-                aria-label={listAriaLabel?.(title)}
-                role={listRole}
-                aria-activedescendant={
-                  listRole === 'listbox' ? listAriaActiveDescendant?.(group) : undefined
-                }
-                tabIndex={listTabIndex?.(group)}
-                data-testid={listDataTestId?.(group)}
-                onKeyDown={listOnKeyDown ? (e) => listOnKeyDown(e, group) : undefined}
-              >
-                {group.blocks.map((block) => renderBlock(block, group))}
-              </ul>
-            )}
+            {isExpanded &&
+              (renderGroupList ? (
+                // PEND-58f FE-3 — the override owns the entire `<ul>`
+                // (role/aria/children); used for the virtualized
+                // search-result listbox where the virtualizer hook must
+                // live in a per-group child component.
+                renderGroupList(group, title)
+              ) : (
+                // biome-ignore lint/a11y/useAriaPropsSupportedByRole: `aria-activedescendant` is gated on `listRole === 'listbox'` at runtime; biome can't see the conditional. PEND-50 sets `listRole="listbox"` on search-result lists; other consumers leave `listRole` unset and never receive the attribute.
+                <ul
+                  className={listClassName ?? 'ml-4 mt-1 space-y-1'}
+                  aria-label={listAriaLabel?.(title)}
+                  role={listRole}
+                  aria-activedescendant={
+                    listRole === 'listbox' ? listAriaActiveDescendant?.(group) : undefined
+                  }
+                  tabIndex={listTabIndex?.(group)}
+                  data-testid={listDataTestId?.(group)}
+                  onKeyDown={listOnKeyDown ? (e) => listOnKeyDown(e, group) : undefined}
+                >
+                  {group.blocks.map((block) => renderBlock(block, group))}
+                </ul>
+              ))}
           </div>
         )
       })}

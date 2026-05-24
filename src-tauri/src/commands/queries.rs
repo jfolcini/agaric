@@ -430,6 +430,54 @@ pub struct SearchBlockRow {
     pub match_offsets: Vec<MatchOffset>,
 }
 
+/// BE-3 (PEND-58f) — marshalled filter parts shared by the cursor
+/// (`search_blocks_inner`) and partitioned (`search_blocks_partitioned_inner`)
+/// search paths.
+///
+/// Both inner functions previously open-coded the identical filter
+/// marshalling (brace-expand + validate page-name globs, bundle the three
+/// toggle flags, resolve metadata predicates) — duplicated bug-for-bug.
+/// This struct + [`prepare_search_filter`] centralise it so a fix lands
+/// once on both surfaces.
+///
+/// The `tag_ids` borrow stays at each call site (it is a trivial slice
+/// borrow of `filter.tag_ids` whose lifetime is tied to the caller's
+/// `filter`).
+struct PreparedSearchFilter {
+    include_globs: Vec<String>,
+    exclude_globs: Vec<String>,
+    toggles: fts::SearchToggles,
+    metadata: fts::metadata_filter::MetadataPredicates,
+}
+
+/// BE-3 (PEND-58f) — marshal the shared filter fields once.
+///
+/// - PEND-54 — brace-expand and validate page-name globs in Rust so we
+///   surface `InvalidGlob:` typed errors at the IPC boundary.
+/// - PEND-55 — bundle the three toggle flags into a single value threaded
+///   through the FTS / regex-mode pipelines. The default (all-off) value
+///   reproduces the pre-PEND-55 FTS-only behaviour.
+/// - PEND-53 — resolve state / priority / due / scheduled / property
+///   metadata against today's date. Invalid dates / unknown bucket
+///   keywords surface as `AppError::Validation` with the
+///   `InvalidDateFilter:` prefix the frontend keys on.
+fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, AppError> {
+    let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
+    let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
+    let toggles = fts::SearchToggles {
+        case_sensitive: filter.case_sensitive,
+        whole_word: filter.whole_word,
+        is_regex: filter.is_regex,
+    };
+    let metadata = fts::metadata_filter::prepare_metadata(filter)?;
+    Ok(PreparedSearchFilter {
+        include_globs,
+        exclude_globs,
+        toggles,
+        metadata,
+    })
+}
+
 /// Full-text search across block content using FTS5.
 ///
 /// Returns an empty page if the query is blank. Otherwise delegates to
@@ -455,40 +503,38 @@ pub async fn search_blocks_inner(
     limit: Option<i64>,
     filter: SearchFilter,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    if query.trim().is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
-    }
+    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // `fts::search_with_toggles`: a blank query with at least one
+    // structural filter returns the filtered set (recency-ordered),
+    // while a blank query with no filter returns empty. Let the empty
+    // query flow through instead of short-circuiting here.
     let page = pagination::PageRequest::new(cursor, limit)?;
+
+    // SQL-A1 (PEND-58f) — align the over-cap contract with the
+    // partitioned path (BE-2). `PageRequest::new` accepts `1..=200`, but
+    // the FTS scan ceiling is `MAX_SEARCH_RESULTS` (100); without this
+    // check a cursor caller passing 101–200 would have been silently
+    // capped by `search_fts`'s `min(limit, MAX_SEARCH_RESULTS)` while the
+    // partitioned command REJECTS the same over-limit ask. Reject here so
+    // both surfaces agree (the `min` in `search_fts` stays as
+    // defence-in-depth). Mirrors the BE-2 `AppError::Validation` shape in
+    // `search_blocks_partitioned_inner`.
+    let max_results = fts::MAX_SEARCH_RESULTS;
+    if page.limit > max_results {
+        return Err(AppError::Validation(format!(
+            "search limit must be in [1, {max_results}]; got {}",
+            page.limit
+        )));
+    }
+
     let tag_ids_slice: Option<&[String]> = if filter.tag_ids.is_empty() {
         None
     } else {
         Some(filter.tag_ids.as_slice())
     };
-    // PEND-54 — brace-expand and validate page-name globs in Rust so
-    // we surface `InvalidGlob:` typed errors at the IPC boundary.
-    let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
-    let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
-
-    // PEND-55 — bundle the three toggle flags into a single value
-    // threaded through the FTS / regex-mode pipelines. The default
-    // (all-off) value reproduces the pre-PEND-55 FTS-only behaviour so
-    // existing callers / older frontends are unaffected.
-    let toggles = fts::SearchToggles {
-        case_sensitive: filter.case_sensitive,
-        whole_word: filter.whole_word,
-        is_regex: filter.is_regex,
-    };
-
-    // PEND-53 — resolve state / priority / due / scheduled / property
-    // metadata against today's date. Invalid dates / unknown bucket
-    // keywords surface as `AppError::Validation` with the
-    // `InvalidDateFilter:` prefix the frontend keys on.
-    let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
+    // BE-3 (PEND-58f) — marshal globs / toggles / metadata via the
+    // shared helper so the cursor and partitioned paths stay in lockstep.
+    let prepared = prepare_search_filter(&filter)?;
 
     fts::search_with_toggles(
         pool,
@@ -497,11 +543,11 @@ pub async fn search_blocks_inner(
         filter.parent_id.as_deref(),
         tag_ids_slice,
         filter.space_id.as_deref(),
-        &include_globs,
-        &exclude_globs,
-        toggles,
+        &prepared.include_globs,
+        &prepared.exclude_globs,
+        prepared.toggles,
         filter.block_type_filter.as_deref(),
-        &metadata,
+        &prepared.metadata,
     )
     .await
 }
@@ -874,16 +920,32 @@ pub struct PartitionedSearchResponse {
 ///
 /// `filter.block_type_filter` is **ignored** — partitioning by
 /// `block_type` IS what this function does. The field is left on the
-/// wire for `SearchFilter` compat and is silently dropped.
+/// wire for `SearchFilter` compat and is silently dropped. **BE-4
+/// (PEND-58f) per-endpoint contract:** this is the one search endpoint
+/// that drops `block_type_filter`; the cursor [`search_blocks_inner`]
+/// path honours it. Both share the [`SearchFilter`] wire type, so the
+/// divergence is intentional and surface-specific — do not "fix" it by
+/// threading the field here, that would defeat the partition split.
 ///
 /// All other `SearchFilter` fields are honoured exactly as
 /// [`search_blocks_inner`] honours them.
+///
+/// ## Limit validation (BE-2, PEND-58f)
+///
+/// `page_limit` / `block_limit` must each be in `[0, MAX_SEARCH_RESULTS]`
+/// (100). An over-limit request is **rejected** with
+/// [`AppError::Validation`], matching the cursor path's
+/// `PageRequest::new` "reject, don't silently truncate" contract. The
+/// per-partition scan ceiling is `MAX_SEARCH_RESULTS` regardless, so a
+/// silent cap would have hidden the discrepancy from the caller.
 ///
 /// ## `has_more` semantics
 ///
 /// PEND-69 F1 — `has_more` is derived from a `limit + 1` probe on
 /// each scan independently. Either partition is `true` iff its scan
 /// returned more rows than its cap (resolves Open Q3 — probe approach).
+/// SQL-3 (PEND-58f) — the probe fetches `min(limit, MAX_SEARCH_RESULTS)
+/// + 1`, so `has_more` is now correct even at exactly the cap.
 ///
 /// - `next_cursor = None` for both (palette doesn't paginate).
 /// - `total_count = None` for both.
@@ -921,13 +983,26 @@ pub async fn search_blocks_partitioned_inner(
     filter: SearchFilter,
     cancel: Option<crate::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
-    // Mirror `search_blocks_inner`'s empty-query short-circuit so callers
-    // observe the same wire shape on empty input.
-    if query.trim().is_empty() {
-        return Ok(PartitionedSearchResponse {
-            pages: empty_partition(),
-            blocks: empty_partition(),
-        });
+    // PEND-58g NEW-3 — the empty-query decision now lives in
+    // `fts::search_with_toggles_partitioned`: a blank query with at
+    // least one structural filter returns the filtered partitions
+    // (recency-ordered), while a blank query with no filter returns two
+    // empty partitions. Let the empty query flow through instead of
+    // short-circuiting here.
+
+    // BE-2 (PEND-58f) — reject an over-limit request instead of silently
+    // capping it. The per-partition scan ceiling is `MAX_SEARCH_RESULTS`
+    // (100); a caller asking for more would have had its request quietly
+    // clamped, so the response cardinality / `has_more` would not match
+    // what was asked. Mirror the cursor path's `PageRequest::new`
+    // "reject, don't truncate" contract. The public command signature is
+    // unchanged — this returns the existing `AppError::Validation`.
+    let max_results = u32::try_from(fts::MAX_SEARCH_RESULTS).unwrap_or(u32::MAX);
+    if page_limit > max_results || block_limit > max_results {
+        return Err(AppError::Validation(format!(
+            "partitioned search limits must each be in [0, {max_results}]; \
+             got page_limit={page_limit}, block_limit={block_limit}"
+        )));
     }
 
     let tag_ids_slice: Option<&[String]> = if filter.tag_ids.is_empty() {
@@ -936,16 +1011,9 @@ pub async fn search_blocks_partitioned_inner(
         Some(filter.tag_ids.as_slice())
     };
 
-    // Bug-for-bug compat with `search_blocks_inner`: brace-expand and
-    // validate page-name globs, bundle toggles, resolve metadata.
-    let include_globs = fts::glob_filter::prepare_globs(&filter.include_page_globs)?;
-    let exclude_globs = fts::glob_filter::prepare_globs(&filter.exclude_page_globs)?;
-    let toggles = fts::SearchToggles {
-        case_sensitive: filter.case_sensitive,
-        whole_word: filter.whole_word,
-        is_regex: filter.is_regex,
-    };
-    let metadata = fts::metadata_filter::prepare_metadata(&filter)?;
+    // BE-3 (PEND-58f) — marshal globs / toggles / metadata via the shared
+    // helper (same path the cursor `search_blocks_inner` uses).
+    let prepared = prepare_search_filter(&filter)?;
 
     // PEND-69 F1 — `search_with_toggles_partitioned` runs the two
     // scans in parallel under `tokio::try_join!` and returns each
@@ -959,10 +1027,10 @@ pub async fn search_blocks_partitioned_inner(
         filter.parent_id.as_deref(),
         tag_ids_slice,
         filter.space_id.as_deref(),
-        &include_globs,
-        &exclude_globs,
-        toggles,
-        &metadata,
+        &prepared.include_globs,
+        &prepared.exclude_globs,
+        prepared.toggles,
+        &prepared.metadata,
         cancel,
     )
     .await?;
@@ -981,18 +1049,6 @@ pub async fn search_blocks_partitioned_inner(
             total_count: None,
         },
     })
-}
-
-/// Build an empty [`PageResponse`] for the partitioned-search empty-query
-/// short-circuit. Inline because the project doesn't have a generic
-/// `empty_page()` helper today.
-fn empty_partition() -> PageResponse<SearchBlockRow> {
-    PageResponse {
-        items: Vec::new(),
-        next_cursor: None,
-        has_more: false,
-        total_count: None,
-    }
 }
 
 /// Tauri command: PEND-61 partitioned full-text search. Returns two

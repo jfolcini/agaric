@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT MIN(applied_through_seq) as \"wm!: i64\" FROM loro_doc_state",
+  "describe": {
+    "columns": [
+      {
+        "name": "wm!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "931093654afafdaa9b38e2e0225fff886477d8e8bbb5871e49009c7b04dd0616"
+}

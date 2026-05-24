@@ -37,7 +37,7 @@ import { EmptyState } from './EmptyState'
 import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 
-const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-ring/50 bg-accent/30'
+const UNLINKED_FOCUS_CLASSES = 'ring-2 ring-inset ring-ring/50 bg-accent/30'
 const UNLINKED_FOCUS_CLASSES_ARR = UNLINKED_FOCUS_CLASSES.split(' ')
 
 export interface UnlinkedReferencesProps {

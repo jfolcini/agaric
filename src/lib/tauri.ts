@@ -48,7 +48,9 @@ export {
   listProjectedAgendaLimit,
   PAGINATION_MAX,
   paginationLimit,
+  SEARCH_BLOCKS_MAX,
   safeLimit,
+  searchBlocksLimit,
 } from './safe-limit'
 
 import type {
@@ -164,7 +166,13 @@ export function cancelledError(reason = 'aborted client-side'): AppError {
  */
 export function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal == null) return promise
-  if (signal.aborted) return Promise.reject(cancelledError(signal.reason?.toString()))
+  if (signal.aborted) {
+    // The IPC promise was already constructed (args are eager); it's now
+    // orphaned by the early reject below. Swallow its eventual settlement so a
+    // later rejection doesn't surface as an unhandled promise rejection.
+    promise.catch(() => {})
+    return Promise.reject(cancelledError(signal.reason?.toString()))
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       signal.removeEventListener('abort', onAbort)
@@ -700,77 +708,93 @@ export async function getBlockHistory(params: {
  * `snippet: string | null`). The shape is a strict superset of
  * `BlockRow`, so existing consumers compile unchanged.
  */
-export async function searchBlocks(params: {
-  query: string
-  parentId?: string | undefined
-  tagIds?: string[] | undefined
-  cursor?: string | undefined
-  limit?: SafeLimit | undefined
-  spaceId: string
-  /** PEND-54 — page-name glob include list. See `SearchFilter`. */
-  includePageGlobs?: string[] | undefined
-  /** PEND-54 — page-name glob exclude list. See `SearchFilter`. */
-  excludePageGlobs?: string[] | undefined
-  /** PEND-55 — case-sensitive post-FTS filter. See `SearchFilter`. */
-  caseSensitive?: boolean | undefined
-  /** PEND-55 — ASCII whole-word post-FTS filter. See `SearchFilter`. */
-  wholeWord?: boolean | undefined
-  /** PEND-55 — regex-mode (bypasses FTS5). See `SearchFilter`. */
-  isRegex?: boolean | undefined
+export async function searchBlocks(
+  params: {
+    query: string
+    parentId?: string | undefined
+    tagIds?: string[] | undefined
+    cursor?: string | undefined
+    limit?: SafeLimit | undefined
+    spaceId: string
+    /** PEND-54 — page-name glob include list. See `SearchFilter`. */
+    includePageGlobs?: string[] | undefined
+    /** PEND-54 — page-name glob exclude list. See `SearchFilter`. */
+    excludePageGlobs?: string[] | undefined
+    /** PEND-55 — case-sensitive post-FTS filter. See `SearchFilter`. */
+    caseSensitive?: boolean | undefined
+    /** PEND-55 — ASCII whole-word post-FTS filter. See `SearchFilter`. */
+    wholeWord?: boolean | undefined
+    /** PEND-55 — regex-mode (bypasses FTS5). See `SearchFilter`. */
+    isRegex?: boolean | undefined
+    /**
+     * PEND-51 — restrict to a specific `blocks.block_type` (e.g. `'page'`).
+     * The Cmd+K palette fires a page-only query in parallel with an
+     * unrestricted blocks query so the FE only has to merge by `page_id`.
+     * `undefined` preserves the pre-PEND-51 "all block types" behaviour.
+     * See `SearchFilter.block_type_filter`.
+     */
+    blockTypeFilter?: string | undefined
+    /** PEND-53 — `blocks.todo_state IN (...)`. See `SearchFilter`. */
+    stateFilter?: string[] | undefined
+    /** PEND-53 — `blocks.priority IN (...)`. See `SearchFilter`. */
+    priorityFilter?: string[] | undefined
+    /**
+     * PEND-53 — date predicate on `blocks.due_date`. The frontend AST
+     * carries `DateFilterValue` with operators `< <= = >= >`; this
+     * wrapper translates to the wire shape `{ named: ... } | { op: {
+     * op: 'lt' | 'lte' | 'eq' | 'gte' | 'gt', date } }`.
+     */
+    dueFilter?: DateFilterValueInput | null | undefined
+    /** PEND-53 — same shape as `dueFilter` but on `blocks.scheduled_date`. */
+    scheduledFilter?: DateFilterValueInput | null | undefined
+    /** PEND-53 — AND-joined property filters; see `SearchPropertyFilter`. */
+    propertyFilters?: { key: string; value: string }[] | undefined
+    /** PEND-53 — AND-joined property exclusions. */
+    excludedPropertyFilters?: { key: string; value: string }[] | undefined
+    /**
+     * PEND-63 — `not-state:` projection. Backend emits
+     * `(todo_state IS NULL OR todo_state NOT IN (...))` — NULL-inclusive
+     * inversion. Literal `'none'` flips to `todo_state IS NOT NULL`.
+     */
+    excludedStateFilter?: string[] | undefined
+    /** PEND-63 — `not-priority:` projection. Symmetric to `excludedStateFilter`. */
+    excludedPriorityFilter?: string[] | undefined
+  },
   /**
-   * PEND-51 — restrict to a specific `blocks.block_type` (e.g. `'page'`).
-   * The Cmd+K palette fires a page-only query in parallel with an
-   * unrestricted blocks query so the FE only has to merge by `page_id`.
-   * `undefined` preserves the pre-PEND-51 "all block types" behaviour.
-   * See `SearchFilter.block_type_filter`.
+   * PEND-58f FE-2 — optional client-side abort. When the supplied
+   * `AbortSignal` fires the returned promise rejects with a
+   * `cancelled`-kind `AppError` (see {@link withAbort}), which
+   * `isCancellation()` discriminates so superseded searches are
+   * swallowed silently by the caller. The underlying IPC is NOT
+   * cancelled server-side (Tauri 2 limitation); this is a
+   * stop-waiting primitive that lets a newer search drop the prior
+   * in-flight one. Omit for the pre-PEND-58f fire-and-forget shape.
    */
-  blockTypeFilter?: string | undefined
-  /** PEND-53 — `blocks.todo_state IN (...)`. See `SearchFilter`. */
-  stateFilter?: string[] | undefined
-  /** PEND-53 — `blocks.priority IN (...)`. See `SearchFilter`. */
-  priorityFilter?: string[] | undefined
-  /**
-   * PEND-53 — date predicate on `blocks.due_date`. The frontend AST
-   * carries `DateFilterValue` with operators `< <= = >= >`; this
-   * wrapper translates to the wire shape `{ named: ... } | { op: {
-   * op: 'lt' | 'lte' | 'eq' | 'gte' | 'gt', date } }`.
-   */
-  dueFilter?: DateFilterValueInput | null | undefined
-  /** PEND-53 — same shape as `dueFilter` but on `blocks.scheduled_date`. */
-  scheduledFilter?: DateFilterValueInput | null | undefined
-  /** PEND-53 — AND-joined property filters; see `SearchPropertyFilter`. */
-  propertyFilters?: { key: string; value: string }[] | undefined
-  /** PEND-53 — AND-joined property exclusions. */
-  excludedPropertyFilters?: { key: string; value: string }[] | undefined
-  /**
-   * PEND-63 — `not-state:` projection. Backend emits
-   * `(todo_state IS NULL OR todo_state NOT IN (...))` — NULL-inclusive
-   * inversion. Literal `'none'` flips to `todo_state IS NOT NULL`.
-   */
-  excludedStateFilter?: string[] | undefined
-  /** PEND-63 — `not-priority:` projection. Symmetric to `excludedStateFilter`. */
-  excludedPriorityFilter?: string[] | undefined
-}): Promise<PageResponse<SearchBlockRow>> {
+  signal?: AbortSignal,
+): Promise<PageResponse<SearchBlockRow>> {
   return unwrap(
-    await commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
-      parentId: params.parentId ?? null,
-      tagIds: params.tagIds ?? [],
-      spaceId: params.spaceId,
-      includePageGlobs: params.includePageGlobs ?? [],
-      excludePageGlobs: params.excludePageGlobs ?? [],
-      caseSensitive: params.caseSensitive ?? false,
-      wholeWord: params.wholeWord ?? false,
-      isRegex: params.isRegex ?? false,
-      blockTypeFilter: params.blockTypeFilter ?? null,
-      stateFilter: params.stateFilter ?? [],
-      priorityFilter: params.priorityFilter ?? [],
-      dueFilter: marshalDateFilter(params.dueFilter ?? null),
-      scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
-      propertyFilters: params.propertyFilters ?? [],
-      excludedPropertyFilters: params.excludedPropertyFilters ?? [],
-      excludedStateFilter: params.excludedStateFilter ?? [],
-      excludedPriorityFilter: params.excludedPriorityFilter ?? [],
-    }),
+    await withAbort(
+      commands.searchBlocks(params.query, params.cursor ?? null, params.limit ?? null, {
+        parentId: params.parentId ?? null,
+        tagIds: params.tagIds ?? [],
+        spaceId: params.spaceId,
+        includePageGlobs: params.includePageGlobs ?? [],
+        excludePageGlobs: params.excludePageGlobs ?? [],
+        caseSensitive: params.caseSensitive ?? false,
+        wholeWord: params.wholeWord ?? false,
+        isRegex: params.isRegex ?? false,
+        blockTypeFilter: params.blockTypeFilter ?? null,
+        stateFilter: params.stateFilter ?? [],
+        priorityFilter: params.priorityFilter ?? [],
+        dueFilter: marshalDateFilter(params.dueFilter ?? null),
+        scheduledFilter: marshalDateFilter(params.scheduledFilter ?? null),
+        propertyFilters: params.propertyFilters ?? [],
+        excludedPropertyFilters: params.excludedPropertyFilters ?? [],
+        excludedStateFilter: params.excludedStateFilter ?? [],
+        excludedPriorityFilter: params.excludedPriorityFilter ?? [],
+      }),
+      signal,
+    ),
   )
 }
 

@@ -7,6 +7,7 @@
  * `handleTemplateSelect` is passed to the template picker UI for user clicks.
  */
 
+import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
 import { notify } from '@/lib/notify'
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
@@ -20,8 +21,7 @@ export interface UseTemplateSelectionParams {
   rootParentId: string | null
   blocks: Array<{ id: string; parent_id: string | null; content: string | null }>
   load: () => Promise<void>
-  // biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-  t: (...args: any[]) => any
+  t: TFunction
 }
 
 export interface UseTemplateSelectionReturn {

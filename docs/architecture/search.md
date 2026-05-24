@@ -19,7 +19,10 @@ CREATE VIRTUAL TABLE fts_blocks USING fts5(
 
 The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
 
-Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (`MAX_SEARCH_RESULTS = 100` in `src-tauri/src/fts/search.rs`) and the 3-character query minimum (enforced both frontend at `src/components/SearchPanel.tsx` and backend at `src-tauri/src/fts/search.rs`) keep that cost bounded.
+Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/src/fts/search.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
+
+- **Frontend** (`src/components/SearchPanel.tsx`) — a soft hint. When the trimmed query is non-empty but its JavaScript-string length (UTF-16 code units, counted across the *whole* query) is below 3, the panel shows a "type more characters" notice. It does not block the request.
+- **Backend** (`sanitize_fts_query` in `src-tauri/src/fts/search.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
 
 The synchronous primary-state writer does **not** maintain `fts_blocks`. The materializer rebuilds the FTS row asynchronously on every block insert / update / soft-delete, batched through the materializer's retry queue (`materializer_retry_queue`). The search query therefore sees results that lag the write log by one materializer flush — measured in milliseconds at the desk, but never zero. This is the same lag every materialized view in the app pays.
 
@@ -30,7 +33,7 @@ The search SQL projects `snippet(fts_blocks, 1, '<mark>', '</mark>', '…', N)` 
 - `1` is the index of the `stripped` column (the only indexed column).
 - `<mark>` / `</mark>` are the literal text boundaries SQLite emits around each hit. These are **not** HTML tags at the SQL layer — they are opaque marker strings the frontend parses. Choosing real HTML-looking tags trades a tiny amount of confusion (someone might assume FTS5 returns HTML) for a renderer that can ignore any other angle-bracket in the source content as ordinary text.
 - `'…'` is the ellipsis that flags a truncated window on either end.
-- `N` is the window width measured in **trigrams**, not words. On the trigram tokenizer a window of 32 produces roughly 32 characters of context — much tighter than the per-word windows most FTS5 deployments use. The benchmark in Phase 1 of PEND-50 tunes `N`; expect a value in the 64–96 range to read naturally on typical block content.
+- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/src/fts/search.rs`; consult the code rather than a number here, which would drift.
 
 For page-title-only hits (block with no content body), `snippet()` may return `NULL` on the SQL side; the frontend treats `snippet: None` as "render the page title verbatim, no highlight" and the row still navigates correctly on click.
 
@@ -39,39 +42,45 @@ For page-title-only hits (block with no content body), `snippet()` may return `N
 The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes live in `src-tauri/src/commands/queries.rs` and round-trip through `tauri-specta` into `src/lib/bindings.ts`:
 
 ```rust
-// Request — appended to, never re-shaped.
+// Request — appended to, never re-shaped. Every field carries
+// #[serde(default)] so the tauri-specta-regenerated frontend wrappers stay
+// compatible when a follow-up field lands ahead of its consumer. Only the
+// base fields are shown; later plans (PEND-53/54/55/63) append more.
 pub struct SearchFilter {
-    pub parent_id: Option<ActiveBlockId>,
-    pub tag_ids: Vec<ActiveBlockId>,
-    pub space_id: Option<ActiveBlockId>,
-    // Follow-up plans append fields here. Each MUST carry #[serde(default)]
-    // so the frontend wrappers regenerated by tauri-specta stay compatible
-    // when a follow-up lands ahead of the consumer.
+    pub parent_id: Option<String>,
+    pub tag_ids: Vec<String>,
+    pub space_id: Option<String>,
+    // Follow-up plans append fields here, each with #[serde(default)].
 }
 
 // Response — one row per matching block, paginated via PageResponse<T>.
+// Standalone struct (NOT a sub-type of ActiveBlockRow); it mirrors the
+// ActiveBlockRow columns by value so the wire format is a strict superset.
 pub struct SearchBlockRow {
-    // Inherited from ActiveBlockRow:
     pub id: ActiveBlockId,
     pub block_type: String,
     pub content: Option<String>,
-    pub parent_id: Option<ActiveBlockId>,
-    pub position: Option<i32>,
-    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub parent_id: Option<String>,
+    pub position: Option<i64>,
+    pub deleted_at: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
-    pub due_date: Option<chrono::NaiveDate>,
-    pub scheduled_date: Option<chrono::NaiveDate>,
-    pub page_id: Option<ActiveBlockId>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<String>,
     // Added in PEND-50:
     pub snippet: Option<String>,  // literal <mark>...</mark> boundaries, never HTML-parsed
+    // Added in PEND-55 — UTF-16 match offsets from the toggle/regex
+    // post-filter pass; empty unless a toggle is on. Preferred over
+    // `snippet` by the renderer when populated.
+    pub match_offsets: Vec<MatchOffset>,
     // Follow-ups append optional fields here with #[serde(default)].
 }
 ```
 
 Two invariants ride on this contract:
 
-1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at four arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
+1. **`SearchFilter` is the canonical extension struct.** New filter dimensions land as additional fields on this struct — never as new positional arguments on the Tauri command. The `tauri-specta` 10-argument ceiling is already close on the search surface; the struct keeps the command signature at five arguments (`pool`, `query`, `cursor`, `limit`, `filter`) regardless of how many filter dimensions exist. The `ExtraQueryFilters` struct in `src-tauri/src/commands/mod.rs` is the same pattern applied to `query_by_property`.
 2. **`SearchBlockRow.snippet` carries literal `<mark>` boundaries.** The frontend never feeds this string to `dangerouslySetInnerHTML`. Instead the renderer at `src/components/search/SearchResultBlockRow.tsx` splits the string on the literal marker pairs and emits alternating React text nodes and `<mark>` elements. React escapes any stray `<`, `&`, `script`, etc. as text content — so the snippet path has no XSS surface, even though the FTS5 sanitiser is the only thing between user content and the rendered DOM.
 
 Errors propagate through the existing `AppError` shape — `{ kind: string, message: string }` per `src-tauri/src/error.rs`. Typed validation errors (e.g., invalid glob patterns added by PEND-54) use `AppError::Validation("InvalidGlob: …")` and rely on a stable message prefix the frontend parses. The shape is not a tagged union because the manual `Serialize` impl predates that pattern; do not retrofit it without a coordinated migration.
@@ -83,6 +92,11 @@ The result list reuses `src/components/CollapsibleGroupList.tsx` — the same pr
 - per-group `expandedGroups: Record<string, boolean>` state with `aria-expanded` chevrons,
 - a `renderHeader` slot for the page-title + breadcrumb + match-count row,
 - a `renderBlock` slot the search panel parametrises with `<SearchResultBlockRow row={…} />`.
+
+The orchestration above `CollapsibleGroupList` is two FE-3 components (PEND-58f):
+
+- `src/components/search/SearchResultGroups.tsx` — wraps `CollapsibleGroupList` with the search a11y model (the `role="region"` container, per-group `aria-activedescendant` resolution from the parent's flat `focusedIndex`, and the page-name-only "1 match (in name)" counter rule). It also exports the pure `groupResultsByPage(rows, pageTitles)` helper that buckets the flat `SearchBlockRow[]` into `SearchResultGroup[]`, preserving relevance order at both group and row level. It supplies `CollapsibleGroupList`'s `renderGroupList` slot with the virtualizer below rather than letting the primitive mount every row eagerly.
+- `src/components/search/VirtualizedResultListbox.tsx` — one expanded page-group's `role="listbox"`, windowed with `@tanstack/react-virtual`. It is a drop-in for the single `<ul>` `CollapsibleGroupList` used to render, preserving the per-group listbox count, roles, `data-testid`s, and the roving `aria-activedescendant` contract. The load-bearing a11y detail: `scrollToIndex` mounts the focused row before `aria-activedescendant` points at it, so the active descendant id always resolves to a live DOM node even though only the visible window plus overscan is mounted; `measureElement` corrects the height estimate after first paint.
 
 The search panel groups its flat `SearchBlockRow[]` by `page_id` before handing it to `CollapsibleGroupList`. Pages whose only match is on the page title itself (no content hits) render as a single header row with no children — the `renderBlock` slot is called zero times for that group. The match-count summary above the first group (`N matches in M pages`, via `ResultCountSummary`) is i18n-driven; see `search.matchCountSingular` / `.matchCountPlural` in `src/lib/i18n/references.ts`.
 
@@ -115,14 +129,14 @@ input string ──tokenize──▶ raw tokens ──classify──▶ SearchQu
 Three pure modules under `src/lib/search-query/`:
 
 - `tokenize.ts` — lexes whitespace-delimited words and `"…"` quoted phrases, attaching `[startCol, endCol)` spans. Mirrors the FTS5 sanitiser's quoting rules so the parser doesn't pre-process operator syntax.
-- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 will register `state:`, `priority:`, `due:`, etc. without touching the core parser.
+- `registry.ts` — token-prefix recogniser table. Each recogniser owns one prefix (`tag:`, `path:`, `not-path:`) and returns either a concrete `FilterToken` or an `invalid` token with a typed error string. The longest prefix wins; PEND-53 registered `state:`, `priority:`, `due:`, etc. on top of this table without touching the core parser.
 - `classify.ts` — walks the raw token stream, asks the registry, and stitches the surviving free-text spans into `freeText`.
 
 The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `s` — is enforced by `fast-check` property tests in `__tests__/serialize.test.ts`. Direct equality `serialize(parse(s)) === s` only holds for canonical inputs (the `#tag` bare alias normalises to `tag:#tag` on the way out, by design).
 
 Validation errors come in two flavours:
 
-- **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) run inside `register.ts`'s parsers and surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
+- **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) live in `glob-validate.ts` (`validateGlob`), which `register.ts`'s `path:` / `not-path:` parsers call; failures surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
 - **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::Validation("InvalidGlob: …")` so the frontend keys on the same prefix regardless of which side caught the error.
 
 ### AST → SQL projection
@@ -133,20 +147,28 @@ Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 pat
 
 ## PEND-55 — Toggle row pipeline
 
-The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. The dispatch is binary:
+The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. A blank free-text query that carries at least one structural filter is handled first (see *Filter-only search* below); otherwise the dispatch is binary:
 
 - **`is_regex == false`** → `search_fts` (today's FTS5 path) is called first; if `case_sensitive` or `whole_word` is on, the result rows are passed through `apply_post_filter` with a literal-escaped regex. The filter narrows matches and attaches `match_offsets`; rows without a match are dropped.
-- **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs) returns up to `REGEX_PRE_FILTER_CAP = 1000` candidates; each is matched against the user's regex.
+- **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs and any structural metadata predicates) returns up to `REGEX_PRE_FILTER_CAP` candidates; each is matched against the user's regex. The numeric value of that cap lives only in the code constant — see `src-tauri/src/fts/toggle_filter.rs`.
+
+### Filter-only search (PEND-58g NEW-3)
+
+A search whose free-text is blank/whitespace but which carries at least one structural filter (`tag:`, `path:`, `state:`, `prop:`, a parent, a block-type, …) is a **filter-only** query. FTS5 MATCH cannot express "match everything", so `search_with_toggles` / `search_with_toggles_partitioned` short-circuit BEFORE the FTS/regex dispatch and run `filter_only_scan` — a plain `b.id DESC` (recency-ordered) scan over `blocks` applying exactly the same structural filters the other paths apply, with no pattern match. It is **mode-independent**: with no pattern there is nothing for FTS or a regex to match, so the `is_regex` / `case_sensitive` / `whole_word` toggles don't change the result.
+
+- The cursor path (`fts_fetch_filter_only_page`) paginates on a strictly-less `b.id < ?cursor` predicate (id-only `Cursor::for_id`), derives `has_more` from a `limit + 1` probe, and keys `next_cursor` on the last *returned* (post-truncate) row.
+- The partitioned path (`fts_fetch_filter_only_partitioned`) runs the pages partition (`block_type = 'page'`) and the unrestricted blocks partition, each with its own `limit + 1` probe; the palette doesn't paginate, so no cursor is emitted.
+- `space_id` is always supplied (FEAT-3p4), so it does NOT count as a user filter — a blank query scoped only to a space still returns empty, never the whole space.
 
 ### Caps (all locked-in via module constants)
 
-| Constant | Value | Reason |
-|---|---|---|
-| `MAX_PATTERN_LEN` | 1024 | Rejected before `RegexBuilder` to bound parser work. Pattern length > 1 KiB → typed `InvalidRegex:` error. |
-| `REGEX_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::size_limit`. Bounds compiled-regex memory; degenerate patterns fail compilation rather than OOM. |
-| `REGEX_DFA_SIZE_LIMIT_BYTES` | 10 MiB | `RegexBuilder::dfa_size_limit`. Bounds the lazy-DFA cache at runtime. |
-| `MAX_OFFSETS_PER_BLOCK` | 50 | Per-row offset count. `.` regex against a long block returns 50 offsets max; trailing matches dropped. |
-| `REGEX_PRE_FILTER_CAP` | 1000 | Regex-mode SQL scan limit. `MAX_SEARCH_RESULTS = 100` is the post-cap; 10× headroom for sparse-match patterns. |
+The regex pipeline is bounded by a set of locked-in caps — pattern length, the
+`RegexBuilder` size / DFA-size limits, the per-row offset count, and the
+regex-mode pre-filter scan limit. The authoritative values and their rationale
+live as documented `pub const`s at the top of `src-tauri/src/fts/toggle_filter.rs`
+(`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
+`MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`). Read them from the code — a copy
+of the numbers here would silently drift.
 
 ### UTF-16 offset emission
 
@@ -160,7 +182,17 @@ ASCII passthrough is free (`len_utf16 == 1`, `byte == utf16_index`). CJK (3 byte
 
 ### Regex-mode SQL path
 
-The recency-ordered scan reuses the same parent / tag / space / path-glob filters as `search_fts`. Ordering is `b.id DESC` — ULID prefixes are time-sortable, and `blocks` doesn't carry a `created_at` column. The cursor field on the response is always `None` because there's no rank to encode; "Load more" is disabled in regex mode (the candidate set is already capped at `REGEX_PRE_FILTER_CAP`).
+The recency-ordered scan reuses the same parent / tag / space / path-glob filters (and the structural metadata predicates) as `search_fts`. Ordering is `b.id DESC` — ULID prefixes are time-sortable, and `blocks` doesn't carry a `created_at` column. The cursor field on the response is always `None` because there's no rank to encode; "Load more" is disabled in regex mode (the candidate set is already capped at `REGEX_PRE_FILTER_CAP`).
+
+### Regex matches raw content, FTS matches the stripped index
+
+Regex mode and FTS mode see **different text for the same block**. FTS5 matches the `fts_blocks.stripped` column — markup-stripped, reference-resolved, NFC-normalised (written by `strip_for_fts_with_maps`). Regex mode runs the user's pattern against the **raw `blocks.content`** column instead. The authoritative contract is the comment block at the top of `regex_mode_query` in `src-tauri/src/fts/toggle_filter.rs`. Three concrete consequences:
+
+1. **Reference tokens are visible to regex, invisible to FTS.** A `#[ULID]` tag/page reference stays verbatim in `blocks.content` but is resolved to its target name in the stripped index. A regex on a tag or page *name* therefore MISSES a block that only references that name via `#[ULID]` — FTS would match it. (Use the `tag:` structural filter instead of a regex when you want reference-aware tag matching.)
+2. **Raw markdown/markup is matchable by regex only.** Link wrappers, formatting markers, and other syntax the strip pass removes are still present in `blocks.content`, so only a regex can match them.
+3. **NFC vs NFD.** `blocks.content` is stored as the user typed it (may be NFD, e.g. a macOS paste); the stripped index is NFC. The regex *pattern* is NFC-normalised before compilation (cheap, safe), but the stored content on this path is **not** re-normalised — a regex against NFD-stored content can still diverge from the FTS index.
+
+Changing the scanned column (stripped vs raw) is a deliberate out-of-scope behaviour change; the code comment is the documented contract.
 
 ### Frontend rendering
 
@@ -205,6 +237,12 @@ When ambiguity exists, autocomplete-open wins, then history recall (PEND-55), th
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
+- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, `usePaginatedQuery`, breadcrumbs, grouping, roving nav, navigation (PEND-58g FE-A18).
+- `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers (PEND-58g FE-A18).
+- `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection (PEND-58g FE-A18).
+- `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude) (PEND-58g UX-A5).
+- `src/components/search/SearchResultGroups.tsx` — group orchestration over `CollapsibleGroupList` + `groupResultsByPage` (PEND-58f FE-3).
+- `src/components/search/VirtualizedResultListbox.tsx` — per-group virtualized `role="listbox"` (PEND-58f FE-3).
 - `src/components/search/SearchResultBlockRow.tsx` — snippet / offset → React-node renderer.
 - `src/components/search/ResultCountSummary.tsx` — "N matches in M pages" header.
 - `src/components/search/SearchToggleRow.tsx` — three toggle buttons (PEND-55).

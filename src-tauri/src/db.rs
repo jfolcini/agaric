@@ -224,7 +224,10 @@ pub struct CommandTx {
     /// Label used by [`begin_immediate_logged`] for slow-acquire logs.
     /// Stored here only so diagnostic code (future: a debug-assert on
     /// Drop with a pending queue) can name the originating command.
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "stored for a planned Drop-time debug-assert that names the originating command"
+    )]
     label: &'static str,
 }
 

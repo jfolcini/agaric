@@ -7,8 +7,6 @@
 //! Tests the SQL emission, not the resolver math (that lives in
 //! `metadata_filter`'s own unit tests).
 
-#![allow(unused_imports)]
-
 use crate::commands::queries::{
     search_blocks_inner, DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
 };

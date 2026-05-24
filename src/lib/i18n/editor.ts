@@ -17,6 +17,8 @@ export const editor: Record<string, string> = {
   'attachment.openFile': 'Open file {{filename}}',
   'slash.repeatSet': 'Set repeat to {{value}}',
   'slash.repeatFailed': 'Failed to set repeat',
+  'slash.repeatRemoved': 'Repeat removed',
+  'slash.repeatRemoveFailed': 'Failed to remove repeat',
   'slash.effortSet': 'Set effort to {{value}}',
   'slash.effortFailed': 'Failed to set effort',
   'slash.noTemplates':

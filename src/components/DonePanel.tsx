@@ -13,6 +13,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
@@ -318,9 +319,9 @@ export function DonePanel({
                       rule across both kinds; flat-list virtualization
                       lets the windowing logic skip entire offscreen
                       groups instead of mounting every sub-list. */}
-                  <div
-                    ref={scrollParentRef}
-                    className="done-panel-scroll max-h-[calc(100dvh-260px)] overflow-auto"
+                  <ScrollArea
+                    viewportRef={scrollParentRef}
+                    viewportClassName="done-panel-scroll max-h-[calc(100dvh-260px)]"
                   >
                     {/* No aria-label here: the enclosing `<section>` is
                         already labelled `donePanel.completedItems`,
@@ -398,7 +399,7 @@ export function DonePanel({
                         )
                       })}
                     </ul>
-                  </div>
+                  </ScrollArea>
 
                   {/* Load more */}
                   <LoadMoreButton

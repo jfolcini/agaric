@@ -165,7 +165,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     data-hunk-active={isActiveHunk || undefined}
                     className={cn(
                       'bg-destructive/15 text-destructive no-underline line-through',
-                      isActiveHunk && 'ring-2 ring-ring/60 rounded-sm',
+                      isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
                     )}
                   >
                     {content}
@@ -180,7 +180,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
                     data-hunk-active={isActiveHunk || undefined}
                     className={cn(
                       'bg-status-done text-status-done-foreground no-underline',
-                      isActiveHunk && 'ring-2 ring-ring/60 rounded-sm',
+                      isActiveHunk && 'ring-2 ring-inset ring-ring/60 rounded-sm',
                     )}
                   >
                     {content}

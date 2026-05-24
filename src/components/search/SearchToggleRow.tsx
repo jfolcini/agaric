@@ -97,17 +97,33 @@ export function SearchToggleRow({
                   data-state={pressed ? 'on' : 'off'}
                   onClick={() => onChange({ ...toggles, [key]: !pressed })}
                   className={cn(
-                    'inline-flex items-center justify-center rounded-sm px-2 py-1',
+                    'relative inline-flex items-center justify-center rounded-sm px-2 py-1',
                     // Coarse-pointer hit area
                     '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
                     'text-muted-foreground transition-colors',
                     'hover:bg-accent hover:text-accent-foreground',
                     'focus-ring-visible',
-                    pressed && 'bg-secondary text-foreground shadow-sm',
+                    // UX-15 — the active toggle was previously cued ONLY by a
+                    // low-contrast fill + subtle shadow (a colour-only signal).
+                    // Add a non-colour cue: a visible inset ring (a shape/border
+                    // change) on the pressed state so the active mode is
+                    // distinguishable independent of colour perception. The
+                    // small dot below the icon is a second, redundant
+                    // shape-only indicator.
+                    pressed && 'bg-secondary text-foreground shadow-sm ring-1 ring-inset ring-ring',
                     'disabled:pointer-events-none disabled:opacity-50',
                   )}
                 >
                   <Icon className="h-4 w-4" aria-hidden="true" />
+                  {/* UX-15 — shape-only active indicator (no colour reliance):
+                      a small dot renders only while the toggle is pressed. */}
+                  {pressed && (
+                    <span
+                      aria-hidden="true"
+                      data-testid={`${testId}-active-dot`}
+                      className="pointer-events-none absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+                    />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent>{label}</TooltipContent>

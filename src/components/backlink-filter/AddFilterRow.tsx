@@ -12,6 +12,7 @@
  * switch.
  */
 
+import type { TFunction } from 'i18next'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -54,8 +55,7 @@ type FilterCategory =
 // ---------------------------------------------------------------------------
 
 type BuildResult = { filter: BacklinkFilter } | { error: string }
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-type TFunc = (...args: any[]) => any
+type TFunc = TFunction
 
 function buildTypeFilter(s: BuildState): BuildResult {
   return { filter: { type: 'BlockType', block_type: s.blockType } }

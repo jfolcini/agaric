@@ -23,6 +23,7 @@ import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
+import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import { clearGraphCache, GraphView } from '../GraphView'
 
@@ -1049,6 +1050,46 @@ describe('GraphView', () => {
       render(<GraphView />)
 
       expect(await screen.findByText('No pages to visualize')).toBeInTheDocument()
+    })
+
+    it('clears a stale error once a later refetch succeeds (sticky-error regression)', async () => {
+      // First load fails → the error EmptyState is shown.
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_all_pages_in_space') return Promise.reject(new Error('network failure'))
+        if (cmd === 'list_page_links') return Promise.reject(new Error('network failure'))
+        if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+        return Promise.resolve(null)
+      })
+
+      const prevSpaceId = useSpaceStore.getState().currentSpaceId
+      try {
+        render(<GraphView />)
+        await screen.findByRole('heading', { level: 2, name: 'Failed to load graph data' })
+
+        // A subsequent fetch (triggered by a space switch) succeeds.
+        mockedInvoke.mockImplementation((cmd: string) => {
+          if (cmd === 'list_all_pages_in_space')
+            return Promise.resolve([{ id: 'page-1', content: 'Page One', block_type: 'page' }])
+          if (cmd === 'list_page_links') return Promise.resolve([])
+          if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+          return Promise.resolve(null)
+        })
+        await act(async () => {
+          useSpaceStore.setState({ currentSpaceId: 'SPACE_RECOVER' })
+        })
+
+        // The graph renders and the stale "failed to load" screen is gone.
+        await waitFor(() => {
+          expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+        })
+        expect(
+          screen.queryByRole('heading', { level: 2, name: 'Failed to load graph data' }),
+        ).not.toBeInTheDocument()
+      } finally {
+        act(() => {
+          useSpaceStore.setState({ currentSpaceId: prevSpaceId })
+        })
+      }
     })
   })
 

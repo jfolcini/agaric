@@ -30,12 +30,13 @@
  * change and persist across re-renders.
  */
 
-import type { TFunction } from 'i18next'
 import type React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { CollapsibleGroupList } from '../CollapsibleGroupList'
 import { ResultCountSummary } from './ResultCountSummary'
 import { SearchResultBlockRow } from './SearchResultBlockRow'
+import { VirtualizedResultListbox } from './VirtualizedResultListbox'
 
 /** A page-bucketed group of matching block rows. */
 export interface SearchResultGroup {
@@ -64,7 +65,6 @@ export interface SearchResultGroupsProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLElement>) => boolean
   /** Click handler for a group's page-title link (navigates to the page). */
   onPageTitleClick?: (pageId: string, title: string) => void
-  t: TFunction
 }
 
 export function SearchResultGroups({
@@ -77,8 +77,8 @@ export function SearchResultGroups({
   loadingResultId,
   onKeyDown,
   onPageTitleClick,
-  t,
 }: SearchResultGroupsProps): React.ReactElement | null {
+  const { t } = useTranslation()
   if (groups.length === 0) return null
 
   const focusedRow = flatRows[focusedIndex]
@@ -93,6 +93,31 @@ export function SearchResultGroups({
     if (!focusedRow) return undefined
     if (group.page_id !== focusedRow.page_id) return undefined
     return `search-result-${focusedRow.id}`
+  }
+
+  // Index of the focused row WITHIN a group's own `blocks` array, or `-1`
+  // when the focused row is not in this group. PEND-58f FE-3: the
+  // virtualizer needs this to `scrollToIndex` the active row so it is
+  // mounted and `aria-activedescendant` resolves to a real DOM node.
+  function activeRowIndexFor(group: SearchResultGroup): number {
+    if (!focusedRow) return -1
+    if (group.page_id !== focusedRow.page_id) return -1
+    return group.blocks.findIndex((b) => b.id === focusedRow.id)
+  }
+
+  // FE-A7: roving `tabIndex`. Exactly one group must be in the tab order so
+  // the results region is reachable with Tab. Normally that is the group
+  // owning the focused row. But immediately after a collapse `focusedRow`
+  // can be `undefined` (the focused flat index now points past the shrunk
+  // list); without a fallback NO group would be tabbable and the whole
+  // region would drop out of the tab order. Fall back to the first EXPANDED
+  // group (collapsed groups render no listbox, so they cannot host tabIndex).
+  const firstExpandedGroupId = groups.find(
+    (g) => (expandedGroups[g.page_id] ?? true) && g.blocks.length > 0,
+  )?.page_id
+  function tabIndexFor(group: SearchResultGroup): 0 | -1 {
+    if (focusedRow) return group.page_id === focusedRow.page_id ? 0 : -1
+    return group.page_id === firstExpandedGroupId ? 0 : -1
   }
 
   return (
@@ -110,15 +135,6 @@ export function SearchResultGroups({
         untitledLabel={t('common.untitled') as string}
         defaultExpanded
         groupClassName="search-result-group"
-        listClassName="ml-4 mt-1 space-y-1 list-none p-0"
-        listAriaLabel={(title) => t('search.groupExpandedLabel', { pageTitle: title })}
-        listRole="listbox"
-        listAriaActiveDescendant={activeDescendantFor}
-        listTabIndex={(g) => (focusedRow && g.page_id === focusedRow.page_id ? 0 : -1)}
-        listOnKeyDown={(e) => {
-          if (onKeyDown(e)) e.preventDefault()
-        }}
-        listDataTestId={(g) => `search-result-group-${g.page_id}`}
         formatCount={(g) => {
           // PEND-50 recommendation: page-name-only hits show as
           // "1 match (in name)" so the user understands why the group
@@ -134,6 +150,10 @@ export function SearchResultGroups({
           if (g.blocks.length === 1) return t('search.matchCountInGroupSingular') as string
           return t('search.matchCountInGroupPlural', { count: g.blocks.length }) as string
         }}
+        // `renderBlock` is unused once `renderGroupList` is supplied (the
+        // override owns the `<ul>` + rows), but the prop is required by
+        // CollapsibleGroupList's type, so provide the same row markup the
+        // virtualized path uses for the (unreachable) default branch.
         renderBlock={(block) => (
           <SearchResultBlockRow
             key={block.id}
@@ -142,6 +162,37 @@ export function SearchResultGroups({
             isFocused={!!focusedRow && focusedRow.id === block.id}
             onClick={() => onResultClick(block)}
             loading={loadingResultId === block.id}
+          />
+        )}
+        // PEND-58f FE-3 — replace the eager per-group `<ul>` with a
+        // virtualized listbox so a group with up to the 5000-item cap of
+        // rows mounts only its visible window. The roving a11y model is
+        // preserved unchanged: per-group `role="listbox"`, per-group
+        // `aria-activedescendant`, and the focused row scrolled into view.
+        renderGroupList={(group, title) => (
+          <VirtualizedResultListbox
+            blocks={group.blocks}
+            activeRowId={activeDescendantFor(group)}
+            activeRowIndex={activeRowIndexFor(group)}
+            ariaLabel={t('search.groupExpandedLabel', { pageTitle: title })}
+            tabIndex={tabIndexFor(group)}
+            dataTestId={`search-result-group-${group.page_id}`}
+            onKeyDown={(e) => {
+              if (onKeyDown(e)) e.preventDefault()
+            }}
+            renderRow={(block, style, measureRef, index) => (
+              <SearchResultBlockRow
+                key={block.id}
+                row={block}
+                id={`search-result-${block.id}`}
+                isFocused={!!focusedRow && focusedRow.id === block.id}
+                onClick={() => onResultClick(block)}
+                loading={loadingResultId === block.id}
+                style={style}
+                measureRef={measureRef}
+                dataIndex={index}
+              />
+            )}
           />
         )}
       />

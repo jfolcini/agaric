@@ -124,6 +124,105 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(cursor)
 }
 
+/// Boot-only self-heal for an orphaned / stale apply cursor.
+///
+/// `loro_doc_state` holds one persisted Loro engine snapshot per space,
+/// rehydrated into the in-memory engines at boot (see `lib.rs`). Two
+/// failure modes leave an engine behind the global apply cursor
+/// (`materializer_apply_cursor.materialized_through_seq`), so the
+/// incremental replay walk (`seq > cursor`) replays nothing into it and
+/// every later edit/move apply fails "loro: block not found":
+///
+///  1. **Missing snapshot** — the table is empty (e.g. the snapshot
+///     scheduler was disabled in 8c2c5ddf) while the cursor advanced; the
+///     engine boots empty. Reset the cursor to 0 → full replay rebuilds it.
+///  2. **Stale snapshot (PEND-70 C1/C2)** — a snapshot blob reflects ops
+///     only up to its `applied_through_seq` watermark, but a crash let the
+///     cursor run ahead (snapshots are periodic, the cursor is per-op).
+///     Reset the cursor down to `MIN(applied_through_seq)` so replay
+///     re-applies the unmaterialized tail onto the behind engines.
+///
+/// In both cases the op_log is the append-only source of truth and every
+/// apply handler is idempotent (`MAX(materialized_through_seq, ?)` +
+/// `INSERT OR IGNORE/REPLACE` / keyed `UPDATE` projections + in-order
+/// engine re-apply), so re-applying over already-materialized SQL and
+/// already-caught-up engines is safe. The reset target is the most-stale
+/// watermark across all spaces; because `save_all_engines` refreshes every
+/// snapshot each pass, that is bounded by ~one snapshot interval of ops.
+///
+/// MUST be called at boot only (after snapshot rehydrate, before the
+/// replay walk).
+///
+/// Returns `true` if it reset the cursor.
+pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool, AppError> {
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await?;
+    if cursor == 0 {
+        return Ok(false);
+    }
+
+    let max_seq: i64 = sqlx::query_scalar!(r#"SELECT MAX(seq) as "max_seq: i64" FROM op_log"#,)
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
+    if max_seq == 0 {
+        return Ok(false);
+    }
+
+    let snapshot_count: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM loro_doc_state"#,)
+            .fetch_one(pool)
+            .await?;
+
+    // How far back to rewind the cursor so replay catches every behind
+    // engine up to the materialised frontier.
+    let reset_to: i64 = if snapshot_count == 0 {
+        // No persisted snapshot at all — every engine boots empty; rebuild
+        // the whole op-log.
+        0
+    } else {
+        // Snapshots exist. Each reflects ops only up to its
+        // `applied_through_seq`; the most-stale one bounds what replay must
+        // re-apply. A backfilled/legacy `0` watermark forces a full rebuild
+        // for that space, which is correct (one-time cost after migration).
+        let min_watermark: i64 = sqlx::query_scalar!(
+            r#"SELECT MIN(applied_through_seq) as "wm!: i64" FROM loro_doc_state"#,
+        )
+        .fetch_one(pool)
+        .await?;
+        if cursor <= min_watermark {
+            // Every snapshot already covers the cursor — nothing to heal.
+            return Ok(false);
+        }
+        min_watermark
+    };
+
+    tracing::warn!(
+        cursor,
+        max_seq,
+        reset_to,
+        snapshot_count,
+        "recovery: apply cursor is ahead of the Loro snapshot watermark \
+         (missing or stale snapshot) — rewinding the cursor so replay \
+         rebuilds the behind engines from the op-log"
+    );
+    let updated_at = crate::now_rfc3339();
+    sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = ?, \
+             updated_at = ? \
+         WHERE id = 1",
+        reset_to,
+        updated_at,
+    )
+    .execute(pool)
+    .await?;
+    Ok(true)
+}
+
 /// Walk `op_log WHERE seq > cursor` and enqueue each row as an
 /// `ApplyOp` task on the materializer's foreground queue.
 ///
@@ -300,6 +399,182 @@ mod tests {
             row_seq, 3,
             "materializer_apply_cursor row must be reset to MAX(op_log.seq) on disk, \
              not just in the return value"
+        );
+    }
+
+    /// Self-heal: when `loro_doc_state` is empty (the persisted Loro
+    /// snapshot is missing) but the apply cursor is non-zero, the
+    /// in-memory engine cannot be rebuilt from the snapshot, so
+    /// `heal_orphaned_apply_cursor` must reset the cursor to 0 — forcing a full
+    /// op-log replay that reconstructs the engine. Regression guard for
+    /// the deleted snapshot scheduler that left `loro_doc_state` empty
+    /// while the cursor advanced, wedging every edit on "block not found".
+    #[tokio::test]
+    async fn apply_cursor_resets_to_zero_when_snapshot_missing() {
+        let (pool, _dir) = test_pool().await;
+
+        // Insert 3 op_log rows (seqs 1..=3); leave `loro_doc_state` empty.
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Cursor claims everything is materialized (== MAX(op_log.seq)),
+        // so the over-shoot guard does NOT fire — only the snapshot-empty
+        // guard should.
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 3, \
+                 updated_at = '2026-01-01T00:00:00.000Z' \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            healed,
+            "heal must reset the cursor when loro_doc_state is empty"
+        );
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 0,
+            "materializer_apply_cursor row must be reset to 0 on disk for a full rebuild"
+        );
+    }
+
+    /// A snapshot whose watermark already covers the cursor (the snapshot
+    /// is current) must NOT trigger a reset — the normal incremental replay
+    /// (`seq > cursor`) applies and the cursor is returned as-is.
+    #[tokio::test]
+    async fn apply_cursor_preserved_when_snapshot_current() {
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Seed a snapshot whose watermark (2) >= the cursor (2): the
+        // snapshot already reflects everything the cursor claims, so the
+        // heal must leave the cursor alone.
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES ('test-space', X'00', 0, 0, 2)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 2, \
+                 updated_at = '2026-01-01T00:00:00.000Z' \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(
+            !healed,
+            "heal must be a no-op when the snapshot watermark covers the cursor"
+        );
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 2,
+            "cursor must be preserved when the snapshot watermark covers it"
+        );
+    }
+
+    /// PEND-70 C1/C2 repro: a snapshot that is *present but stale*
+    /// (`applied_through_seq` < cursor — the crash let the cursor run ahead
+    /// of the last periodic snapshot) must rewind the cursor down to the
+    /// watermark so replay re-applies the unmaterialized tail onto the
+    /// behind engine. The old `COUNT(*) > 0` gate left the cursor ahead and
+    /// wedged every later edit on "block not found".
+    #[tokio::test]
+    async fn apply_cursor_rewinds_to_watermark_when_snapshot_stale() {
+        let (pool, _dir) = test_pool().await;
+
+        for seq in 1..=3i64 {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+            )
+            .bind("test-device")
+            .bind(seq)
+            .bind(format!("hash-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Snapshot reflects ops only through seq 1, but the cursor advanced
+        // to 3 (two ops applied after the last snapshot, then a crash).
+        sqlx::query(
+            "INSERT INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES ('test-space', X'00', 0, 0, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE materializer_apply_cursor \
+             SET materialized_through_seq = 3, \
+                 updated_at = '2026-01-01T00:00:00.000Z' \
+             WHERE id = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let healed = heal_orphaned_apply_cursor(&pool).await.unwrap();
+        assert!(healed, "heal must rewind the cursor for a stale snapshot");
+
+        let row_seq: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            row_seq, 1,
+            "cursor must rewind to the snapshot watermark so replay re-applies seq 2..3"
         );
     }
 }

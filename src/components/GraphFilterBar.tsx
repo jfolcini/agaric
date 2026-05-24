@@ -11,6 +11,7 @@
  * replaced rather than stacked.
  */
 
+import type { TFunction } from 'i18next'
 import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -92,8 +93,7 @@ export interface GraphFilterBarProps {
 // ---------------------------------------------------------------------------
 
 /** Human-readable label for a single filter (used inside the pill). */
-// biome-ignore lint/suspicious/noExplicitAny: TFunction overload set is too complex
-function filterLabel(filter: GraphFilter, t: (...args: any[]) => any): string {
+function filterLabel(filter: GraphFilter, t: TFunction): string {
   switch (filter.type) {
     case 'tag':
       return `${t('graph.filter.tag')}: ${filter.tagIds.length}`

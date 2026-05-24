@@ -64,8 +64,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
     }))
     const mod = await import('../extensions/property-picker')
     const ext = mod.PropertyPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -92,8 +91,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
     const mod = await import('../extensions/property-picker')
     const userItems = vi.fn().mockResolvedValue([{ id: 'status', label: 'status' }])
     const ext = mod.PropertyPicker.configure({ items: userItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -119,8 +117,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
     const mod = await import('../extensions/property-picker')
     const userItems = vi.fn().mockRejectedValue(new Error('IPC blew up'))
     const ext = mod.PropertyPicker.configure({ items: userItems })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -146,8 +143,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
     }))
     const mod = await import('../extensions/property-picker')
     const ext = mod.PropertyPicker.configure({ items: () => [] })
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })
@@ -198,8 +194,7 @@ describe('PropertyPicker suggestion command', () => {
     }
     if (onSelect) config.onSelect = onSelect
     const ext = mod.PropertyPicker.configure(config)
-    // biome-ignore lint/complexity/noBannedTypes: test needs .call() on TipTap config method
-    ;(ext.config.addProseMirrorPlugins as Function).call({
+    ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
       options: ext.options,
     })

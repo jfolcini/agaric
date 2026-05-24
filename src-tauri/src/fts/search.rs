@@ -19,22 +19,24 @@ use super::metadata_filter::MetadataPredicates;
 // ---------------------------------------------------------------------------
 
 /// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
-/// an `info!` breadcrumb. 200 ms is well above the typical FTS5
-/// trigram scan on a 10k-block fixture (sub-50 ms on a warm cache, see
-/// `benches/fts_bench.rs`) but well below the 1 s `warn!` budget — it
-/// surfaces "the cache is cold and the query is doing real work"
-/// without spamming on every keystroke.
+/// an `info!` breadcrumb. 200 ms is a **round design figure** chosen to
+/// sit comfortably above a warm-cache FTS5 trigram scan yet well below
+/// the 1 s `warn!` budget — it surfaces "the cache is cold and the query
+/// is doing real work" without spamming on every keystroke. It is a
+/// log-only breadcrumb, not a budget the code enforces. SQL-7 (PEND-58f):
+/// this is a design figure, not a benchmarked value; see
+/// `benches/fts_bench.rs` if you want to derive a measured floor.
 pub(crate) const FTS_QUERY_INFO_MS: u128 = 200;
 
 /// Per-FTS-query wall-time threshold at which [`fts_fetch_rows`] emits
-/// a `warn!`. **Measured starting point**: 1 s mirrors the PEND-70
-/// design's recommended ceiling. If CI runners observe legitimate
-/// cold-cache scans crossing this floor on the 10k-block bench
-/// fixture, raise the constant to the observed worst-case + 3×
-/// headroom and document the bump here. As of 2026-05 the FTS bench
-/// (`benches/fts_bench.rs::bench_search_fts` at `count=10_000`)
-/// completes well under 100 ms on a warm cache; the 1 s budget gives
-/// 10× headroom for cold-cache CI runs.
+/// a `warn!`. SQL-7 (PEND-58f) — 1 s is a **round design figure**
+/// (the PEND-70 design's recommended ceiling), NOT a benchmarked value;
+/// the earlier "measured starting point" wording overstated its
+/// provenance. It is log-only — nothing aborts at this threshold. If CI
+/// runners observe legitimate cold-cache scans crossing this floor on the
+/// 10k-block bench fixture (`benches/fts_bench.rs::bench_search_fts` at
+/// `count=10_000`), derive the new value from the observed worst-case +
+/// 3× headroom and document the bump here.
 pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 
 // ---------------------------------------------------------------------------
@@ -46,7 +48,26 @@ pub(crate) const FTS_QUERY_WARN_MS: u128 = 1_000;
 ///
 /// PEND-61 Phase 1 — also used by [`search_fts_partitioned`] as the
 /// ceiling on the combined `page_limit + block_limit` fetch.
-pub(super) const MAX_SEARCH_RESULTS: i64 = 100;
+///
+/// PEND-58f BE-2 — re-exported via `crate::fts` so the partitioned IPC
+/// command can validate `page_limit` / `block_limit` against the same
+/// ceiling and **reject** (not silently cap) an over-limit request,
+/// matching the cursor path's `PageRequest::new` contract.
+pub(crate) const MAX_SEARCH_RESULTS: i64 = 100;
+
+/// SQL-4 (PEND-58f) — maximum byte length of a raw FTS query string.
+///
+/// The regex-mode path already rejects patterns over [`MAX_PATTERN_LEN`]
+/// (1 KiB) up front via `build_regex`; the FTS path had no equivalent
+/// guard, so a pathological multi-megabyte query string was tokenised,
+/// NFC-normalised, sanitised, and bound into a MATCH expression before
+/// SQLite rejected it (wasting CPU on the normalise/tokenise walk and
+/// risking a confusing low-level FTS5 error). 4 KiB is comfortably above
+/// any realistic hand-typed or paste-built query (the longest structured
+/// query the search-query DSL emits is a few hundred bytes) while keeping
+/// the up-front work bounded. Measured in bytes (`str::len`) to bound the
+/// allocation work, not in scalar count.
+pub(crate) const MAX_QUERY_LEN: usize = 4 * 1024;
 
 /// Token types produced by [`tokenize_query`].
 enum QueryToken {
@@ -290,6 +311,16 @@ pub async fn search_fts(
         });
     }
 
+    // SQL-4 (PEND-58f) — reject over-long queries up front, before the
+    // NFC-normalise + tokenise walk. Mirrors the regex path's
+    // `MAX_PATTERN_LEN` guard.
+    if query.len() > MAX_QUERY_LEN {
+        return Err(AppError::Validation(format!(
+            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
+            query.len()
+        )));
+    }
+
     // Sanitize user input for safe FTS5 MATCH (F01: prevent operator injection).
     let sanitized = sanitize_fts_query(query);
 
@@ -381,6 +412,218 @@ pub async fn search_fts(
 }
 
 // ---------------------------------------------------------------------------
+// SQL-A3 / BE-A1 (PEND-58f) — filter-aware cursor pagination
+// ---------------------------------------------------------------------------
+
+/// Window size (candidate FTS rows fetched per loop iteration) for the
+/// post-filter cursor pagination in [`fts_fetch_post_filtered_page`].
+///
+/// SQL-A3 (PEND-58f) — the post-filter (case/word toggle) path narrows an
+/// FTS candidate window after the FTS scan. To return a FULL page of
+/// `limit` survivors we may have to scan several windows when the filter
+/// is selective. Each window asks the FTS scan for [`MAX_SEARCH_RESULTS`]
+/// candidates (one page's worth) — large enough that a typical filter
+/// fills a page in one or two windows, small enough that we never fetch a
+/// huge slab when the very first window already has enough survivors.
+const POST_FILTER_WINDOW: i64 = MAX_SEARCH_RESULTS;
+
+/// Maximum number of candidate windows scanned per page request in
+/// [`fts_fetch_post_filtered_page`].
+///
+/// SQL-A3 (PEND-58f) — bounds the total work a pathologically selective
+/// post-filter can trigger. With [`POST_FILTER_WINDOW`] = 100 the ceiling
+/// is `100 * 10 = 1000` FTS candidates scanned per page — the same
+/// order-of-magnitude bound the regex-mode path uses
+/// (`REGEX_PRE_FILTER_CAP` = 1000). If a filter is so selective that it
+/// drops > 1000 candidates without filling a page, we stop scanning and
+/// report `has_more = false` (best-effort: matches beyond the window are
+/// not surfaced, mirroring the regex-mode contract). 10 windows is a
+/// round design figure, not a benchmarked value.
+const POST_FILTER_MAX_WINDOWS: usize = 10;
+
+/// SQL-A3 / BE-A1 (PEND-58f) — filter-aware cursor pagination for the
+/// non-regex toggle (case-sensitive / whole-word) path.
+///
+/// ## Why this exists
+///
+/// The naive composition — call [`search_fts`] (which computes
+/// `has_more` / `next_cursor` on a `limit + 1` candidate window) and THEN
+/// drop non-matching rows — is broken two ways:
+///
+///   1. **Under-fill.** The page renders sparse/empty with
+///      `has_more = true` because the post-filter shrank the candidate
+///      window below `limit`.
+///   2. **Unrecoverable drops.** Rows dropped *within* the window are
+///      skipped by the next page's cursor (it points past the pre-filter
+///      window), so those survivors are permanently lost.
+///
+/// ## What this does
+///
+/// Fetches candidate windows via [`fts_fetch_rows`] directly, applies the
+/// caller's per-row `keep` predicate (which also attaches match offsets /
+/// clears the FTS snippet), accumulates survivors, and advances the FTS
+/// cursor by the **last candidate** of each window (so dropped candidates
+/// are never re-scanned). It loops until it has `limit + 1` survivors OR
+/// the FTS scan is exhausted (a window returns fewer rows than requested)
+/// OR the [`POST_FILTER_MAX_WINDOWS`] bound is hit.
+///
+/// Then:
+/// - `has_more = survivors > limit` (truncated to `limit`).
+/// - `next_cursor` = the `(rank, id)` of the **last RETURNED survivor**.
+///   This resumes the next page strictly after that survivor; the dropped
+///   candidates sit *before* it in rank order and are not re-scanned —
+///   verified correct because the FTS keyset is `(rank ASC, id ASC)` and
+///   every survivor we returned ranks at or before the last one.
+///
+/// The `keep` predicate is `FnMut(&mut SearchBlockRow) -> bool`: it
+/// returns `true` to retain the row (after mutating its `match_offsets` /
+/// `snippet`) and `false` to drop it.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn fts_fetch_post_filtered_page<F>(
+    pool: &SqlitePool,
+    query: &str,
+    page: &PageRequest,
+    parent_id: Option<&str>,
+    tag_ids: Option<&[String]>,
+    space_id: Option<&str>,
+    include_page_globs: &[String],
+    exclude_page_globs: &[String],
+    block_type_filter: Option<&str>,
+    metadata: &MetadataPredicates,
+    mut keep: F,
+) -> Result<PageResponse<SearchBlockRow>, AppError>
+where
+    F: FnMut(&mut SearchBlockRow) -> bool,
+{
+    // Mirror `search_fts`'s up-front guards so this path observes the
+    // exact same empty / over-long / empty-after-sanitise semantics.
+    if query.trim().is_empty() {
+        return Ok(PageResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: None,
+        });
+    }
+    if query.len() > MAX_QUERY_LEN {
+        return Err(AppError::Validation(format!(
+            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
+            query.len()
+        )));
+    }
+    let sanitized = sanitize_fts_query(query);
+    if sanitized.is_empty() {
+        return Ok(PageResponse {
+            items: vec![],
+            next_cursor: None,
+            has_more: false,
+            total_count: None,
+        });
+    }
+
+    let effective_limit = page.limit.min(MAX_SEARCH_RESULTS);
+    let limit_usize = usize::try_from(effective_limit).unwrap_or(usize::MAX);
+    // We want `limit + 1` survivors so the extra one signals `has_more`.
+    let target = limit_usize.saturating_add(1);
+
+    // Seed the FTS cursor from the incoming page cursor (same shape as
+    // `search_fts`). Subsequent windows advance this by the LAST CANDIDATE
+    // of each fetched window so dropped rows are never re-scanned.
+    let (mut cursor_flag, mut cursor_rank, mut cursor_id): (Option<i64>, f64, String) =
+        match page.after.as_ref() {
+            Some(c) => (Some(1), c.rank.unwrap_or(0.0), c.id.clone()),
+            None => (None, 0.0, String::new()),
+        };
+
+    let window_usize = usize::try_from(POST_FILTER_WINDOW).unwrap_or(usize::MAX);
+    // `(SearchBlockRow, rank)` survivors. The rank rides alongside each
+    // survivor so the final `next_cursor` can be built from the last
+    // RETURNED survivor (which `SearchBlockRow` alone cannot carry — it
+    // has no rank field).
+    let mut survivors: Vec<(SearchBlockRow, f64)> = Vec::with_capacity(target);
+
+    for _ in 0..POST_FILTER_MAX_WINDOWS {
+        if survivors.len() >= target {
+            break;
+        }
+        let rows = fts_fetch_rows(
+            pool,
+            &sanitized,
+            cursor_flag,
+            cursor_rank,
+            &cursor_id,
+            POST_FILTER_WINDOW,
+            parent_id,
+            tag_ids,
+            space_id,
+            include_page_globs,
+            exclude_page_globs,
+            block_type_filter,
+            metadata,
+            // The toggle post-filter clears `row.snippet` anyway (it
+            // prefers offsets), so skip the per-row `snippet()` walk.
+            false,
+            None,
+        )
+        .await?;
+
+        let fetched = rows.len();
+        if fetched == 0 {
+            break;
+        }
+
+        for r in rows {
+            let rank = r.search_rank;
+            let id_clone = r.id.clone();
+            let mut block_row = fts_row_to_block_row(r);
+            // Advance the FTS cursor by EVERY candidate (the last candidate
+            // of the window wins) so dropped rows are never re-scanned by a
+            // later window — including an all-drop window, which still makes
+            // forward progress instead of looping on the same rows.
+            cursor_flag = Some(1);
+            cursor_rank = rank;
+            cursor_id = id_clone;
+            if keep(&mut block_row) {
+                survivors.push((block_row, rank));
+                if survivors.len() >= target {
+                    break;
+                }
+            }
+        }
+
+        // FTS exhausted — a window returned fewer rows than requested, so
+        // there is nothing left to scan. Stop regardless of survivor count.
+        if fetched < window_usize {
+            break;
+        }
+    }
+
+    let has_more = survivors.len() > limit_usize;
+    if has_more {
+        survivors.truncate(limit_usize);
+    }
+
+    let next_cursor = if has_more {
+        // `next_cursor` = (rank, id) of the LAST RETURNED survivor.
+        let (last_row, last_rank) = survivors
+            .last()
+            .expect("has_more implies at least `limit` survivors (limit >= 1)");
+        Some(Cursor::for_id_and_rank(last_row.id.as_str().to_string(), *last_rank).encode()?)
+    } else {
+        None
+    };
+
+    let items: Vec<SearchBlockRow> = survivors.into_iter().map(|(row, _rank)| row).collect();
+
+    Ok(PageResponse {
+        items,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Shared SQL builder + row fetcher
 // ---------------------------------------------------------------------------
 
@@ -461,6 +704,18 @@ async fn fts_fetch_rows(
     } else {
         "NULL as snippet"
     };
+    // SQL-9 (PEND-58f) — the cursor tiebreak uses an EPSILON of `1e-9`:
+    // `ABS(fts.rank - ?3) < 1e-9` treats two ranks within 1e-9 of each
+    // other as "equal" and falls back to the `b.id` tiebreaker. This
+    // couples pagination correctness to bm25's numeric scale. The
+    // assumption is that genuinely-distinct adjacent ranks differ by far
+    // more than 1e-9 (bm25 scores are O(1)–O(10) for typical corpora), so
+    // 1e-9 only ever absorbs float-precision drift between the cursor's
+    // serialized rank and SQLite's recomputation — never two legitimately
+    // different ranks. If a future ranking function emits scores whose
+    // meaningful resolution is finer than 1e-9, this epsilon would merge
+    // distinct ranks and skip/duplicate rows at the page boundary; revisit
+    // it together with the cursor `rank` field then.
     let mut sql = format!(
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
@@ -489,29 +744,53 @@ async fn fts_fetch_rows(
         None
     };
 
-    // Optional tag_ids filter (ALL semantics)
+    // Optional tag_ids filter (ALL semantics).
+    //
+    // SQL-1 (PEND-58f) — dedupe the caller's `tag_ids` before binding.
+    // The "ALL tags" clause compares `COUNT(DISTINCT bt.tag_id)` against
+    // the bound list length; a duplicate tag id (e.g. the same chip added
+    // twice, or two FE code paths appending the same id) would make the
+    // raw `len()` exceed the achievable distinct count, so the predicate
+    // could never be satisfied and the query silently returned zero rows.
+    // De-duplicating here makes the bound count match the `DISTINCT`
+    // semantics. Order is preserved so the placeholder/bind indices stay
+    // deterministic.
+    //
+    // SQL-A6 (PEND-58f) — normalise each id to its canonical UPPERCASE
+    // ULID form BEFORE the dedup set (and bind the normalised form).
+    // `block_tags.tag_id` stores the canonical uppercase Crockford-base32
+    // ULID (`BlockId`/`ActiveBlockId` both normalise via
+    // `to_ascii_uppercase`), so a mixed-case duplicate would survive
+    // byte-exact dedup, inflate the bound count past the achievable
+    // `COUNT(DISTINCT)`, and silently zero out the ALL-tags predicate.
     let tag_count_param_idx;
     let tag_param_start;
-    let active_tag_ids: &[String] = match tag_ids {
+    let active_tag_ids: Vec<String> = match tag_ids {
         Some(ids) if !ids.is_empty() => {
-            // Build IN-list placeholders for tag IDs
-            let placeholders: Vec<String> = (0..ids.len())
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<String> = ids
+                .iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect();
+            // Build IN-list placeholders for the deduped tag IDs.
+            let placeholders: Vec<String> = (0..deduped.len())
                 .map(|i| format!("?{}", next_param + i))
                 .collect();
             tag_param_start = next_param;
-            next_param += ids.len();
+            next_param += deduped.len();
             tag_count_param_idx = next_param;
             next_param += 1;
             sql.push_str(&format!(
                 "\n           AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN ({})) = ?{tag_count_param_idx}",
                 placeholders.join(", ")
             ));
-            ids
+            deduped
         }
         _ => {
             tag_param_start = 0;
             tag_count_param_idx = 0;
-            &[]
+            Vec::new()
         }
     };
 
@@ -540,6 +819,14 @@ async fn fts_fetch_rows(
     // wrapped by `prepare_globs`; we bind one parameter per pattern
     // and OR-join inside each `IN (...)` sub-select. `LOWER(title)`
     // is applied SQL-side (cheap on the small `pages_cache` table).
+    //
+    // SQL-2 (PEND-58f) — this `LOWER(pc.title) GLOB ?` clause is a
+    // `pages_cache` SCAN; it does NOT use `idx_pages_cache_title_nocase`
+    // (expression mismatch on `LOWER(...)`, GLOB-not-LIKE, and the
+    // substring-wrapped patterns carry a leading wildcard). The scan is
+    // acceptable because `pages_cache` is the small per-page summary
+    // table. See migration `0068_pages_cache_title_index.sql` for the
+    // full rationale.
     let include_glob_param_start = if !include_page_globs.is_empty() {
         let start = next_param;
         let placeholders: Vec<String> = (0..include_page_globs.len())
@@ -620,7 +907,7 @@ async fn fts_fetch_rows(
     if let Some(pid) = parent_id {
         db_query = db_query.bind(pid);
     }
-    for tag_id in active_tag_ids {
+    for tag_id in &active_tag_ids {
         db_query = db_query.bind(tag_id);
     }
     if !active_tag_ids.is_empty() {
@@ -853,6 +1140,14 @@ pub(crate) async fn search_fts_partitioned(
         });
     }
 
+    // SQL-4 (PEND-58f) — same up-front length cap as `search_fts`.
+    if query.len() > MAX_QUERY_LEN {
+        return Err(AppError::Validation(format!(
+            "search query is too long ({} bytes); maximum is {MAX_QUERY_LEN} bytes",
+            query.len()
+        )));
+    }
+
     let sanitized = sanitize_fts_query(query);
 
     // Guard: post-sanitisation may yield empty (e.g. all sub-trigram
@@ -913,8 +1208,22 @@ pub(crate) async fn search_fts_partitioned(
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;
 
-    let page_limit_usize = usize::try_from(page_limit).unwrap_or(usize::MAX);
-    let block_limit_usize = usize::try_from(block_limit).unwrap_or(usize::MAX);
+    // SQL-3 (PEND-58f) — clamp the comparison limit to the same
+    // `MAX_SEARCH_RESULTS` ceiling the fetch was clamped to. The fetch
+    // probes `min(limit, MAX_SEARCH_RESULTS) + 1` rows, so `has_more`
+    // must be measured against the *clamped* limit; otherwise an
+    // over-cap `limit` (e.g. 200) would compare a ≤ 101-row result
+    // against 200 and never report `has_more`. The command layer
+    // (`search_blocks_partitioned_inner`, BE-2) now rejects over-cap
+    // limits up front, but this helper is also called directly in tests,
+    // so the clamp keeps the probe self-consistent.
+    let max_results_usize = usize::try_from(MAX_SEARCH_RESULTS).unwrap_or(usize::MAX);
+    let page_limit_usize = usize::try_from(page_limit)
+        .unwrap_or(usize::MAX)
+        .min(max_results_usize);
+    let block_limit_usize = usize::try_from(block_limit)
+        .unwrap_or(usize::MAX)
+        .min(max_results_usize);
     // `limit == 0` is a degenerate ask — the caller doesn't want any
     // rows from this partition, so there's nothing to "have more" of.
     // Without this guard the `limit + 1 = 1` probe would set
@@ -943,14 +1252,24 @@ pub(crate) async fn search_fts_partitioned(
     })
 }
 
-/// Compute the `limit + 1` probe SQL `LIMIT` value, capped at
-/// [`MAX_SEARCH_RESULTS`]. Shared helper for the per-partition scan
-/// limits in [`search_fts_partitioned`].
+/// Compute the per-partition fetch `LIMIT`: the effective page limit
+/// (capped at [`MAX_SEARCH_RESULTS`]) **plus one**, so the caller can
+/// detect overflow against its own (also-capped) limit.
+///
+/// SQL-3 (PEND-58f) — the previous implementation computed
+/// `min(limit + 1, MAX_SEARCH_RESULTS)`, which at the boundary
+/// (`limit == 100`) collapsed to `min(101, 100) = 100`. With a fetch
+/// limit equal to the cap, `rows.len() > limit` could never be true, so
+/// `has_more` was *always false* at exactly the cap (the single-partition
+/// `search_fts` path adds the +1 *after* capping and so was already
+/// correct — the two disagreed). The fix caps the limit first and adds
+/// the probe row afterwards: `min(limit, MAX_SEARCH_RESULTS) + 1`, which
+/// yields `101` at the cap and lets the probe see one extra row.
 fn limit_plus_one_capped(limit: u32) -> i64 {
-    let raw: u64 = u64::from(limit).saturating_add(1);
     let max_results_u64 = u64::try_from(MAX_SEARCH_RESULTS).unwrap_or(u64::MAX);
-    let capped = raw.min(max_results_u64);
-    i64::try_from(capped).unwrap_or(MAX_SEARCH_RESULTS)
+    let capped_limit = u64::from(limit).min(max_results_u64);
+    let probe = capped_limit.saturating_add(1);
+    i64::try_from(probe).unwrap_or(MAX_SEARCH_RESULTS)
 }
 
 // ---------------------------------------------------------------------------

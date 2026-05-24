@@ -80,6 +80,15 @@ function stepGlobValidate(
  *
  * Mirrors the Rust implementation in `src-tauri/src/fts/glob_filter.rs`
  * so chip-side preview counts match the backend exactly.
+ *
+ * DSL-A4 — this is a parity reference: it currently has no production
+ * caller (the chip-side preview-count consumer was never built; the
+ * glob value is passed verbatim to the backend, which expands it
+ * authoritatively). It is intentionally retained, exported, and pinned
+ * by `__tests__/glob-validate.test.ts` so its contract stays in lockstep
+ * with the Rust expander. The contract that matters: at `EXPANSION_CAP`
+ * the result is *truncated*, never an error — matching the backend's
+ * `results.truncate(EXPANSION_CAP)` (it does not error on overflow).
  */
 export const EXPANSION_CAP = 64
 

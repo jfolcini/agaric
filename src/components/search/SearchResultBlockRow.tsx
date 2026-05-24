@@ -33,6 +33,24 @@ export interface SearchResultBlockRowProps {
   loading?: boolean
   /** DOM id used by the parent listbox `aria-activedescendant`. */
   id?: string
+  /**
+   * PEND-58f FE-3 — absolute-positioning style supplied by the per-group
+   * virtualizer (`position:absolute; transform:translateY(start)`). Unset
+   * for the non-virtualized callers (tests) where the row flows normally.
+   */
+  style?: React.CSSProperties
+  /**
+   * PEND-58f FE-3 — the virtualizer's `measureElement` ref. Attached to
+   * the `<li>` so its real height corrects the size estimate after first
+   * paint. Unset outside the virtualized listbox.
+   */
+  measureRef?: (el: HTMLElement | null) => void
+  /**
+   * PEND-58f FE-3 — the virtual-row index, rendered as `data-index` so
+   * `@tanstack/react-virtual`'s `measureElement` can map the measured DOM
+   * node back to its row. Unset outside the virtualized listbox.
+   */
+  dataIndex?: number
 }
 
 /**
@@ -77,6 +95,9 @@ function SearchResultBlockRowImpl({
   onClick,
   loading,
   id,
+  style,
+  measureRef,
+  dataIndex,
 }: SearchResultBlockRowProps): React.ReactElement {
   const { t } = useTranslation()
   const hasOffsets =
@@ -99,6 +120,9 @@ function SearchResultBlockRowImpl({
     // biome-ignore lint/a11y/useKeyWithClickEvents: tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
+      ref={measureRef}
+      data-index={dataIndex}
+      style={style}
       // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
       role="option"
       aria-selected={isFocused}
@@ -148,6 +172,10 @@ function SearchResultBlockRowImpl({
  * commit it gets the latest closure.
  */
 export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) => {
+  // PEND-58f FE-3 — `style` is the virtualizer's positioning transform; it
+  // changes whenever the row's offset shifts (scroll / re-measure), so it
+  // must defeat the memo. `measureRef` is stable per virtualizer instance,
+  // so it is intentionally NOT compared.
   return (
     prev.row.id === next.row.id &&
     prev.row.content === next.row.content &&
@@ -155,6 +183,8 @@ export const SearchResultBlockRow = memo(SearchResultBlockRowImpl, (prev, next) 
     prev.row.match_offsets === next.row.match_offsets &&
     prev.isFocused === next.isFocused &&
     prev.loading === next.loading &&
-    prev.id === next.id
+    prev.id === next.id &&
+    prev.dataIndex === next.dataIndex &&
+    prev.style?.transform === next.style?.transform
   )
 })

@@ -8,6 +8,7 @@
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -66,7 +67,7 @@ function useHarness(params: HarnessParams) {
     setFocused: params.setFocused,
     rootParentId: params.rootParentId,
     onNavigateToPage: params.onNavigateToPage,
-    t: params.t,
+    t: params.t as unknown as TFunction,
   })
 }
 

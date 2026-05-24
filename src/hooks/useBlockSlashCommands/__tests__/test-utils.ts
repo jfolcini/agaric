@@ -7,6 +7,7 @@
  * global `invoke` mock) and verify state mutations directly.
  */
 
+import type { TFunction } from 'i18next'
 import { vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { makeBlock } from '../../../__tests__/fixtures'
@@ -57,7 +58,7 @@ export function makeSyntheticCtx(overrides?: {
     datePickerCursorPos,
     setDatePickerMode,
     setDatePickerOpen,
-    t,
+    t: t as unknown as TFunction,
     openTemplatePicker,
   }
 
