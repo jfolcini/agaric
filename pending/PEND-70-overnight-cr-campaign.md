@@ -514,3 +514,76 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
 
 08:00 CEST 2026-05-24. On stop: `prek run --all-files` green, branch pushed, PR
 open against `main` with CI passing, ledger summarized. End the loop.
+
+---
+
+## FINAL SUMMARY (campaign complete — 2026-05-24 ~07:00 CEST)
+
+**Outcome.** PR #50 (`pend-58f-search-view-hardening` → `main`) is **CI-green and
+MERGEABLE**. `mergeStateStatus` is `BLOCKED` solely on the expected human approving
+review (`reviewDecision: REVIEW_REQUIRED`); the only non-green check is the **advisory
+`claude-review` bot** (not a required status context — the branch ruleset lists no
+required CI contexts, and every `validate/*`, `Analyze*`, `CodeQL`, `dco`, `build`
+check passes). `prek run --all-files` confirmed green locally. Ready for you to review,
+approve, merge — **with the one release caveat below.**
+
+**Effort.** 30 numbered review rounds (R0–R30) across ~16 lenses covering the whole
+codebase — search FE/DSL/SQL, merge integration, recovery/snapshot, op-log +
+materializer, inbound sync + transport/pairing, Loro CRDT engine, graph + PageBrowser,
+block editor + drafts, tags/properties + inheritance, journal/agenda/recurrence,
+settings/persistence, attachments, MCP, app-shell effect/async, security/XSS, a11y,
+i18n, Rust panic-safety — plus a pass (R25) that re-verified the campaign's own fixes
+regression-free.
+
+**Fixes shipped (all CI-validated; the 8 from R13–R30):**
+
+- `71dff1f5` — search `searchBlocks` 100-cap helper + corrected `safe-limit` contract (R15)
+- `d39d7e13` — GraphView sticky-error reset + stable `EMPTY_TAG_IDS` + recovery test (R16)
+- `79b62ed7` — editor keydown IME/composition guard + 2 tests (R17)
+- `55e336ec` — render-time link href-scheme gate (javascript:/data: XSS hardening) + test (R19)
+- `f1354b20` — date-property default uses local day not UTC + test (R20)
+- `7c7d8692` — localStorage poison/quota try-catch guards (tag-colors/starred-pages/useWeekStart) + tests (R21)
+- `416f5b0b` — 5 missing i18n keys (raw keys were shown to users incl. a button label) + test updates (R26)
+- `d1be351b` — CancellationRegistry mutex-poison recovery (removes a Drop double-panic→abort footgun on the search-cancellation path) (R30)
+
+(Earlier rounds R1–R7 also shipped: noBannedTypes typing `ea38748f`, tokenize doc
+`cf9a7740`, GH-action SHA-pin `2a733f37`, prop-key trim BE-8 `c0dc654e`, migrate/e2e
+test gaps `447017a6`, docs cleanup — see the ledger rows above.)
+
+### ⚠️ Release decision required (the headline)
+
+**C1/C2 — stale / per-space-missing Loro snapshot wedges the engine after a crash**
+(`recovery/replay.rs` `heal_orphaned_apply_cursor` + `loro/snapshot.rs`; no seq
+watermark in `loro_doc_state`). **This is IN this PR's diff** (newly reachable from this
+branch's snapshot re-instatement `e702a5b6`) — a data-USABILITY wedge ("block not found"
+on later edits; op_log intact, recoverable via forced rebuild but nothing triggers it).
+**Recommendation: treat it as a release blocker** — land the per-space snapshot watermark
+and a watermark-aware heal before releasing, OR consciously ship with it as the top
+follow-up. Deliberately NOT auto-fixed overnight (schema migration + heal state-machine
+rework on data-integrity code — unsafe unattended). Also posted as a comment on PR #50.
+
+### Pre-existing CRITICAL/MAJOR clusters (NOT PR #50 regressions — for maintainer triage)
+
+On `main` already (not introduced by this PR); each logged above with repro + fix sketch:
+
+- **Inbound-sync projection cluster (F1 + R29)** — `apply_remote` →
+  `project_block_full_to_sql` `INSERT OR REPLACE` cascade-wipes tags/properties/caches for
+  the whole space per incremental sync and never re-projects; `BlockSnapshot` also omits
+  `deleted_at` (soft-deletes resurrect) and the REPLACE clobbers `archived_at`/`is_conflict`.
+  Fix coherently: surgical upsert + full per-block re-projection from the engine + cache rebuild.
+- **Attachments unwired end-to-end** — no `@tauri-apps/plugin-fs` byte-copy + FE passes the
+  absolute path the backend rejects; `assetProtocol` disabled. Verify whether attachments are
+  intentionally not-yet-shipped.
+- **Pairing writes a junk empty-string `peer_refs` row** (FE always sends
+  `remote_device_id=''`) → ghost peer + daemon wrongly activates; needs a pairing-contract fix.
+- **Session-created tags lack a `space` property** → `add_tag` rejected in a non-default space
+  until next boot.
+- **Cross-space ref/content validators are dead code** (documented as wired, zero production callers).
+
+The complete deferred-findings list (a11y, perf, doc, test-coverage, MCP, sync-security,
+journal-semantics) is in the **Deferred findings** section above. Many invariants were also
+**verified correct** — noted per-round in the ledger.
+
+**Campaign ended in wind-down after R30** (the well had begun producing facets of
+already-logged clusters — e.g. R29's soft-delete bug is part of F1). No further review
+rounds; PR left CI-green + merge-ready.
