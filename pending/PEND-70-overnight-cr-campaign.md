@@ -94,7 +94,8 @@ log them. Keep reverts surgical.
 | 14 | 03:30 | op-log apply / materializer / inbound-sync correctness | subagent: local write atomicity, seq allocation, fg-apply cursor advance + idempotency, FIFO ordering, fg-drop→retry-queue, `insert_remote_op` hash/parent checks, snapshot RESET rebuild all CORRECT — **found ⚠️ CRITICAL F1** (inbound `apply_remote` `INSERT OR REPLACE` + CASCADE FKs cascade-wipes tags/props/soft-delete/caches for the whole space per incremental sync, no re-projection; reproduced empirically) + F2/F3 (MINOR, couple w/ F1). **F1 verified PRE-EXISTING on `main`, NOT a PR #50 regression** (projection.rs/loro_sync.rs not in PR diff; only a lint-annotation touch in orchestrator.rs) | **NOT fixed** (design-level projection-contract + orchestrator-wiring change; defer-with-care). Logged F1/F2/F3 to Deferred-findings | escalate to user |
 | 15 | 03:30 | whole-PR-diff final sanity pass (merge-readiness) | subagent verdict **APPROVE** — 0 CRIT / 0 MAJOR / 3 MINOR: (a) `search_blocks` 200→100 cap drift in `safe-limit.ts` (latent — no caller >100), (b) inverted Step 1.4/1.5 comment order in `recovery/boot.rs`, (c) untested `spawn_periodic_snapshot` `#[cfg(test)]` hook. Heal/snapshot re-instatement + PEND-69 hygiene verified correct & merge-ready (known C1/C2/F1-F3 stay deferred) | **FIXED (a)+(b)**: added `searchBlocksLimit` (100-cap) helper + corrected doc, switched the 3 explicit searchBlocks callers (useBlockResolve ×2, CommandPalette tags) off `paginationLimit`; reordered boot.rs heal/replay comments to match code order. (c) logged as deferred. tsc+biome+vitest(366) green | `71dff1f5` |
 | 16 | 04:00 | FRESH subsystem: graph view + PageBrowser | subagent verdict CHANGES — 1 MAJOR + 2 MINOR, **all pre-existing (outside PR diff)**; the PR's own `usePaginatedQuery` AbortSignal hardening verified correct. MAJOR: GraphView `error` state is sticky (never `setError(null)` → a recovered graph still shows "failed to load" after a transient failure + filter/space change). MINOR: `tagFilterIds` fresh `[]` re-fires the fetch effect on unrelated client-side filter toggles; tag catalogue not space-refreshed | **FIXED MAJOR + MINOR-1**: `setError(null)` at fetch-effect top + module-scope stable `EMPTY_TAG_IDS`; added a sticky-error recovery regression test (GraphView.test.tsx 40 green). MINOR-2 (tag catalogue) logged as deferred (needs backend `spaceId` param). tsc+biome+vitest green | `d39d7e13` |
-| 17 | 04:30 | FRESH subsystem: block editor + draft persistence | subagent verdict CHANGES — 0 CRIT / 2 MAJOR / 3 MINOR + nit, **all pre-existing**; lots verified correct (backend draft atomicity, autosave version-race, blur-guard chain, undo isolation, editor lifecycle, save-failure surfacing). MAJOR-1: draft `flushDraft` fires mid-edit (op-log bloat). MAJOR-2: no IME/composition guard → CJK Enter splits the block instead of confirming the candidate | **FIXED MAJOR-2** (one-line `if (event.isComposing \|\| event.keyCode === 229) return` at the top of the editor keydown handler + 2 IME regression tests; vitest 51 green). MAJOR-1 deferred (risky blur/discard reconciliation) + 3 MINOR/nit logged | pending commit |
+| 17 | 04:30 | FRESH subsystem: block editor + draft persistence | subagent verdict CHANGES — 0 CRIT / 2 MAJOR / 3 MINOR + nit, **all pre-existing**; lots verified correct (backend draft atomicity, autosave version-race, blur-guard chain, undo isolation, editor lifecycle, save-failure surfacing). MAJOR-1: draft `flushDraft` fires mid-edit (op-log bloat). MAJOR-2: no IME/composition guard → CJK Enter splits the block instead of confirming the candidate | **FIXED MAJOR-2** (one-line `if (event.isComposing \|\| event.keyCode === 229) return` at the top of the editor keydown handler + 2 IME regression tests; vitest 51 green). MAJOR-1 deferred (risky blur/discard reconciliation) + 3 MINOR/nit logged | `79b62ed7` |
+| 18 | 04:45 | FRESH subsystem: tags & properties + inheritance | subagent verdict CHANGES — 0 CRIT / 2 MAJOR / 2 MINOR, **all pre-existing**; lots verified correct (`query_by_property` injection-safe, exactly-one-value invariant ×3 layers, BEGIN IMMEDIATE on all tag/prop mutations, inheritance depth-bounded CTEs, tag-delete cascade, tags_cache rename ordering, sync-replay parity). MAJOR: cross-space ref/content validators are dead code (documented-but-unwired); session-created tags lack a `space` prop → addTag rejected in non-default space. MINOR: transient inheritance-drop (self-healed by rebuild); clear-number/date-via-empty silently fails | **LOG-ONLY round** — both MAJORs are defer-required (product decision / manual confirm); the "slam-dunk" property-clear MINOR isn't actually trivial (reserved-key handling). All 4 logged to Deferred-findings; no code change | no commit (ledger only) |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -209,6 +210,45 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   (`use-block-flush.ts`) does — route through the shared flush body. nit: `discardDraft`
   isn't memoized (`useDraftAutosave.ts:57`), churning `useEditorBlur`'s `handleBlur`
   useCallback — wrap in `useCallback([])`.
+- **[spaces/security, MAJOR — defer, needs product decision] Cross-space ref/content
+  validators are dead code** (`spaces/cross_space_validation.rs:30`
+  `validate_content_cross_space_refs`, `:79` `validate_ref_property_cross_space`). The
+  module doc + `space.rs:206-210` claim these are wired into `set_property` ref-type
+  validation, `edit_block` content-scan, sync-ingress, and bulk-import — but **both have
+  zero production callers** (only `#[cfg(test)]` refs). So setting a ref-type property
+  (`linked_page`, `project`, …) to a block in a *different* space is NOT rejected, and
+  editing a block to contain cross-space `[[ULID]]`/`#[ULID]` tokens is NOT rejected.
+  Only `add_tag_inner` enforces cross-space (its own inline check, `tags.rs:113-124`).
+  Fix: wire the validators into `set_property_in_tx` + the edit/create content paths,
+  OR — if cross-space non-tag refs are intentionally allowed — correct the misleading
+  docs. Defer: wiring enforcement may reject existing data; needs a product call.
+- **[tags, MAJOR — defer, needs manual confirm] Session-created tags have no `space`
+  property → applying them to a spaced block is rejected** (`hooks/useBlockTags.ts:115`
+  `handleCreateTag` → `createBlock({blockType:'tag'})` with no space/parent; guard
+  `tags.rs:113-124`). A tag created mid-session resolves to space `None`; the target
+  block resolves to `Some(S)`; `add_tag_inner`'s `src_space != tag_space` guard then
+  fails with "cross-space tag" until the boot-time `migrate_orphan_tags_to_space`
+  (`spaces/bootstrap.rs:698`) assigns a space at next launch. Manifests as a
+  `tags.addFailed` toast right after creating a tag in a non-default space. (The FE unit
+  test mocks `add_tag` to succeed, so it doesn't exercise the real guard — needs manual
+  verification in a non-default-space context.) Fix: set the active space on the new tag
+  block at create time, or relax the guard to auto-adopt the source block's space.
+- **[tags, MINOR — defer, self-healed] `remove_inherited_tag` can transiently drop a
+  deeper descendant's inheritance** (`tag_inheritance/incremental.rs:51-127`): Step 2
+  computes one global `nearest_ancestor` relative to the removed block, so when an
+  intermediate descendant holds the tag directly, a grandchild can lose its inherited
+  row until the async `RebuildTagInheritanceCache` full rebuild corrects it. Window =
+  between the in-tx incremental update and the background rebuild; `query_by_tags`
+  (include_inherited) can transiently miss the grandchild. Fix: compute nearest
+  tag-bearing ancestor per-descendant, or subtree-recompute the affected subtree.
+- **[properties, MINOR — defer] Clearing a non-reserved number/date property via an
+  empty value silently fails** (`lib/property-save-utils.ts:99-103` →
+  `setProperty(all-null)` → `op.rs:486-493` rejects count==0 for non-reserved keys →
+  `saveFailed` toast). NOTE: looks slam-dunk but isn't — for *reserved* keys
+  `setProperty(null)` is the correct clear (keeps the row), so the fix can't blanket-route
+  empty→`deleteProperty`; it needs reserved-key awareness (or a UX decision that "clear =
+  delete the property"). Deferred to avoid an unattended product/UX call + keep the PR
+  scoped.
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets
