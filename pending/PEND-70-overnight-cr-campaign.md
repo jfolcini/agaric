@@ -105,7 +105,8 @@ log them. Keep reverts surgical.
 | 25 | 06:30 | FINAL merge-readiness: verify the campaign's OWN 6 fix commits | subagent verdict **APPROVE** — all 6 fixes sound, regression-free, merge-ready; independently re-ran tsc (clean) + biome (clean, 10 files) + 398 tests passing. Per-fix confirmed correct: searchBlocks cap (matches backend MAX_SEARCH_RESULTS=100, all live callers ≤cap, no missed caller, re-export valid), GraphView setError(null)+EMPTY_TAG_IDS (clears only stale error, sentinel cache-key-equivalent), IME guard (placement correct, no over-fire), link-scheme gate (denylist correct, legit links unaffected), date default (getTodayString local, same shape), localStorage guards (state computed before guard, StorageEvent on success path only). No bad cross-fix interactions (disjoint files). 2 NITs deferred (no dedicated throw-test for tag-colors/starred-pages; no unit test for searchBlocksLimit — consistent w/ existing untested helpers) | **APPROVE, log-only** — campaign fixes confirmed merge-ready; NITs logged | `156f461b` |
 | 26 | 06:45 | i18n / localization consistency | subagent verdict APPROVE — 0 MAJOR / 4 MINOR + nit, **all pre-existing**; PR diff i18n-clean (all 106 new keys resolve; interpolation placeholders + plural pairs verified; dynamic-key sets complete). MINOR-1: 5 `t()` calls referenced MISSING keys → raw dotted keys shown to users (incl. a visible `pairing.retryButton` button label + 4 toasts) | **FIXED MINOR-1** — added the 5 missing keys to their namespace files (`editor.ts` slash.repeatRemoved/RemoveFailed, `agenda.ts` duePanel.loadAgendaFailed, `pages.ts` pageHeader.loadAliasesFailed, `sync.ts` pairing.retryButton), matching sibling wording. Other 3 MINOR + nit (agenda priority labels, vendored sidebar sr-only, plural-shape, callout edge) logged. tsc+biome+prek green | `416f5b0b` |
 | 27 | 07:00 | a11y holistic (dialogs/forms/nav/live-regions/menus) | subagent verdict APPROVE — 0 MAJOR / 3 MINOR (all slam-dunk) + 2 design-level, **all pre-existing**; codebase "unusually mature on a11y" (Radix focus-trap primitives, type-mandatory aria on IconButton, full ARIA TabBar/SettingsView, FormField label/error assoc, near-universal vitest-axe). MINOR: role=status→alert on 2 settings error paras; missing aria-label on BlockPropertyEditor ref-search input; missing role=alert on StatusPanel syncError. Design-level: aria-modal w/o focus-trap (JournalCalendarDropdown/TemplatePicker); MenuPopoverContent lacks role=menu | **LOG-ONLY round** — 3 slam-dunk a11y tweaks logged as a cluster for one maintainer a11y pass (kept out to avoid sprawling the already-broad PR into settings/status files); 2 deferred | `e9df8a18` |
-| 28 | 07:15 | MCP server surface (AI-agent tools; security) | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 4 MINOR, **all pre-existing**; surface well-bounded (typed args + deny_unknown_fields, per-tool limit caps, ULID normalization, parameterized SQL — no injection, bounded search/regex, BEGIN IMMEDIATE writes, OS-level access gate, activity-feed privacy redaction, no stdio poisoning). MINOR: MCP error path skips `sanitize_internal_error` (info-parity, not a breach); cross-space check TOCTOU outside tx (theoretical); 2 stale docs (get_block soft-delete claim; rmcp_spike "off by default") + search space_id not normalized | **LOG-ONLY round** — all pre-existing/out-of-scope; cheap maintainer fixes noted (route MCP errors through sanitize_internal_error; fix the 2 doc strings) | no commit (ledger only) |
+| 28 | 07:15 | MCP server surface (AI-agent tools; security) | subagent verdict APPROVE — 0 CRIT / 0 MAJOR / 4 MINOR, **all pre-existing**; surface well-bounded (typed args + deny_unknown_fields, per-tool limit caps, ULID normalization, parameterized SQL — no injection, bounded search/regex, BEGIN IMMEDIATE writes, OS-level access gate, activity-feed privacy redaction, no stdio poisoning). MINOR: MCP error path skips `sanitize_internal_error` (info-parity, not a breach); cross-space check TOCTOU outside tx (theoretical); 2 stale docs (get_block soft-delete claim; rmcp_spike "off by default") + search space_id not normalized | **LOG-ONLY round** — all pre-existing/out-of-scope; cheap maintainer fixes noted (route MCP errors through sanitize_internal_error; fix the 2 doc strings) | `863d66b3` |
+| 29 | 07:30 | Loro CRDT engine internals (registry / apply / snapshot / position) | subagent verdict CHANGES — 0 CRIT / 1 MAJOR / 2 MINOR, **all pre-existing**; engine verified solid (registry mutex poisoning-recovery + no lock-across-await, no panics on apply paths, USV splice math + checked_add, tag dedup idempotence, i64 position stability, peer_id xxh3 pinned, per-space isolation, two-device convergence proptests incl. deleted_at AT THE ENGINE LAYER). MAJOR: `BlockSnapshot` omits `deleted_at` → soft-deletes resurrect on sync-pull (field-coverage facet of F1; engine converges it, SQL projection drops it). MINOR: INSERT-OR-REPLACE also clears archived_at/is_conflict/conflict_source; apply_create_block silent container overwrite on dup id | **LOG-ONLY round** — MAJOR folded into the F1 inbound-projection cluster (fix coherently, not piecemeal); all pre-existing / not PR #50 regressions | no commit (ledger only) |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -360,6 +361,31 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   `_one` (works by i18next fallback to base, fragile). nit: unknown callout type
   (`blockquote.tsx:47`) renders raw `callout.<type>` label. All pre-existing, single-locale
   app (`lng:'en'`), no `t()`-enforcement lint — so logged for maintainer triage.
+- **⚠️ [sync, MAJOR — same cluster as F1; pre-existing, NOT a PR #50 regression (R29)]
+  Soft-deleted blocks RESURRECT on sync-pull** because `BlockSnapshot` (`loro/engine.rs:149`)
+  carries no `deleted_at` field — `read_block` never surfaces the engine's `FIELD_DELETED_AT`,
+  and `project_block_full_to_sql` (`loro/projection.rs:437`) `INSERT OR REPLACE`s without it →
+  the receiver writes `deleted_at = NULL`. Device A soft-deletes X + syncs → B resurrects X
+  (and any A-update touching a B-locally-deleted X un-deletes it). Live via `apply_remote` →
+  orchestrator. This is the field-coverage facet of **F1** (the inbound-projection cluster);
+  the engine layer itself converges `deleted_at` correctly (proptest verifies) — the gap is
+  purely the SQL projection. **Fix coherently WITH F1**, not piecemeal: the proper fix
+  (surgical `INSERT … ON CONFLICT DO UPDATE` + re-project full per-block state from the engine
+  incl. deleted_at/tags/props + enqueue cache rebuild) subsumes this; patching only
+  `deleted_at` would still leave tags/props wiped per F1 (a false "sync fixed"). Self-contained
+  sub-fix if done in isolation: add `deleted_at` to `BlockSnapshot` + `read_block` + the
+  full-block projection column list.
+- **[sync, MINOR — same cluster (R29)] `INSERT OR REPLACE` also clears `archived_at` /
+  `is_conflict` / `conflict_source`** on any remotely-touched block (`projection.rs:437`,
+  schema `migrations/0001`): these non-CRDT columns revert to defaults on every re-projection.
+  Compounds F1 / the deleted_at MAJOR — all three are "the projection isn't column-surgical."
+  Fix with the F1 upsert redesign (update only engine-owned columns).
+- **[loro, MINOR — defer (R29)] `apply_create_block` silently overwrites an existing
+  block_id's container** (`engine.rs:218` `insert_container` is a last-writer-wins MapSet, not
+  a merge or error). Practically rare (unique ULIDs + cursor-gated replay verified safe), but
+  two peers concurrently creating the same block_id (deterministic id / purge-then-recreate
+  race) silently drop one peer's content+edit-history with no logged error. Fix needs CRDT
+  semantics sign-off (guard with `get(id).is_none()` or upsert scalar fields only).
 - **[mcp, MINOR ×4 — defer/log (R28)]** the MCP agent tool surface is well-bounded
   (typed args + `deny_unknown_fields`, per-tool `validate_limit` caps, ULID normalization,
   parameterized SQL, bounded search + regex limits, `BEGIN IMMEDIATE` writes, OS-level
