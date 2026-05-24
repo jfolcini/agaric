@@ -1002,10 +1002,11 @@ impl LoroEngine {
     ///
     /// * Soft-deleted blocks (those whose `deleted_at` slot is set)
     ///   ARE included in the returned vector — the projection helper
-    ///   needs them to project the soft-delete to SQL.
+    ///   refreshes their core columns (content/parent/position) without
+    ///   touching the SQL `deleted_at`, so the block stays soft-deleted.
     /// * If the import added zero new ops (peer was up-to-date), the
     ///   walk still returns every block_id — the projection helper
-    ///   becomes a sequence of idempotent `INSERT OR REPLACE`s, which
+    ///   becomes a sequence of idempotent core-column UPSERTs, which
     ///   is correct but wasteful. A future iteration may short-circuit
     ///   on `ImportStatus.success.is_empty()` to skip the walk.
     pub fn import_with_changed_blocks(
