@@ -10,7 +10,7 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::now_rfc3339;
-use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload};
+use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload, SetPropertyPayload};
 use crate::op_log;
 use crate::pagination::ActiveBlockRow;
 use crate::pagination::PageResponse;
@@ -107,19 +107,60 @@ pub async fn add_tag_inner(
         _ => {}
     }
 
-    // PEND-15 Phase 2 (Path A) — reject add_tag when the tag's space
-    // differs from the source block's space. Tags are space-scoped;
-    // cross-space tag references are not allowed.
+    // PEND-15 Phase 2 (Path A) — tags are space-scoped; a tag may not be
+    // applied across spaces.
+    //
+    // PEND-76 F4: a tag with no space yet (an orphan — e.g. one created
+    // mid-session via `handleCreateTag`, which creates the tag block
+    // without a space property) is ADOPTED into the source block's space
+    // here instead of being rejected. This is the eager equivalent of the
+    // boot-time `migrate_orphan_tags_to_space` and mirrors its op-emit +
+    // inline-materialise shape, so a freshly created tag can be applied in
+    // a non-default space immediately rather than failing with a
+    // `tags.addFailed` toast until the next launch.
     {
         let src_space =
             crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&block_id)).await?;
         let tag_space =
             crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&tag_id)).await?;
         if src_space != tag_space {
-            return Err(AppError::Validation(format!(
-                "cross-space tag: block '{}' (space {:?}) cannot use tag '{}' (space {:?})",
-                block_id, src_space, tag_id, tag_space,
-            )));
+            match (&src_space, &tag_space) {
+                // Orphan tag + spaced source block — adopt the tag into the
+                // source's space rather than reject.
+                (Some(space_id), None) => {
+                    let space_ref = space_id.as_str().to_owned();
+                    let set_space = OpPayload::SetProperty(SetPropertyPayload {
+                        block_id: BlockId::from_trusted(&tag_id),
+                        key: "space".to_owned(),
+                        value_text: None,
+                        value_num: None,
+                        value_date: None,
+                        value_ref: Some(space_ref.clone()),
+                        value_bool: None,
+                    });
+                    op_log::append_local_op_in_tx(&mut tx, device_id, set_space, now_rfc3339())
+                        .await?;
+                    // Materialise the property row inside the same tx so the
+                    // downstream dup-check / projection see the adopted space.
+                    sqlx::query!(
+                        "INSERT OR REPLACE INTO block_properties \
+                         (block_id, key, value_text, value_num, value_date, value_ref) \
+                         VALUES (?, 'space', NULL, NULL, NULL, ?)",
+                        tag_id,
+                        space_ref,
+                    )
+                    .execute(&mut **tx)
+                    .await?;
+                }
+                // Genuine cross-space (both spaced but differ) or a spaced
+                // tag on an unspaced source block — reject.
+                _ => {
+                    return Err(AppError::Validation(format!(
+                        "cross-space tag: block '{}' (space {:?}) cannot use tag '{}' (space {:?})",
+                        block_id, src_space, tag_id, tag_space,
+                    )));
+                }
+            }
         }
     }
 
