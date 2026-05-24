@@ -10,6 +10,12 @@ on:
   pull_request_review:
     types: [submitted]
 
+# Least-privilege default token (Scorecard Token-Permissions): the job below
+# sets its own explicit `permissions:` block; this read-only baseline locks
+# down any job that doesn't.
+permissions:
+  contents: read
+
 jobs:
   claude:
     if: |

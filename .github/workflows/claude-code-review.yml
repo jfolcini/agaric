@@ -10,6 +10,12 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+# Least-privilege default token (Scorecard Token-Permissions): every job
+# below sets its own explicit `permissions:` block; this read-only baseline
+# locks down any job that doesn't.
+permissions:
+  contents: read
+
 jobs:
   claude-review:
     # Optional: Filter by PR author
