@@ -5788,3 +5788,50 @@ async fn set_todo_state_batch_clears_state() {
         .unwrap();
     assert!(v.is_none(), "todo_state must be cleared by None");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_ref_cross_space_rejected() {
+    // PEND-76 F5: a ref-type property whose target lives in a different
+    // space than the source block is rejected at the command layer.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+
+    let src = create_block_inner(&pool, DEV, &mat, "content".into(), "src".into(), None, None)
+        .await
+        .unwrap();
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "target".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assign_to_space(&pool, &src.id, TEST_SPACE_ID).await;
+    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+
+    let result = set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        src.id.clone().into(),
+        "linked_page".into(),
+        None,
+        None,
+        None,
+        Some(target.id.clone()),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "cross-space ref property must be rejected, got {result:?}"
+    );
+}

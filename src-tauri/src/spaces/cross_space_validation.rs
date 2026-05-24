@@ -1,7 +1,12 @@
 //! Cross-space reference validation (PEND-15 Phase 2 enforcement).
 //!
-//! Every code path that could produce a cross-space reference calls
-//! one of the two helpers below BEFORE emitting an op:
+//! The two helpers below are called BEFORE emitting an op so a write
+//! that would introduce a cross-space reference is rejected up front.
+//! PEND-76 F5 wired them into the single-block command paths:
+//! `set_property` (ref-type values, `set_property_in_tx`), block create
+//! (`create_block_in_tx`), and block edit (`edit_block_inner`).
+//! `add_tag` enforces cross-space via its own inline guard. (Bulk-import
+//! and sync-ingress are not yet gated — a follow-up.)
 //!
 //! - [`validate_content_cross_space_refs`] — scans block content for
 //!   `[[ULID]]` / `((ULID))` / `#[ULID]` tokens; resolves each
@@ -12,9 +17,13 @@
 //!   property value (`value_ref`) targets a block in the same space
 //!   as the source block.
 //!
-//! Both helpers are generic over [`sqlx::SqliteExecutor`] so they
-//! work inside the command's `BEGIN IMMEDIATE` transaction without
-//! opening a fresh connection.
+//! Both helpers take `&mut SqliteConnection` so they run on the
+//! command's `BEGIN IMMEDIATE` transaction (the `&mut Transaction` /
+//! `CommandTx` handle deref-coerces to it) without opening a fresh
+//! connection. PEND-76 F5: enforcement applies only
+//! when BOTH the source and the target are assigned to a space — an
+//! orphan (unassigned) block is not "cross-space" to anything, so it is
+//! tolerated (mirrors the orphan-tag adoption in `add_tag`).
 
 use crate::cache::{TAG_REF_RE, ULID_LINK_RE};
 use crate::error::AppError;
@@ -28,11 +37,18 @@ use crate::ulid::BlockId;
 /// Returns `Err(AppError::Validation)` on the first cross-space token
 /// found.
 pub async fn validate_content_cross_space_refs(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    conn: &mut sqlx::SqliteConnection,
     source_block_id: &BlockId,
     content: &str,
 ) -> Result<(), AppError> {
-    let source_space = resolve_block_space(&mut **tx, source_block_id).await?;
+    let source_space = resolve_block_space(&mut *conn, source_block_id).await?;
+    // PEND-76 F5: only enforce when the source block is itself assigned to
+    // a space. An unassigned (orphan) source — e.g. a freshly created
+    // top-level block that has not yet inherited a page/space — has no
+    // space to be "cross" to, so there is nothing to reject.
+    let Some(source_space) = source_space else {
+        return Ok(());
+    };
 
     // Collect all ULIDs referenced in the content (both link and tag-ref forms)
     let mut targets: Vec<&str> = Vec::new();
@@ -49,15 +65,19 @@ pub async fn validate_content_cross_space_refs(
 
     for target_str in targets {
         let target_id = BlockId::from_trusted(target_str);
-        let target_space = resolve_block_space(&mut **tx, &target_id).await?;
-        if target_space != source_space {
-            return Err(AppError::Validation(format!(
-                "cross-space reference: block '{}' (space {:?}) references '{}' (space {:?})",
-                source_block_id.as_str(),
-                source_space,
-                target_str,
-                target_space,
-            )));
+        let target_space = resolve_block_space(&mut *conn, &target_id).await?;
+        // Only a target assigned to a DIFFERENT space is a violation; an
+        // orphan target (None) is tolerated — it is not cross-space yet.
+        if let Some(target_space) = target_space {
+            if target_space != source_space {
+                return Err(AppError::Validation(format!(
+                    "cross-space reference: block '{}' (space {}) references '{}' (space {})",
+                    source_block_id.as_str(),
+                    source_space.as_str(),
+                    target_str,
+                    target_space.as_str(),
+                )));
+            }
         }
     }
 
@@ -77,7 +97,7 @@ pub async fn validate_content_cross_space_refs(
 /// gate only applies to user-defined ref properties (`linked_page`,
 /// `project`, etc.).
 pub async fn validate_ref_property_cross_space(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    conn: &mut sqlx::SqliteConnection,
     source_block_id: &BlockId,
     value_ref: Option<&str>,
     property_key: &str,
@@ -92,19 +112,26 @@ pub async fn validate_ref_property_cross_space(
         return Ok(());
     }
 
+    let source_space = resolve_block_space(&mut *conn, source_block_id).await?;
+    // PEND-76 F5: orphan source — no space to be "cross" to, nothing to enforce.
+    let Some(source_space) = source_space else {
+        return Ok(());
+    };
     let target_id = BlockId::from_trusted(target_str);
-    let source_space = resolve_block_space(&mut **tx, source_block_id).await?;
-    let target_space = resolve_block_space(&mut **tx, &target_id).await?;
+    let target_space = resolve_block_space(&mut *conn, &target_id).await?;
 
-    if target_space != source_space {
-        return Err(AppError::Validation(format!(
-            "cross-space ref property: '{}' target '{}' (space {:?}) differs from source '{}' (space {:?})",
-            property_key,
-            target_str,
-            target_space,
-            source_block_id.as_str(),
-            source_space,
-        )));
+    // Tolerate an orphan target; only a different assigned space violates.
+    if let Some(target_space) = target_space {
+        if target_space != source_space {
+            return Err(AppError::Validation(format!(
+                "cross-space ref property: '{}' target '{}' (space {}) differs from source '{}' (space {})",
+                property_key,
+                target_str,
+                target_space.as_str(),
+                source_block_id.as_str(),
+                source_space.as_str(),
+            )));
+        }
     }
 
     Ok(())
@@ -194,6 +221,56 @@ mod tests {
         assert!(
             msg.contains("cross-space"),
             "error should mention cross-space: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn content_scan_orphan_source_is_noop() {
+        // PEND-76 F5: a source block with no space (orphan) has no space to
+        // be "cross" to, so any reference passes.
+        let (pool, _dir) = test_pool().await;
+        seed_spaces(&pool).await;
+        let page_w = BlockId::new().to_string();
+        let orphan = BlockId::new().to_string();
+        let target = BlockId::new().to_string();
+        seed_page(&pool, &page_w, SPACE_WORK_ULID).await;
+        seed_content(&pool, &target, &page_w, "").await;
+        seed_content(&pool, &orphan, &orphan, "").await; // orphan: no space prop
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let content = format!("ref [[{}]]", target);
+        let result =
+            validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&orphan), &content)
+                .await;
+        assert!(
+            result.is_ok(),
+            "orphan source must be a no-op: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn content_scan_orphan_target_is_tolerated() {
+        // PEND-76 F5: a reference to an orphan (unassigned) target is
+        // tolerated — it is not cross-space yet.
+        let (pool, _dir) = test_pool().await;
+        seed_spaces(&pool).await;
+        let page_p = BlockId::new().to_string();
+        let blk = BlockId::new().to_string();
+        let orphan_target = BlockId::new().to_string();
+        seed_page(&pool, &page_p, SPACE_PERSONAL_ULID).await;
+        seed_content(&pool, &blk, &page_p, "").await;
+        seed_content(&pool, &orphan_target, &orphan_target, "").await;
+
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let content = format!("ref [[{}]]", orphan_target);
+        let result =
+            validate_content_cross_space_refs(&mut tx, &BlockId::from_trusted(&blk), &content)
+                .await;
+        assert!(
+            result.is_ok(),
+            "orphan target must be tolerated: {:?}",
+            result.err()
         );
     }
 
