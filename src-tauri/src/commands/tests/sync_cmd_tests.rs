@@ -242,6 +242,38 @@ async fn sync_confirm_pairing_stores_peer_and_clears_session() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
+    // PEND-76 F3: production FE passes an empty remote_device_id (it doesn't
+    // know the peer's id at confirm time — mDNS + TOFU establish it later). That
+    // must set the pending-pairing marker (so the dormant daemon wakes to accept
+    // the first connection) and NOT write a junk empty-string peer_refs row.
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-local",
+        info.passphrase,
+        String::new(),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        peer_refs::list_peer_refs(&pool).await.unwrap().is_empty(),
+        "an empty remote id must not create a peer_refs row"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "an empty remote id must set the pending-pairing marker"
+    );
+}
+
 // ----------------------------------------------------------------------
 // H-1 — Pairing passphrase verification against the active slot
 // ----------------------------------------------------------------------

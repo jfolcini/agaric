@@ -8,16 +8,17 @@ design-level, destructive-path, or product-decision change that is unsafe to
 apply speculatively. Each carries an empirical repro or a verified premise; file
 refs are as of the campaign snapshot.
 
-Ordered by severity. **Status (2026-05-24):** F1 cascade-wipe + edit-resurrection
-FIXED (propagation residual deferred — see F1 block). **F4 FIXED** (orphan-tag
-adoption in `add_tag`). **F5 FIXED** (referential cross-space enforcement wired into
-set_property/create/edit). **F3 deferred** with a concrete finding (the empty
-`peer_refs` row is load-bearing for post-pairing daemon activation; removing it
-breaks first-pairing sync — needs a design change, see F3 block). **F2** (attachment
-feature) — done via **bytes-over-IPC** (backend + IPC plumbing + FE wiring); needs a
-real-Tauri smoke test, and the purge file-leak + large-file IPC efficiency are
-deferred follow-ups (see F2 block). **F3 remains.** F1's propagation residual and
-F5's bulk-import/sync-ingress gating are documented follow-ups.
+Ordered by severity. **Status (2026-05-24): all five clusters addressed.** F1
+cascade-wipe + edit-resurrection FIXED (remote-change propagation residual deferred).
+**F2 FIXED** — attachment upload/render via bytes-over-IPC. **F3 FIXED** — daemon
+activation decoupled from `peer_refs` via a persistent pending-pairing marker.
+**F4 FIXED** — orphan-tag adoption in `add_tag`. **F5 FIXED** — referential
+cross-space enforcement wired into set_property/create/edit. **Two clusters ship
+unverified-end-to-end** (mocked harness can't exercise them): F2's real
+upload→render round-trip and F3's full pairing handshake both need a real-build /
+2-device smoke test. **Documented follow-ups:** F1 remote-change propagation, F2
+single-block purge file-leak + large-file IPC efficiency, F5 bulk-import/sync-ingress
+gating.
 
 ---
 
@@ -187,20 +188,32 @@ pairing — the real fix wires the FE to pass the scanned/typed remote device_id
 pairing-contract change). Tests miss it (they pass a non-empty `"device-remote"`).
 Verify the pairing flow with the maintainer.
 
-⏳ **DEFERRED (2026-05-24) — the obvious fix breaks pairing.** Investigation
-confirmed the FE genuinely does NOT have the remote device_id at confirm time: the
-QR carries only the passphrase (`pairing.rs:97-112`); mDNS discovery + TOFU cert-pin
+**Why a naive guard breaks pairing:** the FE genuinely has no remote device_id at
+confirm time — the QR carries only the passphrase (`pairing.rs:97-112`); mDNS + TOFU
 establish the real peer row LATER, on the first authenticated connection
 (`sync_daemon/orchestrator.rs:675`, `sync_daemon/server.rs:176`,
-`sync_protocol/orchestrator.rs:532`). Critically, the empty-string `peer_refs` row
-is **load-bearing**: it's what trips `should_start_active` so the dormant daemon
-wakes and runs that very first sync (see the `dormant_daemon_wakes_on_pair_notification`
-test). So a "skip the empty write" guard would leave `should_start_active` false
-after the first-ever pairing → daemon stays dormant → no first sync → TOFU never
-runs → pairing never completes. The real fix **decouples daemon activation from
-`peer_refs`** (e.g. a pairing-completed wake signal / pending-pairing state that
-activates the daemon without a junk row) and needs runtime verification of the full
-pairing→first-sync handshake. Its own focused effort.
+`sync_protocol/orchestrator.rs:532`). The empty-string `peer_refs` row was
+**load-bearing**: it tripped `should_start_active` so the dormant daemon woke to
+accept that first connection. A bare "skip the empty write" would leave the daemon
+dormant → no first sync → TOFU never runs → pairing never completes.
+
+✅ **FIXED (2026-05-24) — decoupled daemon activation from `peer_refs`.** Added a
+persistent `app_settings` marker `sync.pending_pairing` (`peer_refs::{set,is,clear}_pending_pairing`).
+`confirm_pairing` now sets that marker for the empty-id case (and still persists a
+real peer if a non-empty id is ever supplied) instead of writing the junk row;
+`should_start_active` returns true when real peers exist **or** the marker is set
+(and clears the marker once a real peer exists); `list_peer_refs` defensively
+filters empty `peer_id`s so any legacy junk row neither activates the daemon nor
+shows as a ghost peer. Tests: `pending_pairing_set_check_clear_roundtrip`,
+`list_peer_refs_excludes_empty_peer_id` (peer_refs.rs),
+`should_start_active_true_when_pairing_pending`,
+`should_start_active_clears_pending_marker_once_a_real_peer_exists`
+(sync_daemon/tests.rs), `confirm_pairing_empty_remote_id_sets_pending_marker_not_peer`
+(sync_cmd_tests.rs).
+
+⚠️ **Needs a 2-device smoke test.** The activation *decision* is unit-verified, but
+the full pairing → daemon-accepts-connection → TOFU-writes-real-peer → first-sync
+handshake can only be confirmed with two real paired devices on a network.
 
 ## F4 — Session-created tags lack a `space` property (MAJOR — needs manual confirm)
 

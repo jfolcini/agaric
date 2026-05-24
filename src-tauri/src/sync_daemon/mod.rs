@@ -121,7 +121,21 @@ impl SyncDaemon {
     /// because a transient DB issue must not prevent sync.
     pub async fn should_start_active(pool: &SqlitePool) -> Result<bool, AppError> {
         let peers = peer_refs::list_peer_refs(pool).await?;
-        Ok(!peers.is_empty())
+        if !peers.is_empty() {
+            // A real peer exists — the pending-pairing activation bridge (if
+            // any) is no longer needed. Clear it for hygiene; best-effort so a
+            // failed clear never prevents the daemon from going active.
+            if let Err(e) = peer_refs::clear_pending_pairing(pool).await {
+                tracing::warn!(error = %e, "failed to clear pending-pairing marker");
+            }
+            return Ok(true);
+        }
+        // PEND-76 F3: no real peers yet — activate iff a pairing is awaiting
+        // its first peer connection. `confirm_pairing` sets this marker so the
+        // dormant daemon wakes to accept that first inbound connection (the
+        // TOFU path then writes the real peer row). Replaces the old junk
+        // empty-string `peer_refs` row that used to force activation here.
+        peer_refs::is_pending_pairing(pool).await
     }
 
     /// PERF-25: Spawn the daemon only if peers exist, otherwise start a

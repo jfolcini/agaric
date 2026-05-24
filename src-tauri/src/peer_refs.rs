@@ -58,6 +58,7 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
                   device_name, last_address
            FROM peer_refs
+           WHERE peer_id != ''
            ORDER BY synced_at DESC"#,
     )
     .fetch_all(pool)
@@ -300,6 +301,60 @@ pub async fn update_last_address(
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound(format!("peer_refs ({peer_id})")));
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Pending-pairing marker (PEND-76 F3)
+// ---------------------------------------------------------------------------
+
+/// `app_settings` key for the "a pairing completed; the first peer connection
+/// is expected" marker.
+///
+/// Set by `confirm_pairing` when the FE supplies no remote device_id (the QR
+/// carries only the passphrase; mDNS + TOFU establish the real peer on the
+/// first connection). Honored by
+/// [`crate::sync_daemon::SyncDaemon::should_start_active`] so the dormant
+/// daemon wakes to *accept* that first inbound connection, and cleared once a
+/// real peer exists. This replaces the old hack of writing a junk
+/// empty-string `peer_id` row purely to trip the activation check.
+const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
+
+/// Mark that a pairing just completed and a first peer connection is expected.
+pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query!(
+        "INSERT INTO app_settings (key, value, updated_at)
+         VALUES (?, '1', CAST(strftime('%s','now') AS INTEGER) * 1000)
+         ON CONFLICT(key) DO UPDATE SET
+             value = '1',
+             updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000",
+        PENDING_PAIRING_KEY,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Whether a pairing is awaiting its first peer connection.
+pub async fn is_pending_pairing(pool: &SqlitePool) -> Result<bool, AppError> {
+    let value: Option<String> = sqlx::query_scalar!(
+        "SELECT value FROM app_settings WHERE key = ?",
+        PENDING_PAIRING_KEY,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(value.as_deref() == Some("1"))
+}
+
+/// Clear the pending-pairing marker — a real peer has been established, so the
+/// activation bridge is no longer needed.
+pub async fn clear_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query!(
+        "DELETE FROM app_settings WHERE key = ?",
+        PENDING_PAIRING_KEY
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -754,5 +809,49 @@ mod tests {
             Some("10.0.0.1:9999"),
             "last_address must be persisted"
         );
+    }
+
+    // ── pending-pairing marker (PEND-76 F3) ─────────────────────────────
+
+    #[tokio::test]
+    async fn pending_pairing_set_check_clear_roundtrip() {
+        let (pool, _dir) = test_pool().await;
+
+        assert!(
+            !is_pending_pairing(&pool).await.unwrap(),
+            "pending-pairing must be false on a fresh DB"
+        );
+
+        set_pending_pairing(&pool).await.unwrap();
+        assert!(
+            is_pending_pairing(&pool).await.unwrap(),
+            "pending-pairing must be true after set"
+        );
+
+        // Idempotent: a second set stays true.
+        set_pending_pairing(&pool).await.unwrap();
+        assert!(is_pending_pairing(&pool).await.unwrap());
+
+        clear_pending_pairing(&pool).await.unwrap();
+        assert!(
+            !is_pending_pairing(&pool).await.unwrap(),
+            "pending-pairing must be false after clear"
+        );
+
+        // Clearing an already-clear marker is a no-op (no error).
+        clear_pending_pairing(&pool).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_peer_refs_excludes_empty_peer_id() {
+        // A legacy/junk empty-string peer row must never surface (it would
+        // wrongly trip should_start_active and show as a blank ghost peer).
+        let (pool, _dir) = test_pool().await;
+        upsert_peer_ref(&pool, "").await.unwrap();
+        upsert_peer_ref(&pool, "PEER_REAL").await.unwrap();
+
+        let peers = list_peer_refs(&pool).await.unwrap();
+        assert_eq!(peers.len(), 1, "the empty-string peer must be filtered out");
+        assert_eq!(peers[0].peer_id, "PEER_REAL");
     }
 }
