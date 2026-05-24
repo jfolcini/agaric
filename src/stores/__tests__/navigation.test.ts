@@ -1086,7 +1086,7 @@ describe('useNavigationStore', () => {
   // ---------------------------------------------------------------------------
   describe('FEAT-9 recentPages recordVisit hook', () => {
     beforeEach(() => {
-      useRecentPagesStore.setState({ recentPages: [] })
+      useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
     })
 
     it('navigateToPage calls recordVisit with pageId and title', () => {
