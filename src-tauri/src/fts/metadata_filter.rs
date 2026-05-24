@@ -462,6 +462,11 @@ fn append_property_match(
 ) {
     let keyword = if exclude { "NOT EXISTS" } else { "EXISTS" };
 
+    // BE-8: bind the trimmed key so a whitespace-padded `prop:` key (which the
+    // empty-key guard already trims before its is-empty check) matches the
+    // stored, un-padded key instead of silently matching nothing.
+    let key = pf.key.trim();
+
     let key_idx = *next_param;
     *next_param += 1;
 
@@ -470,7 +475,7 @@ fn append_property_match(
             "\n           AND {keyword} (SELECT 1 FROM block_properties bp \
               WHERE bp.block_id = {block_alias}.id AND bp.key = ?{key_idx})"
         ));
-        binds.push(MetaBind::Str(pf.key.clone()));
+        binds.push(MetaBind::Str(key.to_string()));
         return;
     }
 
@@ -496,7 +501,7 @@ fn append_property_match(
     ));
 
     let parsed = parse_prop_value(&pf.value);
-    binds.push(MetaBind::Str(pf.key.clone()));
+    binds.push(MetaBind::Str(key.to_string()));
     binds.push(MetaBind::Str(pf.value.clone()));
     binds.push(MetaBind::NullableF64(parsed.num));
     binds.push(MetaBind::NullableStr(parsed.date));
@@ -696,11 +701,57 @@ fn monday_of(d: NaiveDate) -> NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::queries::{NamedDateRange, SearchFilter};
+    use crate::commands::queries::{NamedDateRange, SearchFilter, SearchPropertyFilter};
 
     fn fixed_today() -> NaiveDate {
         // 2026-05-18 is a Monday — pinned so `this-week` math is stable.
         NaiveDate::from_ymd_opt(2026, 5, 18).unwrap()
+    }
+
+    #[test]
+    fn property_key_is_trimmed_before_binding() {
+        // BE-8: a whitespace-padded `prop:` key must bind as its trimmed form
+        // (matching the empty-key guard's trim) so it matches the stored,
+        // un-padded key instead of silently matching nothing. Covers both the
+        // key-only and key+value composition paths.
+        let f = SearchFilter {
+            property_filters: vec![
+                SearchPropertyFilter {
+                    key: "  status  ".into(),
+                    value: String::new(),
+                },
+                SearchPropertyFilter {
+                    key: " owner ".into(),
+                    value: "me".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let m = prepare_metadata_with_today(&f, fixed_today()).unwrap();
+        let mut sql = String::new();
+        let mut next_param = 1usize;
+        let binds = append_metadata_sql(&mut sql, &mut next_param, &m, "b");
+        let str_binds: Vec<&str> = binds
+            .iter()
+            .filter_map(|b| match b {
+                MetaBind::Str(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            str_binds.contains(&"status"),
+            "key-only path must bind the trimmed key, got {str_binds:?}"
+        );
+        assert!(
+            str_binds.contains(&"owner"),
+            "key+value path must bind the trimmed key, got {str_binds:?}"
+        );
+        assert!(
+            !str_binds
+                .iter()
+                .any(|s| s.starts_with(' ') || s.ends_with(' ')),
+            "no whitespace-padded key may be bound, got {str_binds:?}"
+        );
     }
 
     #[test]
