@@ -5,6 +5,13 @@ leaf transforms and invariant-rich logic that currently rely on example-based
 unit tests only. Triggered by a 2026-05-24 audit of where `proptest!` is and
 isn't used.
 
+**STATUS (2026-05-24): Tier A shipped; Tier B remains.** Tier A landed on
+`pend-78-79-77-quick-wins`: `word_diff::compute_word_diff` reconstruction
+invariants (new-side, old-side, combining-marks) + `space_filter_canonical::normalize`
+idempotence and whitespace-equivalence. **Tier B is still open** — it needs the
+seeded-DB fixture harness (the bulk of the cost); this file stays in `pending/`
+for that remaining work.
+
 > **The inventory below is a dated snapshot (2026-05-24), indicative not
 > authoritative.** It records which modules *have* a property test, not counts.
 > Re-run the "How to re-audit" command for fresh state. Do not add a hook that
@@ -28,7 +35,7 @@ isn't used.
 Roundtrips and the CRDT merge core are well covered. The gaps are leaf
 transforms and DB-bound invariants.
 
-## Tier A — pure functions, cheap, no DB (do first)
+## Tier A — pure functions, cheap, no DB ✅ DONE (2026-05-24)
 
 ### A1. `word_diff.rs::compute_word_diff` (`src-tauri/src/word_diff.rs:26`)
 

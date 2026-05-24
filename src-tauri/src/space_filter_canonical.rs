@@ -65,6 +65,7 @@ pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR b.page_id IN (\n
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
     use regex::Regex;
 
     /// Render every space-filter occurrence into a comparable canonical
@@ -261,5 +262,48 @@ mod tests {
              \"b.page_id IN (SELECT bp.block_id\" src-tauri/src/` and \
              reconcile.",
         );
+    }
+
+    proptest! {
+        /// PEND-77 A2: `normalize` is idempotent — re-normalizing a canonical
+        /// form is a no-op. Tokens are space-joined so `?` placeholders are
+        /// always separated (matching real bound SQL; `??`-style adjacency
+        /// never occurs in the production filter strings this guards).
+        #[test]
+        fn normalize_is_idempotent(
+            toks in prop::collection::vec(
+                prop::sample::select(vec![
+                    "?", "?2", "?7", "bp.", "bp_sp.", "(", ")", "foo", "block_id", "AND", "OR",
+                    "IS", "NULL", "IN", "SELECT",
+                ]),
+                0..20,
+            ),
+        ) {
+            let s = toks.join(" ");
+            let once = normalize(&s);
+            let twice = normalize(&once);
+            prop_assert_eq!(once, twice);
+        }
+
+        /// Two strings differing only in inter-token whitespace (spaces, tabs,
+        /// newlines, `\`-continuations) normalize to the same canonical form.
+        #[test]
+        fn normalize_collapses_whitespace_runs(
+            tokens in prop::collection::vec("[a-zA-Z0-9_]{1,6}", 1..8),
+            ws in prop::collection::vec(
+                prop::sample::select(vec![" ", "  ", "   ", "\n", "\t", " \\\n"]),
+                1..8,
+            ),
+        ) {
+            let single = tokens.join(" ");
+            let mut varied = String::new();
+            for (i, tok) in tokens.iter().enumerate() {
+                if i > 0 {
+                    varied.push_str(ws[(i - 1) % ws.len()]);
+                }
+                varied.push_str(tok);
+            }
+            prop_assert_eq!(normalize(&single), normalize(&varied));
+        }
     }
 }
