@@ -48,7 +48,9 @@ export {
   listProjectedAgendaLimit,
   PAGINATION_MAX,
   paginationLimit,
+  SEARCH_BLOCKS_MAX,
   safeLimit,
+  searchBlocksLimit,
 } from './safe-limit'
 
 import type {

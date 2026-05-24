@@ -74,7 +74,7 @@ import {
 } from '@/lib/recent-pages'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 import type { SearchBlockRow } from '@/lib/tauri'
-import { paginationLimit, searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import { searchBlocks, searchBlocksLimit, searchBlocksPartitioned } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -1633,7 +1633,7 @@ function TagsModeBody({
     searchBlocks({
       query: debouncedQuery,
       blockTypeFilter: 'tag',
-      limit: paginationLimit(TAGS_QUERY_LIMIT),
+      limit: searchBlocksLimit(TAGS_QUERY_LIMIT),
       spaceId: currentSpaceId ?? '',
     })
       .then((resp) => {

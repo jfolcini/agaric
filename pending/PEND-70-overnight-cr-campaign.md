@@ -92,6 +92,7 @@ log them. Keep reverts surgical.
 | 12 | 04:25 | whole-diff holistic ("would I approve?") | senior breadth pass: **APPROVE — no new CRITICAL/MAJOR; nothing that shouldn't ship.** Smell-test clean (no debug code / stray files / TODO; the 2 `.sqlx` artifacts are the legit heal-cursor queries; the 20k-line SESSION-LOG "deletion" is the deliberate 401-800 archival). Verified: recovery/snapshot boot ordering + heal guards correct; merge's non-search frontend (ScrollArea migration + focus-ring) coherent; new e2e specs assert real behavior; PEND-69 hygiene consistent end-to-end. 2 MINOR nits | left the documented `test.skip` (search-results.spec.ts:112) as-is; called out the bundled out-of-scope Linux/UI fixes in the PR description | `dffd2642` |
 | 13 | 03:00 | recovery/snapshot DEEP correctness | subagent: replay ordering/idempotency, over-shoot heal, snapshot round-trip + per-space isolation, corrupt-blob degradation, and concurrency all CORRECT — **but found ⚠️ CRITICAL C1/C2** (stale / per-space-missing snapshot leaves engine behind cursor; coarse `COUNT(*)>0` heal gate won't fire → engine wedge "block not found"; newly reachable from this branch's snapshot re-instatement; root cause = no seq watermark in `loro_doc_state`). + M1 (replay cursor can have gaps below it via fg-drop — pre-existing, retry-queue backstop) + m2 (test gap) | **NOT fixed** (schema-migration + heal rework on data-integrity code — unsafe unattended; a botched fix risks data loss). Logged as the TOP follow-up + flagged on the PR | escalate to user |
 | 14 | 03:30 | op-log apply / materializer / inbound-sync correctness | subagent: local write atomicity, seq allocation, fg-apply cursor advance + idempotency, FIFO ordering, fg-drop→retry-queue, `insert_remote_op` hash/parent checks, snapshot RESET rebuild all CORRECT — **found ⚠️ CRITICAL F1** (inbound `apply_remote` `INSERT OR REPLACE` + CASCADE FKs cascade-wipes tags/props/soft-delete/caches for the whole space per incremental sync, no re-projection; reproduced empirically) + F2/F3 (MINOR, couple w/ F1). **F1 verified PRE-EXISTING on `main`, NOT a PR #50 regression** (projection.rs/loro_sync.rs not in PR diff; only a lint-annotation touch in orchestrator.rs) | **NOT fixed** (design-level projection-contract + orchestrator-wiring change; defer-with-care). Logged F1/F2/F3 to Deferred-findings | escalate to user |
+| 15 | 03:30 | whole-PR-diff final sanity pass (merge-readiness) | subagent verdict **APPROVE** — 0 CRIT / 0 MAJOR / 3 MINOR: (a) `search_blocks` 200→100 cap drift in `safe-limit.ts` (latent — no caller >100), (b) inverted Step 1.4/1.5 comment order in `recovery/boot.rs`, (c) untested `spawn_periodic_snapshot` `#[cfg(test)]` hook. Heal/snapshot re-instatement + PEND-69 hygiene verified correct & merge-ready (known C1/C2/F1-F3 stay deferred) | **FIXED (a)+(b)**: added `searchBlocksLimit` (100-cap) helper + corrected doc, switched the 3 explicit searchBlocks callers (useBlockResolve ×2, CommandPalette tags) off `paginationLimit`; reordered boot.rs heal/replay comments to match code order. (c) logged as deferred. tsc+biome+vitest(366) green | pending commit |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -165,6 +166,14 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   cursor past itself, so replay's invariant is "no double-apply", NOT "no skips" —
   recovery of the skipped op relies on the retry-queue sweeper. Pre-existing (C-2b),
   documented; noting that the cursor legitimately has gaps below it.
+- **[test, MINOR] `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn split
+  but no test exercises it** (`loro/snapshot.rs:266`, sole caller `lib.rs:997`). The
+  function added a `#[cfg(test)] let spawn_fn = tokio::spawn;` seam specifically to be
+  testable under a tokio runtime, yet no test calls it — testability scaffolding with
+  no test. Either add a smoke test (spawn with `interval_secs=1`, seed an engine, flip
+  shutdown, assert a snapshot row appears) or drop the `#[cfg(test)]` split. Deferred
+  (R15): adding an async-timer test unattended risks flakiness; not worth the overnight
+  churn for a fire-and-forget timer.
 - **[a11y, MAJOR] Cross-group keyboard roving loses the SR active-descendant**
   (`SearchResultGroups.tsx` / `VirtualizedResultListbox.tsx`). Per-group
   `role="listbox"` is the documented PEND-50 design; only the owning group sets

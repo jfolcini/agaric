@@ -110,6 +110,26 @@ pub async fn recover_at_boot(
     let pending_snapshots_deleted = delete_result.rows_affected();
 
     // -----------------------------------------------------------------
+    // Step 1.4: self-heal an orphaned apply cursor BEFORE the replay
+    // walk. If the persisted Loro snapshot (`loro_doc_state`) is empty
+    // while the cursor is non-zero, the engine just rehydrated to empty
+    // and the `seq > cursor` walk would replay nothing — leaving every
+    // edit/move to fail "block not found". Resetting the cursor to 0
+    // makes the replay below rebuild the engine from the full op-log.
+    // Non-fatal: a failure here is logged and boot continues (the replay
+    // step still runs from whatever cursor survives).
+    // -----------------------------------------------------------------
+    match heal_orphaned_apply_cursor(pool).await {
+        Ok(true) => {
+            tracing::warn!("recovery: reset orphaned apply cursor — full op-log rebuild follows");
+        }
+        Ok(false) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "recovery: cursor self-heal check failed — continuing");
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Step 1.5: C-2b — replay unmaterialized ops before draft recovery.
     //
     // Drafts emit synthetic edit_block ops; running drafts before
@@ -124,24 +144,6 @@ pub async fn recover_at_boot(
     // uses for individual-draft errors. Boot must succeed so the user
     // can at least open the app and recover via UI.
     // -----------------------------------------------------------------
-    // Step 1.4: self-heal an orphaned apply cursor BEFORE the replay
-    // walk. If the persisted Loro snapshot (`loro_doc_state`) is empty
-    // while the cursor is non-zero, the engine just rehydrated to empty
-    // and the `seq > cursor` walk would replay nothing — leaving every
-    // edit/move to fail "block not found". Resetting the cursor to 0
-    // makes the replay below rebuild the engine from the full op-log.
-    // Non-fatal: a failure here is logged and boot continues (the replay
-    // step still runs from whatever cursor survives).
-    match heal_orphaned_apply_cursor(pool).await {
-        Ok(true) => {
-            tracing::warn!("recovery: reset orphaned apply cursor — full op-log rebuild follows");
-        }
-        Ok(false) => {}
-        Err(e) => {
-            tracing::warn!(error = %e, "recovery: cursor self-heal check failed — continuing");
-        }
-    }
-
     let replay_report = match replay_unmaterialized_ops(pool, materializer).await {
         Ok(r) => r,
         Err(e) => {
