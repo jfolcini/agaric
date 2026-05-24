@@ -115,8 +115,8 @@ These are real but either design-level, on load-bearing/pre-existing paths, or
 codebase-wide patterns — applying speculative unattended fixes risks regressing
 tested behavior. Captured here for a maintainer decision / a follow-up PR.
 
-- **⚠️ [recovery, CRITICAL — RELEASE BLOCKER, decide before releasing] Stale /
-  per-space-missing Loro snapshot wedges the engine after a crash** (`recovery/replay.rs`
+- **✅ FIXED (commit `11c275de`, 2026-05-24) — was: [recovery, CRITICAL — release
+  blocker] Stale / per-space-missing Loro snapshot wedges the engine after a crash** (`recovery/replay.rs`
   `heal_orphaned_apply_cursor` + `loro/snapshot.rs` + migration `0052`). **Newly
   introduced by this branch's snapshot re-instatement (`e702a5b6`).** The apply
   cursor advances per-op (transactional), but snapshots write only every 5 min / on
@@ -131,11 +131,18 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   `loro_doc_state` at each save (revive `op_count`/add a column via a new
   append-only STRICT migration) and make the heal/replay per-space + watermark-aware
   (reset cursor to the min behind-watermark, or replay `seq > snapshot_seq` per space).
-  **Deliberately NOT fixed overnight** — schema migration + heal state-machine rework
-  on data-integrity code; a botched fix risks real data loss, so it needs a human +
-  tests. There is no safe non-regressive interim without the watermark (always-reset
-  would full-replay every boot). The existing test `apply_cursor_preserved_when_
-  snapshot_present` currently enshrines the buggy behavior — update it as the repro.
+  **FIX SHIPPED (`11c275de`):** migration `0071` adds `loro_doc_state.applied_through_seq`
+  (the cursor seq the blob reflects); the save path writes `cursor - 1` (a safe lower
+  bound — engine dispatch is post-commit + the foreground queue is serial); the heal now
+  rewinds the global cursor to `MIN(applied_through_seq)` when it's ahead (empty-table
+  case still resets to 0), so replay re-applies the unmaterialized tail idempotently.
+  `op_log` has no `space_id`, so the heal/reset stays global (not per-space); `MIN` is
+  bounded (~one snapshot interval) since `save_all_engines` refreshes every snapshot each
+  pass. Tests: `apply_cursor_rewinds_to_watermark_when_snapshot_stale` (the repro) +
+  updated `apply_cursor_preserved_when_snapshot_current`. Verified: fmt + clippy + full
+  nextest + `sqlx prepare --check` + prek green. Residual edge (logged, not blocking): a
+  space whose snapshot SAVE failed while holding only old ops (seq < MIN) — a rare
+  double-fault — would still need a manual rebuild.
 - **⚠️ [sync, CRITICAL — PRE-EXISTING on `main`, NOT a PR #50 regression] Inbound
   delta-sync (`apply_remote`) cascade-wipes tags / properties / soft-delete /
   page-assignment / derived caches for the whole space on every incremental sync**
@@ -550,17 +557,17 @@ regression-free.
 `cf9a7740`, GH-action SHA-pin `2a733f37`, prop-key trim BE-8 `c0dc654e`, migrate/e2e
 test gaps `447017a6`, docs cleanup — see the ledger rows above.)
 
-### ⚠️ Release decision required (the headline)
+### ✅ Release blocker C1/C2 — FIXED (`11c275de`, 2026-05-24)
 
-**C1/C2 — stale / per-space-missing Loro snapshot wedges the engine after a crash**
-(`recovery/replay.rs` `heal_orphaned_apply_cursor` + `loro/snapshot.rs`; no seq
-watermark in `loro_doc_state`). **This is IN this PR's diff** (newly reachable from this
-branch's snapshot re-instatement `e702a5b6`) — a data-USABILITY wedge ("block not found"
-on later edits; op_log intact, recoverable via forced rebuild but nothing triggers it).
-**Recommendation: treat it as a release blocker** — land the per-space snapshot watermark
-and a watermark-aware heal before releasing, OR consciously ship with it as the top
-follow-up. Deliberately NOT auto-fixed overnight (schema migration + heal state-machine
-rework on data-integrity code — unsafe unattended). Also posted as a comment on PR #50.
+The snapshot-wedge CRITICAL that was in this PR's diff is now fixed (the user chose
+"fix C1/C2 first"): migration `0071` adds a per-space `applied_through_seq` watermark,
+the save path records `cursor - 1` (a safe lower bound), and `heal_orphaned_apply_cursor`
+rewinds the global cursor to `MIN(applied_through_seq)` when it's ahead so boot replay
+re-applies the unmaterialized tail idempotently. Added the stale-snapshot repro test +
+updated the current-snapshot test; fmt, clippy, full nextest, `sqlx prepare --check`,
+and prek all green. **No remaining known release blocker in this PR's diff.** (Residual
+edge, logged: a space whose snapshot SAVE failed while holding only old ops — a rare
+double-fault — would still need a manual rebuild.)
 
 ### Pre-existing CRITICAL/MAJOR clusters (NOT PR #50 regressions — for maintainer triage)
 
