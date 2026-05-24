@@ -2,6 +2,7 @@ import type React from 'react'
 import type { TextNode } from '../../../editor/types'
 import { i18n } from '../../../lib/i18n'
 import { openUrl } from '../../../lib/open-url'
+import { isAllowedUrl } from '../../../lib/url-validation'
 import type { RenderContext } from '../context'
 
 /**
@@ -59,8 +60,12 @@ function renderExternalLink(
 /** Apply bold / italic / code / link marks to a text node, innermost-out. */
 function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.ReactNode {
   const linkMark = node.marks?.find((m) => m.type === 'link')
+  // Re-validate the href scheme at the render sink: input-time validation
+  // (external-link extension / link editor) is bypassed by markdown import
+  // and peer sync, so a `javascript:`/`data:` href can reach stored content.
+  // Render those as plain text rather than a clickable link to `openUrl`.
   let content: React.ReactNode =
-    linkMark && linkMark.type === 'link'
+    linkMark && linkMark.type === 'link' && isAllowedUrl(linkMark.attrs.href)
       ? renderExternalLink(node.text, linkMark.attrs.href, ctx, `${key}-link`)
       : node.text
 

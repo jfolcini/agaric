@@ -332,6 +332,30 @@ describe('RichContentRenderer', () => {
     expect(link?.textContent).toContain('click here')
   })
 
+  it('renders a blocked-scheme link href as plain text, not an openUrl sink (XSS hardening)', () => {
+    // A javascript:/data: href can reach stored content via markdown import or
+    // peer sync, bypassing input-time validation. The render sink must not turn
+    // it into a clickable element that calls openUrl.
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'click me',
+              marks: [{ type: 'link', attrs: { href: 'javascript:alert(document.cookie)' } }],
+            },
+          ],
+        },
+      ],
+    })
+    const { container } = render(renderRichContent('[click me](javascript:alert(1))', {}))
+    expect(container.querySelector('span.external-link')).toBeNull()
+    expect(container.textContent).toContain('click me')
+  })
+
   // -- Inline tokens: hardBreak -----------------------------------------------
 
   it('renders hardBreak as space span', () => {
