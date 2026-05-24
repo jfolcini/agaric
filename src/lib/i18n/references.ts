@@ -227,6 +227,10 @@ export const references: Record<string, string> = {
   'search.filterHelper.propKeyPlaceholder': 'area',
   'search.filterHelper.propValueLabel': 'Property value',
   'search.filterHelper.propValuePlaceholder': 'value',
+  // PEND-70 CR8 MAJOR-1 — round-trip guards (the prop DSL has no quoting,
+  // so the form rejects keys/values it can't serialise back unambiguously).
+  'search.filterHelper.propKeyInvalid': "Key can't contain spaces, = or quotes",
+  'search.filterHelper.propValueInvalid': "Value can't contain spaces or quotes",
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
   // UX-8 — accessible name for the alias-match card region.

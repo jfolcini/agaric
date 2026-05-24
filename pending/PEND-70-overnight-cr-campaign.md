@@ -83,7 +83,9 @@ log them. Keep reverts surgical.
 | 3 | 02:35 | search frontend + a11y + perf | subagent: **no CRITICAL**. 1 MAJOR (cross-group SR focus — the documented per-group-listbox design), 5 MINOR (dead history-recall activeIndex wiring; breadcrumb re-fetch of unresolvable ids; breadcrumb not space-scoped; radiogroup/toolbar lack roving — codebase-wide). Hook extraction, usePaginatedQuery race guards, perf memos all verified correct. | **logged for follow-up** (all on load-bearing or pre-existing/codebase-wide paths — not safe to speculatively change unattended; see "Deferred findings") | no code change |
 | 4 | 02:40 | Rust diff (PEND-69 hygiene + compound-filter SQL) | subagent: **no CRITICAL/MAJOR**, clippy green. PEND-69 hygiene verified behaviour-neutral. 2 MINOR: prop-key trim mismatch (BE-8); vestigial SnapshotTaskShutdown flag | **fixed** the prop-key trim (+unit test); logged the snapshot flag | `c0dc654e` |
 | 5 | 03:00 | e2e + test quality/coverage | subagent: **no CRITICAL**, test quality high (editor casts + TFunction mocks sound; e2e has zero sleeps, deterministic selectors). 3 test gaps: M1 (MAJOR) `migrate()` `historyEnabled` fallback untested; M2 (MINOR) FE-4 nav-generation race untested; M3 (MINOR) dropdown Enter test uses raw `KeyboardEvent` | **fixed** all 3 (M1 +4 migrate tests; M2 +1 non-flaky nav-race regression test; M3 → userEvent); 102 tests green | `447017a6` |
-| 6 | 03:10 | docs accuracy | subagent: SEARCH.md / architecture / SESSION-LOG / PEND-58g/69/70 docs accurate. 2 MAJOR: the merge resurrected the deleted PEND-58 + PEND-58d README index rows and the `PEND-58d.md` file (index/narrative contradiction + D23a double-tracked vs REVIEW-LATER `PAGES-FOLD-MARK`). 2 MINOR: architecture related-files omitted FE-A18 hooks; `docs/features/views.md` Search section stale | **fixed** both MAJORs (removed the 2 stale index rows, re-deleted `PEND-58d.md`) + MINOR-3 (added FE-A18 modules to architecture/search.md); logged views.md | `<batch>` |
+| 6 | 03:10 | docs accuracy | subagent: SEARCH.md / architecture / SESSION-LOG / PEND-58g/69/70 docs accurate. 2 MAJOR: the merge resurrected the deleted PEND-58 + PEND-58d README index rows and the `PEND-58d.md` file (index/narrative contradiction + D23a double-tracked vs REVIEW-LATER `PAGES-FOLD-MARK`). 2 MINOR: architecture related-files omitted FE-A18 hooks; `docs/features/views.md` Search section stale | **fixed** both MAJORs (removed the 2 stale index rows, re-deleted `PEND-58d.md`) + MINOR-3 (added FE-A18 modules to architecture/search.md); logged views.md | `<docs commit>` |
+| 7 | 03:20 | perf deep-dive (snapshot/recovery + SQL plans) | subagent: **no CRITICAL/MAJOR perf regressions**. Verified: boot replay is delta-only (not full-scan), search SQL bounded everywhere (no missing-index scans), frontend well-memoized (single batched breadcrumb resolve, virtualized window, correct abort). 2 MINOR: exit-save `block_on` has no timeout; periodic snapshot holds the registry mutex across all-space export | logged both (timeout needs a *measured* value; mutex-hold is a deliberate documented trade-off) | no code change |
+| 8 | 03:35 | error-handling + adversarial edge cases | subagent: **no CRITICAL**. 1 MAJOR: `PropFilterForm` silently corrupts the search when key/value has `=`/space/`"` (verbatim serialize → first-`=`/whitespace re-parse) — NEW surface from Batch 5. 2 MINOR: `withAbort` unhandled-rejection on a pre-aborted signal; breadcrumb non-array result silently un-logged. Verified graceful: regex/glob caps, usePaginatedQuery abort/error, empty/boundary states, StrictMode pendingViewQuery one-shot, persisted-state coercion | **fixed** MAJOR (PropFilterForm key/value validation + inline a11y error + 2 i18n keys + 6-test file) + both MINOR (withAbort no-op catch; breadcrumb non-array warn); tsc + 122 vitest green | `CR8` |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -126,6 +128,28 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   case/word/regex toggles, regex + filter-only search, per-space history, and mobile
   escalation. Mostly pre-existing; `docs/SEARCH.md` is the current source of truth
   (FEATURE-MAP defers to it), so this is a low-priority focused refresh.
+- **[perf/lifecycle, MINOR] `save_all_engines` exit-save has no timeout** (`lib.rs`
+  `RunEvent::Exit`): the synchronous `block_on` over the 2-conn writer pool writes a
+  multi-MiB snapshot blob per space with no upper bound → shutdown latency grows with
+  total snapshot bytes on large multi-space workspaces. Fix: wrap in
+  `tokio::time::timeout` + log-skip on expiry (the 5-min periodic task + next-boot
+  self-heal cover a missed exit-save). NOT applied overnight: the timeout value must
+  be *measured* from real large-workspace save durations (don't invent it), and it's
+  on the app-exit path (test exit behavior before changing).
+- **[perf, MINOR] periodic snapshot holds the registry mutex across all-space export**
+  (`loro/registry.rs` `snapshot_all_engines`): O(spaces × export) under the single
+  global engine mutex, so a user typing in space A can stall behind space B's export.
+  Fine at the 5-min cadence + human apply rates; the code comment deliberately
+  pre-commits to this trade-off. Fix only if multi-space workspaces grow: collect
+  engine handles under the lock, drop it, then export. Promote to REVIEW-LATER if
+  space counts rise.
+- **[DSL enhancement, MINOR] No quoting for `prop:`/`tag:`/`path:` values with spaces**:
+  `tokenSource` serializes `prop:key=value` verbatim, so a value containing
+  whitespace can't round-trip through the query string (CR8 made `PropFilterForm`
+  reject such input rather than corrupt it — a v1 limitation). Proper fix: support
+  `prop:key="value with space"` in `serialize.ts` `tokenSource` + `register.ts`
+  `parsePropToken` + the tokenizer (the same verbatim-serialize gap pre-exists for
+  `tag:`/`path:` values). Then the form can lift the no-space value restriction.
 
 ## Stop condition
 

@@ -164,7 +164,13 @@ export function cancelledError(reason = 'aborted client-side'): AppError {
  */
 export function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal == null) return promise
-  if (signal.aborted) return Promise.reject(cancelledError(signal.reason?.toString()))
+  if (signal.aborted) {
+    // The IPC promise was already constructed (args are eager); it's now
+    // orphaned by the early reject below. Swallow its eventual settlement so a
+    // later rejection doesn't surface as an unhandled promise rejection.
+    promise.catch(() => {})
+    return Promise.reject(cancelledError(signal.reason?.toString()))
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => {
       signal.removeEventListener('abort', onAbort)

@@ -187,6 +187,8 @@ export function useSearchResults({
             }
             return next
           })
+        } else {
+          logger.warn('SearchPanel', 'breadcrumb resolve returned a non-array result', undefined)
         }
       })
       .catch((err) => {
