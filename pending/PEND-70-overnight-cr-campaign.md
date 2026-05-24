@@ -82,7 +82,8 @@ log them. Keep reverts surgical.
 | — | 02:30 | CI fix | `validate / lint` FAILED: zizmor `unpinned-uses` ×4 + end-of-file, both on main's merged `claude*.yml` workflows | pinned actions (`zizmor --fix`) + EOF; re-push | `2a733f37` |
 | 3 | 02:35 | search frontend + a11y + perf | subagent: **no CRITICAL**. 1 MAJOR (cross-group SR focus — the documented per-group-listbox design), 5 MINOR (dead history-recall activeIndex wiring; breadcrumb re-fetch of unresolvable ids; breadcrumb not space-scoped; radiogroup/toolbar lack roving — codebase-wide). Hook extraction, usePaginatedQuery race guards, perf memos all verified correct. | **logged for follow-up** (all on load-bearing or pre-existing/codebase-wide paths — not safe to speculatively change unattended; see "Deferred findings") | no code change |
 | 4 | 02:40 | Rust diff (PEND-69 hygiene + compound-filter SQL) | subagent: **no CRITICAL/MAJOR**, clippy green. PEND-69 hygiene verified behaviour-neutral. 2 MINOR: prop-key trim mismatch (BE-8); vestigial SnapshotTaskShutdown flag | **fixed** the prop-key trim (+unit test); logged the snapshot flag | `c0dc654e` |
-| 5 | 03:00 | e2e + test quality/coverage | subagent: **no CRITICAL**, test quality high (editor casts + TFunction mocks sound; e2e has zero sleeps, deterministic selectors). 3 test gaps: M1 (MAJOR) `migrate()` `historyEnabled` fallback untested; M2 (MINOR) FE-4 nav-generation race untested; M3 (MINOR) dropdown Enter test uses raw `KeyboardEvent` | **fixed** all 3 (M1 +4 migrate tests; M2 +1 non-flaky nav-race regression test; M3 → userEvent); 102 tests green | `49bf…` (CR5 tests) |
+| 5 | 03:00 | e2e + test quality/coverage | subagent: **no CRITICAL**, test quality high (editor casts + TFunction mocks sound; e2e has zero sleeps, deterministic selectors). 3 test gaps: M1 (MAJOR) `migrate()` `historyEnabled` fallback untested; M2 (MINOR) FE-4 nav-generation race untested; M3 (MINOR) dropdown Enter test uses raw `KeyboardEvent` | **fixed** all 3 (M1 +4 migrate tests; M2 +1 non-flaky nav-race regression test; M3 → userEvent); 102 tests green | `447017a6` |
+| 6 | 03:10 | docs accuracy | subagent: SEARCH.md / architecture / SESSION-LOG / PEND-58g/69/70 docs accurate. 2 MAJOR: the merge resurrected the deleted PEND-58 + PEND-58d README index rows and the `PEND-58d.md` file (index/narrative contradiction + D23a double-tracked vs REVIEW-LATER `PAGES-FOLD-MARK`). 2 MINOR: architecture related-files omitted FE-A18 hooks; `docs/features/views.md` Search section stale | **fixed** both MAJORs (removed the 2 stale index rows, re-deleted `PEND-58d.md`) + MINOR-3 (added FE-A18 modules to architecture/search.md); logged views.md | `<batch>` |
 
 ## Deferred findings (for human review — not auto-fixed overnight)
 
@@ -120,6 +121,11 @@ tested behavior. Captured here for a maintainer decision / a follow-up PR.
   handled separately by the `RunEvent::Exit` handler, so it's harmless dead
   plumbing. Either wire a shutdown caller or drop the managed flag. Not changed
   overnight — it's on the app-lifecycle path (risky to rewire unattended).
+- **[docs, MINOR] `docs/features/views.md` Search section is stale**: describes only
+  page/tag filter chips; missing the inline filter DSL, the `+ Filter` builder, the
+  case/word/regex toggles, regex + filter-only search, per-space history, and mobile
+  escalation. Mostly pre-existing; `docs/SEARCH.md` is the current source of truth
+  (FEATURE-MAP defers to it), so this is a low-priority focused refresh.
 
 ## Stop condition
 

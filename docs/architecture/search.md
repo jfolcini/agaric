@@ -237,6 +237,10 @@ When ambiguity exists, autocomplete-open wins, then history recall (PEND-55), th
 ## Related files
 
 - `src/components/SearchPanel.tsx` — orchestrator: input, debounce, IPC call, group + render.
+- `src/components/SearchPanel/useSearchResults.ts` — extracted results pipeline: AST→IPC projection, `usePaginatedQuery`, breadcrumbs, grouping, roving nav, navigation (PEND-58g FE-A18).
+- `src/components/SearchPanel/useSearchHistoryControls.ts` — extracted per-space history surface: store wiring, recall cycling, handlers (PEND-58g FE-A18).
+- `src/components/SearchPanel/searchFilterParams.ts` — pure AST→`searchBlocks` filter-param projection (PEND-58g FE-A18).
+- `src/components/search/filter-forms/` — `+ Filter` builder sub-forms (state / priority / due / scheduled / prop + include-exclude) (PEND-58g UX-A5).
 - `src/components/search/SearchResultGroups.tsx` — group orchestration over `CollapsibleGroupList` + `groupResultsByPage` (PEND-58f FE-3).
 - `src/components/search/VirtualizedResultListbox.tsx` — per-group virtualized `role="listbox"` (PEND-58f FE-3).
 - `src/components/search/SearchResultBlockRow.tsx` — snippet / offset → React-node renderer.
