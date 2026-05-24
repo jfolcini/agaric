@@ -158,6 +158,16 @@ cargo tauri android build --target aarch64 --debug   # Debug APK (400 MB)
 
 No cross-compilation — each desktop platform must be built on that platform. Android builds run on Linux. CI handles the full matrix automatically.
 
+### Releasing
+
+Maintainers cut a release with a single command from a clean `main`:
+
+```bash
+scripts/release.sh <new-version>      # e.g. scripts/release.sh 0.2.1
+```
+
+It runs a local release-build check, bumps every version manifest in lockstep, GPG-signs and pushes the tag, and the tag triggers CI to build every platform and **draft** the GitHub Release (which a maintainer then reviews and publishes). Full details — provenance/SBOM artifacts, flags, and why the bump runs locally — in [docs/BUILD.md § Releasing](docs/BUILD.md#releasing).
+
 ### Android
 
 Both debug and release APKs build and run successfully. Release APKs are 24 MB (vs 402 MB debug) thanks to R8/ProGuard minification. Requires Android SDK, NDK 27, and JDK 17. See [docs/BUILD.md](docs/BUILD.md#android-builds) for signing and emulator setup.

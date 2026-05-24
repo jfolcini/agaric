@@ -1,20 +1,20 @@
 name: Release
 
 on:
+  # A release is driven entirely by pushing a version tag (e.g. `0.2.0`),
+  # whose commit must already carry the bumped manifests. Cut releases with
+  # `scripts/release.sh <version>` (see docs/BUILD.md § Releasing) — it runs the
+  # local build check, bumps every manifest in lockstep, commits, tags, and
+  # pushes for you. There is deliberately NO `workflow_dispatch` bump button:
+  # bumping means pushing a commit to `main`, which the in-workflow
+  # GITHUB_TOKEN cannot do under the branch ruleset (it is not a bypass actor,
+  # and its pushes don't trigger workflows anyway). So the bump is cut locally
+  # by the maintainer (an admin bypass actor) and only the resulting tag fires
+  # this workflow — keeping branch protection intact with no long-lived PAT.
   push:
     tags:
       - 'v*'
       - '[0-9]*'
-  # One-click release entry point: `gh workflow run release.yml -f version=0.1.16`
-  # (or via the GitHub Actions UI) runs the `bump-version` job below, which
-  # bumps every manifest in lockstep, commits, tags, and pushes — then the
-  # rest of this workflow builds + drafts the release in the same run.
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'New semver version (e.g. 0.1.16, no leading "v")'
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -23,76 +23,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Bump all version manifests in lockstep, commit, tag, and push.
-  # Runs ONLY on `workflow_dispatch`; tag-push runs skip this job (the
-  # `if:` is false). Downstream jobs depend on this via `needs:` —
-  # GitHub Actions treats a skipped `needs:` predecessor as success, so
-  # tag-push runs proceed straight to `verify-version` without waiting.
-  # The heavy lifting lives in `scripts/bump-version.sh` (single source
-  # of truth — same script runs locally).
-  bump-version:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    # PEND-41 R1 — no historical sample (workflow_dispatch-only path). Bumps
-    # 5 manifests in lockstep + commit + tag + push. Conservative 10-min budget.
-    timeout-minutes: 10
-    permissions:
-      contents: write  # pushes commits + tags back to main
-    steps:
-      - name: Checkout (with full history so we can push back)
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-          # GITHUB_TOKEN's `contents: write` is enough to push commits +
-          # tags back to main. Note: pushes via GITHUB_TOKEN do not
-          # trigger downstream workflow runs by GH design — which is
-          # why the build matrix in this same run (via `needs:`) is the
-          # path that actually produces the release artifacts, not a
-          # second `release.yml` run kicked off by the tag push.
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # zizmor: artipacked baseline entry remains — bump-version
-          # pushes commits + tags back to main, which needs the token
-          # persisted to git config. Setting persist-credentials: false
-          # here would break the push step below.
-          persist-credentials: true
-      - name: Set up Rust toolchain (for `cargo update`)
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - name: Set up Node.js (for `npm install --package-lock-only`)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-      - name: Import GPG signing key
-        # `bump-version.sh` does `git commit -S` + `git tag -s` because
-        # main has a `required_signatures` ruleset (a bypass would defeat
-        # the rule). The runner has no GPG identity by default, so we
-        # import the maintainer's key from repo secrets (GPG_PRIVATE_KEY
-        # + GPG_PASSPHRASE — see docs/architecture/ci-and-tooling.md for
-        # the setup steps). The action also configures git user.name /
-        # user.email from the key's UID and points commit.gpgsign at it,
-        # so we no longer need the explicit `git config user.*` step that
-        # used the github-actions[bot] identity (which would have made
-        # the signature's author and the commit's author mismatch).
-        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
-        with:
-          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
-          passphrase: ${{ secrets.GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_commit_gpgsign: true
-          git_tag_gpgsign: true
-      - name: Run scripts/bump-version.sh with --commit --tag --push
-        # Pass `inputs.version` via env: rather than direct ${{ }}
-        # interpolation in the script body — defuses zizmor's
-        # template-injection rule by construction.
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          chmod +x scripts/bump-version.sh
-          scripts/bump-version.sh "$INPUT_VERSION" --commit --tag --push
-      - name: Summary
-        env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
-        run: |
-          echo "::notice title=Tagged $INPUT_VERSION::Release pipeline now building $INPUT_VERSION."
 
   # Guard against version drift between the git tag and the in-repo
   # manifests. tauri-action names release bundles + the in-app version
@@ -102,20 +32,9 @@ jobs:
   # `--version` strings say another, and the Tauri updater compares the
   # wrong number against the manifest. Fail fast before any heavy build
   # job spins up. Tag may be `0.1.14` or `v0.1.14`; strip a leading `v`
-  # before comparing.
+  # before comparing. This is the FIRST job — a release is driven solely by a
+  # tag push (scripts/release.sh), so there is no bump job upstream of it.
   verify-version:
-    needs: bump-version
-    # GitHub Actions treats a skipped `needs:` predecessor as "skipped"
-    # for downstream jobs (NOT "success" as the original MAINT-114
-    # comment claimed). Without an explicit `if:`, every release pushed
-    # via tag (the common path) cascade-skips through verify-version →
-    # validate → build-and-release → android-build-and-release and the
-    # release artifacts never publish — that is exactly what happened
-    # to 0.1.17 and 0.1.18 before this fix. Allow the job when its
-    # predecessor either succeeded (workflow_dispatch path) or was
-    # skipped (tag-push path), but block on real failures or
-    # cancellation.
-    if: ${{ !cancelled() && (needs.bump-version.result == 'success' || needs.bump-version.result == 'skipped') }}
     runs-on: ubuntu-24.04
     # PEND-41 R1 — no historical sample. Trivial jq / grep / awk over the 5
     # manifests + fail-fast comparison; 5-min budget is generous.
@@ -145,10 +64,6 @@ jobs:
 
   # Run the same validation as `prek run --all-files` locally before letting
   # the release matrix build any artifacts. Source of truth: prek.toml.
-  #
-  # `if:` mirrors verify-version — without it the upstream skip of
-  # `bump-version` (workflow_dispatch-only) cascades through this and
-  # the build matrix on every tag-push release, so no artefacts publish.
   validate:
     needs: verify-version
     if: ${{ !cancelled() && needs.verify-version.result == 'success' }}
@@ -596,19 +511,20 @@ jobs:
 
       # OpenSSF Scorecard's `Signed-Releases` check only inspects the
       # release-page asset list — it does not query the Sigstore
-      # transparency log. So `attest-build-provenance` alone gets us
-      # Sigstore-verifiable provenance (which `gh attestation verify`
-      # consumes) but a 0/10 on the score, because the heuristic looks
-      # for `*.sigstore.json` / `*.intoto.jsonl` / `*.sig` files
-      # attached to the release.
+      # transparency log. It scores per release purely by asset-name suffix:
+      #   * a `.sigstore.json` / `.sig` / `.asc` asset → SIGNED (8/10)
+      #   * a `.intoto.jsonl` provenance asset         → PROVENANCE (10/10)
+      # (verified against the scorecard binary v5.3.0 that action v2.4.3
+      # pins; the provenance probe matches ONLY the `.intoto.jsonl` suffix,
+      # so a `.sigstore.json` bundle alone caps the release at 8).
       #
-      # The Attest steps above expose a `bundle-path` output pointing at
-      # the local Sigstore bundle they just published. We copy it to a
-      # per-platform name (so Linux/Windows/macOS bundles don't clash on
-      # the same release asset slot) and `gh release upload` it.
-      # End users gain a one-click verification artifact; Scorecard's
-      # heuristic flips 0 → 10. `gh attestation verify` continues to
-      # work via the Sigstore log; this is purely additive.
+      # The Attest steps above expose a `bundle-path` output pointing at the
+      # local Sigstore bundle. We attach it under a per-platform name (so
+      # Linux/Windows/macOS bundles don't clash on one asset slot) for the
+      # signature dimension, AND (next step) decode its DSSE payload — itself
+      # the in-toto SLSA statement — into a sibling `.intoto.jsonl` for the
+      # provenance dimension. `gh attestation verify` keeps working via the
+      # Sigstore log; both uploads are purely additive.
       - name: Upload SLSA attestation bundle to release (Linux)
         if: matrix.platform == 'ubuntu-24.04' && steps.attest_linux.outputs.bundle-path != ''
         env:
@@ -625,6 +541,23 @@ jobs:
           cp "$BUNDLE_SRC" "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
+      - name: Upload in-toto provenance to release (Linux)
+        if: matrix.platform == 'ubuntu-24.04' && steps.attest_linux.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_linux.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Decode the bundle's base64 DSSE payload(s) into one in-toto
+          # statement per line. jq streams the file, so this handles both a
+          # single-subject bundle and a JSONL multi-subject bundle; the
+          # `// .payload` fallback covers older flat bundle shapes.
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.intoto.jsonl"
+          jq -r '(.dsseEnvelope.payload // .payload) | @base64d' "$BUNDLE_SRC" > "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
       - name: Upload SLSA attestation bundle to release (Windows)
         if: matrix.platform == 'windows-2025-vs2026' && steps.attest_windows.outputs.bundle-path != ''
         env:
@@ -638,6 +571,20 @@ jobs:
           cp "$BUNDLE_SRC" "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
+      # Provenance counterpart of the .sigstore.json above (see Linux step).
+      - name: Upload in-toto provenance to release (Windows)
+        if: matrix.platform == 'windows-2025-vs2026' && steps.attest_windows.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_windows.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.intoto.jsonl"
+          jq -r '(.dsseEnvelope.payload // .payload) | @base64d' "$BUNDLE_SRC" > "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
       - name: Upload SLSA attestation bundle to release (macOS)
         if: matrix.platform == 'macos-15' && steps.attest_macos.outputs.bundle-path != ''
         env:
@@ -649,6 +596,20 @@ jobs:
           set -euo pipefail
           dest="${RUNNER_TEMP}/agaric-${TARGET}.sigstore.json"
           cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
+      # Provenance counterpart of the .sigstore.json above (see Linux step).
+      - name: Upload in-toto provenance to release (macOS)
+        if: matrix.platform == 'macos-15' && steps.attest_macos.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_macos.outputs.bundle-path }}
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-${TARGET}.intoto.jsonl"
+          jq -r '(.dsseEnvelope.payload // .payload) | @base64d' "$BUNDLE_SRC" > "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       # PEND-41 R9 — attach the per-platform SBOMs to the draft release
@@ -924,6 +885,20 @@ jobs:
           cp "$BUNDLE_SRC" "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
+      # Provenance counterpart of the .sigstore.json above (see the Linux
+      # build-and-release step for the full rationale).
+      - name: Upload in-toto provenance to release (Android)
+        if: steps.attest_android.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_android.outputs.bundle-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dest="${RUNNER_TEMP}/agaric-android-aarch64.intoto.jsonl"
+          jq -r '(.dsseEnvelope.payload // .payload) | @base64d' "$BUNDLE_SRC" > "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
       - name: Upload Android APK to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -985,7 +960,7 @@ jobs:
           # version (which verify-version already proved matches the
           # tag). Routed via env: rather than direct ${{ }} in the
           # `run:` body to defuse zizmor's template-injection rule
-          # (same pattern as bump-version.sh invocation above).
+          # (same env-indirection pattern used throughout this workflow).
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
@@ -1060,6 +1035,22 @@ jobs:
           VERSION="${TAG#v}"
           dest="${RUNNER_TEMP}/agaric-${VERSION}.openvex.sigstore.json"
           cp "$BUNDLE_SRC" "$dest"
+          gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
+
+      # Provenance counterpart of the .sigstore.json above (see the Linux
+      # build-and-release step for the full rationale).
+      - name: Upload in-toto provenance to release (VEX)
+        if: steps.attest_vex.outputs.bundle-path != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_SRC: ${{ steps.attest_vex.outputs.bundle-path }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          dest="${RUNNER_TEMP}/agaric-${VERSION}.intoto.jsonl"
+          jq -r '(.dsseEnvelope.payload // .payload) | @base64d' "$BUNDLE_SRC" > "$dest"
           gh release upload "${GITHUB_REF_NAME}" "$dest" --clobber
 
       - name: Upload OpenVEX document to release
