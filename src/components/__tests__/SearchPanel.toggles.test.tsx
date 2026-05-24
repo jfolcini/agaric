@@ -404,6 +404,40 @@ describe('SearchPanel invalid-regex announcement (UX-A2)', () => {
     expect(within(status).queryByTestId('search-results-count')).toBeNull()
   })
 
+  it('does NOT surface the inline regex alert for an `InvalidRegex:` error when regex mode is OFF', async () => {
+    // PEND-70 CR11 — case-sensitive / whole-word mode builds a *literal*
+    // match regex server-side; an oversized literal makes the backend reject
+    // with an `InvalidRegex:`-prefixed message even though the user never
+    // enabled regex. The inline "invalid regex" alert must NOT fire in that
+    // case — the failure falls through to the generic error body + status.
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_blocks') {
+        throw new Error('InvalidRegex: pattern too large')
+      }
+      return emptyPage
+    })
+    render(<SearchPanel />)
+
+    // Regex toggle stays OFF (the default); use the case-sensitive toggle to
+    // reflect the literal-match mode that triggers the backend rejection.
+    const caseButton = screen.getByTestId('search-toggle-case-sensitive')
+    fireEvent.click(caseButton)
+    expect(caseButton).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('search-toggle-regex')).toHaveAttribute('aria-pressed', 'false')
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'a'.repeat(50))
+
+    // The generic error body owns the failure...
+    await waitFor(() => {
+      expect(screen.getByTestId('search-error-state')).toBeInTheDocument()
+    })
+    // ...and the inline regex alert must never appear in non-regex mode.
+    expect(screen.queryByTestId('search-inline-error')).toBeNull()
+    // The status region announces the generic failure (not a double-suppress).
+    expect(screen.getByTestId('search-results-status')).toHaveTextContent(t('search.statusError'))
+  })
+
   it('still announces the generic failure for a non-regex backend error', async () => {
     // A plain backend error (no `InvalidRegex:` prefix) must still light
     // up the status region — UX-A2 only suppresses the regex case.

@@ -150,13 +150,20 @@ export function useSearchResults({
   // raw IPC error and surface it inline. Derived synchronously (not via an
   // effect) so the status region's generic-error suppression is single-commit.
   const regexError = useMemo<string | null>(() => {
+    // PEND-70 CR11 — the inline regex alert is regex-mode-only. In
+    // case-sensitive / whole-word mode the backend builds a *literal* match
+    // regex internally; an oversized literal makes `build_regex` reject with an
+    // `InvalidRegex:`-prefixed error. Surfacing that as "invalid regex" to a
+    // user who never enabled regex is misleading — fall through to the generic
+    // error state instead by short-circuiting here.
+    if (!toggles.isRegex) return null
     if (!error) return null
     const msg = typeof error === 'string' ? error : ''
     const prefix = 'InvalidRegex:'
     const idx = msg.indexOf(prefix)
     if (idx < 0) return null
     return t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() })
-  }, [error, t])
+  }, [error, t, toggles.isRegex])
 
   // Resolve page titles for breadcrumbs when results change.
   useEffect(() => {
