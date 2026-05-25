@@ -641,15 +641,21 @@ pub async fn reproject_block_properties_from_engine(
 /// `tag_ids`, so the stale SQL edge is swept by the up-front DELETE and
 /// never re-inserted.
 ///
-/// ## FK ordering
+/// ## FK safety (dangling / cross-space tag ids)
 ///
-/// `block_tags.tag_id` has an FK to `blocks(id)` (the tag block), so
-/// every referenced tag block must already exist in SQL before the
-/// INSERT.  `apply_remote` guarantees this by running the core upsert
-/// pass (`project_block_full_to_sql`) over *every* changed block —
-/// including the tag blocks themselves — before this tag-reprojection
-/// pass.  The `INSERT OR IGNORE` mirrors the local path
-/// (`commands/tags.rs::add_tag_inner`) and keeps the helper idempotent.
+/// `block_tags.tag_id` has an FK to `blocks(id)` (the tag block).
+/// `apply_remote` upserts every changed block — including tag blocks —
+/// in the core pass before this one, so the common case is covered. But
+/// `read_tags` can still return a tag id with **no** `blocks` row: the
+/// engine's `apply_purge_block` removes a purged tag block's own entries
+/// without scrubbing the dangling element it left in *other* blocks' tag
+/// lists, and a cross-space tag block isn't in this space's doc at all.
+/// `INSERT OR IGNORE` suppresses only UNIQUE conflicts, **not** FK
+/// violations — an unguarded insert of such an id would abort the whole
+/// inbound-sync tx (and keep failing on retry). So the INSERT is gated on
+/// the tag block existing: a dangling/foreign edge is silently dropped,
+/// matching the engine's intent (the tag block is gone) without breaking
+/// the sync.
 pub async fn reproject_block_tags_from_engine(
     conn: &mut SqliteConnection,
     block_id: &crate::ulid::BlockId,
@@ -663,11 +669,18 @@ pub async fn reproject_block_tags_from_engine(
         .await?;
 
     for tag_id in tag_ids {
-        sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-            .bind(block_id.as_str())
-            .bind(tag_id)
-            .execute(&mut *conn)
-            .await?;
+        // FK-safe + idempotent: only insert when the tag block exists (see
+        // the "FK safety" doc above); `INSERT OR IGNORE` keeps re-adds a
+        // no-op like the local `add_tag_inner` path.
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+        )
+        .bind(block_id.as_str())
+        .bind(tag_id)
+        .bind(tag_id)
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -1961,6 +1974,40 @@ mod tests {
             ids,
             vec![BLOCK_B.to_string()],
             "stale TAG_C edge swept; only BLOCK_B remains"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_skips_dangling_tag_id_without_fk_abort() {
+        // A tag_id with no `blocks` row — e.g. a purged tag block leaves a
+        // dangling element in another block's engine tag list — must be
+        // dropped, NOT FK-abort the inbound-sync tx. `INSERT OR IGNORE` does
+        // not suppress FK violations, so the helper gates on existence.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let tag_ids = vec![
+            BLOCK_B.to_string(),                      // exists → projected
+            "01J0000000000000000000000Z".to_string(), // dangling → dropped
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &tag_ids)
+            .await
+            .expect("must not FK-abort on a dangling tag id");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string()],
+            "dangling tag id dropped; the valid edge is still projected"
         );
     }
 }
