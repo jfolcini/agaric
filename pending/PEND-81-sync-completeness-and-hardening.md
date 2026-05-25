@@ -18,14 +18,23 @@ regardless of whether iroh ever lands.
 > (decoupled from the junk `peer_refs` row via a `sync.pending_pairing` marker),
 > plus the F4/F5 space-correctness fixes. This plan covers what remains.
 
-**PROGRESS (2026-05-25): §2A items #1 (properties) + #2 (tags) shipped.**
+**PROGRESS (2026-05-25): §2A items #1 (properties), #2 (tags), #4 (derived
+caches), and reserved hot-path keys shipped.**
 `apply_remote` now re-projects inbound **typed properties** (via
-`property_definitions` routing — no engine-model migration needed) and **tags +
-inherited tags** (`reproject_block_*_from_engine` + `tag_inheritance::rebuild_all`)
-from the engine to SQL. **Remaining §2A:** #3 soft-delete/restore (needs Phase-2
-real `deleted_at`), reserved hot-path property keys + agenda derivation, #4 derived
-caches beyond `block_tag_inherited` (FTS/pages/agenda), #5 hard-delete cascade; plus
-the targeted (non-global) inheritance reindex perf follow-up.
+`property_definitions` routing — no engine-model migration needed), **tags +
+inherited tags** (`reproject_block_*_from_engine` + `tag_inheritance::rebuild_all`),
+and the **reserved hot-path columns** (`todo_state`/`priority`/`due_date`/
+`scheduled_date`, authoritative-replace in `reproject_block_properties_from_engine`)
+from the engine to SQL. **#4 derived caches** now rebuild after every inbound import:
+the orchestrator's formerly-`dead_code` `materializer` handle is wired — the
+`ApplyOutcome::Imported` arm enqueues `Materializer::enqueue_inbound_sync_rebuilds`
+(the `FULL_CACHE_REBUILD_TASKS` fan-out — tags/pages/agenda/projected-agenda/
+page-ids/block-tag-refs/page-links — plus `RebuildFtsIndex`) on the background queue,
+which also closes the agenda derivation for the re-projected hot-path columns.
+**Remaining §2A (both blocked on PEND-80 Phase 2):** #3 soft-delete/restore (needs
+real `deleted_at` + descendant marking — re-projecting blind would resurrect
+soft-deleted descendants) and #5 hard-delete (purge) cascade; plus the targeted
+(non-global) inheritance/cache reindex perf follow-up.
 
 ---
 

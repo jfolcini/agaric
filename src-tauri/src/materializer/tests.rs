@@ -2232,6 +2232,53 @@ async fn pages_cache_after_create_page() {
         "page title in cache should match created page"
     );
 }
+
+#[tokio::test]
+async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
+    // PEND-81 §2A #4: after an inbound sync writes the per-block SQL
+    // projection, the orchestrator enqueues this fan-out so the read-path
+    // derived caches + FTS converge to the imported state. Seed a tag, a
+    // page, and a content block directly (as `apply_remote`'s per-block
+    // projection would), run the fan-out, and assert each corresponding
+    // cache was rebuilt.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block_direct(&pool, "SYNC_TAG_1", "tag", "synced-tag").await;
+    insert_block_direct(&pool, "SYNC_PAGE_1", "page", "Synced Page").await;
+    insert_block_direct(&pool, "SYNC_NOTE_1", "content", "searchable inbound text").await;
+
+    mat.enqueue_inbound_sync_rebuilds()
+        .expect("enqueue inbound sync rebuilds");
+    mat.flush_background().await.expect("flush background");
+
+    let tag_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tags_cache WHERE tag_id = 'SYNC_TAG_1'")
+            .fetch_one(&pool)
+            .await
+            .expect("count tags_cache");
+    assert_eq!(tag_rows, 1, "RebuildTagsCache ran for the synced tag block");
+
+    let page_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = 'SYNC_PAGE_1'")
+            .fetch_one(&pool)
+            .await
+            .expect("count pages_cache");
+    assert_eq!(
+        page_rows, 1,
+        "RebuildPagesCache ran for the synced page block"
+    );
+
+    let fts_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = 'SYNC_NOTE_1'")
+            .fetch_one(&pool)
+            .await
+            .expect("count fts_blocks");
+    assert_eq!(
+        fts_rows, 1,
+        "RebuildFtsIndex ran for the synced content block"
+    );
+}
 #[tokio::test]
 async fn tags_cache_after_delete() {
     let (pool, _dir) = test_pool().await;

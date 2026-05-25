@@ -340,6 +340,10 @@ mod tests {
 
     const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const SPACE_B: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+    /// Distinct space for the periodic-snapshot smoke test. The global
+    /// registry is shared within a test binary, so this ULID must not
+    /// collide with `SPACE_A`/`SPACE_B` above.
+    const SPACE_PERIODIC: &str = "01J0PERIODICSNAP000000TEST";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
@@ -536,5 +540,65 @@ mod tests {
         hydrated.import(&bytes).expect("import");
         let snap = hydrated.read_block("BLOCK_A").unwrap().unwrap();
         assert_eq!(snap.content, "in A");
+    }
+
+    /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in
+    /// [`spawn_periodic_snapshot`]. Drives the real spawned task end to
+    /// end: install the process-global state, register + mutate an
+    /// engine, spawn the periodic task with a 1-second cadence, then poll
+    /// `loro_doc_state` until the engine's snapshot row appears. The task
+    /// skips its first `interval.tick()` and pulls state from
+    /// `crate::loro::shared::get()`, so this exercises the spawn, the tick
+    /// loop, and the `save_all_engines` call the seam exists to cover.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_periodic_snapshot_persists_engine_state() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_PERIODIC);
+
+        // Install fresh process-global state and register an engine the
+        // task can find via `crate::loro::shared::get()`. Mutate it so
+        // the exported snapshot is non-trivial.
+        let state = crate::loro::shared::install_for_test();
+        {
+            let mut g = state
+                .registry
+                .for_space(&space, "device-periodic")
+                .expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_PERIODIC", "content", "tick", None, 0)
+                .expect("create");
+        }
+
+        // Spawn the periodic task (1s cadence). The first tick is skipped,
+        // so the first persist lands ~1s in.
+        let shutdown = Arc::new(AtomicBool::new(false));
+        spawn_periodic_snapshot(pool.clone(), shutdown.clone(), 1);
+
+        // Poll for the row rather than sleeping a fixed interval: bounded
+        // loop, ~5s total timeout, short sleeps in between. Deterministic
+        // and non-flaky — succeeds as soon as the snapshot lands.
+        let mut persisted = false;
+        for _ in 0..50 {
+            let row = load_snapshot(&pool, &space).await.expect("load");
+            if row.is_some() {
+                persisted = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Stop the task before asserting so a failure doesn't leave it
+        // running against a half-torn-down pool.
+        shutdown.store(true, Ordering::Relaxed);
+
+        assert!(
+            persisted,
+            "periodic snapshot task should persist a loro_doc_state row \
+             for the space within ~5s"
+        );
     }
 }

@@ -162,6 +162,48 @@ impl Materializer {
         Ok(())
     }
 
+    /// Enqueue the read-path derived-cache + FTS rebuild fan-out after an
+    /// inbound sync import (PEND-81 §2A #4).
+    ///
+    /// The loro-sync receiver ([`crate::sync_protocol::loro_sync::apply_remote`])
+    /// writes each changed block's per-block SQL projection — core columns,
+    /// properties incl. the reserved hot-path columns, and direct tag edges —
+    /// and synchronously rebuilds `block_tag_inherited`. But the read-path
+    /// derived caches (`tags_cache`, `pages_cache`, `agenda_cache`,
+    /// projected-agenda, `page_id`, `block_tag_refs`, the page-link roll-up)
+    /// and the FTS index are NOT refreshed by that per-block projection, so a
+    /// remote tag/property/content change would silently diverge in those
+    /// caches until the next local mutation or snapshot restore. This enqueues
+    /// a global rebuild of each via the background queue — eventually
+    /// consistent + deduped — mirroring the fan-out a local block-structure
+    /// mutation triggers ([`FULL_CACHE_REBUILD_TASKS`]) plus a full FTS
+    /// reindex.
+    ///
+    /// `RebuildTagInheritanceCache` is part of [`FULL_CACHE_REBUILD_TASKS`]
+    /// and is enqueued here even though `apply_remote` already rebuilt
+    /// `block_tag_inherited` synchronously. That synchronous rebuild runs
+    /// directly against the pool, so the queue's dedup pass does NOT collapse
+    /// it (dedup only spans queue-side tasks within one drain) — `rebuild_all`
+    /// simply runs once more. This is harmless: it is a fully idempotent
+    /// DELETE-all + recursive-CTE recompute. Keeping the canonical
+    /// [`FULL_CACHE_REBUILD_TASKS`] set whole (rather than hand-excluding the
+    /// tag-inheritance task) means a future change to that set reaches the sync
+    /// path automatically.
+    ///
+    /// Non-fatal by convention at the call site: a queue-closed / serialization
+    /// error must not unwind the sync session (the per-block projection has
+    /// already committed), so the orchestrator logs and continues.
+    pub fn enqueue_inbound_sync_rebuilds(&self) -> Result<(), AppError> {
+        for task in FULL_CACHE_REBUILD_TASKS {
+            self.try_enqueue_background(task.clone())?;
+        }
+        // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
+        // per-block via `UpdateFtsBlock`). Inbound sync touches arbitrary
+        // block content, so do a full FTS reindex.
+        self.try_enqueue_background(MaterializeTask::RebuildFtsIndex)?;
+        Ok(())
+    }
+
     /// Enqueue a foreground `ApplyOp` and the matching background fan-out
     /// for `record`, ensuring the bg tasks land **after** ApplyOp has
     /// drained.

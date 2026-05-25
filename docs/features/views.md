@@ -9,16 +9,18 @@ This file covers the other sidebar views and the page editor.
 
 ## Search
 
-Reachable via the sidebar Search icon or `Ctrl+F` from anywhere.
+Reachable via the sidebar Search icon or `Ctrl+Shift+F` (this is the find-across-pages view; `Ctrl+F` is the separate in-page find). **[../SEARCH.md](../SEARCH.md) is the source of truth** for the full filter DSL, toggles, regex, and mobile behaviour — this is the view-level overview.
 
-- **Full-text search** across every block in the active space.
-- **Debounced** as you type; results re-fetch after a short pause.
-- **Press Enter** to commit immediately without waiting for the debounce.
-- **Filter chips**: scope by *page* (multi-select) and by *tag* (multi-select).
-- **Alias resolution**: typing a page alias surfaces that page's title in results.
-- **CJK note**: full-text search does not currently tokenise CJK languages with word-boundary intelligence — substring matches still work.
-- **Cursor pagination**: *Load more* fetches the next page.
-- **Click a result** to navigate; the block scrolls into view and focuses.
+- **Full-text search** across every block in the active space, **debounced** as you type. **Press Enter** to commit immediately without waiting for the debounce.
+- **Inline filter DSL**: type structural filters straight into the input — `tag:#urgent`, `path:Journal/*`, `state:TODO`, `priority:1`, `due:this-week`, `scheduled:today`, `prop:key=value`, plus the `AND`/`OR`/`NOT` boolean operators. A query made only of filters still searches (returns matching blocks, most-recent first). **Filter-prefix autocomplete** suggests values as you type a recognised prefix.
+- **`+ Filter ▾` builder**: a guided popover above the chip row adds the same filters without memorising the syntax. Every chip is a projection of the parsed query, so the query string stays canonical — copy-pasting a query reproduces every filter exactly.
+- **Toggles** (right of the input): case-sensitive (`Aa`), whole-word (`Ab|`), and regex (`.*`). Preferences persist across windows in `localStorage`.
+- **Filter chips**: scope by *page* (multi-select) and by *tag* (multi-select); **alias resolution** surfaces a page's title from a typed alias.
+- **Per-space history**: with the input empty, `↑` / `↓` recall the last 20 submitted queries (most-recent first), partitioned per space.
+- **In-app help**: the `?` button in the toolbar opens a reference dialog (filter syntax, toggles, regex, boolean operators, tips).
+- **CJK note**: full-text search does not currently tokenise CJK languages with word-boundary intelligence — substring matches still work, but the whole-word toggle does not match CJK.
+- **Cursor pagination**: *Load more* fetches the next page. **Click a result** to navigate; the block scrolls into view and focuses.
+- **Mobile**: touch devices reach search through a single Sheet (magnifying-glass, top-right) with *In this page* / *Across all pages* segments; the across-pages segment can escalate into this full find-across-pages view.
 
 ## Pages
 

@@ -484,7 +484,8 @@ pub async fn project_block_full_to_sql(
 }
 
 /// Re-project a block's full property set from the engine into the SQL
-/// `block_properties` table after a sync-pull import.
+/// `block_properties` table (non-reserved keys) and the dedicated
+/// `blocks` hot-path columns (reserved keys) after a sync-pull import.
 ///
 /// This closes the PEND-76 F1 property-propagation residual:
 /// [`project_block_full_to_sql`] deliberately touches only the core
@@ -515,15 +516,27 @@ pub async fn project_block_full_to_sql(
 /// represented as row-absent (no INSERT; the up-front DELETE already
 /// cleared any prior row), matching "cleared property" semantics.
 ///
-/// ## Reserved keys are out of scope
+/// ## Reserved keys → hot-path `blocks` columns (PEND-81 §2A)
 ///
 /// Reserved property keys (`todo_state`, `priority`, `due_date`,
 /// `scheduled_date`) live on dedicated `blocks` columns, not in
-/// `block_properties`, so they are skipped here.  Re-projecting those
-/// hot-path columns from the engine on inbound sync is a follow-up
-/// (it must coordinate with `project_block_full_to_sql`'s deliberate
-/// non-touching of those columns to avoid resurrecting soft-deleted
-/// cohorts).
+/// `block_properties`, so they are skipped by the `block_properties`
+/// pass above.  A second pass re-projects them to their columns,
+/// mirroring the local [`project_set_property_to_sql`] routing
+/// (`todo_state`/`priority` → text columns; `due_date`/`scheduled_date`
+/// → date columns; the engine stores all four as a single string that
+/// maps directly).  Authoritative-replace holds here too: a single
+/// `UPDATE` sets each column from the engine value and NULLs any
+/// reserved key *absent* from `props`, so a remote delete/clear of a
+/// hot-path key propagates.
+///
+/// This pass touches only the four hot-path columns — never `deleted_at`
+/// — so it cannot resurrect a soft-deleted cohort (re-projecting a
+/// hot-path value onto an already-soft-deleted block is harmless: every
+/// read path filters by `deleted_at`).  The agenda/projected-agenda
+/// caches that read `due_date`/`scheduled_date`/`todo_state` are rebuilt
+/// by the inbound-sync cache fan-out
+/// ([`crate::materializer::Materializer::enqueue_inbound_sync_rebuilds`]).
 pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
     block_id: &crate::ulid::BlockId,
@@ -550,7 +563,7 @@ pub async fn reproject_block_properties_from_engine(
     for (key, value) in props {
         if is_reserved_property_key(key) {
             // Reserved keys map to dedicated `blocks` columns, never
-            // `block_properties`.  Skip (see fn-level doc / follow-up).
+            // `block_properties`.  Handled by the reserved-key pass below.
             continue;
         }
 
@@ -618,6 +631,41 @@ pub async fn reproject_block_properties_from_engine(
         .execute(&mut *conn)
         .await?;
     }
+
+    // Reserved hot-path keys → dedicated `blocks` columns (PEND-81 §2A).
+    // Authoritative-replace: collect each reserved key's engine value
+    // (None when absent / cleared on the remote), then a single UPDATE
+    // sets all four columns at once — present keys to their value, absent
+    // keys to NULL. `todo_state`/`priority` are text; `due_date`/
+    // `scheduled_date` are date strings; the engine stores each as one
+    // string that maps directly to the column (mirrors the local
+    // `project_set_property_to_sql` routing).
+    let mut todo_state: Option<&str> = None;
+    let mut priority: Option<&str> = None;
+    let mut due_date: Option<&str> = None;
+    let mut scheduled_date: Option<&str> = None;
+    for (key, value) in props {
+        match key.as_str() {
+            "todo_state" => todo_state = value.as_deref(),
+            "priority" => priority = value.as_deref(),
+            "due_date" => due_date = value.as_deref(),
+            "scheduled_date" => scheduled_date = value.as_deref(),
+            _ => {}
+        }
+    }
+    sqlx::query(
+        "UPDATE blocks SET \
+             todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
+         WHERE id = ?",
+    )
+    .bind(todo_state)
+    .bind(priority)
+    .bind(due_date)
+    .bind(scheduled_date)
+    .bind(block_id.as_str())
+    .execute(&mut *conn)
+    .await?;
+
     Ok(())
 }
 
@@ -1882,6 +1930,101 @@ mod tests {
         assert_eq!(
             count.0, 0,
             "null/unparseable values produce no row; stale row swept"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_routes_reserved_keys_to_blocks_columns() {
+        // PEND-81 §2A: reserved hot-path keys must land on the dedicated
+        // `blocks` columns (todo_state / priority / due_date /
+        // scheduled_date), NOT in block_properties.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![
+            ("todo_state".to_string(), Some("DOING".to_string())),
+            ("priority".to_string(), Some("A".to_string())),
+            ("due_date".to_string(), Some("2026-02-01".to_string())),
+            ("scheduled_date".to_string(), Some("2026-01-15".to_string())),
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject reserved keys");
+        drop(conn);
+
+        let row: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = sqlx::query_as(
+            "SELECT todo_state, priority, due_date, scheduled_date FROM blocks WHERE id = ?",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch reserved columns");
+        assert_eq!(
+            row,
+            (
+                Some("DOING".into()),
+                Some("A".into()),
+                Some("2026-02-01".into()),
+                Some("2026-01-15".into()),
+            ),
+            "reserved keys routed to their dedicated blocks columns"
+        );
+
+        // None of them leaked into block_properties.
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("count props");
+        assert_eq!(count.0, 0, "reserved keys never land in block_properties");
+    }
+
+    #[tokio::test]
+    async fn reproject_clears_reserved_key_absent_from_props() {
+        // A reserved key set on a first sync, then absent (cleared / deleted
+        // on the remote) on a re-sync, must NULL its blocks column —
+        // authoritative-replace, mirroring a remote DeleteProperty.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+        let bid = BlockId::from_trusted(BLOCK_A);
+
+        // Sync 1 — todo_state + due_date present.
+        let props1 = vec![
+            ("todo_state".to_string(), Some("TODO".to_string())),
+            ("due_date".to_string(), Some("2026-03-03".to_string())),
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props1)
+            .await
+            .expect("reproject 1");
+        drop(conn);
+
+        // Sync 2 — both absent (cleared on remote).
+        let props2: Vec<(String, Option<String>)> = vec![];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props2)
+            .await
+            .expect("reproject 2");
+        drop(conn);
+
+        let row: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT todo_state, due_date FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch reserved columns");
+        assert_eq!(
+            row,
+            (None, None),
+            "reserved keys absent from props on re-sync are NULLed"
         );
     }
 

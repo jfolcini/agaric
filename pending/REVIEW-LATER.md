@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-31 open items in the summary table; 31 detail entries (FE-* sub-tables don't appear in the summary).
+30 open items in the summary table; 30 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -49,7 +49,6 @@ Items flagged during development that need revisiting. Organized by section with
 | CR-PERSIST | CR | `tabs` + `journal` zustand persist stores set `version` but provide no `migrate` (`stores/tabs.ts:424`, `stores/journal.ts:142`) — the day anyone bumps to `version:2`, the persisted blob is silently discarded to defaults (open tabs / per-space journal dates lost). No current bug (both at v1); `search-history.ts` added a no-op `migrate` placeholder for exactly this. Fix: add a pass-through/coercing `migrate` (not a one-liner — mirror search-history's care). | M | — |
 | CR-UX | CR | Search-view touch/UX residuals (from PEND-58g): UX-A8 always-visible/long-press toggle-mode explanation for touch (Radix tooltips don't fire on tap; inline labels overflow a narrow row), plus UX-A10/A12/A13 (history dropdown overlay vs inline; capped+error co-render; RTL physical spacing). | S | Design decision + runtime verification |
 | CR-E2E-TAURI | CR | Tauri-driven e2e harness (from PEND-58g E2E-A6/A3) — the web+mock `search_blocks` returns the whole match set in one page and never runs the real Rust FTS/regex pipeline, so `<mark>` highlight, real FTS/regex behavior, and multi-page Load-More are all unreachable on the current Playwright+mock harness. The only way to cover them. | L | — |
-| CR-MINOR | CR | Catch-all CR-campaign trivia: `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test (`loro/snapshot.rs:266`); `docs/features/views.md` Search section stale (SEARCH.md is source of truth); `rmcp_spike` "off by default" docstring contradicts wired-on behavior; filter-forms lack dedicated test files. | S | — |
 | TEST-PROPTEST-B | TEST | Property-test coverage — Tier B (DB-bound). proptest invariants for `reverse::compute_reverse` (inverse law + `OpType`→inverse mapping), `dag::walk_edit_chain`/`find_lca` (termination within `MAX_LCA_STEPS` / cycle / LCA-commutativity), `soft_delete` cascade/restore (idempotence/inverse/subtree-isolation), and block-descendant/position tree CTEs (closure / soft-delete filtering / position monotonicity). Cost is the shared seeded-DB fixture harness, not the assertions. Tier A (`word_diff` + `space_filter_canonical`) shipped 2026-05-25. Test-only. | M-L (harness is the bulk) | — |
 
 ### Quick wins (S-cost, ready to grab)
@@ -413,16 +412,3 @@ re-locate before editing.
   assert the IPC payload via `latestFilter`, never the filtered result set.
 - **Fix:** a Tauri-driven e2e harness exercising the real backend.
 - **Cost:** L. **Status:** Deferred.
-
-### CR-MINOR — campaign trivia (docs / test / diagnostic strings)
-- `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test exercises it
-  (`loro/snapshot.rs:266`) — add a smoke test or drop the seam.
-- `docs/features/views.md` Search section stale (missing the inline filter DSL, `+ Filter`
-  builder, toggles, per-space history, mobile escalation); `docs/SEARCH.md` is the source
-  of truth, so this is a low-priority refresh.
-- MCP stale docstring: `rmcp_spike` "off by default" contradicts wired-on behavior.
-- filter-forms (`src/components/search/filter-forms/`) lack dedicated test files
-  (covered transitively via `FilterHelperPopover.test.tsx`).
-- **Cost:** S. **Status:** Deferred. (Shipped 2026-05-25: recv-timeout string now
-  interpolates `RECV_TIMEOUT`; `get_block` docstring corrected to "excludes soft-deleted";
-  `handle_search` `space_id` now ULID-normalized like `parent_id`/`tag_ids`.)
