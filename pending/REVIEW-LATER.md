@@ -389,17 +389,14 @@ re-locate before editing.
 - **Cost:** L. **Status:** Deferred.
 
 ### CR-MINOR — campaign trivia (docs / test / diagnostic strings)
-- Stale `recv` timeout literal "30s" vs `RECV_TIMEOUT=180s` (`sync_net/connection.rs:494`
-  vs `:458`) — trivial (interpolate the constant).
 - `spawn_periodic_snapshot` has a `#[cfg(test)]` spawn-fn seam but no test exercises it
   (`loro/snapshot.rs:266`) — add a smoke test or drop the seam.
 - `docs/features/views.md` Search section stale (missing the inline filter DSL, `+ Filter`
   builder, toggles, per-space history, mobile escalation); `docs/SEARCH.md` is the source
   of truth, so this is a low-priority refresh.
-- MCP stale docstrings: `get_block` claims it returns soft-deleted blocks but filters
-  `deleted_at IS NULL` (`tools_ro.rs:567`); `rmcp_spike` "off by default" contradicts
-  wired-on behavior; `handle_search` `space_id` not ULID-normalized (`tools_ro.rs:794`)
-  unlike parent_id/tag_ids → lowercase space ULID silently returns empty.
+- MCP stale docstring: `rmcp_spike` "off by default" contradicts wired-on behavior.
 - filter-forms (`src/components/search/filter-forms/`) lack dedicated test files
   (covered transitively via `FilterHelperPopover.test.tsx`).
-- **Cost:** S. **Status:** Deferred.
+- **Cost:** S. **Status:** Deferred. (Shipped 2026-05-25: recv-timeout string now
+  interpolates `RECV_TIMEOUT`; `get_block` docstring corrected to "excludes soft-deleted";
+  `handle_search` `space_id` now ULID-normalized like `parent_id`/`tag_ids`.)
