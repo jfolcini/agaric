@@ -18,6 +18,15 @@ regardless of whether iroh ever lands.
 > (decoupled from the junk `peer_refs` row via a `sync.pending_pairing` marker),
 > plus the F4/F5 space-correctness fixes. This plan covers what remains.
 
+**PROGRESS (2026-05-25): §2A items #1 (properties) + #2 (tags) shipped.**
+`apply_remote` now re-projects inbound **typed properties** (via
+`property_definitions` routing — no engine-model migration needed) and **tags +
+inherited tags** (`reproject_block_*_from_engine` + `tag_inheritance::rebuild_all`)
+from the engine to SQL. **Remaining §2A:** #3 soft-delete/restore (needs Phase-2
+real `deleted_at`), reserved hot-path property keys + agenda derivation, #4 derived
+caches beyond `block_tag_inherited` (FTS/pages/agenda), #5 hard-delete cascade; plus
+the targeted (non-global) inheritance reindex perf follow-up.
+
 ---
 
 ## 1. Current architecture (one screen)

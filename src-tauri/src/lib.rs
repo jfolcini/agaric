@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod appimage_integration;
 pub mod backlink;
 pub mod block_descendants;
 pub mod block_positions;
@@ -663,6 +665,12 @@ pub fn run() {
             // Keep the non-blocking appender's worker guard alive for the
             // lifetime of the app so buffered writes are never lost.
             app.manage(LogGuard(log_guard));
+
+            // PEND-79: AppImage first-run desktop self-integration (Linux).
+            // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
+            // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
+            #[cfg(target_os = "linux")]
+            appimage_integration::integrate_appimage_if_running();
 
             // FEAT-10: install the deep-link router as early as possible
             // so launch-time `agaric://…` URLs are routed once the rest of

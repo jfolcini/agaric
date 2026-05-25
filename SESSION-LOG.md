@@ -4,7 +4,7 @@
 
 - **This file:** sessions 801 – 837 (latest entry 2026-05-25).
 - **Archived sessions:** 1 – 400 in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md); 401 – 800 in [`docs/session-log/2026-sessions-401-800.md`](docs/session-log/2026-sessions-401-800.md).
-- **Previously-resolved counter:** 1342+ REVIEW-LATER items across 833 sessions.
+- **Previously-resolved counter:** 1342+ REVIEW-LATER items across 837 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
 
 ## Session 837 — CR-MINOR trivia: recv-timeout string, get_block docstring, MCP search space_id normalization (2026-05-25)
@@ -29,7 +29,8 @@ tombstones — corrected the docstring to match behavior. (3) `handle_search` pa
 `space_id` to `SearchFilter` raw while `parent_id`/`tag_ids` go through
 `normalize_ulid_arg`; a lowercase space ULID therefore silently returned empty —
 now normalized identically (the L-121 comment updated to say "parent, each tag, and
-space").
+space"). Also folds in the README release-badge fix (`&sort=semver` to bust the
+stale camo cache + select the highest semver release).
 
 **REVIEW-LATER impact:**
 - **Top-level open count:** unchanged (no top-level rows; CR-MINOR is a sub-bucket).
@@ -42,6 +43,7 @@ space").
 - `src-tauri/src/sync_net/connection.rs` (recv-timeout string interpolates the constant)
 - `src-tauri/src/mcp/tools_ro.rs` (get_block docstring fix + `space_id` normalization + L-121 comment)
 - `pending/REVIEW-LATER.md` (trim the 3 resolved CR-MINOR bullets; note ship date)
+- `README.md` (release-badge `&sort=semver` cache-bust)
 
 **Verification:**
 - `cargo nextest run --manifest-path src-tauri/Cargo.toml normalize_ulid recv_timeout connection:: get_block` — 35 pass.
@@ -54,7 +56,161 @@ flake-mitigation; the change applies the already-thoroughly-unit-tested
 `parent_id`/`tag_ids` lines which likewise have no per-call-site test. Proportional
 to a one-line trivia fix; an FTS test would be net-negative flake risk overnight.
 
-**Commit plan:** one code commit + folded docs; branch `cr-minor-mcp-sync-trivia` off `main`.
+**Commit plan:** one code commit + folded docs + badge; branch `cr-minor-mcp-sync-trivia`, merged to `main` via #57.
+
+---
+
+## Session 836 — inbound tag + inherited-tag re-projection over Loro sync (PEND-81 §2A) (2026-05-25)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-25 |
+| **Subagents** | 1 build + 1 review |
+| **Items closed** | PEND-81 §2A tags (remote AddTag/RemoveTag → SQL `block_tags` + `block_tag_inherited`) |
+| **Items modified** | PEND-80/81 (sync metadata completeness) |
+| **Tests added** | +6 (backend) |
+| **Files touched** | 2 |
+
+**Summary:** Remote `AddTag`/`RemoveTag` changes now reach SQL. `apply_remote`'s Phase 2
+is a two-pass replace inside the existing tx — Pass A upserts every block's core
+columns + properties (so all tag-block rows referenced by `block_tags.tag_id` exist),
+Pass B re-projects each block's tags from `engine.read_tags` (authoritative
+DELETE + existence-gated INSERT). After commit, `tag_inheritance::rebuild_all` rebuilds
+`block_tag_inherited` (a global rebuild, correctness-first; targeted reindex is a
+documented perf follow-up). Builds on session 835's property re-projection; together
+they close the PEND-76 F1 tag/property propagation residual.
+
+**Process:** built + independently reviewed (no self-review), and **committed before
+review** (the session-835 reviewer had discarded uncommitted work). Review caught a
+**BLOCKER**: a purged tag block leaves a dangling element in other blocks' engine tag
+lists (`apply_purge_block` doesn't scrub element refs) and a cross-space tag block isn't
+in this space's doc, so `read_tags` can return a `tag_id` with no `blocks` row — and
+`INSERT OR IGNORE` does NOT suppress FK violations, which would abort the entire
+inbound-sync tx and keep failing on retry. Fixed with an existence-gated INSERT +
+regression test. Also un-masked the F1 E2E guard (now that tags *and* properties are
+both re-projected, a REPLACE regression would be re-inserted — so the test now asserts
+`deleted_at`/`todo_state`, which nothing re-projects, survive the core upsert).
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (PEND-track items).
+- **Previously resolved:** 1342+ (unchanged).
+
+**Files touched (this session):**
+- `src-tauri/src/loro/projection.rs` (`reproject_block_tags_from_engine` + 3 tests)
+- `src-tauri/src/sync_protocol/loro_sync.rs` (two-pass `apply_remote` + rebuild_all + 3 E2E tests + F1 guard)
+
+**Verification:**
+- `cargo nextest run loro_sync reproject tag_inheritance` — 63 pass (6 new); `prek` at commit.
+- `scripts/push.sh` CI-equivalent at push.
+
+**Lessons learned:** Engine vs SQL diverge on purge (engine keeps dangling tag-list
+elements; SQL cascade-deletes them) — any engine→SQL re-projection over an FK must
+tolerate dangling references. Remaining PEND-81 §2A: reserved hot-path keys + agenda,
+real `deleted_at`/restore (Phase 2), and a targeted (non-global) inheritance reindex.
+
+**Commit plan:** code + review-fix + docs commits on `loro-inbound-tag-reprojection` (stacked on the property branch); pushed; PR to open.
+
+---
+
+## Session 835 — inbound property re-projection over Loro sync (PEND-76 F1 / PEND-80) (2026-05-25)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-25 |
+| **Subagents** | 1 build + 1 review |
+| **Items closed** | PEND-76 F1 property-propagation residual |
+| **Items modified** | PEND-80 (Phase-1 properties: functional outcome shipped) |
+| **Tests added** | +12 (backend) |
+| **Files touched** | 3 (+ PEND-80 doc) |
+
+**Summary:** Remote `SetProperty`/`DeleteProperty` changes now reach SQL. `apply_remote`
+re-projects each changed block's properties from the Loro engine into `block_properties`
+via `reproject_block_properties_from_engine` (authoritative DELETE-then-INSERT, so remote
+deletes propagate). **Key finding:** no engine-model migration is needed — the engine's
+existing string value + `property_definitions.value_type` (all types present since
+migration 0043) recovers the SQL type losslessly (`f64::to_string` round-trips), so
+PEND-80's "native typed engine values" is not required for correctness and is deferred as
+a representation refinement. Reserved hot-path keys + derived caches + `LoroTree` remain
+follow-ups.
+
+**Process:** built by one subagent, reviewed by a second (no self-review). The review
+caught a **BLOCKER**: an explicit-null or unparseable-`number` value routed to no column
+→ an all-NULL row that violates the `block_properties.exactly_one_value` CHECK (migration
+0062) and would abort the entire inbound-sync tx. Fixed by skipping the INSERT (cleared
+property = row-absent, which the up-front DELETE already achieves) + a regression test.
+Also strengthened the F1 cascade-wipe regression test to assert a SQL-only property is
+swept by the authoritative replace.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (PEND-track item).
+- **Previously resolved:** 1342+ (unchanged).
+
+**Files touched (this session):**
+- `src-tauri/src/loro/engine.rs` (`read_all_properties` + 2 tests)
+- `src-tauri/src/loro/projection.rs` (`reproject_block_properties_from_engine` + 5 tests)
+- `src-tauri/src/sync_protocol/loro_sync.rs` (wire into `apply_remote` + 2 E2E tests + strengthened F1 test)
+- `pending/PEND-80-extend-loro-engine-model.md` (progress note)
+
+**Verification:**
+- `cargo nextest run loro_sync reproject read_all_properties` — 29 pass (12 new); `prek` at commit.
+- `scripts/push.sh` CI-equivalent at push.
+
+**Lessons learned:** Reviewer subagents must not `git checkout` over an uncommitted
+working tree — the review agent here discarded the (uncommitted) change and had to
+reconstruct it from memory. Commit before spawning the reviewer.
+
+**Commit plan:** code commit + docs commit on `loro-inbound-property-reprojection` (stacked on the quick-wins branch); pushed; PR to open.
+
+---
+
+## Session 834 — sync roadmap lock + PEND-76 PR + quick wins (PEND-78/79/77 Tier A) (2026-05-25)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-25 |
+| **Subagents** | orchestrator-direct |
+| **Items closed** | PEND-78, PEND-79, PEND-77 Tier A |
+| **Items modified** | PEND-77 (Tier A done; Tier B deferred), PEND-80/PEND-81 (sync Option A locked), PEND-76 (PR #53 opened) |
+| **Tests added** | +4 (frontend) / +11 (backend) |
+| **Files touched** | 13 |
+
+**Summary:** Locked the pending roadmap and shipped three independent quick wins.
+**Planning:** rewrote `pending/README.md` "Active order" and locked the sync epic on
+**Option A** (enrich the Loro engine — PEND-80 — then re-project remote changes in
+PEND-81; Option B op-based sync rejected); opened **PR #53** for the already-committed
+PEND-76 F1–F5 fixes. **PEND-78:** the recent-pages strip could durably persist another
+space's pages into the active space's MRU — `recordVisit` now reads the active space's
+own slice (not the flat mirror) and the space-subscriber first-fire reconciles the flat
+mirror to the active slice (extracted as `reconcileRecentPagesOnSpaceChange`, exported
+for tests). **PEND-79:** AppImage first-run desktop self-integration on Linux
+(`$APPIMAGE`-guarded `agaric.desktop` + hicolor icon install + cache refresh, Exec
+drift-rewrite). **PEND-77 Tier A:** proptest reconstruction invariants for
+`compute_word_diff` and idempotence/whitespace-equivalence for
+`space_filter_canonical::normalize`.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** unchanged (PEND-track items; no REVIEW-LATER rows touched).
+- **Previously resolved:** 1342+ (unchanged).
+
+**Files touched (this session):**
+- `pending/README.md` (active order + index rows for 76/77/78/79)
+- `pending/PEND-80-*.md`, `pending/PEND-81-*.md` (Option A locked); `pending/PEND-77-*.md` (Tier A status); `pending/PEND-78-*.md`, `pending/PEND-79-*.md` (deleted on completion)
+- `src/stores/recent-pages.ts`, `src/stores/__tests__/recent-pages.test.ts` (PEND-78 fix + 4 tests)
+- `src/components/__tests__/RecentPagesStrip.test.tsx`, `src/stores/__tests__/navigation.test.ts`, `src/components/__tests__/App.test.tsx` (reset both store fields now that `recordVisit` reads the slice)
+- `src-tauri/src/appimage_integration.rs` (new module + 6 tests), `src-tauri/src/lib.rs` (mod + Linux setup-hook call)
+- `src-tauri/src/word_diff.rs` (+3 proptests), `src-tauri/src/space_filter_canonical.rs` (+2 proptests)
+
+**Verification:**
+- `npx vitest run` (recent-pages + RecentPagesStrip + navigation + App) — 243 pass.
+- `cargo nextest run appimage_integration word_diff space_filter_canonical` — 22 pass (11 new).
+- `prek run --all-files` + `scripts/push.sh` CI-equivalent at push.
+
+**Process notes:** PR #53 = PEND-76; quick wins stacked on `pend-78-79-77-quick-wins`
+(one PR, three surgical commits) to amortize the multi-minute verify-before-push.
+PEND-78 exposed the "partial `setState` of only `recentPages`" test-reset class the
+plan predicted — fixed the three reset sites.
+
+**Commit plan:** 3 commits on `pend-78-79-77-quick-wins` (stacked on #53); pushed; PR to open.
 
 ---
 

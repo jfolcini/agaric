@@ -89,10 +89,12 @@ export const useRecentPagesStore = create<RecentPagesState>()(
       recordVisit: (ref) => {
         const state = get()
         const key = activeSpaceKey()
-        // The flat field is the active-space mirror — same source of truth
-        // as the navigation store. Read it (rather than the per-space slot)
-        // so a partial setState in tests still drives the next visit.
-        const current = state.recentPages
+        // PEND-78: build the next MRU from the active space's OWN slice — the
+        // single source of truth. Reading the flat mirror here was the
+        // write-time corruption path: a stale flat field (another space's
+        // list, e.g. after rehydrate) would be copied into this space's slice
+        // and durably persisted.
+        const current = state.recentPagesBySpace[key] ?? []
         const filtered = current.filter((p) => p.pageId !== ref.pageId)
         const next = [ref, ...filtered].slice(0, MAX_RETAINED)
         set({
@@ -136,20 +138,22 @@ export const useRecentPagesStore = create<RecentPagesState>()(
 )
 
 /**
- * Subscribe once to `useSpaceStore` so the flat `recentPages` field swaps
- * with the per-space slice whenever the user switches space (mirrors the
- * navigation store's space-switch flush). Without this, switching from
- * space-A to space-B would leak A's MRU list into the active view.
+ * Flush the outgoing space's slice and pull the incoming space's slice into
+ * the flat `recentPages` mirror on a space change. On first fire
+ * (`prevKey === newKey`) it (a) seeds the legacy slot from the rehydrated
+ * flat list for the v0→v1 path, then (b) reconciles the flat mirror to the
+ * active space's slice — PEND-78 Defect 2: on rehydrate the flat field may
+ * hold a *different* space's list (whichever was active when persistence
+ * last ran), and leaving it stale leaks that list through the flat-field
+ * read paths.
  *
  * MAINT-122: subscription mechanics + diff detection live in
- * `createSpaceSubscriber`; this site only owns the recent-pages flush /
- * pull logic. On first fire (`prevKey === newKey`) we only seed the
- * legacy slot from the rehydrated flat list — seeding a real space's
- * slice from the flat field is a cross-space leak vector (the flat
- * field is whichever space was last active when persistence ran).
- * Real spaces accrue their slice naturally via `recordVisit`.
+ * `createSpaceSubscriber`; this callback owns only the recent-pages
+ * flush/pull/reconcile. Exported because the module-level subscriber fires
+ * its first-fire (seed) path once at import, so that path is otherwise
+ * unreachable from the test runtime.
  */
-createSpaceSubscriber((prevKey, newKey) => {
+export function reconcileRecentPagesOnSpaceChange(prevKey: string, newKey: string): void {
   const recentState = useRecentPagesStore.getState()
   if (prevKey === newKey) {
     if (
@@ -163,6 +167,11 @@ createSpaceSubscriber((prevKey, newKey) => {
           [newKey]: recentState.recentPages,
         },
       })
+      return
+    }
+    const slice = recentState.recentPagesBySpace[newKey] ?? []
+    if (slice !== recentState.recentPages) {
+      useRecentPagesStore.setState({ recentPages: slice })
     }
     return
   }
@@ -175,4 +184,6 @@ createSpaceSubscriber((prevKey, newKey) => {
     recentPages: next,
     recentPagesBySpace: flushedBySpace,
   })
-})
+}
+
+createSpaceSubscriber(reconcileRecentPagesOnSpaceChange)
