@@ -201,7 +201,9 @@ pub async fn apply_remote(
     device_id: &str,
     message: LoroSyncMessage,
 ) -> Result<ApplyOutcome, AppError> {
-    use crate::loro::projection::project_block_full_to_sql;
+    use crate::loro::projection::{
+        project_block_full_to_sql, reproject_block_properties_from_engine,
+    };
 
     // Validate protocol version + extract bytes / space_id.  For
     // Update, also gate the import on the MAINT-228 reachability
@@ -270,11 +272,21 @@ pub async fn apply_remote(
     // drop guard, then write everything" — same correctness shape.
     let mut tx = crate::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
     for block_id in &changed_blocks {
-        let snapshot_opt = {
+        // Read both the core snapshot and the full property set under the
+        // guard, then drop it before the SQL writes — same
+        // read-under-guard-then-write-in-tx shape as `read_block`, so we
+        // never hold the engine mutex across the tx write.
+        let (snapshot_opt, props) = {
             let mut guard = registry.for_space(&space_id, device_id)?;
-            guard.engine_mut().read_block(block_id.as_str())?
+            let engine = guard.engine_mut();
+            let snap = engine.read_block(block_id.as_str())?;
+            let props = engine.read_all_properties(block_id.as_str())?;
+            (snap, props)
         };
         project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot_opt.as_ref()).await?;
+        // Re-project the block's properties (PEND-76 F1): mirrors remote
+        // SetProperty / DeleteProperty changes into `block_properties`.
+        reproject_block_properties_from_engine(&mut tx, block_id, &props).await?;
     }
     tx.commit().await?;
 
@@ -534,6 +546,17 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // A second, SQL-only property that A's engine will NOT carry — under
+        // the new authoritative-replace semantics it must be swept by the
+        // inbound re-projection (proves the behavior isn't just "re-affirm").
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES (?, 'sql_only', 'should-be-swept')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
             .bind(BLOCK_A)
             .bind(BLOCK_B)
@@ -541,13 +564,20 @@ mod tests {
             .await
             .unwrap();
 
-        // A edits X's content and sends a snapshot.
+        // A edits X's content and sends a snapshot.  A's engine carries
+        // the same `effort` property B already materialised (both are
+        // derived from the same CRDT) — so the inbound property
+        // re-projection (PEND-76 F1) re-affirms the row rather than
+        // sweeping it.  The point of this test is that the *core* upsert
+        // does not cascade-wipe the block's derived tags/properties.
         let registry_a = LoroEngineRegistry::new();
         {
             let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
-            g.engine_mut()
-                .apply_create_block(BLOCK_A, "content", "edited-by-A", None, 0)
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "edited-by-A", None, 0)
                 .expect("create");
+            e.apply_set_property(BLOCK_A, "effort", Some("3"))
+                .expect("set effort");
         }
         let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
             .await
@@ -574,22 +604,35 @@ mod tests {
             "content must update from the inbound edit"
         );
 
-        // Tag + property survive (REPLACE would have cascade-deleted them).
-        let derived: (i64, i64) = sqlx::query_as(
-            "SELECT \
-                (SELECT COUNT(*) FROM block_properties WHERE block_id = ?), \
-                (SELECT COUNT(*) FROM block_tags WHERE block_id = ?)",
-        )
-        .bind(BLOCK_A)
-        .bind(BLOCK_A)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch derived");
+        // block_tags survive — this is the load-bearing F1 cascade-wipe
+        // guard: tags are untouched by property re-projection, so if the
+        // core upsert had deleted the `blocks` row, the `ON DELETE CASCADE`
+        // would have taken `block_tags` to 0.
+        let tag_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch tag count");
         assert_eq!(
-            derived.0, 1,
-            "block_properties must survive the inbound sync"
+            tag_count.0, 1,
+            "block_tags must survive the inbound sync (F1)"
         );
-        assert_eq!(derived.1, 1, "block_tags must survive the inbound sync");
+
+        // Engine-backed property is re-affirmed; the SQL-only property
+        // (absent from A's engine) is swept by the authoritative replace.
+        let prop_keys: Vec<(String,)> =
+            sqlx::query_as("SELECT key FROM block_properties WHERE block_id = ? ORDER BY key")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch prop keys");
+        let keys: Vec<String> = prop_keys.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            keys,
+            vec!["effort".to_string()],
+            "engine-backed `effort` survives; SQL-only `sql_only` is swept by re-projection"
+        );
     }
 
     /// A Snapshot envelope with `protocol_version != 1` must be
@@ -950,6 +993,186 @@ mod tests {
         assert!(
             miss.contains("counter") || miss.contains("peer"),
             "diagnostic should mention peer/counter, got: {miss}",
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // PEND-76 F1 — inbound property re-projection (end-to-end).
+    // -----------------------------------------------------------------
+
+    /// Seed the `property_definitions` rows the re-projection consults to
+    /// recover SQL types for the typed-column assertions below.
+    async fn seed_property_defs(pool: &SqlitePool) {
+        // `INSERT OR REPLACE` so these test-chosen types win over any
+        // builtin seed (e.g. migration 0014 seeds `effort` as `select`).
+        for (key, value_type) in [
+            ("note", "text"),
+            ("effort", "number"),
+            ("done", "boolean"),
+            ("due", "date"),
+        ] {
+            sqlx::query(
+                "INSERT OR REPLACE INTO property_definitions (key, value_type, created_at) \
+                 VALUES (?, ?, '2026-01-01T00:00:00Z')",
+            )
+            .bind(key)
+            .bind(value_type)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// A remote engine sets several typed properties on a block; after
+    /// `apply_remote`, each `block_properties` row carries the correct
+    /// typed column (text/number/boolean/date), recovered from
+    /// `property_definitions`.
+    #[tokio::test]
+    async fn apply_remote_reprojects_typed_properties_to_sql() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_property_defs(&pool).await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Build A: create a block and set typed properties (string form,
+        // mirroring the engine's single-string storage).
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create");
+            e.apply_set_property(BLOCK_A, "note", Some("hello"))
+                .expect("set note");
+            e.apply_set_property(BLOCK_A, "effort", Some("3.14"))
+                .expect("set effort");
+            e.apply_set_property(BLOCK_A, "done", Some("true"))
+                .expect("set done");
+            e.apply_set_property(BLOCK_A, "due", Some("2026-01-01"))
+                .expect("set due");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        // Apply on B.
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
+
+        // Each property landed in the right typed column.
+        let note: (Option<String>, Option<f64>, Option<i64>) = sqlx::query_as(
+            "SELECT value_text, value_num, value_bool FROM block_properties \
+             WHERE block_id = ? AND key = 'note'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch note");
+        assert_eq!(note, (Some("hello".into()), None, None));
+
+        let effort: (Option<f64>, Option<String>) = sqlx::query_as(
+            "SELECT value_num, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch effort");
+        assert_eq!(effort, (Some(3.14), None));
+
+        let done: (Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT value_bool, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'done'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch done");
+        assert_eq!(done, (Some(1), None));
+
+        let due: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT value_date, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'due'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch due");
+        assert_eq!(due, (Some("2026-01-01".into()), None));
+    }
+
+    /// A property present after a first sync, then removed on the remote
+    /// (engine `apply_delete_property`), must have its `block_properties`
+    /// row gone after a second `apply_remote`.  Pins remote-delete
+    /// propagation via the authoritative-replace DELETE.
+    #[tokio::test]
+    async fn apply_remote_reproject_removes_deleted_property_on_resync() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_property_defs(&pool).await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create");
+            e.apply_set_property(BLOCK_A, "note", Some("hello"))
+                .expect("set note");
+        }
+        let registry_b = LoroEngineRegistry::new();
+
+        // First sync: B materialises the `note` property.
+        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare 1");
+        apply_remote(&pool, &registry_b, "device-B", msg1)
+            .await
+            .expect("apply 1");
+        let count_before: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'note'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count before");
+        assert_eq!(count_before, 1, "note must be present after first sync");
+
+        // A deletes the property, then re-syncs (incremental update).
+        let b_vv: Vec<u8> = {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            g.engine_mut().version_vector()
+        };
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_delete_property(BLOCK_A, "note")
+                .expect("delete note");
+        }
+        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare 2");
+        apply_remote(&pool, &registry_b, "device-B", msg2)
+            .await
+            .expect("apply 2");
+
+        let count_after: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'note'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count after");
+        assert_eq!(
+            count_after, 0,
+            "note row must be gone after the remote deletes it and re-syncs"
         );
     }
 }

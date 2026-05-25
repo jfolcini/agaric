@@ -733,6 +733,74 @@ impl LoroEngine {
         }
     }
 
+    /// Read back every property of a block as `(key, value)` pairs.
+    ///
+    /// Mirrors [`read_property`]'s container access and value
+    /// conversion, but enumerates the whole per-block properties
+    /// `LoroMap` rather than a single key.  Used by the sync-pull
+    /// re-projection path (`apply_remote`) to mirror remote
+    /// `SetProperty` / `DeleteProperty` state into the SQL
+    /// `block_properties` table.
+    ///
+    /// Value mapping per entry:
+    /// * `LoroValue::Null` (explicit clear) → `None`
+    /// * `LoroValue::String(s)` → `Some(s)`
+    /// * any other variant → `Err(AppError::Validation)` (writer /
+    ///   reader drift — the engine only ever stores String|Null).
+    ///
+    /// Returns an empty `Vec` when the block has never had any
+    /// properties (no entry in the `block_properties` root).
+    ///
+    /// [`read_property`]: Self::read_property
+    pub fn read_all_properties(
+        &self,
+        block_id: &str,
+    ) -> Result<Vec<(String, Option<String>)>, AppError> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let Some(voc) = props_root.get(block_id) else {
+            return Ok(Vec::new());
+        };
+        let block_props: LoroMap = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_all_properties block {block_id} props slot is not a container"
+                ))
+            })?
+            .into_map()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_all_properties block {block_id} props is not a LoroMap"
+                ))
+            })?;
+        let mut out: Vec<(String, Option<String>)> = Vec::with_capacity(block_props.len());
+        let mut err: Option<AppError> = None;
+        block_props.for_each(|key, value_voc| {
+            if err.is_some() {
+                return;
+            }
+            match value_voc.into_value() {
+                Ok(LoroValue::Null) => out.push((key.to_string(), None)),
+                Ok(LoroValue::String(s)) => out.push((key.to_string(), Some((*s).clone()))),
+                Ok(other) => {
+                    err = Some(AppError::Validation(format!(
+                        "loro: read_all_properties {block_id}/{key} \
+                         expected String|Null, got {other:?}"
+                    )));
+                }
+                Err(_) => {
+                    err = Some(AppError::Validation(format!(
+                        "loro: read_all_properties {block_id}/{key} expected scalar"
+                    )));
+                }
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        Ok(out)
+    }
+
     /// Read the current parent_id scalar of a block.  Returns
     /// `Ok(None)` if the slot is null, `Err` if the block is missing.
     pub fn read_parent(&self, block_id: &str) -> Result<Option<String>, AppError> {
@@ -1553,6 +1621,53 @@ mod op_coverage_tests {
             None,
             "delete_property must remove key even when value is explicit-Null"
         );
+    }
+
+    // ── read_all_properties ───────────────────────────────────────────
+
+    #[test]
+    fn read_all_properties_returns_every_entry_including_explicit_null() {
+        let mut engine = engine_with_block(BLOCK_A);
+        engine
+            .apply_set_property(BLOCK_A, "effort", Some("3"))
+            .expect("set effort");
+        engine
+            .apply_set_property(BLOCK_A, "assignee", Some("alice"))
+            .expect("set assignee");
+        // An explicit-null clear must round-trip as `None`, distinct
+        // from an absent key (which simply won't appear in the vec).
+        engine
+            .apply_set_property(BLOCK_A, "cleared", None)
+            .expect("set cleared");
+
+        let mut props = engine.read_all_properties(BLOCK_A).expect("read all");
+        props.sort();
+        assert_eq!(
+            props,
+            vec![
+                ("assignee".to_string(), Some("alice".to_string())),
+                ("cleared".to_string(), None),
+                ("effort".to_string(), Some("3".to_string())),
+            ],
+        );
+    }
+
+    #[test]
+    fn read_all_properties_for_block_without_props_is_empty() {
+        let engine = engine_with_block(BLOCK_A);
+        let props = engine.read_all_properties(BLOCK_A).expect("read all");
+        assert!(
+            props.is_empty(),
+            "block with no properties yields empty vec"
+        );
+
+        // A block_id that has never existed at all must also yield an
+        // empty vec (no entry in the block_properties root).
+        let fresh = LoroEngine::new();
+        assert!(fresh
+            .read_all_properties(BLOCK_B)
+            .expect("read all")
+            .is_empty());
     }
 }
 
