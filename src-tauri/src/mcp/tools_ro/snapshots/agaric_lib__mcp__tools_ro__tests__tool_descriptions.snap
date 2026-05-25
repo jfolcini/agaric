@@ -139,7 +139,7 @@ expression: wire
       - space_id
     type: object
   name: search
-- description: Fetch a single block by ULID. Returns the BlockRow including soft-deleted blocks.
+- description: Fetch a single block by ULID. Returns the BlockRow; soft-deleted (tombstoned) blocks are excluded.
   inputSchema:
     additionalProperties: false
     properties:
