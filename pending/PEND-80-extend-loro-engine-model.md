@@ -17,6 +17,21 @@ engine is lossless, remote changes can be re-projected to SQL completely.
 > open questions in §8 are now scoped to *how* (migration path, `LoroTree`
 > sequencing, encoding), not *whether*.
 
+**PROGRESS (2026-05-25): inbound property re-projection shipped.** The
+*functional* goal of Phase 1 for properties — remote `SetProperty`/`DeleteProperty`
+changes reaching SQL losslessly — is done (`reproject_block_properties_from_engine`
+in `apply_remote`; closes the PEND-76 F1 property residual). **Key finding:** it
+needed **no engine-model migration**. The engine's existing string value plus
+`property_definitions.value_type` (all of text/number/date/select/ref/boolean
+present since migration 0043) recovers the SQL type losslessly (`f64::to_string`
+round-trips), so §2.1 ("native typed values in the engine") is **not required for
+correctness** and is deferred as a pure representation refinement (it only matters
+for §4 Phase-4 unified projection). **Remaining Phase-1 follow-ups:** reserved
+hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`) + their agenda
+derivation on inbound sync; tag re-projection + `block_tag_inherited` rebuild (needs
+`tag_inheritance::rebuild::rebuild_all` + materializer `flush_background`); real
+`deleted_at`/restore (Phase 2). `LoroTree` (Phase 3) is independent of this.
+
 ## 0. The boundary this plan respects (read first)
 
 We are **extending Loro's storage/merge role, not dissolving the architecture.**
