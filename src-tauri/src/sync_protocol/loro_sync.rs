@@ -203,6 +203,7 @@ pub async fn apply_remote(
 ) -> Result<ApplyOutcome, AppError> {
     use crate::loro::projection::{
         project_block_full_to_sql, reproject_block_properties_from_engine,
+        reproject_block_tags_from_engine,
     };
 
     // Validate protocol version + extract bytes / space_id.  For
@@ -263,14 +264,19 @@ pub async fn apply_remote(
         guard.engine_mut().import_with_changed_blocks(&bytes)?
     };
 
-    // Phase 2 — project each changed block to SQL in a single tx.
-    // Per the plan: read each block's snapshot from the engine OUTSIDE
-    // the tx (releasing the mutex between reads and the SQL write so
-    // we don't hold both at once), then run the projections inside the
+    // Phase 2 — project each changed block to SQL in a single tx, in
+    // two passes.  Per the plan: read each block's state from the engine
+    // OUTSIDE the tx (releasing the mutex between reads and the SQL write
+    // so we don't hold both at once), then run the projections inside the
     // tx.  This is a per-block read -> per-block write pattern; if a
     // benchmark shows contention it can swap to "snapshot all blocks,
     // drop guard, then write everything" — same correctness shape.
     let mut tx = crate::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
+
+    // Pass A — core columns + properties.  This upserts EVERY changed
+    // block (including the tag blocks themselves), so all `blocks` rows
+    // referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
+    // Pass B's tag-edge inserts.
     for block_id in &changed_blocks {
         // Read both the core snapshot and the full property set under the
         // guard, then drop it before the SQL writes — same
@@ -288,7 +294,32 @@ pub async fn apply_remote(
         // SetProperty / DeleteProperty changes into `block_properties`.
         reproject_block_properties_from_engine(&mut tx, block_id, &props).await?;
     }
+
+    // Pass B — tags (PEND-81 §2A).  Mirrors remote AddTag / RemoveTag
+    // changes into `block_tags`.  Runs AFTER Pass A so every referenced
+    // tag block already has its `blocks` row (FK ordering, see above).
+    // Read the tag list under the guard, then write in the tx — same
+    // read-under-guard-then-write-in-tx discipline as the property pass.
+    for block_id in &changed_blocks {
+        let tag_ids: Vec<String> = {
+            let mut guard = registry.for_space(&space_id, device_id)?;
+            guard.engine_mut().read_tags(block_id.as_str())?
+        };
+        reproject_block_tags_from_engine(&mut tx, block_id, &tag_ids).await?;
+    }
     tx.commit().await?;
+
+    // Rebuild the derived `block_tag_inherited` cache (PEND-81 §2A).
+    // `block_tags` only carries direct edges; inherited tags are a
+    // derived recursive-CTE projection over `(block_tags, blocks.parent_id)`,
+    // so a remote tag change to any block can shift inherited rows for its
+    // whole subtree.  This is a GLOBAL rebuild chosen for correctness-first;
+    // a targeted per-block (per-subtree) reindex is a documented perf
+    // follow-up (the plan's "prefer targeted reindex" note).  Skipped when
+    // nothing changed so a no-op import stays cheap.
+    if !changed_blocks.is_empty() {
+        crate::tag_inheritance::rebuild_all(pool).await?;
+    }
 
     Ok(ApplyOutcome::Imported(space_id))
 }
@@ -565,19 +596,23 @@ mod tests {
             .unwrap();
 
         // A edits X's content and sends a snapshot.  A's engine carries
-        // the same `effort` property B already materialised (both are
-        // derived from the same CRDT) — so the inbound property
-        // re-projection (PEND-76 F1) re-affirms the row rather than
-        // sweeping it.  The point of this test is that the *core* upsert
-        // does not cascade-wipe the block's derived tags/properties.
+        // the same `effort` property AND the same tag edge B already
+        // materialised (both derived from the same CRDT) — so the inbound
+        // property/tag re-projections (PEND-76 F1 / PEND-81 §2A) re-affirm
+        // those rows rather than sweeping them.  The point of this test is
+        // that the *core* upsert does not cascade-wipe the block's derived
+        // tags/properties.
         let registry_a = LoroEngineRegistry::new();
         {
             let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
             let e = g.engine_mut();
             e.apply_create_block(BLOCK_A, "content", "edited-by-A", None, 0)
                 .expect("create");
+            e.apply_create_block(BLOCK_B, "tag", "tag-X", None, 0)
+                .expect("create tag block");
             e.apply_set_property(BLOCK_A, "effort", Some("3"))
                 .expect("set effort");
+            e.apply_add_tag(BLOCK_A, BLOCK_B).expect("add tag");
         }
         let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
             .await
@@ -1173,6 +1208,185 @@ mod tests {
         assert_eq!(
             count_after, 0,
             "note row must be gone after the remote deletes it and re-syncs"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // PEND-81 §2A — inbound tag re-projection (end-to-end).
+    // -----------------------------------------------------------------
+
+    /// A remote engine creates a tag block and tags a content block;
+    /// after `apply_remote`, the `block_tags` edge exists in SQL (and
+    /// the FK to the tag block is satisfied because Pass A upserts the
+    /// tag block before Pass B inserts the edge).
+    #[tokio::test]
+    async fn apply_remote_reprojects_added_tag_to_sql() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // BLOCK_A = content block, BLOCK_B = tag block, edge A→B.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "tagged", None, 0)
+                .expect("create content");
+            e.apply_create_block(BLOCK_B, "tag", "tag-X", None, 1)
+                .expect("create tag block");
+            e.apply_add_tag(BLOCK_A, BLOCK_B).expect("add tag");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("count edge");
+        assert_eq!(count, 1, "tag edge must be projected after apply_remote");
+    }
+
+    /// A tag present after a first sync, then removed on the remote
+    /// (engine `apply_remove_tag`), must have its `block_tags` row gone
+    /// after a second `apply_remote`.  Pins remote-removal propagation
+    /// via the authoritative-replace DELETE in the tag re-projection.
+    #[tokio::test]
+    async fn apply_remote_reproject_removes_tag_on_resync() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "tagged", None, 0)
+                .expect("create content");
+            e.apply_create_block(BLOCK_B, "tag", "tag-X", None, 1)
+                .expect("create tag block");
+            e.apply_add_tag(BLOCK_A, BLOCK_B).expect("add tag");
+        }
+        let registry_b = LoroEngineRegistry::new();
+
+        // First sync: B materialises the edge.
+        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare 1");
+        apply_remote(&pool, &registry_b, "device-B", msg1)
+            .await
+            .expect("apply 1");
+        let before: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("count before");
+        assert_eq!(before, 1, "edge must exist after first sync");
+
+        // A removes the tag, then re-syncs (incremental update).
+        let b_vv: Vec<u8> = {
+            let mut g = registry_b
+                .for_space(&space, "device-B")
+                .expect("for_space B");
+            g.engine_mut().version_vector()
+        };
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_remove_tag(BLOCK_A, BLOCK_B)
+                .expect("remove tag");
+        }
+        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", Some(&b_vv))
+            .await
+            .expect("prepare 2");
+        apply_remote(&pool, &registry_b, "device-B", msg2)
+            .await
+            .expect("apply 2");
+
+        let after: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("count after");
+        assert_eq!(
+            after, 0,
+            "tag edge must be gone after the remote removes it and re-syncs"
+        );
+    }
+
+    /// Inheritance: a parent block tagged on the sender, with a child
+    /// block.  After `apply_remote`, `block_tag_inherited` must carry the
+    /// child's inherited row — proving the post-commit `rebuild_all` ran
+    /// off the freshly re-projected `block_tags`.
+    #[tokio::test]
+    async fn apply_remote_rebuilds_inherited_tags_for_child() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // BLOCK_A = tagged parent, BLOCK_C = child of A, BLOCK_B = tag block.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "parent", None, 0)
+                .expect("create parent");
+            e.apply_create_block(BLOCK_C, "content", "child", Some(BLOCK_A), 0)
+                .expect("create child");
+            e.apply_create_block(BLOCK_B, "tag", "tag-X", None, 1)
+                .expect("create tag block");
+            e.apply_add_tag(BLOCK_A, BLOCK_B).expect("tag parent");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            "snapshot apply must report Imported, got {outcome:?}"
+        );
+
+        // Direct edge on the parent.
+        let direct: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+                .bind(BLOCK_A)
+                .bind(BLOCK_B)
+                .fetch_one(&pool)
+                .await
+                .expect("count direct");
+        assert_eq!(direct, 1, "parent's direct tag edge must be projected");
+
+        // Inherited row on the child — proves rebuild_all ran.
+        let inherited: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_tag_inherited \
+             WHERE block_id = ? AND tag_id = ? AND inherited_from = ?",
+        )
+        .bind(BLOCK_C)
+        .bind(BLOCK_B)
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count inherited");
+        assert_eq!(
+            inherited.0, 1,
+            "child must inherit the parent's tag after apply_remote (rebuild_all ran)"
         );
     }
 }
