@@ -564,7 +564,7 @@ fn tool_desc_get_block() -> ToolDescription {
     ToolDescription {
         name: TOOL_GET_BLOCK.to_string(),
         description:
-            "Fetch a single block by ULID. Returns the BlockRow including soft-deleted blocks."
+            "Fetch a single block by ULID. Returns the BlockRow; soft-deleted (tombstoned) blocks are excluded."
                 .to_string(),
         input_schema: json!({
             "type": "object",
@@ -770,7 +770,8 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // back to MAX_PAGE_SIZE=200.
     let validated = validate_limit(TOOL_SEARCH, args.limit, SEARCH_RESULT_CAP)?;
     let limit = Some(validated.unwrap_or(SEARCH_RESULT_CAP));
-    // L-121: normalise ULID-shaped IDs (parent + each tag) at the MCP boundary.
+    // L-121: normalise ULID-shaped IDs (parent, each tag, and space) at the
+    // MCP boundary so a lowercase ULID matches the canonical uppercase store.
     let parent_id = args.parent_id.as_deref().map(normalize_ulid_arg);
     let tag_ids = args
         .tag_ids
@@ -791,7 +792,7 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
         crate::commands::SearchFilter {
             parent_id,
             tag_ids: tag_ids.unwrap_or_default(),
-            space_id: Some(args.space_id),
+            space_id: Some(normalize_ulid_arg(&args.space_id)),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
