@@ -50,8 +50,9 @@ import {
   resolvePageByAlias,
 } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
+import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '../stores/pageBrowserFilters'
 import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+import { LEGACY_SPACE_KEY, useSpaceStore } from '../stores/space'
 import { EmptyState } from './EmptyState'
 import { LoadMoreButton } from './LoadMoreButton'
 import {
@@ -176,37 +177,37 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // local alias before the queryFn so the dep list stays tight.
   const { sortOption, setSortOption, sortPages } = usePageBrowserSort()
 
-  // PEND-58 Phase 3 — compound filters. Chips live here as local state
-  // alongside `filterText` (the name-substring input). Each chip carries
-  // a monotonic `_addId` so structurally-identical chips keep distinct
-  // React keys; the id is stripped before the primitive crosses the IPC.
+  // PEND-58 Phase 3 — compound filters. Chips live in a per-space store
+  // (`usePageBrowserFiltersStore`) rather than local component state so they
+  // survive a navigation round-trip — creating a page opens the editor, which
+  // unmounts this view (`ViewDispatcher` is a `switch` over `currentView`) —
+  // and stay partitioned by space (chip values reference space-scoped ids, so
+  // the active-space slice never leaks onto another space). The dedupe +
+  // monotonic `_addId` assignment (which keeps structurally-identical chips on
+  // distinct React keys; the id is stripped before the primitive crosses the
+  // IPC) moved into the store; these handlers just bind the active space's key.
   // Filters only apply on the metadata IPC path (`flagOn`); the legacy
   // `listBlocks` path has no server-side filter support.
-  const [filters, setFilters] = useState<PageFilterWithKey[]>([])
-  const filterAddIdRef = useRef(0)
-  const handleAddFilter = useCallback((f: FilterPrimitive) => {
-    setFilters((prev) => {
-      // PEND-58d D22 — dedupe identical chips. Compare the incoming
-      // primitive against the existing set with the React-key-only
-      // `_addId` stripped (a structural compare via stable JSON). A
-      // structurally-identical chip is a no-op: re-applying it would
-      // ship a duplicate `FilterPrimitive` to the IPC (an AND of a
-      // condition with itself — pure noise) and add a redundant pill.
-      const incoming = JSON.stringify(f)
-      const isDuplicate = prev.some(({ _addId, ...rest }) => JSON.stringify(rest) === incoming)
-      if (isDuplicate) return prev
-      return [...prev, { ...f, _addId: ++filterAddIdRef.current }]
-    })
-  }, [])
-  const handleRemoveFilter = useCallback((index: number) => {
-    setFilters((prev) => prev.filter((_, i) => i !== index))
-  }, [])
+  const filters = usePageBrowserFiltersStore((s) => selectPageFiltersForSpace(s, currentSpaceId))
+  const addFilterForSpace = usePageBrowserFiltersStore((s) => s.addFilter)
+  const removeFilterForSpace = usePageBrowserFiltersStore((s) => s.removeFilter)
+  const clearFiltersForSpace = usePageBrowserFiltersStore((s) => s.clearFilters)
+  const filterSpaceKey = currentSpaceId ?? LEGACY_SPACE_KEY
+  const handleAddFilter = useCallback(
+    (f: FilterPrimitive) => addFilterForSpace(filterSpaceKey, f),
+    [addFilterForSpace, filterSpaceKey],
+  )
+  const handleRemoveFilter = useCallback(
+    (index: number) => removeFilterForSpace(filterSpaceKey, index),
+    [removeFilterForSpace, filterSpaceKey],
+  )
   // PEND-58d D12 — clear every active chip in one shot. Wired to the
   // chip row's `onClearAll` prop (the FilterRow renders the control;
   // this provides the behaviour). No-op when already empty.
-  const handleClearAllFilters = useCallback(() => {
-    setFilters((prev) => (prev.length === 0 ? prev : []))
-  }, [])
+  const handleClearAllFilters = useCallback(
+    () => clearFiltersForSpace(filterSpaceKey),
+    [clearFiltersForSpace, filterSpaceKey],
+  )
   // PEND-58e E5 — resolve a `tag:` chip's tag id to its human-readable
   // name. The tags are preloaded into the global resolve cache on boot
   // (and re-fetched per space), the same source the editor uses to render
@@ -408,7 +409,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   const [filterAnnouncement, setFilterAnnouncement] = useState('')
   const filterAnnouncePrefixRef = useRef('')
   const filterAnnouncePendingRef = useRef(false)
-  const prevFiltersRef = useRef<PageFilterWithKey[]>([])
+  // Seed with the current (possibly store-persisted) chips so a remount with
+  // pre-existing filters doesn't fire a spurious "filter added" announcement.
+  const prevFiltersRef = useRef<PageFilterWithKey[]>(filters)
   const [aliasMatchId, setAliasMatchId] = useState<string | null>(null)
   // Stable id base for section header `aria-labelledby` wiring. Two
   // headers (`starred` and `other`) share the same prefix.

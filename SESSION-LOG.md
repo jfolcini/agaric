@@ -13,10 +13,10 @@
 |----------|-------|
 | **Date** | 2026-05-25 |
 | **Subagents** | 2 build (snapshot test, filter-forms tests) + 1 review (core sync); the core re-projection + wiring + docstrings + docs were orchestrator-direct |
-| **Items closed** | PEND-81 §2A #4 (derived caches rebuild after inbound sync) + reserved hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`); 4 CR-MINOR bullets (spawn_periodic_snapshot test seam, views.md Search refresh, rmcp_spike docstring, filter-forms tests) |
+| **Items closed** | PEND-81 §2A #4 (derived caches rebuild after inbound sync) + reserved hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`); 4 CR-MINOR bullets (spawn_periodic_snapshot test seam, views.md Search refresh, rmcp_spike docstring, filter-forms tests); + Pages-view filter persistence (fix for a pre-push e2e flake surfaced while pushing) |
 | **Items modified** | PEND-80 (Phase-1 follow-ups), PEND-81 (§2A progress) |
-| **Tests added** | +30 (frontend, filter-forms) / +4 (backend: 2 reserved-key projection, 1 inbound-sync fan-out, 1 spawn_periodic_snapshot smoke); 1 existing backend test updated for the new reserved-key sweep |
-| **Files touched** | 15 (11 modified + 4 new) |
+| **Tests added** | +37 (frontend: 30 filter-forms + 7 pageBrowserFilters store) / +4 (backend: 2 reserved-key projection, 1 inbound-sync fan-out, 1 spawn_periodic_snapshot smoke); 1 existing backend test updated for the new reserved-key sweep |
+| **Files touched** | 19 (13 modified + 6 new) |
 
 **Summary:** Closed the two unblocked PEND-81 §2A data-completeness items. **#4 derived
 caches:** wired the orchestrator's formerly-`#[expect(dead_code)]` `materializer`
@@ -71,7 +71,20 @@ race (the reviewer was mid-edit on the test it was fixing). Sequence them: let
 review/edit subagents finish before the orchestrator's full-suite gate, or scope the
 reviewer to read-only when a concurrent full run is planned.
 
-**Commit plan:** single commit on the current `land-loro-sync-stack` branch (not pushed) — awaiting user go-ahead.
+**Pages-view filter persistence (push-time follow-up):** the pre-push CI gate
+flaked on `e2e/pages-view.spec.ts:623` (the `has:template` chip not surviving a
+create→editor→Pages round-trip). Investigation: `PageBrowser` held its compound
+filter chips in local `useState`, and `ViewDispatcher`'s `switch` unmounts the
+Pages view on navigation, so the chips were destroyed on the round-trip (and the
+old `useState` also leaked one space's chips onto another when the view stayed
+mounted across a space switch). Fix: lifted the chips into a new per-space,
+in-memory `usePageBrowserFiltersStore` (`src/stores/pageBrowserFilters.ts`) so
+they survive navigation and stay space-partitioned. Verified: `pages-view` +
+`pages-filter` e2e (59 passed), the previously-flaky test now structural-pass;
+PageBrowser + filter-row + new store unit suites (181 + 7).
+
+**Commit plan:** two commits on `land-loro-sync-stack` — (1) the PEND-81 §2A sync
+batch + CR-MINOR sweep, (2) the Pages-view filter-persistence fix — pushed; MR opened.
 
 ---
 

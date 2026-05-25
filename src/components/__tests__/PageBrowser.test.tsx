@@ -25,6 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import { t } from '@/lib/i18n'
 import { emptyPage, makePage } from '../../__tests__/fixtures'
+import { usePageBrowserFiltersStore } from '../../stores/pageBrowserFilters'
 import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
@@ -109,6 +110,9 @@ beforeEach(() => {
   localStorage.removeItem('page-browser-density')
   localStorage.removeItem('pageBrowser.densityV1')
   localStorage.removeItem('starred-pages')
+  // Compound-filter chips now live in a module-global per-space store; reset it
+  // so chips added in one test don't leak into the next.
+  usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
   // FEAT-3 Phase 2 — PageBrowser now gates its render and listBlocks
   // call on `useSpaceStore.isReady`. Seed the store so tests exercise
   // the real code path rather than the loading skeleton.
