@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/jfolcini/agaric/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jfolcini/agaric/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/jfolcini/agaric/releases"><img alt="Release" src="https://img.shields.io/github/v/release/jfolcini/agaric?include_prereleases"></a>
+  <a href="https://github.com/jfolcini/agaric/releases"><img alt="Release" src="https://img.shields.io/github/v/release/jfolcini/agaric?include_prereleases&sort=semver"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/jfolcini/agaric"><img alt="OpenSSF Scorecard" src="https://api.securityscorecards.dev/projects/github.com/jfolcini/agaric/badge"></a>
   <a href="https://www.bestpractices.dev/projects/12870"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/12870/badge"></a>
