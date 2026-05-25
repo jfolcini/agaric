@@ -26,11 +26,15 @@ needed **no engine-model migration**. The engine's existing string value plus
 present since migration 0043) recovers the SQL type losslessly (`f64::to_string`
 round-trips), so §2.1 ("native typed values in the engine") is **not required for
 correctness** and is deferred as a pure representation refinement (it only matters
-for §4 Phase-4 unified projection). **Remaining Phase-1 follow-ups:** reserved
-hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`) + their agenda
-derivation on inbound sync; tag re-projection + `block_tag_inherited` rebuild (needs
-`tag_inheritance::rebuild::rebuild_all` + materializer `flush_background`); real
-`deleted_at`/restore (Phase 2). `LoroTree` (Phase 3) is independent of this.
+for §4 Phase-4 unified projection). **Phase-1 follow-ups now shipped:** reserved
+hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`, authoritative-
+replace in `reproject_block_properties_from_engine`) + their agenda derivation on
+inbound sync (the inbound-sync cache fan-out rebuilds `agenda_cache` /
+`projected_agenda_cache`); tag re-projection + `block_tag_inherited` rebuild (session
+836). **Remaining Phase-1:** real `deleted_at`/restore (Phase 2 — engine needs the
+real timestamp + descendant marking before remote delete/restore can re-project
+without resurrecting soft-deleted descendants). `LoroTree` (Phase 3) is independent
+of this.
 
 ## 0. The boundary this plan respects (read first)
 

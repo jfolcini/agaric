@@ -1,9 +1,14 @@
 //! MAINT-111 spike — official Rust MCP SDK (`rmcp`) adapter.
 //!
-//! **Off by default.** This module compiles only when the
-//! `mcp_rmcp_spike` Cargo feature is enabled. The production build
-//! (`cargo build`) does not link `rmcp` and runs the hand-rolled
-//! `mcp/server.rs` framing for every tool call.
+//! **Wired on (production dispatcher).** `rmcp` is a hard dependency
+//! (see `Cargo.toml`) and this adapter — not a feature gate — is the
+//! production `tools/list` / `tools/call` dispatcher: `super::server`
+//! constructs [`RmcpReadOnlyAdapter`] and serves every read-only tool
+//! through it. The hand-rolled `mcp/server.rs` framing is retained only
+//! for the connection lifecycle plumbing it wraps (see "What this does
+//! NOT do" below); it no longer dispatches tool calls. (Originally a
+//! MAINT-111 spike gated behind a `mcp_rmcp_spike` feature — that gate
+//! is gone.)
 //!
 //! ## MAINT-111 M1 status — LANDED
 //!
@@ -16,8 +21,9 @@
 //! hand-rolled `super::server::handle_tools_list` and rmcp's
 //! `ListToolsResult` — and asserts that every `tools[]` entry matches
 //! field-by-field (`name`, `description`, `inputSchema`).
-//! `call_tool` still rejects every non-search tool name and is
-//! expanded in M2.
+//! (At M1, `call_tool` still rejected every non-search tool name; M2/M3
+//! since landed, so the adapter now dispatches every read-only tool —
+//! see the top-of-module note.)
 //!
 //! The spike answers the four MAINT-111 questions with code:
 //!
@@ -47,7 +53,7 @@
 //! 4. *Stability.* `rmcp 1.6` is post-1.0; the breaking-change cadence
 //!    has slowed. Apache-2.0 — already on the `deny.toml` allow-list.
 //!
-//! ## What the spike does NOT do
+//! ## What this adapter does NOT do
 //!
 //! - It does NOT replace the accept loop / lifecycle bookkeeping in
 //!   `mcp/mod.rs::serve` / `mcp/server.rs::serve_unix` /
@@ -56,12 +62,13 @@
 //!   gate, L-113 grace period) and would stay even after a full
 //!   migration. `rmcp` only takes over the per-connection JSON-RPC
 //!   loop.
-//! - It does NOT replace the existing [`super::server::serve`] for
-//!   any tool. The hand-rolled path is still the production code
-//!   path; this module is purely additive. M1 brings `tools/list`
-//!   parity for the full RO registry; M2 will extend `call_tool` to
-//!   dispatch every RO tool through the adapter; M3 deletes the
-//!   hand-rolled framing.
+//! - It does NOT replace the connection-level [`super::server::serve`]
+//!   plumbing — that wraps the rmcp `serve` loop (above). It DOES,
+//!   however, own per-connection JSON-RPC dispatch for every read-only
+//!   tool: `tools/list` reflects the full RO registry and `call_tool`
+//!   dispatches every RO tool through the adapter. The hand-rolled
+//!   `parse_request` / `make_*` / `dispatch` framing is no longer on
+//!   the tool-call path.
 //! - It does NOT migrate any RW tool. Read-write tools have richer
 //!   side-effects (op-log appends, activity-feed errors, materializer
 //!   trigger) that the spike does not need to demonstrate to answer

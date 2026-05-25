@@ -110,15 +110,14 @@ use crate::peer_refs;
 pub struct SyncOrchestrator {
     pool: SqlitePool,
     device_id: String,
-    /// Held for API stability; the loro-sync receiver path applies
-    /// engine state directly via
-    /// [`crate::sync_protocol::loro_sync::apply_remote`] (which writes
-    /// the SQL projection inside its own tx) and does not need to
-    /// enqueue materializer tasks.
-    #[expect(
-        dead_code,
-        reason = "held for API stability; the loro-sync receiver path applies engine state directly and never enqueues materializer tasks"
-    )]
+    /// Drives the read-path derived-cache + FTS rebuild fan-out after an
+    /// inbound sync import. The loro-sync receiver path applies engine
+    /// state directly via
+    /// [`crate::sync_protocol::loro_sync::apply_remote`] (which writes the
+    /// per-block SQL projection inside its own tx); `handle_message` then
+    /// enqueues [`Materializer::enqueue_inbound_sync_rebuilds`] so the
+    /// global derived caches (tags / pages / agenda / page-ids /
+    /// block-tag-refs / page-links / FTS) converge to the imported state.
     materializer: Materializer,
     pub(crate) state: SyncState,
     session: SyncSession,
@@ -406,6 +405,27 @@ impl SyncOrchestrator {
                                 ApplyOutcome::Imported(_space_id) => {
                                     self.session.ops_received =
                                         self.session.ops_received.saturating_add(1);
+                                    // PEND-81 §2A #4: `apply_remote` wrote the
+                                    // per-block SQL projection (core columns,
+                                    // properties incl. reserved hot-path columns,
+                                    // direct tag edges) and rebuilt
+                                    // `block_tag_inherited`, but NOT the read-path
+                                    // derived caches / FTS. Enqueue the global
+                                    // rebuild fan-out via the materializer
+                                    // (background, deduped). Non-fatal: a
+                                    // queue-closed error must not unwind the sync
+                                    // session — the projection already committed —
+                                    // so log + continue (mirrors
+                                    // `dispatch_background_or_warn`).
+                                    if let Err(e) =
+                                        self.materializer.enqueue_inbound_sync_rebuilds()
+                                    {
+                                        tracing::warn!(
+                                            device_id = %self.device_id,
+                                            error = %e,
+                                            "failed to enqueue inbound-sync cache rebuilds"
+                                        );
+                                    }
                                 }
                                 ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
                                     // MAINT-228: the import was NOT

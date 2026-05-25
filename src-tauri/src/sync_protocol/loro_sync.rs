@@ -562,12 +562,18 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Set un-re-projected derived columns (`deleted_at`, `todo_state`):
-        // neither the property nor the tag re-projection rebuilds these, so
-        // they are the genuine F1 guard — the core upsert must preserve them.
-        // The old `INSERT OR REPLACE` bug deleted + re-inserted the row,
-        // resetting both to NULL; the tag/property survival below is masked by
-        // re-projection, but this is not.
+        // Set the un-re-projected derived column `deleted_at`: no
+        // re-projection rebuilds it, so it is the genuine F1 guard — the core
+        // upsert must preserve it. The old `INSERT OR REPLACE` bug deleted +
+        // re-inserted the row, resetting it to NULL; the tag/property survival
+        // below is masked by re-projection, but this is not.
+        //
+        // Also pre-seed a SQL-only `todo_state` that A's engine will NOT carry.
+        // `todo_state` is a reserved hot-path column that the PEND-81 §2A
+        // reserved-key pass re-projects under authoritative-replace, so it is
+        // NOT an F1 cascade guard anymore — instead it proves the reserved-key
+        // pass sweeps a stale value absent from the engine (asserted below,
+        // mirroring the `sql_only` block_properties sweep).
         sqlx::query(
             "UPDATE blocks SET deleted_at = '2026-05-01T00:00:00Z', todo_state = 'DOING' \
              WHERE id = ?",
@@ -653,9 +659,18 @@ mod tests {
             "content must update from the inbound edit"
         );
 
-        // The genuine, un-masked F1 guard: derived columns that NO
-        // re-projection rebuilds must survive the core upsert. A REPLACE
-        // regression would delete + re-insert the row, resetting both to NULL.
+        // The genuine, un-masked F1 guard: `deleted_at` is rebuilt by NO
+        // re-projection, so it must survive the core upsert. A REPLACE
+        // regression would delete + re-insert the row, resetting it to NULL.
+        //
+        // `todo_state`, by contrast, is a reserved hot-path column the PEND-81
+        // §2A reserved-key pass re-projects under authoritative-replace: A's
+        // engine carries no `todo_state` for X, so the stale SQL-only value
+        // must be NULLed (same authoritative-replace semantics as the
+        // `sql_only` block_properties sweep below). This is correct because the
+        // engine is never behind SQL for a synced block's reserved keys
+        // (`apply_set_property_via_loro` always writes the engine; the SQL-only
+        // fallback fires only for spaceless blocks that never reach sync).
         let preserved: (Option<String>, Option<String>) =
             sqlx::query_as("SELECT deleted_at, todo_state FROM blocks WHERE id = ?")
                 .bind(BLOCK_A)
@@ -664,11 +679,9 @@ mod tests {
                 .expect("fetch preserved columns");
         assert_eq!(
             preserved,
-            (
-                Some("2026-05-01T00:00:00Z".to_string()),
-                Some("DOING".to_string())
-            ),
-            "deleted_at + todo_state must survive the inbound core upsert (F1)"
+            (Some("2026-05-01T00:00:00Z".to_string()), None),
+            "deleted_at must survive the inbound core upsert (F1); the stale \
+             SQL-only todo_state is swept by the reserved-key re-projection"
         );
 
         // block_tags is re-affirmed by the tag re-projection (the engine
