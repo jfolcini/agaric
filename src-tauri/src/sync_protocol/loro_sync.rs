@@ -562,6 +562,20 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // Set un-re-projected derived columns (`deleted_at`, `todo_state`):
+        // neither the property nor the tag re-projection rebuilds these, so
+        // they are the genuine F1 guard — the core upsert must preserve them.
+        // The old `INSERT OR REPLACE` bug deleted + re-inserted the row,
+        // resetting both to NULL; the tag/property survival below is masked by
+        // re-projection, but this is not.
+        sqlx::query(
+            "UPDATE blocks SET deleted_at = '2026-05-01T00:00:00Z', todo_state = 'DOING' \
+             WHERE id = ?",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
              VALUES (?, 'tag', 'tag-X', NULL, 0)",
@@ -639,10 +653,29 @@ mod tests {
             "content must update from the inbound edit"
         );
 
-        // block_tags survive — this is the load-bearing F1 cascade-wipe
-        // guard: tags are untouched by property re-projection, so if the
-        // core upsert had deleted the `blocks` row, the `ON DELETE CASCADE`
-        // would have taken `block_tags` to 0.
+        // The genuine, un-masked F1 guard: derived columns that NO
+        // re-projection rebuilds must survive the core upsert. A REPLACE
+        // regression would delete + re-insert the row, resetting both to NULL.
+        let preserved: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT deleted_at, todo_state FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch preserved columns");
+        assert_eq!(
+            preserved,
+            (
+                Some("2026-05-01T00:00:00Z".to_string()),
+                Some("DOING".to_string())
+            ),
+            "deleted_at + todo_state must survive the inbound core upsert (F1)"
+        );
+
+        // block_tags is re-affirmed by the tag re-projection (the engine
+        // carries this edge). NOTE: this no longer isolates the cascade-wipe
+        // on its own — re-projection would re-insert it even after a REPLACE
+        // cascade — which is why the deleted_at/todo_state assertion above is
+        // the real F1 guard. This still verifies the tag re-projection path.
         let tag_count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
                 .bind(BLOCK_A)
