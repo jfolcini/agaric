@@ -483,6 +483,208 @@ pub async fn project_block_full_to_sql(
     }
 }
 
+/// Re-project a block's full property set from the engine into the SQL
+/// `block_properties` table after a sync-pull import.
+///
+/// This closes the PEND-76 F1 property-propagation residual:
+/// [`project_block_full_to_sql`] deliberately touches only the core
+/// `blocks` columns, so remote `SetProperty` / `DeleteProperty` changes
+/// would otherwise never reach SQL.  `apply_remote` calls this helper
+/// per changed block with the engine's post-import property snapshot
+/// (`props`, from [`crate::loro::engine::LoroEngine::read_all_properties`]).
+///
+/// ## Authoritative-replace semantics
+///
+/// The engine is the source of truth after an import, so the helper
+/// first `DELETE`s all existing `block_properties` rows for the block,
+/// then re-INSERTs one row per non-reserved engine property.  This makes
+/// remote *deletes* propagate correctly: a property removed on the
+/// remote is absent from `props`, so the stale SQL row is swept by the
+/// up-front DELETE and never re-inserted.
+///
+/// ## Typed-column routing
+///
+/// The engine compresses each value to a single string (or explicit
+/// null); the SQL types are recovered from `property_definitions.value_type`
+/// (defaulting to `"text"` if the key has no definition row).  The
+/// `value: Option<String>` is routed into exactly one typed column per
+/// the value type; the others stay NULL.  An explicit-null value
+/// (`None`), or a `number` whose string fails to parse, routes to no
+/// column — and since `block_properties` has an `exactly_one_value`
+/// CHECK (migration 0062) that forbids an all-NULL row, such a value is
+/// represented as row-absent (no INSERT; the up-front DELETE already
+/// cleared any prior row), matching "cleared property" semantics.
+///
+/// ## Reserved keys are out of scope
+///
+/// Reserved property keys (`todo_state`, `priority`, `due_date`,
+/// `scheduled_date`) live on dedicated `blocks` columns, not in
+/// `block_properties`, so they are skipped here.  Re-projecting those
+/// hot-path columns from the engine on inbound sync is a follow-up
+/// (it must coordinate with `project_block_full_to_sql`'s deliberate
+/// non-touching of those columns to avoid resurrecting soft-deleted
+/// cohorts).
+pub async fn reproject_block_properties_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &crate::ulid::BlockId,
+    props: &[(String, Option<String>)],
+) -> Result<(), AppError> {
+    // Authoritative replace: clear all existing rows first so remote
+    // deletes (absent from `props`) are swept and never re-inserted.
+    //
+    // Safe by construction: a non-reserved `block_properties` row can only
+    // exist for a block whose property writes went through the engine. The
+    // SQL-only fallbacks (`apply_set_property_sql_only`, orphan-tag adoption,
+    // undo) either fire only when the block has no resolvable space — in
+    // which case it is in no per-space engine and never reaches this sync
+    // path — or also append the op to the op_log, which drives the engine via
+    // the materializer. So the engine is never *behind* SQL for a synced
+    // block, and this DELETE never sweeps a property the engine doesn't know.
+    // (A future change that lets spaceless blocks into an engine must revisit
+    // this.)
+    sqlx::query("DELETE FROM block_properties WHERE block_id = ?")
+        .bind(block_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+
+    for (key, value) in props {
+        if is_reserved_property_key(key) {
+            // Reserved keys map to dedicated `blocks` columns, never
+            // `block_properties`.  Skip (see fn-level doc / follow-up).
+            continue;
+        }
+
+        // Recover the SQL type from the property definition; default to
+        // "text" for an undefined key (warn once so a missing definition
+        // is observable without spamming the log per-property).
+        let value_type: String =
+            sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
+                .bind(key)
+                .fetch_optional(&mut *conn)
+                .await?
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        key = %key,
+                        block_id = %block_id.as_str(),
+                        "reproject_block_properties_from_engine: no property_definitions row; \
+                         defaulting to 'text'"
+                    );
+                    "text".to_string()
+                });
+
+        // Route the single string value into exactly one typed column.
+        let mut value_text: Option<&str> = None;
+        let mut value_num: Option<f64> = None;
+        let mut value_date: Option<&str> = None;
+        let mut value_ref: Option<&str> = None;
+        let mut value_bool: Option<i64> = None;
+        match value_type.as_str() {
+            "number" => value_num = value.as_deref().and_then(|s| s.parse::<f64>().ok()),
+            "boolean" => value_bool = value.as_deref().map(|s| i64::from(s == "true")),
+            "date" => value_date = value.as_deref(),
+            "ref" => value_ref = value.as_deref(),
+            // "select" | "text" | anything unrecognised → text column.
+            _ => value_text = value.as_deref(),
+        }
+
+        // The `block_properties.exactly_one_value` CHECK (migration 0062)
+        // forbids an all-NULL row. An explicit-null engine value (a cleared
+        // property), or a `number` whose string fails to parse, routes to no
+        // column. The correct SQL representation of a cleared property is
+        // row-absent — the up-front DELETE already removed any prior row — so
+        // skip the INSERT rather than violate the CHECK and abort the whole
+        // inbound-sync transaction.
+        if value_text.is_none()
+            && value_num.is_none()
+            && value_date.is_none()
+            && value_ref.is_none()
+            && value_bool.is_none()
+        {
+            continue;
+        }
+
+        sqlx::query(
+            "INSERT INTO block_properties \
+                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(block_id.as_str())
+        .bind(key)
+        .bind(value_text)
+        .bind(value_num)
+        .bind(value_date)
+        .bind(value_ref)
+        .bind(value_bool)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Re-project a block's full tag set from the engine into the SQL
+/// `block_tags` table after a sync-pull import.
+///
+/// This closes the PEND-81 §2A tag-propagation residual:
+/// [`project_block_full_to_sql`] touches only the core `blocks` columns,
+/// so remote `AddTag` / `RemoveTag` changes would otherwise never reach
+/// SQL.  `apply_remote` calls this helper per changed block with the
+/// engine's post-import tag-id list (`tag_ids`, from
+/// [`crate::loro::engine::LoroEngine::read_tags`] — the values are tag
+/// block ULIDs, matching `block_tags.tag_id`).
+///
+/// ## Authoritative-replace semantics
+///
+/// The engine is the source of truth after an import, so the helper
+/// first `DELETE`s all existing `block_tags` rows for the block, then
+/// re-inserts one row per engine tag.  This makes remote *removals*
+/// propagate correctly: a tag removed on the remote is absent from
+/// `tag_ids`, so the stale SQL edge is swept by the up-front DELETE and
+/// never re-inserted.
+///
+/// ## FK safety (dangling / cross-space tag ids)
+///
+/// `block_tags.tag_id` has an FK to `blocks(id)` (the tag block).
+/// `apply_remote` upserts every changed block — including tag blocks —
+/// in the core pass before this one, so the common case is covered. But
+/// `read_tags` can still return a tag id with **no** `blocks` row: the
+/// engine's `apply_purge_block` removes a purged tag block's own entries
+/// without scrubbing the dangling element it left in *other* blocks' tag
+/// lists, and a cross-space tag block isn't in this space's doc at all.
+/// `INSERT OR IGNORE` suppresses only UNIQUE conflicts, **not** FK
+/// violations — an unguarded insert of such an id would abort the whole
+/// inbound-sync tx (and keep failing on retry). So the INSERT is gated on
+/// the tag block existing: a dangling/foreign edge is silently dropped,
+/// matching the engine's intent (the tag block is gone) without breaking
+/// the sync.
+pub async fn reproject_block_tags_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &crate::ulid::BlockId,
+    tag_ids: &[String],
+) -> Result<(), AppError> {
+    // Authoritative replace: clear all existing edges first so remote
+    // removals (absent from `tag_ids`) are swept and never re-inserted.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = ?")
+        .bind(block_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+
+    for tag_id in tag_ids {
+        // FK-safe + idempotent: only insert when the tag block exists (see
+        // the "FK safety" doc above); `INSERT OR IGNORE` keeps re-adds a
+        // no-op like the local `add_tag_inner` path.
+        sqlx::query(
+            "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+             SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+        )
+        .bind(block_id.as_str())
+        .bind(tag_id)
+        .bind(tag_id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -498,6 +700,7 @@ mod tests {
 
     const BLOCK_A: &str = "01HZ00000000000000000000A1";
     const BLOCK_B: &str = "01HZ00000000000000000000B2";
+    const TAG_C: &str = "01HZ00000000000000000000C3";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
@@ -1426,5 +1629,385 @@ mod tests {
         assert_eq!(row.1, "remote-created");
         assert_eq!(row.2, None);
         assert_eq!(row.3, 4);
+    }
+
+    // ---------------------------------------------------------------------
+    // PEND-76 F1 — inbound property re-projection into block_properties.
+    // ---------------------------------------------------------------------
+
+    /// Seed the `property_definitions` rows the re-projection consults to
+    /// recover SQL types, plus the owning block row (block_properties FK).
+    async fn seed_block_and_property_defs(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(pool)
+        .await
+        .unwrap();
+        // `INSERT OR REPLACE` so these test-chosen types win over any
+        // builtin seed (e.g. migration 0014 seeds `effort` as `select`).
+        for (key, value_type) in [
+            ("note", "text"),
+            ("effort", "number"),
+            ("done", "boolean"),
+            ("due", "date"),
+            ("link", "ref"),
+        ] {
+            sqlx::query(
+                "INSERT OR REPLACE INTO property_definitions (key, value_type, created_at) \
+                 VALUES (?, ?, '2026-01-01T00:00:00Z')",
+            )
+            .bind(key)
+            .bind(value_type)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reproject_routes_values_into_typed_columns() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![
+            ("note".to_string(), Some("hello".to_string())),
+            ("effort".to_string(), Some("3.14".to_string())),
+            ("done".to_string(), Some("true".to_string())),
+            ("due".to_string(), Some("2026-01-01".to_string())),
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        // text → value_text only.
+        let note: (
+            Option<String>,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+        ) = sqlx::query_as(
+            "SELECT value_text, value_num, value_date, value_ref, value_bool \
+                 FROM block_properties WHERE block_id = ? AND key = 'note'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch note");
+        assert_eq!(note, (Some("hello".into()), None, None, None, None));
+
+        // number → value_num only (parsed to f64).
+        let effort: (Option<String>, Option<f64>) = sqlx::query_as(
+            "SELECT value_text, value_num FROM block_properties \
+             WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch effort");
+        assert_eq!(effort, (None, Some(3.14)));
+
+        // boolean → value_bool only ("true" → 1).
+        let done: (Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT value_bool, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'done'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch done");
+        assert_eq!(done, (Some(1), None));
+
+        // date → value_date only.
+        let due: (Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT value_date, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'due'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch due");
+        assert_eq!(due, (Some("2026-01-01".into()), None));
+    }
+
+    #[tokio::test]
+    async fn reproject_undefined_key_defaults_to_text() {
+        // A key with no property_definitions row must default to the
+        // text column rather than erroring.
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![("mystery".to_string(), Some("raw".to_string()))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject undefined");
+        drop(conn);
+
+        let row: (Option<String>,) = sqlx::query_as(
+            "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'mystery'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch mystery");
+        assert_eq!(row.0, Some("raw".into()));
+    }
+
+    #[tokio::test]
+    async fn reproject_clears_stale_rows_and_skips_reserved_keys() {
+        // Pre-seed a stale property row; a re-projection whose `props`
+        // omit it must sweep it (remote-delete propagation).  A reserved
+        // key in `props` must NOT land in block_properties.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES (?, 'stale', 'gone-after-resync')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        // New engine state: only `note`, plus a reserved key that must
+        // be skipped.  `stale` is absent → must be deleted.
+        let props = vec![
+            ("note".to_string(), Some("kept".to_string())),
+            ("todo_state".to_string(), Some("DOING".to_string())),
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT key FROM block_properties WHERE block_id = ? ORDER BY key")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch keys");
+        let keys: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            keys,
+            vec!["note".to_string()],
+            "stale row swept, reserved key skipped, only `note` remains"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_routes_ref_value() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        // value_ref has a FK to blocks(id); point at the seeded BLOCK_A.
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![("link".to_string(), Some(BLOCK_A.to_string()))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        let link: (
+            Option<String>,
+            Option<String>,
+            Option<f64>,
+            Option<String>,
+            Option<i64>,
+        ) = sqlx::query_as(
+            "SELECT value_ref, value_text, value_num, value_date, value_bool \
+                 FROM block_properties WHERE block_id = ? AND key = 'link'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch link");
+        assert_eq!(link, (Some(BLOCK_A.into()), None, None, None, None));
+    }
+
+    #[tokio::test]
+    async fn reproject_skips_null_and_unparseable_values_without_violating_check() {
+        // Regression for the `block_properties.exactly_one_value` CHECK
+        // (migration 0062): an explicit-null value and a `number` value
+        // whose string doesn't parse both route to no column. They must be
+        // skipped (row-absent), NOT inserted as an all-NULL row — otherwise
+        // the INSERT fails the CHECK and aborts the whole inbound-sync tx.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+        // Pre-seed a stale `note` row so we also confirm the up-front DELETE
+        // still clears it even when every replacement value is skipped.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'note', 'stale')",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![
+            ("note".to_string(), None), // explicit null (cleared)
+            ("effort".to_string(), Some("not-a-number".to_string())), // number that won't parse
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Must NOT error (no CHECK violation, no tx abort).
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject must succeed for null / unparseable values");
+        drop(conn);
+
+        let count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM block_properties WHERE block_id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+        assert_eq!(
+            count.0, 0,
+            "null/unparseable values produce no row; stale row swept"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // PEND-81 §2A — inbound tag re-projection into block_tags.
+    // ---------------------------------------------------------------------
+
+    /// Seed the owning block plus two tag blocks so the `block_tags` FK
+    /// (`tag_id` → `blocks(id)`) is satisfied for the re-projection tests.
+    async fn seed_block_and_tag_blocks(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(pool)
+        .await
+        .unwrap();
+        for (id, label) in [(BLOCK_B, "tag-X"), (TAG_C, "tag-Y")] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'tag', ?, NULL, 0)",
+            )
+            .bind(id)
+            .bind(label)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_routes_multiple_tags() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let tag_ids = vec![BLOCK_B.to_string(), TAG_C.to_string()];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &tag_ids)
+            .await
+            .expect("reproject tags");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string(), TAG_C.to_string()],
+            "both tag edges must be projected"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_sweeps_stale_tag_on_resync() {
+        // A first projection routes two tags; a second projection whose
+        // `tag_ids` omits one must sweep the stale edge (remote-removal
+        // propagation via the authoritative-replace DELETE).
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(
+            &mut conn,
+            &bid,
+            &[BLOCK_B.to_string(), TAG_C.to_string()],
+        )
+        .await
+        .expect("first reproject");
+        // Resync: TAG_C removed on the remote → absent from the engine list.
+        reproject_block_tags_from_engine(&mut conn, &bid, &[BLOCK_B.to_string()])
+            .await
+            .expect("second reproject");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string()],
+            "stale TAG_C edge swept; only BLOCK_B remains"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_skips_dangling_tag_id_without_fk_abort() {
+        // A tag_id with no `blocks` row — e.g. a purged tag block leaves a
+        // dangling element in another block's engine tag list — must be
+        // dropped, NOT FK-abort the inbound-sync tx. `INSERT OR IGNORE` does
+        // not suppress FK violations, so the helper gates on existence.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let tag_ids = vec![
+            BLOCK_B.to_string(),                      // exists → projected
+            "01J0000000000000000000000Z".to_string(), // dangling → dropped
+        ];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &tag_ids)
+            .await
+            .expect("must not FK-abort on a dangling tag id");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string()],
+            "dangling tag id dropped; the valid edge is still projected"
+        );
     }
 }

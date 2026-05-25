@@ -1870,7 +1870,7 @@ describe('App', () => {
     })
 
     it('is hidden when recentPages is empty', async () => {
-      useRecentPagesStore.setState({ recentPages: [] })
+      useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
       render(<App />)
       await waitFor(() => {

@@ -53,7 +53,7 @@ function clearActiveTab() {
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseIsMobile.mockReturnValue(false)
-  useRecentPagesStore.setState({ recentPages: [] })
+  useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
   clearActiveTab()
   localStorage.clear()
 })

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { selectRecentPagesForSpace, useRecentPagesStore } from '../recent-pages'
+import {
+  reconcileRecentPagesOnSpaceChange,
+  selectRecentPagesForSpace,
+  useRecentPagesStore,
+} from '../recent-pages'
 import { useSpaceStore } from '../space'
 
 const STORAGE_KEY = 'agaric:recent-pages'
@@ -259,6 +263,104 @@ describe('useRecentPagesStore', () => {
       expect(state.recentPages).toEqual([])
       // Legacy slot retained (no data lost).
       expect(state.recentPagesBySpace['__legacy__']).toHaveLength(2)
+    })
+
+    it('recordVisit builds from the active space slice, not a stale foreign flat mirror (PEND-78 Defect 1)', () => {
+      useSpaceStore.setState({ currentSpaceId: 'space-A' })
+      // Post-rehydrate inconsistency: the flat mirror holds space-B's list
+      // while the active space is space-A (with its own slice).
+      useRecentPagesStore.setState({
+        recentPages: [
+          { pageId: 'B1', title: 'B One' },
+          { pageId: 'B2', title: 'B Two' },
+        ],
+        recentPagesBySpace: {
+          'space-A': [{ pageId: 'A1', title: 'A One' }],
+          'space-B': [
+            { pageId: 'B1', title: 'B One' },
+            { pageId: 'B2', title: 'B Two' },
+          ],
+        },
+      })
+
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A2', title: 'A Two' })
+
+      const state = useRecentPagesStore.getState()
+      // space-A grew from its OWN slice — no space-B bleed.
+      expect(state.recentPagesBySpace['space-A']?.map((p) => p.pageId)).toEqual(['A2', 'A1'])
+      expect(state.recentPagesBySpace['space-A']?.some((p) => p.pageId.startsWith('B'))).toBe(false)
+      expect(
+        selectRecentPagesForSpace(state, 'space-A').some((p) => p.pageId.startsWith('B')),
+      ).toBe(false)
+    })
+
+    it('boot: rehydrate with a foreign flat mirror + first-fire reconcile leaves no cross-space leak (PEND-78)', async () => {
+      // Order matters: change space FIRST so the subscriber's persist write
+      // fires now, THEN seed localStorage so `rehydrate()` reads our blob
+      // (not the just-written empty state).
+      useSpaceStore.setState({ currentSpaceId: 'space-A' })
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          state: {
+            // Foreign (space-B) flat mirror persisted alongside the real slices.
+            recentPages: [{ pageId: 'B1', title: 'B One' }],
+            recentPagesBySpace: {
+              'space-A': [{ pageId: 'A1', title: 'A One' }],
+              'space-B': [{ pageId: 'B1', title: 'B One' }],
+            },
+          },
+          version: 1,
+        }),
+      )
+      await useRecentPagesStore.persist.rehydrate()
+      // Boot first-fire: currentSpaceId already resolved to the real space.
+      reconcileRecentPagesOnSpaceChange('space-A', 'space-A')
+
+      const afterReconcile = useRecentPagesStore.getState()
+      // Flat reconciled to space-A; the null-space read no longer flashes space-B.
+      expect(afterReconcile.recentPages.map((p) => p.pageId)).toEqual(['A1'])
+      expect(selectRecentPagesForSpace(afterReconcile, null).some((p) => p.pageId === 'B1')).toBe(
+        false,
+      )
+
+      // A subsequent visit stays within space-A's own slice.
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A2', title: 'A Two' })
+      const finalState = useRecentPagesStore.getState()
+      expect(finalState.recentPagesBySpace['space-A']?.map((p) => p.pageId)).toEqual(['A2', 'A1'])
+    })
+
+    it('first-fire reconciles the flat mirror to the active space slice (PEND-78 Defect 2)', () => {
+      useSpaceStore.setState({ currentSpaceId: 'space-A' })
+      // Set the foreign flat mirror AFTER the space change so only the
+      // first-fire reconcile (not the diff-branch pull) can correct it.
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'B1', title: 'B One' }],
+        recentPagesBySpace: {
+          'space-A': [{ pageId: 'A1', title: 'A One' }],
+          'space-B': [{ pageId: 'B1', title: 'B One' }],
+        },
+      })
+
+      // Simulate the boot-time first fire (prevKey === newKey).
+      reconcileRecentPagesOnSpaceChange('space-A', 'space-A')
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPages.map((p) => p.pageId)).toEqual(['A1'])
+    })
+
+    it('first-fire still seeds the legacy slot from the flat mirror (v0→v1 path)', () => {
+      useSpaceStore.setState({ currentSpaceId: null })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'L1', title: 'Legacy 1' }],
+        recentPagesBySpace: {},
+      })
+
+      reconcileRecentPagesOnSpaceChange('__legacy__', '__legacy__')
+
+      const state = useRecentPagesStore.getState()
+      expect(state.recentPagesBySpace['__legacy__']).toEqual([{ pageId: 'L1', title: 'Legacy 1' }])
+      expect(state.recentPages.map((p) => p.pageId)).toEqual(['L1'])
     })
   })
 })

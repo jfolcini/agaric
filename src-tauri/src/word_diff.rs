@@ -40,6 +40,7 @@ pub fn compute_word_diff(old: &str, new: &str) -> Vec<DiffSpan> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn identical_text_returns_single_equal_span() {
@@ -186,5 +187,59 @@ mod tests {
             inserted.contains("cheese"),
             "should detect 'cheese' as inserted"
         );
+    }
+
+    // PEND-77 A1: word-diff reconstruction invariants. The spans from
+    // `compute_word_diff` must losslessly reconstruct both inputs — dropping
+    // the Delete spans yields `new`, dropping the Insert spans yields `old` —
+    // generalizing the hand-pinned example cases into universal properties.
+    const COMBINING_ALPHABET: &[&str] = &[
+        "a", "z", " ", "\n", "e", "\u{0301}", "é", "ñ", "中", "😀", "\u{0300}",
+    ];
+
+    proptest! {
+        #[test]
+        fn word_diff_reconstructs_new_side(old in any::<String>(), new in any::<String>()) {
+            let spans = compute_word_diff(&old, &new);
+            let rebuilt: String = spans
+                .iter()
+                .filter(|s| s.tag != DiffTag::Delete)
+                .map(|s| s.value.as_str())
+                .collect();
+            prop_assert_eq!(rebuilt, new);
+        }
+
+        #[test]
+        fn word_diff_reconstructs_old_side(old in any::<String>(), new in any::<String>()) {
+            let spans = compute_word_diff(&old, &new);
+            let rebuilt: String = spans
+                .iter()
+                .filter(|s| s.tag != DiffTag::Insert)
+                .map(|s| s.value.as_str())
+                .collect();
+            prop_assert_eq!(rebuilt, old);
+        }
+
+        #[test]
+        fn word_diff_reconstructs_with_combining_marks(
+            old in prop::collection::vec(prop::sample::select(COMBINING_ALPHABET.to_vec()), 0..24),
+            new in prop::collection::vec(prop::sample::select(COMBINING_ALPHABET.to_vec()), 0..24),
+        ) {
+            let old: String = old.concat();
+            let new: String = new.concat();
+            let spans = compute_word_diff(&old, &new);
+            let rebuilt_new: String = spans
+                .iter()
+                .filter(|s| s.tag != DiffTag::Delete)
+                .map(|s| s.value.as_str())
+                .collect();
+            let rebuilt_old: String = spans
+                .iter()
+                .filter(|s| s.tag != DiffTag::Insert)
+                .map(|s| s.value.as_str())
+                .collect();
+            prop_assert_eq!(rebuilt_new, new);
+            prop_assert_eq!(rebuilt_old, old);
+        }
     }
 }
