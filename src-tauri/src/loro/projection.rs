@@ -621,6 +621,57 @@ pub async fn reproject_block_properties_from_engine(
     Ok(())
 }
 
+/// Re-project a block's full tag set from the engine into the SQL
+/// `block_tags` table after a sync-pull import.
+///
+/// This closes the PEND-81 §2A tag-propagation residual:
+/// [`project_block_full_to_sql`] touches only the core `blocks` columns,
+/// so remote `AddTag` / `RemoveTag` changes would otherwise never reach
+/// SQL.  `apply_remote` calls this helper per changed block with the
+/// engine's post-import tag-id list (`tag_ids`, from
+/// [`crate::loro::engine::LoroEngine::read_tags`] — the values are tag
+/// block ULIDs, matching `block_tags.tag_id`).
+///
+/// ## Authoritative-replace semantics
+///
+/// The engine is the source of truth after an import, so the helper
+/// first `DELETE`s all existing `block_tags` rows for the block, then
+/// re-inserts one row per engine tag.  This makes remote *removals*
+/// propagate correctly: a tag removed on the remote is absent from
+/// `tag_ids`, so the stale SQL edge is swept by the up-front DELETE and
+/// never re-inserted.
+///
+/// ## FK ordering
+///
+/// `block_tags.tag_id` has an FK to `blocks(id)` (the tag block), so
+/// every referenced tag block must already exist in SQL before the
+/// INSERT.  `apply_remote` guarantees this by running the core upsert
+/// pass (`project_block_full_to_sql`) over *every* changed block —
+/// including the tag blocks themselves — before this tag-reprojection
+/// pass.  The `INSERT OR IGNORE` mirrors the local path
+/// (`commands/tags.rs::add_tag_inner`) and keeps the helper idempotent.
+pub async fn reproject_block_tags_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &crate::ulid::BlockId,
+    tag_ids: &[String],
+) -> Result<(), AppError> {
+    // Authoritative replace: clear all existing edges first so remote
+    // removals (absent from `tag_ids`) are swept and never re-inserted.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = ?")
+        .bind(block_id.as_str())
+        .execute(&mut *conn)
+        .await?;
+
+    for tag_id in tag_ids {
+        sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block_id.as_str())
+            .bind(tag_id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -636,6 +687,7 @@ mod tests {
 
     const BLOCK_A: &str = "01HZ00000000000000000000A1";
     const BLOCK_B: &str = "01HZ00000000000000000000B2";
+    const TAG_C: &str = "01HZ00000000000000000000C3";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
@@ -1817,6 +1869,98 @@ mod tests {
         assert_eq!(
             count.0, 0,
             "null/unparseable values produce no row; stale row swept"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // PEND-81 §2A — inbound tag re-projection into block_tags.
+    // ---------------------------------------------------------------------
+
+    /// Seed the owning block plus two tag blocks so the `block_tags` FK
+    /// (`tag_id` → `blocks(id)`) is satisfied for the re-projection tests.
+    async fn seed_block_and_tag_blocks(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(pool)
+        .await
+        .unwrap();
+        for (id, label) in [(BLOCK_B, "tag-X"), (TAG_C, "tag-Y")] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+                 VALUES (?, 'tag', ?, NULL, 0)",
+            )
+            .bind(id)
+            .bind(label)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_routes_multiple_tags() {
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let tag_ids = vec![BLOCK_B.to_string(), TAG_C.to_string()];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(&mut conn, &bid, &tag_ids)
+            .await
+            .expect("reproject tags");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string(), TAG_C.to_string()],
+            "both tag edges must be projected"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_tags_sweeps_stale_tag_on_resync() {
+        // A first projection routes two tags; a second projection whose
+        // `tag_ids` omits one must sweep the stale edge (remote-removal
+        // propagation via the authoritative-replace DELETE).
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_tag_blocks(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_tags_from_engine(
+            &mut conn,
+            &bid,
+            &[BLOCK_B.to_string(), TAG_C.to_string()],
+        )
+        .await
+        .expect("first reproject");
+        // Resync: TAG_C removed on the remote → absent from the engine list.
+        reproject_block_tags_from_engine(&mut conn, &bid, &[BLOCK_B.to_string()])
+            .await
+            .expect("second reproject");
+        drop(conn);
+
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT tag_id FROM block_tags WHERE block_id = ? ORDER BY tag_id")
+                .bind(BLOCK_A)
+                .fetch_all(&pool)
+                .await
+                .expect("fetch tag_ids");
+        let ids: Vec<String> = rows.into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            ids,
+            vec![BLOCK_B.to_string()],
+            "stale TAG_C edge swept; only BLOCK_B remains"
         );
     }
 }
