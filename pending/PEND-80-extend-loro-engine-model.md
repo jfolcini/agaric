@@ -112,6 +112,69 @@ the current shape is an early simplification, not a Loro limit.
   state-projection for remote) into one state-projection. Pure simplification;
   skip if the materializer churn isn't worth it.
 
+## 3a. LoroTree Phase-0 design (decided 2026-05-25)
+
+Concrete representation + migration design for Phase 3, so the implementation can
+proceed with review rather than a blind cutover. **Not yet implemented** — unlike
+the property re-projection (sync-only, low blast radius), this rewrites the
+*local* block-move path (`apply_move_block` runs on every drag/indent in daily
+use), so a convergence or fractional-index bug risks the live block hierarchy. It
+stays gated behind a flag + shadow-verify (below) and should be its own PEND.
+
+**Current model (what we replace).** Blocks are a flat `LoroMap` at `BLOCKS_ROOT`,
+each `block_id → LoroMap{block_type, content, parent_id, position(i64), deleted_at}`.
+`apply_move_block` sets `parent_id`+`position` as **per-key LWW** — concurrent
+reparents resolve to the later-Lamport write with the loser's intent dropped, and
+cycles / position collisions are only documented edge cases, not prevented
+(`engine.rs`, SPIKE-REPORT.md §4.2). `list_children_walk` is O(N) and parity-only;
+production reads use the SQL `blocks` table.
+
+**Target representation.** A `LoroTree` at a new `BLOCKS_TREE_ROOT`. Each block is a
+tree node (`TreeID`); the node's **meta map** (`tree.get_meta(node)`) holds the
+scalar fields (`block_type`, `content`, `deleted_at`, and the app `block_id` ULID).
+Parent = tree parent; sibling order = LoroTree's built-in fractional index.
+
+**Op → tree mapping.**
+
+- `Create` → `tree.create(parent)` (or `create_at(parent, index)`); set meta.
+- `Move` → `tree.mov_to(node, new_parent, index)` — the convergent, cycle-safe move
+  (LoroTree rejects cycle-forming moves deterministically; this is the headline win
+  over flat-map LWW).
+- `EditContent` → set the node's `content` meta.
+- `SoftDelete`/`Restore` → set/clear `deleted_at` meta — **not** `tree.delete`, so the
+  node survives for restore + the SQL descendant-cascade derivation.
+- `Purge` → `tree.delete(node)`.
+
+**SQL derivation (the projection).** `parent_id` = the block_id of the node's tree
+parent. `position` (i64) = the 0-based ordinal of the node within
+`tree.children(parent)` order (deterministic per projection; keeps the existing
+`ORDER BY position` pagination cursors working — the fractional index itself never
+reaches SQL). `page_id` derivation is unchanged (SQL/app side).
+
+**block_id ↔ TreeID indirection.** Tree ops take `TreeID`s but the domain identity is
+the ULID `block_id`. Keep a `block_id → TreeID` index (a sibling `LoroMap`, or rebuilt
+on load by scanning node meta `block_id`s). Move/delete look up the `TreeID`; the
+projection reads `block_id` back from meta.
+
+**Migration.** Engine-format-version bump. Primary path: **op-log replay** — replay
+`Create`/`Move`/`SoftDelete`/`Purge` ops (which carry `parent_id`+`position`) to
+rebuild the tree + the id index. Fallback when ops were compacted behind a snapshot:
+a **snapshot-format migration** that reads the old flat-map snapshot and creates tree
+nodes preserving each block's `(parent_id, position)` order.
+
+**Shadow + verify (de-risking, required before cutover).** Behind a flag, build the
+`LoroTree` *alongside* the flat map on every create/move/delete; derive
+`parent_id`/`position` from both; diff the SQL projection across a real corpus. Only
+cut over (and **delete** the naive move/position/cycle logic) once the diff is clean
+*and* the PEND-81 Phase-2 two-instance E2E harness exercises concurrent-move
+convergence + cycle-avoidance. Until then the flat map stays authoritative.
+
+**Open risks to settle in implementation.** (1) fractional-index→ordinal stability for
+pagination cursors under concurrent sibling inserts; (2) the cycle-resolution
+semantics LoroTree picks vs. product expectations (verify the loser-move outcome is
+acceptable/surfaced); (3) migration of existing user hierarchies; (4) the local-move
+blast radius — this is the one piece of PEND-80 that touches a hot, in-use write path.
+
 ## 4. Migration & safety (the highest-risk area)
 
 - **The op_log is the migration mechanism.** It already carries the *typed*
