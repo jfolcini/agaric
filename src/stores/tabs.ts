@@ -194,6 +194,71 @@ function setNavigationSelectedBlockId(id: string | null): void {
   useNavigationStore.setState({ selectedBlockId: id })
 }
 
+/**
+ * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `Tab`,
+ * or `null` if the shape is unrecoverable. `localStorage` can hold anything
+ * (manual edits, a corrupt write, a future-shape downgrade); hydrating it
+ * with a bare cast lets a malformed blob crash the tab reducers / selectors.
+ * Drops every `pageStack` entry that isn't a `{ pageId, title }` string pair.
+ */
+function coerceTab(raw: unknown): Tab | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const obj = raw as Record<string, unknown>
+  if (typeof obj['id'] !== 'string') return null
+  const pageStack: PageEntry[] = []
+  if (Array.isArray(obj['pageStack'])) {
+    for (const entry of obj['pageStack']) {
+      if (typeof entry !== 'object' || entry === null) continue
+      const e = entry as Record<string, unknown>
+      if (typeof e['pageId'] !== 'string' || typeof e['title'] !== 'string') continue
+      pageStack.push({ pageId: e['pageId'], title: e['title'] })
+    }
+  }
+  return { id: obj['id'], pageStack, label: typeof obj['label'] === 'string' ? obj['label'] : '' }
+}
+
+/** CR-PERSIST — coerce a persisted value into a `Tab[]`, dropping invalid tabs. */
+function coerceTabList(raw: unknown): Tab[] {
+  if (!Array.isArray(raw)) return emptyTabList()
+  const tabs: Tab[] = []
+  for (const item of raw) {
+    const tab = coerceTab(item)
+    if (tab) tabs.push(tab)
+  }
+  return tabs.length > 0 ? tabs : emptyTabList()
+}
+
+/** CR-PERSIST — coerce a persisted value into a `Record<string, Tab[]>`. */
+function coerceTabsBySpace(raw: unknown): Record<string, Tab[]> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, Tab[]> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue
+    const tabs: Tab[] = []
+    for (const item of value) {
+      const tab = coerceTab(item)
+      if (tab) tabs.push(tab)
+    }
+    if (tabs.length > 0) out[key] = tabs
+  }
+  return out
+}
+
+/** CR-PERSIST — coerce a persisted value into a non-negative integer tab index. */
+function coerceIndex(raw: unknown): number {
+  return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 ? raw : 0
+}
+
+/** CR-PERSIST — coerce a persisted value into a `Record<string, number>`. */
+function coerceIndexBySpace(raw: unknown): Record<string, number> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) out[key] = value
+  }
+  return out
+}
+
 export const useTabsStore = create<TabsStore>()(
   persist(
     (set, get) => ({
@@ -428,6 +493,24 @@ export const useTabsStore = create<TabsStore>()(
         tabsBySpace: state.tabsBySpace,
         activeTabIndexBySpace: state.activeTabIndexBySpace,
       }),
+      // CR-PERSIST — coercing migrate. Without it, a future `version: 2`
+      // bump makes zustand's persist middleware feed `undefined` to
+      // `merge`, silently discarding the persisted blob to defaults — the
+      // user loses every open tab and per-space page stack. It also runs
+      // on any legacy/version-mismatched blob, validating each field so a
+      // corrupt `localStorage` payload can't poison the reducers.
+      migrate: (
+        persisted,
+        _version,
+      ): Pick<TabsState, 'tabs' | 'activeTabIndex' | 'tabsBySpace' | 'activeTabIndexBySpace'> => {
+        const blob = (persisted ?? {}) as Record<string, unknown>
+        return {
+          tabs: coerceTabList(blob['tabs']),
+          activeTabIndex: coerceIndex(blob['activeTabIndex']),
+          tabsBySpace: coerceTabsBySpace(blob['tabsBySpace']),
+          activeTabIndexBySpace: coerceIndexBySpace(blob['activeTabIndexBySpace']),
+        }
+      },
       onRehydrateStorage: () => (state) => {
         // Derive nextTabId from every persisted tab (across all spaces) to
         // avoid ID collisions after a per-space rehydrate.
