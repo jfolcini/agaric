@@ -150,7 +150,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "tls12
 tokio-rustls = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rcgen = "0.14"
-mdns-sd = "0.19"
+mdns-sd = "0.20"
 # L-65: enumerate local interfaces so mDNS announces only on RFC 1918
 # private IPv4 LAN interfaces (not on every routable interface, which
 # leaks the device IP onto guest WiFi / VPN / cellular). Already in the
