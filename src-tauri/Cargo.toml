@@ -175,7 +175,7 @@ tracing-appender = "0.2.4"
 # which defaulted to native-tls), so disabling defaults and re-selecting
 # `rustls` yields a single rustls stack — binary size drops by the
 # `native-tls-crate` slice.
-reqwest = { version = "0.13.3", default-features = false, features = ["rustls", "json", "http2", "charset"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
 tauri-plugin-process = "2.3.1"
 
 # FEAT-5b — Google Calendar OAuth 2.0 PKCE flow + keychain token storage.
