@@ -111,7 +111,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "better-npm-audit": "^3.11.0",
     "esbuild": "^0.28.0",
     "fast-check": "^4.8.0",
