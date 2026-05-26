@@ -123,7 +123,7 @@
     "markdownlint-cli2": "^0.22.1",
     "rollup-plugin-visualizer": "^7.0.1",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13",
+    "vite": "^8.0.14",
     "vitest": "^4.1.4",
     "vitest-axe": "^0.1.0"
   }
