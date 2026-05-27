@@ -1,32 +1,64 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
-# Smart Rust test runner for pre-commit.
+# Smart Rust test runner.
 #
-# Collects staged .rs files from the git index, converts each path to
-# a Rust module filter string, and runs only the matching tests via
-# cargo nextest.
+# Collects .rs files from a configurable diff source, converts each
+# path to a Rust module filter string, and runs only the matching tests
+# via cargo nextest.
 #
 # Module mapping:  src-tauri/src/cache.rs           → cache
 #                  src-tauri/src/commands/blocks.rs  → commands::blocks
 #
 # Skips: mod.rs, lib.rs, main.rs (no meaningful module filter).
 #
-# Full-suite fallback: if any staged file is lib.rs, main.rs, db.rs,
-# error.rs, or op.rs — these are foundational modules imported by
-# nearly every test, so a targeted run would miss too much.
+# Full-suite fallback: if any matched file is lib.rs, main.rs, db.rs,
+# error.rs, op.rs, or pagination.rs — these are foundational modules
+# imported by nearly every test, so a targeted run would miss too much.
 #
-# Usage:  scripts/test-related-rust.sh          (called by prek hook)
-#         scripts/test-related-rust.sh --dry    (preview filter expressions)
+# Diff sources:
+#   --cached         (default; pre-commit use) — files in the git index
+#   --range REVSPEC  (pre-push use) — files differing in a commit range,
+#                    e.g. `--range @{upstream}..HEAD` or `--range main...HEAD`
+#   --dry            preview filter expressions (works with either)
+#
+# Usage:
+#   scripts/test-related-rust.sh                              # pre-commit
+#   scripts/test-related-rust.sh --range @{upstream}..HEAD    # pre-push
+#   scripts/test-related-rust.sh --range main...HEAD --dry    # preview
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 # shellcheck disable=SC1091
 . "$HOME/.cargo/env"
 
-STAGED_RS=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' || true)
+SOURCE="--cached"
+RANGE=""
+DRY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cached)
+      SOURCE="--cached"; shift ;;
+    --range)
+      SOURCE="--range"; RANGE="${2:-}"; shift 2
+      [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; } ;;
+    --dry)
+      DRY=1; shift ;;
+    *)
+      echo "ERROR: unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ "$SOURCE" = "--cached" ]; then
+  STAGED_RS=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' || true)
+  LABEL="staged"
+else
+  STAGED_RS=$(git diff "$RANGE" --name-only --diff-filter=ACMR -- '*.rs' || true)
+  LABEL="range $RANGE"
+fi
 
 if [ -z "$STAGED_RS" ]; then
-  echo "No staged .rs files — skipping cargo nextest"
+  echo "No $LABEL .rs files — skipping cargo nextest"
   exit 0
 fi
 
@@ -37,8 +69,8 @@ FALLBACK_PATTERNS="src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/db.r
 
 for pat in $FALLBACK_PATTERNS; do
   if echo "$STAGED_RS" | grep -qx "$pat"; then
-    echo "Foundational file staged ($pat) — running full test suite"
-    if [ "${1:-}" = "--dry" ]; then
+    echo "Foundational file in $LABEL set ($pat) — running full test suite"
+    if [ "$DRY" = "1" ]; then
       echo "  → cargo nextest run (full)"
       exit 0
     fi
@@ -79,9 +111,9 @@ fi
 # Deduplicate filters
 readarray -t FILTERS < <(printf '%s\n' "${FILTERS[@]}" | sort -u)
 
-echo "Running cargo nextest for ${#FILTERS[@]} module(s): ${FILTERS[*]}"
+echo "Running cargo nextest for ${#FILTERS[@]} module(s) from $LABEL: ${FILTERS[*]}"
 
-if [ "${1:-}" = "--dry" ]; then
+if [ "$DRY" = "1" ]; then
   for mod in "${FILTERS[@]}"; do
     echo "  → test(~$mod)"
   done
