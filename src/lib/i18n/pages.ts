@@ -113,6 +113,22 @@ export const pages: Record<string, string> = {
   'pageHeader.deleteConfirm': 'Delete this page? It can be restored from trash.',
   'pageHeader.starPage': 'Star this page',
   'pageHeader.unstarPage': 'Unstar this page',
+  // PEND-68 Part A — shared toast/restore copy for the page-delete flow
+  // surfaced by both `PageHeader` and journal `DaySection` via
+  // `usePageDeleteAction`. Kept in its own `pageDeleteAction.*` namespace
+  // so journal callers don't have to import `pageHeader.*` keys.
+  'pageDeleteAction.deleted': 'Page deleted',
+  'pageDeleteAction.deleteFailed': 'Failed to delete page',
+  'pageDeleteAction.retry': 'Retry',
+  'pageDeleteAction.undo': 'Undo',
+  'pageDeleteAction.restored': 'Page restored',
+  'pageDeleteAction.restoreFailed': 'Failed to restore page',
+  // Journal-specific confirm copy ("Delete the note for {{date}}?") —
+  // higher-stakes than a regular page delete, so the dialog body calls
+  // out that the day's blocks go to Trash but can be restored.
+  'journal.deleteDayTitle': 'Delete the note for {{date}}?',
+  'journal.deleteDayDescription':
+    "This moves the day's note (and its blocks) to Trash. You can restore it from Trash or with Undo.",
   'pageTree.delete': 'Delete {{path}}',
   'pageTree.createUnder': 'Create page under {{path}}',
   'pageBrowser.newPagePlaceholder': 'New page name...',
