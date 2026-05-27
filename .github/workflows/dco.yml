@@ -75,7 +75,24 @@ jobs:
             cell_msg=$(printf '%s' "$msg" | head -1 | cut -c1-60)
             label="\`${short_sha}\` ${cell_msg}"
 
-            if printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]*.+<${email}>[[:space:]]*$"; then
+            # Dependabot exemption: dependabot commits author as
+            # `<id>+dependabot[bot]@users.noreply.github.com` but sign off as
+            # `dependabot[bot] <support@github.com>` — the trailer email is
+            # fixed by GitHub and intentionally does not match the per-bot
+            # noreply author email, so the strict author-email match below
+            # would reject every weekly bump PR (and historically did,
+            # forcing maintainer-bypass merges). Accept the `support@github.com`
+            # trailer only when the commit author matches the dependabot
+            # bot's noreply pattern; every human author still has to match
+            # their own email exactly.
+            if [ "$name" = "dependabot[bot]" ] \
+               && printf '%s' "$email" | grep -qE '^[0-9]+\+dependabot\[bot\]@users\.noreply\.github\.com$'; then
+              expected_email="support@github.com"
+            else
+              expected_email="$email"
+            fi
+
+            if printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]*.+<${expected_email}>[[:space:]]*$"; then
               echo "| ${label} | ${name} <${email}> | ✓ signed off |" >> "$GITHUB_STEP_SUMMARY"
             elif printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]"; then
               echo "::error file=PR commit ${sha}::DCO sign-off present but email does not match commit author ${email}. Re-sign with \`git commit --amend -s --no-edit && git push --force-with-lease\` (or \`git rebase --signoff <base>\` for older commits)."
