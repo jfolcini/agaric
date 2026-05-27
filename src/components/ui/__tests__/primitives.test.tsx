@@ -8,7 +8,7 @@
  *  - a11y compliance via axe audit
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
@@ -22,6 +22,7 @@ import { Input } from '../input'
 import { Label } from '../label'
 import { ListItem } from '../list-item'
 import { MetricCard } from '../metric-card'
+import { QuickNavChip } from '../quick-nav-chip'
 import { RecentPageChip } from '../recent-page-chip'
 import { SectionGroupHeader } from '../section-group-header'
 import { Spinner } from '../spinner'
@@ -563,6 +564,112 @@ describe('RecentPageChip', () => {
     expect(link.className).toContain('my-chip')
     // `type="button"` must NOT leak onto the anchor (invalid HTML).
     expect(link).not.toHaveAttribute('type')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// QuickNavChip (PEND-68 Part B)
+// ---------------------------------------------------------------------------
+
+describe('QuickNavChip', () => {
+  it('renders as a button with type="button" and data-slot', () => {
+    render(<QuickNavChip>Pages</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Pages' })
+    expect(btn).toBeInTheDocument()
+    expect(btn).toHaveAttribute('type', 'button')
+    expect(btn).toHaveAttribute('data-slot', 'quick-nav-chip')
+  })
+
+  it('renders an icon child alongside a label (composable content)', () => {
+    render(
+      <QuickNavChip>
+        <svg data-testid="dest-icon" />
+        <span>Tags</span>
+      </QuickNavChip>,
+    )
+    const btn = screen.getByRole('button', { name: 'Tags' })
+    expect(within(btn).getByTestId('dest-icon')).toBeInTheDocument()
+  })
+
+  it('rest-state palette: border + bg-secondary/40 + muted text', () => {
+    render(<QuickNavChip>Inactive</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Inactive' })
+    expect(btn.className).toContain('border')
+    expect(btn.className).toContain('border-border/60')
+    expect(btn.className).toContain('bg-secondary/40')
+    expect(btn.className).toContain('text-muted-foreground')
+  })
+
+  it('active=true flips to accent palette and exposes data-active', () => {
+    render(<QuickNavChip active>Active</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Active' })
+    expect(btn.getAttribute('data-active')).toBe('true')
+    expect(btn.className).toContain('border-accent')
+    expect(btn.className).toContain('bg-accent')
+    expect(btn.className).toContain('text-accent-foreground')
+    // The rest-state classes are NOT applied when active.
+    expect(btn.className).not.toContain('bg-secondary/40')
+  })
+
+  it('forwards aria-current="page" to the rendered button (caller-controlled)', () => {
+    render(
+      <QuickNavChip active aria-current="page">
+        Current
+      </QuickNavChip>,
+    )
+    const btn = screen.getByRole('button', { name: 'Current' })
+    expect(btn).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('scales to 44 px touch target on coarse pointers', () => {
+    render(<QuickNavChip>Touch</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Touch' })
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:px-3')
+  })
+
+  it('carries the focus-tint class for keyboard discoverability', () => {
+    render(<QuickNavChip>Focus</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Focus' })
+    expect(btn.className).toContain('focus-ring-visible')
+    expect(btn.className).toContain('focus-visible:bg-accent/60')
+  })
+
+  it('merges custom className', () => {
+    render(<QuickNavChip className="my-dest">Custom</QuickNavChip>)
+    const btn = screen.getByRole('button', { name: 'Custom' })
+    expect(btn.className).toContain('my-dest')
+    expect(btn.className).toContain('bg-secondary/40')
+  })
+
+  it('fires onClick when clicked', async () => {
+    const handleClick = vi.fn()
+    const user = userEvent.setup()
+    render(<QuickNavChip onClick={handleClick}>Click</QuickNavChip>)
+    await user.click(screen.getByRole('button', { name: 'Click' }))
+    expect(handleClick).toHaveBeenCalledTimes(1)
+  })
+
+  it('forwards ref', () => {
+    const ref = React.createRef<HTMLButtonElement>()
+    render(<QuickNavChip ref={ref}>Ref</QuickNavChip>)
+    expect(ref.current).toBeInstanceOf(HTMLButtonElement)
+  })
+
+  it('has no a11y violations (inactive)', async () => {
+    const { container } = render(<QuickNavChip>Accessible</QuickNavChip>)
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations (active, aria-current="page")', async () => {
+    const { container } = render(
+      <QuickNavChip active aria-current="page">
+        Active
+      </QuickNavChip>,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })
 

@@ -95,8 +95,9 @@ const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: 
 beforeEach(() => {
   vi.clearAllMocks()
 
-  // FEAT-9: desktop-by-default so the TabBar + RecentPagesStrip render the
-  // same way they do in the app. Individual tests flip this via mockedUseIsMobile.
+  // FEAT-9 / PEND-68: desktop-by-default so the TabBar + QuickAccessBar
+  // render the same way they do in the app. Individual tests flip this via
+  // mockedUseIsMobile.
   mockedUseIsMobile.mockReturnValue(false)
 
   // Start with boot already completed so BootGate renders children immediately.
@@ -118,8 +119,9 @@ beforeEach(() => {
     activeTabIndexBySpace: {},
   })
 
-  // FEAT-9: reset the recent-pages MRU so RecentPagesStrip tests are isolated.
-  // FEAT-3 Phase 3 — clear the per-space MRU slices for the same reason.
+  // FEAT-9 / PEND-68: reset the recent-pages MRU so QuickAccessBar recents
+  // zone tests are isolated. FEAT-3 Phase 3 — clear the per-space MRU
+  // slices for the same reason.
   useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
   // FEAT-3 Phase 1: reset the space store so SpaceSwitcher renders
@@ -1768,10 +1770,11 @@ describe('App', () => {
     })
   })
 
-  // FEAT-9: the RecentPagesStrip mounts between the hoisted TabBar and the
-  // ViewHeaderOutletSlot. Auto-hidden on mobile and when the visible list
-  // (minus the currently-open page) is empty.
-  describe('FEAT-9 recent-pages strip', () => {
+  // PEND-68 Part B: the QuickAccessBar mounts between the hoisted TabBar and
+  // the ViewHeaderOutletSlot. Renders whenever EITHER the destinations zone
+  // (a hard-coded allowlist of 4 entries) OR the recents zone is non-empty —
+  // on desktop this is effectively always-on. Mobile stays hidden.
+  describe('PEND-68 quick-access bar', () => {
     it('mounts between TabBar and ViewHeaderOutletSlot in the shell', async () => {
       // Seed two recent pages and render from a non-editor view so the
       // currently-open page filter doesn't hide every chip.
@@ -1793,14 +1796,14 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      const strip = screen.getByTestId('recent-pages-strip')
-      expect(strip).toBeInTheDocument()
+      const bar = screen.getByTestId('quick-access-bar')
+      expect(bar).toBeInTheDocument()
 
-      // DOM-tree ordering: TabBar is not rendered with 1 tab, but the strip
+      // DOM-tree ordering: TabBar is not rendered with 1 tab, but the bar
       // must still be a descendant of the SidebarInset and appear BEFORE the
       // view-header outlet so it sits above the scroll area.
       const outlet = screen.getByTestId('view-header-outlet')
-      const position = strip.compareDocumentPosition(outlet)
+      const position = bar.compareDocumentPosition(outlet)
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
@@ -1835,14 +1838,14 @@ describe('App', () => {
       })
 
       const tablist = screen.getByRole('tablist', { name: t('tabs.tabList') })
-      const strip = screen.getByTestId('recent-pages-strip')
+      const bar = screen.getByTestId('quick-access-bar')
       const outlet = screen.getByTestId('view-header-outlet')
 
-      // TabBar → RecentPagesStrip → ViewHeaderOutletSlot document order.
-      const tablistToStrip = tablist.compareDocumentPosition(strip)
-      expect(tablistToStrip & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-      const stripToOutlet = strip.compareDocumentPosition(outlet)
-      expect(stripToOutlet & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      // TabBar → QuickAccessBar → ViewHeaderOutletSlot document order.
+      const tablistToBar = tablist.compareDocumentPosition(bar)
+      expect(tablistToBar & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      const barToOutlet = bar.compareDocumentPosition(outlet)
+      expect(barToOutlet & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     })
 
     it('is hidden on mobile', async () => {
@@ -1866,10 +1869,13 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    it('is hidden when recentPages is empty', async () => {
+    // PEND-68 render-gate change: the bar now renders whenever EITHER zone
+    // is non-empty. Destinations is a 4-entry constant, so the desktop bar
+    // is effectively always present even when there are zero recents.
+    it('still renders on desktop when recentPages is empty (destinations zone)', async () => {
       useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
       render(<App />)
@@ -1877,7 +1883,8 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      expect(screen.queryByTestId('recent-pages-strip')).toBeNull()
+      expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
+      expect(screen.getByTestId('quick-access-destinations')).toBeInTheDocument()
     })
   })
 

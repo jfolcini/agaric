@@ -10,7 +10,7 @@
  *
  * `shrink-0` on the chip prevents flex-children from compressing chip
  * widths when the row overflows; the parent `<ScrollArea orientation="horizontal">`
- * in `RecentPagesStrip` is what surfaces the overflow (PEND-32).
+ * in `QuickAccessBar` (recents zone) is what surfaces the overflow (PEND-32).
  *
  * Class composition mirrors the CVA pattern used by Badge / Button (single
  * base class string composed via `cn()`); this chip has only one variant

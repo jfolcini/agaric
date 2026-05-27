@@ -5,7 +5,7 @@ import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
 import { GcalReauthBanner } from './components/GcalReauthBanner'
 import { GlobalDateControls, JournalControls } from './components/JournalPage'
-import { RecentPagesStrip } from './components/RecentPagesStrip'
+import { QuickAccessBar } from './components/QuickAccessBar'
 import { SearchSheetTrigger } from './components/SearchSheetTrigger'
 import { SpaceTopStripe } from './components/SpaceTopStripe'
 import { TabBar } from './components/TabBar'
@@ -501,12 +501,14 @@ function App() {
              */}
             <TabBar />
             {/*
-             * FEAT-9: desktop-only "Recently visited" chip strip, mounted
-             * between the hoisted TabBar above and the ViewHeaderOutletSlot
-             * below. Responsive grid auto-fits chips; auto-hides on mobile
-             * and when the visible list is empty.
+             * PEND-68 Part B: desktop-only quick-access bar — fixed
+             * destinations cluster (Pages / Tags / Graph / Search) plus the
+             * MRU recents scroller. Mounted between the hoisted TabBar above
+             * and the ViewHeaderOutletSlot below. Mobile gate lives inside
+             * the component (hidden on `useIsMobile()` — the mobile
+             * bottom-nav already covers destinations).
              */}
-            <RecentPagesStrip />
+            <QuickAccessBar />
             {/*
              * UX-198: view-level sticky headers didn't stick because the
              * nearest scroll ancestor was the <ScrollArea> viewport below,
