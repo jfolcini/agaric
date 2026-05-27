@@ -67,4 +67,4 @@ is just an ordering key.
 - [`../architecture/ci-and-tooling.md`](../architecture/ci-and-tooling.md) —
   the continuous-coverage tooling each review draws evidence from.
 - [`../../SECURITY.md`](../../SECURITY.md) — the disclosure path.
-- `pending/PEND-49-ossf-silver-roadmap.md` — the broader Silver roadmap; §5b is this directory.
+- [#80](https://github.com/jfolcini/agaric/issues/80) — the broader Silver roadmap; §5b is this directory.

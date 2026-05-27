@@ -34,7 +34,7 @@ Adjacent rejections that already have homes:
 
 ## Sync & networking
 
-- **iroh / iroh-blobs** (historical) — initially evaluated and rejected for size/scope. Now under reconsideration: `pending/PEND-10-iroh-transport-adoption.md` is an approved adoption plan that would replace the current mDNS + WebSocket + TLS + TOFU stack. The earlier rejection is no longer current.
+- **iroh / iroh-blobs** (historical) — initially evaluated and rejected for size/scope. Now under reconsideration: [#78](https://github.com/jfolcini/agaric/issues/78) is an approved adoption plan that would replace the current mDNS + WebSocket + TLS + TOFU stack. The earlier rejection is no longer current.
 - **magic-wormhole** — over-specified for a same-LAN pairing flow. 4-word EFF-wordlist passphrase + ephemeral mTLS is the right shape.
 - **`webpki` cert verification** — Agaric pins by SHA-256 hash, not by CA chain. `webpki` is the wrong abstraction for self-signed pinned certs.
 - **Persistent shared passphrase** — passphrase theft becomes forever access. Pairing-session passphrases are 5-minute ephemeral.
