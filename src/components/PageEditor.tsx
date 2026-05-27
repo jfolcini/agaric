@@ -29,6 +29,7 @@ import { LinkedReferences } from './LinkedReferences'
 import { LinkPreviewTooltip } from './LinkPreviewTooltip'
 import { PageHeader } from './PageHeader'
 import { PageMetadataBar } from './PageMetadataBar'
+import { PagesTreeSection } from './PagesTreeSection'
 import { UnlinkedReferences } from './UnlinkedReferences'
 
 export interface PageEditorProps {
@@ -195,6 +196,20 @@ function PageEditorInner({
           </div>
         </>
       )}
+
+      {/* Pages tree — child pages of this page (PEND-83 Bug 2).
+          Sits ABOVE LinkedReferences so the navigation affordance for
+          descendant pages lives next to the editor body, not buried under
+          the references stack. The section hides itself entirely when
+          there are zero descendants; its own FeatureErrorBoundary keeps a
+          page-tree crash from cascading into the references panels. */}
+      <FeatureErrorBoundary name="PagesTreeSection">
+        <PagesTreeSection
+          pageId={pageId}
+          pageTitle={title}
+          onNavigateToPage={onNavigateToPage ?? (() => {})}
+        />
+      </FeatureErrorBoundary>
 
       {/* Linked references — always visible at page bottom.
           Wrapped in its own FeatureErrorBoundary so a malformed-ref crash

@@ -41,6 +41,7 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { getPageDisplayName } from '@/lib/page-display'
 import { cn } from '@/lib/utils'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { getShortcutKeys } from '../lib/keyboard-config'
@@ -201,7 +202,14 @@ export function TabBar(): React.ReactElement | null {
           {tabs.map((tab, i) => {
             const isActive = i === activeTabIndex
             const showDropdownHint = isActive && currentView === 'page-editor'
-            const displayTitle = tab.label || t('tabs.untitled')
+            // PEND-83 Bug 1: tabs are space-constrained (`max-w-[120px]
+            // md:max-w-[200px]` + `truncate`) — full namespaced paths
+            // overflow fast. Display the LEAF only and surface the full
+            // path via `title=""` for hover. The empty-label fallback to
+            // "Untitled" is preserved verbatim so the existing label test
+            // keeps passing.
+            const fullPath = tab.label || t('tabs.untitled')
+            const displayTitle = getPageDisplayName(fullPath, 'leaf').label
             const button = (
               <button
                 key={tab.id}
@@ -220,8 +228,9 @@ export function TabBar(): React.ReactElement | null {
                 // wires `aria-haspopup`/`aria-expanded`; the label complements
                 // them. Inactive tabs fall back to their visible text content.
                 aria-label={
-                  showDropdownHint ? t('tabs.switchTabsHint', { title: displayTitle }) : undefined
+                  showDropdownHint ? t('tabs.switchTabsHint', { title: fullPath }) : undefined
                 }
+                title={fullPath}
                 className={cn(
                   // UX-254: `group` enables `group-hover:` on the chevron so
                   // hovering the active tab intensifies the dropdown hint.
@@ -273,7 +282,12 @@ export function TabBar(): React.ReactElement | null {
           >
             {tabs.map((tab, i) => {
               const isActive = i === activeTabIndex
-              const displayTitle = tab.label || t('tabs.untitled')
+              // PEND-83 Bug 1: dropdown rows share the same leaf-with-tooltip
+              // treatment as the tab buttons themselves so the two surfaces
+              // read consistently. The aria-label for the close action keeps
+              // the full path so screen readers announce the unambiguous page.
+              const fullPath = tab.label || t('tabs.untitled')
+              const displayTitle = getPageDisplayName(fullPath, 'leaf').label
               const activateIdx = i * 2
               const closeIdx = i * 2 + 1
               return (
@@ -295,6 +309,7 @@ export function TabBar(): React.ReactElement | null {
                     aria-checked={isActive}
                     data-state={isActive ? 'checked' : 'unchecked'}
                     tabIndex={dropdownFocusedIndex === activateIdx ? 0 : -1}
+                    title={fullPath}
                     className="flex flex-1 items-center gap-2 rounded px-2 py-1.5 text-left text-sm cursor-pointer touch-target focus-ring-visible"
                     onClick={() => {
                       switchTab(i)
@@ -323,7 +338,7 @@ export function TabBar(): React.ReactElement | null {
                     role="menuitem"
                     data-tab-dropdown-close=""
                     tabIndex={dropdownFocusedIndex === closeIdx ? 0 : -1}
-                    aria-label={t('tabs.closeTab', { label: displayTitle })}
+                    aria-label={t('tabs.closeTab', { label: fullPath })}
                     className="mr-1 inline-flex shrink-0 items-center justify-center rounded-sm p-1 hover:bg-destructive/20 cursor-pointer [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 focus-ring-visible"
                     onClick={(e) => {
                       // Keep the dropdown open when the close item fires —

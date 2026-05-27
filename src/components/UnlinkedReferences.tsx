@@ -29,6 +29,7 @@ import {
   listUnlinkedReferences,
   paginationLimit,
 } from '../lib/tauri'
+import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
 import { BacklinkFilterBuilder } from './BacklinkFilterBuilder'
 import { CollapsibleGroupList } from './CollapsibleGroupList'
@@ -97,6 +98,23 @@ export function UnlinkedReferences({
         // boundary so every downstream reader can rely on the declared
         // `BacklinkGroup[]` invariant.
         const respGroups = Array.isArray(resp.groups) ? resp.groups : []
+        // PEND-83 Bug 2 — pre-warm the resolve cache for source-page IDs.
+        // Without this, `useBlockResolve.resolveTitle` falls back to the
+        // `[[ULID-prefix...]]` placeholder for any source page that hasn't
+        // been visited yet (e.g. a deeply nested child created in another
+        // session). The matched-block content path already benefits from
+        // `useBacklinkResolution` warming, but the source-page-header path
+        // surfaces these IDs directly and needed its own pre-warm.
+        const resolveEntries = respGroups
+          .filter((g) => g.page_title != null && g.page_title.length > 0)
+          .map((g) => ({
+            id: g.page_id,
+            title: g.page_title as string,
+            deleted: false,
+          }))
+        if (resolveEntries.length > 0) {
+          useResolveStore.getState().batchSet(resolveEntries)
+        }
         if (cursor) {
           // Append: merge groups with same page_id.
           // FE-L-13: copy-and-replace the matching group instead of

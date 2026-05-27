@@ -422,6 +422,18 @@ pub async fn eval_unlinked_references(
     //    `FTS_ROW_CAP + 1`, which precludes the `query_scalar!` macro.
     //    Applied at the base-set step so `total_count` /
     //    `filtered_count` reflect the post-space-filter universe.
+    //
+    //    PEND-83 Bug 2 — drop title-block hits (`block_type = 'page'`)
+    //    from the unlinked-refs base set. The trigram FTS tokenizer is
+    //    substring-based, so a child page like `Notes/2026` (whose
+    //    title block has `content = 'Notes/2026'`) matches the
+    //    unlinked-refs query for the parent page `Notes` via the
+    //    trigrams `Not`, `ote`, `tes`. Title blocks are not useful
+    //    matches in the refs panel — that panel surfaces body matches,
+    //    not title matches — so we filter them out globally rather
+    //    than scoping to descendants of the current page. Applied at
+    //    the base-set step so pagination + `total_count` /
+    //    `filtered_count` all see the post-filter universe.
     const FTS_ROW_CAP: usize = 10_000;
     let fts_sql = format!(
         "SELECT fb.block_id \
@@ -429,6 +441,7 @@ pub async fn eval_unlinked_references(
          JOIN blocks b ON b.id = fb.block_id \
          WHERE fts_blocks MATCH ?1 \
            AND b.deleted_at IS NULL \
+           AND b.block_type != 'page' \
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \

@@ -9,6 +9,7 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
+import { getPageDisplayName } from '@/lib/page-display'
 import { PageLink } from './PageLink'
 
 export interface GroupItem {
@@ -117,6 +118,11 @@ export function CollapsibleGroupList<G extends GroupItem>({
         const isExpanded = expandedGroups[group.page_id] ?? defaultExpanded
         const title = group.page_title ?? untitledLabel
         const countLabel = formatCount ? formatCount(group) : `(${group.blocks.length})`
+        // PEND-83 Bug 1: references group headers render LEAF + breadcrumb,
+        // mirroring the picker visual treatment (leaf as the primary label,
+        // ancestor segments below in a smaller muted line). The `title=""`
+        // tooltip preserves the full path on hover.
+        const display = getPageDisplayName(title, 'leaf-with-breadcrumb')
         return (
           <div key={group.page_id} className={groupClassName}>
             {onPageTitleClick ? (
@@ -134,11 +140,19 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 >
                   <ChevronToggle isExpanded={isExpanded} size="md" />
                 </button>
-                <PageLink
-                  pageId={group.page_id}
-                  title={title}
-                  className="flex-1 truncate text-left"
-                />
+                <PageLink pageId={group.page_id} title={title} className="flex-1 min-w-0 text-left">
+                  <span className="flex min-w-0 flex-col" title={display.title}>
+                    <span className="truncate">{display.label}</span>
+                    {display.breadcrumb !== undefined && (
+                      <span
+                        className="text-xs text-muted-foreground truncate"
+                        data-testid="group-header-breadcrumb"
+                      >
+                        {display.breadcrumb}
+                      </span>
+                    )}
+                  </span>
+                </PageLink>
                 <span>{countLabel}</span>
               </div>
             ) : (
@@ -150,9 +164,26 @@ export function CollapsibleGroupList<G extends GroupItem>({
                   'flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium hover:bg-accent/50 active:bg-accent/70 transition-colors'
                 }
                 aria-expanded={isExpanded}
+                title={display.title}
               >
                 <ChevronToggle isExpanded={isExpanded} size="md" />
-                {title} {countLabel}
+                {display.breadcrumb !== undefined ? (
+                  <span className="flex min-w-0 flex-col text-left">
+                    <span className="truncate">
+                      {display.label} {countLabel}
+                    </span>
+                    <span
+                      className="text-xs text-muted-foreground truncate font-normal"
+                      data-testid="group-header-breadcrumb"
+                    >
+                      {display.breadcrumb}
+                    </span>
+                  </span>
+                ) : (
+                  <>
+                    {display.label} {countLabel}
+                  </>
+                )}
               </button>
             )}
             {isExpanded &&

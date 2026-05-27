@@ -19,6 +19,7 @@ import type { PickerItem } from '../editor/SuggestionList'
 import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
 import { t as translate } from '../lib/i18n'
 import { logger } from '../lib/logger'
+import { getPageDisplayName } from '../lib/page-display'
 import {
   createBlock,
   createPageInSpace,
@@ -62,17 +63,23 @@ export interface UseBlockResolveReturn {
 
 type PagesListRef = React.RefObject<Array<{ id: string; title: string }>>
 
-/** Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`. */
+/**
+ * Splits a `parent/child/leaf` title into `{ label: leaf, breadcrumb: 'parent / child' }`.
+ *
+ * PEND-83 Bug 1: delegates to the shared `getPageDisplayName` formatter so
+ * the picker is the canonical reference implementation for every other
+ * "leaf + breadcrumb" surface (tabs, recents chip, inline link chip, group
+ * headers). Behaviour is byte-identical to the inlined helper this
+ * replaced — non-namespaced titles return `breadcrumb: undefined`, which
+ * matches the original `formatNamespacedLabel` contract because
+ * `getPageDisplayName`'s non-namespaced branch never assigns the field.
+ */
 function formatNamespacedLabel(title: string): {
   label: string
   breadcrumb: string | undefined
 } {
-  if (!title.includes('/')) {
-    return { label: title, breadcrumb: undefined }
-  }
-  const parts = title.split('/')
-  const leaf = parts.pop() as string
-  return { label: leaf, breadcrumb: parts.join(' / ') }
+  const { label, breadcrumb } = getPageDisplayName(title, 'leaf-with-breadcrumb')
+  return { label, breadcrumb }
 }
 
 function makePagePickerItem(id: string, title: string): PickerItem {
