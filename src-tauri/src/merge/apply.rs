@@ -143,7 +143,14 @@ pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
 
     let op_id = format!("{}/{}", record.device_id, record.seq);
 
-    super::engine_apply(&op_id, &payload, &record.device_id, &space_id, state);
+    super::engine_apply(
+        &op_id,
+        &payload,
+        &record.device_id,
+        &space_id,
+        &record.created_at,
+        state,
+    );
 }
 
 /// Shared warn-and-return helper for the per-variant inner-payload
@@ -234,7 +241,14 @@ mod engine_apply_unit_tests {
         let space = SpaceId::from_trusted(SPACE_A);
         let op = create_op(BLOCK_1, "hello");
 
-        engine_apply("DEV/1", &op, DEVICE_ID, &space, &state);
+        engine_apply(
+            "DEV/1",
+            &op,
+            DEVICE_ID,
+            &space,
+            "2025-01-15T12:00:00Z",
+            &state,
+        );
 
         // The engine for SPACE_A must hold BLOCK_1 with content "hello".
         // Scope the guard so the registry mutex is released before
@@ -268,7 +282,14 @@ mod engine_apply_unit_tests {
             edit_op(BLOCK_1, "alpha-beta"),
             delete_op(BLOCK_1),
         ] {
-            engine_apply("DEV/x", &op, DEVICE_ID, &space, &state);
+            engine_apply(
+                "DEV/x",
+                &op,
+                DEVICE_ID,
+                &space,
+                "2025-01-15T12:00:00Z",
+                &state,
+            );
         }
 
         let mut guard = state
@@ -293,9 +314,23 @@ mod engine_apply_unit_tests {
         let space_b = SpaceId::from_trusted(SPACE_B);
 
         let op_a = create_op(BLOCK_1, "in A");
-        engine_apply("DEV/1", &op_a, DEVICE_ID, &space_a, &state);
+        engine_apply(
+            "DEV/1",
+            &op_a,
+            DEVICE_ID,
+            &space_a,
+            "2025-01-15T12:00:00Z",
+            &state,
+        );
         let op_b = create_op(BLOCK_2, "in B");
-        engine_apply("DEV/2", &op_b, DEVICE_ID, &space_b, &state);
+        engine_apply(
+            "DEV/2",
+            &op_b,
+            DEVICE_ID,
+            &space_b,
+            "2025-01-15T12:00:00Z",
+            &state,
+        );
 
         assert_eq!(state.registry.len(), 2, "must hold two distinct engines");
 
@@ -365,7 +400,7 @@ mod engine_apply_unit_tests {
     /// Helper: drive an op through `engine_apply`.  Mirrors the pattern
     /// from the existing tests.
     fn dispatch(state: &LoroState, space: &SpaceId, op_id: &str, op: &OpPayload) {
-        engine_apply(op_id, op, DEVICE_ID, space, state);
+        engine_apply(op_id, op, DEVICE_ID, space, "2025-01-15T12:00:00Z", state);
     }
 
     #[test]

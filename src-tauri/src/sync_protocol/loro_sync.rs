@@ -202,8 +202,8 @@ pub async fn apply_remote(
     message: LoroSyncMessage,
 ) -> Result<ApplyOutcome, AppError> {
     use crate::loro::projection::{
-        project_block_full_to_sql, reproject_block_properties_from_engine,
-        reproject_block_tags_from_engine,
+        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
+        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
     };
 
     // Validate protocol version + extract bytes / space_id.  For
@@ -306,6 +306,23 @@ pub async fn apply_remote(
             guard.engine_mut().read_tags(block_id.as_str())?
         };
         reproject_block_tags_from_engine(&mut tx, block_id, &tag_ids).await?;
+    }
+
+    // Pass C — soft-delete state (PEND-80 Phase 2).  Mirrors remote
+    // DeleteBlock / RestoreBlock changes into `blocks.deleted_at`.  Runs
+    // AFTER Pass A so every changed block's `parent_id` row exists — the
+    // helper's descendant-cascade / ancestor-guard CTE walks depend on
+    // it.  The engine stores `deleted_at` on the delete seed only, so the
+    // helper re-derives the SQL cascade from the seed timestamp (and an
+    // ancestor check prevents a snapshot re-import from resurrecting a
+    // soft-deleted subtree).
+    for block_id in &changed_blocks {
+        let engine_deleted_at: Option<String> = {
+            let mut guard = registry.for_space(&space_id, device_id)?;
+            guard.engine_mut().read_deleted_at(block_id.as_str())?
+        };
+        reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
+            .await?;
     }
     tx.commit().await?;
 
@@ -562,22 +579,36 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // Set the un-re-projected derived column `deleted_at`: no
-        // re-projection rebuilds it, so it is the genuine F1 guard — the core
-        // upsert must preserve it. The old `INSERT OR REPLACE` bug deleted +
-        // re-inserted the row, resetting it to NULL; the tag/property survival
-        // below is masked by re-projection, but this is not.
-        //
-        // Also pre-seed a SQL-only `todo_state` that A's engine will NOT carry.
-        // `todo_state` is a reserved hot-path column that the PEND-81 §2A
-        // reserved-key pass re-projects under authoritative-replace, so it is
-        // NOT an F1 cascade guard anymore — instead it proves the reserved-key
-        // pass sweeps a stale value absent from the engine (asserted below,
-        // mirroring the `sql_only` block_properties sweep).
+        // Pre-seed a page block so BLOCK_A can carry a `page_id` — the
+        // genuine F1 cascade witness. `page_id` is rebuilt by NO inbound
+        // re-projection (not by the core upsert, the property pass, or the
+        // PEND-80 Phase-2 deleted_at pass) and is in the `ON DELETE CASCADE`
+        // set, so it survives a correct UPSERT but a REPLACE regression
+        // (delete + re-insert the row) resets it to NULL.
         sqlx::query(
-            "UPDATE blocks SET deleted_at = '2026-05-01T00:00:00Z', todo_state = 'DOING' \
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'pg', NULL, 0)",
+        )
+        .bind(BLOCK_C)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // `deleted_at` is now re-projected by the PEND-80 Phase-2 pass
+        // (Pass C): A's engine carries BLOCK_A alive, so the pre-seeded
+        // soft-delete must be cleared on inbound sync (the converged engine
+        // state wins). Asserted below.
+        //
+        // `todo_state` is a reserved hot-path column the PEND-81 §2A
+        // reserved-key pass re-projects under authoritative-replace: A's
+        // engine carries none for BLOCK_A, so the stale SQL-only value must
+        // be NULLed (same authoritative-replace semantics as the `sql_only`
+        // block_properties sweep below).
+        sqlx::query(
+            "UPDATE blocks SET deleted_at = '2026-05-01T00:00:00Z', todo_state = 'DOING', \
+             page_id = ? \
              WHERE id = ?",
         )
+        .bind(BLOCK_C)
         .bind(BLOCK_A)
         .execute(&pool)
         .await
@@ -659,36 +690,40 @@ mod tests {
             "content must update from the inbound edit"
         );
 
-        // The genuine, un-masked F1 guard: `deleted_at` is rebuilt by NO
+        // The genuine, un-masked F1 guard: `page_id` is rebuilt by NO
         // re-projection, so it must survive the core upsert. A REPLACE
         // regression would delete + re-insert the row, resetting it to NULL.
         //
-        // `todo_state`, by contrast, is a reserved hot-path column the PEND-81
-        // §2A reserved-key pass re-projects under authoritative-replace: A's
-        // engine carries no `todo_state` for X, so the stale SQL-only value
-        // must be NULLed (same authoritative-replace semantics as the
-        // `sql_only` block_properties sweep below). This is correct because the
-        // engine is never behind SQL for a synced block's reserved keys
-        // (`apply_set_property_via_loro` always writes the engine; the SQL-only
-        // fallback fires only for spaceless blocks that never reach sync).
-        let preserved: (Option<String>, Option<String>) =
-            sqlx::query_as("SELECT deleted_at, todo_state FROM blocks WHERE id = ?")
+        // `deleted_at`, by contrast, is now re-projected by the PEND-80
+        // Phase-2 pass (Pass C): A's engine carries BLOCK_A alive, so the
+        // pre-seeded soft-delete must be cleared (the converged engine state
+        // wins on inbound sync).
+        //
+        // `todo_state` is a reserved hot-path column the PEND-81 §2A
+        // reserved-key pass re-projects under authoritative-replace: A's
+        // engine carries none for BLOCK_A, so the stale SQL-only value must be
+        // NULLed (same authoritative-replace semantics as the `sql_only`
+        // block_properties sweep below).
+        let projected: (Option<String>, Option<String>, Option<String>) =
+            sqlx::query_as("SELECT page_id, deleted_at, todo_state FROM blocks WHERE id = ?")
                 .bind(BLOCK_A)
                 .fetch_one(&pool)
                 .await
-                .expect("fetch preserved columns");
+                .expect("fetch projected columns");
         assert_eq!(
-            preserved,
-            (Some("2026-05-01T00:00:00Z".to_string()), None),
-            "deleted_at must survive the inbound core upsert (F1); the stale \
-             SQL-only todo_state is swept by the reserved-key re-projection"
+            projected,
+            (Some(BLOCK_C.to_string()), None, None),
+            "page_id must survive the inbound core upsert (F1); the pre-seeded \
+             deleted_at is cleared by the Phase-2 deleted_at re-projection \
+             (engine alive); the stale SQL-only todo_state is swept by the \
+             reserved-key re-projection"
         );
 
         // block_tags is re-affirmed by the tag re-projection (the engine
         // carries this edge). NOTE: this no longer isolates the cascade-wipe
         // on its own — re-projection would re-insert it even after a REPLACE
-        // cascade — which is why the deleted_at/todo_state assertion above is
-        // the real F1 guard. This still verifies the tag re-projection path.
+        // cascade — which is why the `page_id` assertion above is the real F1
+        // guard. This still verifies the tag re-projection path.
         let tag_count: (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
                 .bind(BLOCK_A)
@@ -714,6 +749,176 @@ mod tests {
             vec!["effort".to_string()],
             "engine-backed `effort` survives; SQL-only `sql_only` is swept by re-projection"
         );
+    }
+
+    /// PEND-80 Phase 2: a remote `DeleteBlock` of a subtree seed
+    /// propagates the soft-delete to SQL for the seed AND its
+    /// descendants — even though the engine marks only the seed.
+    /// `apply_remote`'s deleted_at pass re-derives the SQL descendant
+    /// cascade from the seed timestamp.
+    #[tokio::test]
+    async fn apply_remote_cascades_remote_subtree_delete_to_sql() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // A builds a 3-level subtree and soft-deletes the seed (the page)
+        // with a real timestamp. The engine marks ONLY the seed.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "page", "pg", None, 0)
+                .expect("page");
+            e.apply_create_block(BLOCK_B, "content", "c1", Some(BLOCK_A), 0)
+                .expect("c1");
+            e.apply_create_block(BLOCK_C, "content", "c2", Some(BLOCK_B), 0)
+                .expect("c2");
+            e.apply_delete_block(BLOCK_A, "2026-05-25T10:00:00Z")
+                .expect("delete seed");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+
+        // Seed + both descendants are soft-deleted at the seed's timestamp.
+        for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
+            let deleted_at: Option<String> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch deleted_at");
+            assert_eq!(
+                deleted_at.as_deref(),
+                Some("2026-05-25T10:00:00Z"),
+                "block {id} must be soft-deleted at the seed's cohort timestamp"
+            );
+        }
+    }
+
+    /// PEND-80 Phase 2: a remote `RestoreBlock` of a subtree seed clears
+    /// the soft-delete in SQL for the whole cohort.
+    #[tokio::test]
+    async fn apply_remote_propagates_remote_subtree_restore_to_sql() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // B has already materialised the subtree as soft-deleted at T (a
+        // prior sync delivered the delete cascade).
+        for (id, parent) in [
+            (BLOCK_A, None),
+            (BLOCK_B, Some(BLOCK_A)),
+            (BLOCK_C, Some(BLOCK_B)),
+        ] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+                 VALUES (?, 'content', '', ?, 0, '2026-05-25T10:00:00Z')",
+            )
+            .bind(id)
+            .bind(parent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // A carries the same subtree ALIVE (it restored the seed); the
+        // engine marks the seed alive.
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "", None, 0)
+                .expect("a");
+            e.apply_create_block(BLOCK_B, "content", "", Some(BLOCK_A), 0)
+                .expect("b");
+            e.apply_create_block(BLOCK_C, "content", "", Some(BLOCK_B), 0)
+                .expect("c");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+
+        for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
+            let deleted_at: Option<String> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch deleted_at");
+            assert_eq!(
+                deleted_at, None,
+                "block {id} must be restored (deleted_at cleared) by the inbound restore"
+            );
+        }
+    }
+
+    /// PEND-80 Phase 2 centerpiece: re-importing a snapshot whose seed is
+    /// soft-deleted must NOT resurrect the already-soft-deleted
+    /// descendants. The engine marks only the seed, so a naive per-block
+    /// re-projection would read each descendant's `deleted_at` as `None`
+    /// and clear it; the ancestor guard in the deleted_at pass keeps a
+    /// descendant of a still-deleted ancestor soft-deleted.
+    #[tokio::test]
+    async fn apply_remote_reimport_does_not_resurrect_soft_deleted_subtree() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_a = LoroEngineRegistry::new();
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "page", "pg", None, 0)
+                .expect("page");
+            e.apply_create_block(BLOCK_B, "content", "c1", Some(BLOCK_A), 0)
+                .expect("c1");
+            e.apply_create_block(BLOCK_C, "content", "c2", Some(BLOCK_B), 0)
+                .expect("c2");
+            e.apply_delete_block(BLOCK_A, "2026-05-25T10:00:00Z")
+                .expect("delete seed");
+        }
+
+        let registry_b = LoroEngineRegistry::new();
+        // First import: cascades the soft-delete onto B's SQL (seed + descendants).
+        let msg1 = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare 1");
+        apply_remote(&pool, &registry_b, "device-B", msg1)
+            .await
+            .expect("apply 1");
+
+        // Second import of the SAME snapshot. The descendants are now
+        // deleted in SQL but read back `None` from the (seed-only) engine —
+        // the resurrection trap. The ancestor guard must keep them deleted.
+        let msg2 = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare 2");
+        apply_remote(&pool, &registry_b, "device-B", msg2)
+            .await
+            .expect("apply 2");
+
+        for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
+            let deleted_at: Option<String> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("fetch deleted_at");
+            assert_eq!(
+                deleted_at.as_deref(),
+                Some("2026-05-25T10:00:00Z"),
+                "block {id} must stay soft-deleted after re-import (no resurrection)"
+            );
+        }
     }
 
     /// A Snapshot envelope with `protocol_version != 1` must be

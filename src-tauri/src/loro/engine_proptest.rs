@@ -265,7 +265,7 @@ fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate:
             engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)?;
         }
         OpPayload::DeleteBlock(p) => {
-            engine.apply_delete_block(p.block_id.as_str())?;
+            engine.apply_delete_block(p.block_id.as_str(), "2025-01-15T12:00:00Z")?;
         }
         OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(BlockId::as_str);

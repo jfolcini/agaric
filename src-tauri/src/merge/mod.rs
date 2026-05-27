@@ -35,6 +35,12 @@ pub(crate) use apply::dispatch_for_record;
 /// through to [`LoroEngine::with_peer_id`] so the engine's Loro
 /// peer id is stable across the process lifetime.
 ///
+/// `op_created_at` is the originating op's RFC-3339 `created_at`. It is
+/// the real `deleted_at` timestamp the `DeleteBlock` arm writes onto
+/// the engine seed (PEND-80 Phase 2) so the value is lossless across
+/// sync — see [`LoroEngine::apply_delete_block`]. All other arms ignore
+/// it (their ops carry no timestamp the engine stores).
+///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
 pub(crate) fn engine_apply(
@@ -42,6 +48,7 @@ pub(crate) fn engine_apply(
     op: &crate::op::OpPayload,
     device_id: &str,
     space_id: &crate::space::SpaceId,
+    op_created_at: &str,
     state: &crate::loro::shared::LoroState,
 ) {
     let crate::loro::shared::LoroState { registry } = state;
@@ -82,9 +89,9 @@ pub(crate) fn engine_apply(
         crate::op::OpPayload::EditBlock(p) => engine
             .apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
             .map(|_| ()),
-        crate::op::OpPayload::DeleteBlock(p) => {
-            engine.apply_delete_block(p.block_id.as_str()).map(|_| ())
-        }
+        crate::op::OpPayload::DeleteBlock(p) => engine
+            .apply_delete_block(p.block_id.as_str(), op_created_at)
+            .map(|_| ()),
         crate::op::OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
             engine
