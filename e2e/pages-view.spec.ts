@@ -55,7 +55,10 @@ interface BootOpts {
 }
 
 async function openPagesView(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   await expect(page.getByRole('grid')).toBeVisible()
 }
 

@@ -33,7 +33,10 @@ test.describe('Search view — full panel at mobile viewport (PEND-58g E2E-A9)',
   async function escalateToSearchView(page: import('@playwright/test').Page) {
     await waitForBoot(page)
     // Land on a non-page view so the sheet defaults to 'all-pages' (palette).
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Pages')
     await page.getByTestId('search-sheet-trigger').click()
     await expect(page.getByTestId('search-sheet')).toBeVisible()

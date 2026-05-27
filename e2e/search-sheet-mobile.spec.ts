@@ -43,7 +43,10 @@ test.describe('Search sheet (mobile viewport)', () => {
     // 'all-pages'. It also has no `useInPageFindStore.container`
     // registered, so the 'in-page' segment shows the empty-state CTA
     // instead of the toolbar — verified below.
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.locator('[data-testid="header-label"]')).toContainText('Pages')
 
     // Trigger — mobile-only icon button mounted next to the header.

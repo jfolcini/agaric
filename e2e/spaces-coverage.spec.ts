@@ -27,7 +27,10 @@ import { expect, test, waitForBoot } from './helpers'
 
 /** Open the Pages view via the sidebar nav button. */
 async function openPagesView(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   // MAINT-162 — the page list is now an ARIA grid (was listbox).
   await expect(page.getByRole('grid')).toBeVisible()
 }

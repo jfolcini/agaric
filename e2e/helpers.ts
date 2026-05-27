@@ -233,7 +233,10 @@ export async function waitForBoot(page: Page) {
 
 /** Navigate to the page editor for a given page title. */
 export async function openPage(page: Page, title: string) {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   await page.getByText(title, { exact: true }).click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible()
 }

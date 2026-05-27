@@ -146,6 +146,27 @@ jobs:
         run: |
           if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
 
+      - name: Install lychee (prebuilt binary)
+        # The `lychee` pre-commit hook (prek.toml `[[repos.hooks]] id = "lychee"`)
+        # is a `local` hook calling the system `lychee` binary, since the
+        # upstream `lycheeverse/lychee` pre-commit repo is broken on a
+        # normal dev box (see commit bd3dc79c for the failure modes).
+        # That means CI must put a `lychee` binary on PATH explicitly —
+        # `taiki-e/install-action` doesn't manifest lychee, so we pull the
+        # official prebuilt release directly. Fast (~1s) and avoids the
+        # slow `cargo install` compile.
+        run: |
+          set -euo pipefail
+          VERSION=lychee-v0.24.2
+          TARBALL=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL -o /tmp/lychee.tar.gz \
+            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf /tmp/lychee.tar.gz -C "${HOME}/.local/bin" lychee
+          chmod +x "${HOME}/.local/bin/lychee"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/lychee" --version
+
       - name: Restore lychee link-check cache
         # Persist the lychee URL cache across runs so we don't re-hit the
         # same github.com / crates.io / npm URLs from cold every time.
