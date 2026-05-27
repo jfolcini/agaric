@@ -139,3 +139,47 @@ describe('journal store', () => {
     expect(parseISODate('2026-02-30')).toBeNull()
   })
 })
+
+// CR-PERSIST — coercing `migrate` seam. The migrate is the safety net for a
+// future `version` bump (without it zustand silently discards the persisted
+// blob to defaults, losing every space's last-active date/mode) and doubles
+// as corruption defense for a malformed `localStorage` payload. Reached
+// through the same public seam zustand uses on rehydrate.
+describe('journal persist migrate', () => {
+  const migrate = useJournalStore.persist.getOptions().migrate
+
+  type PersistedJournal = {
+    currentDateBySpace: Record<string, string>
+    modeBySpace: Record<string, string>
+  }
+  const run = (blob: unknown): PersistedJournal => migrate?.(blob, 0) as PersistedJournal
+
+  it('is wired into the persist options', () => {
+    expect(typeof migrate).toBe('function')
+  })
+
+  it('returns empty slices for a null/undefined or non-object blob', () => {
+    expect(run(undefined)).toEqual({ currentDateBySpace: {}, modeBySpace: {} })
+    expect(run('corrupt')).toEqual({ currentDateBySpace: {}, modeBySpace: {} })
+  })
+
+  it('preserves valid per-space dates and modes', () => {
+    const blob = {
+      currentDateBySpace: { SPACE_A: '2026-05-25', SPACE_B: '2026-01-01' },
+      modeBySpace: { SPACE_A: 'weekly', SPACE_B: 'agenda' },
+    }
+    expect(run(blob)).toEqual(blob)
+  })
+
+  it('drops entries with invalid calendar dates', () => {
+    const result = run({
+      currentDateBySpace: { OK: '2026-05-25', BAD: '2026-13-45', WRAP: '2026-02-30', X: 5 },
+    })
+    expect(result.currentDateBySpace).toEqual({ OK: '2026-05-25' })
+  })
+
+  it('drops entries with unknown journal modes', () => {
+    const result = run({ modeBySpace: { OK: 'daily', BAD: 'yearly', X: 1 } })
+    expect(result.modeBySpace).toEqual({ OK: 'daily' })
+  })
+})

@@ -17,7 +17,7 @@ Items flagged during development that need revisiting. Organized by section with
 
 ## Summary
 
-30 open items in the summary table; 30 detail entries (FE-* sub-tables don't appear in the summary).
+29 open items in the summary table; 29 detail entries (FE-* sub-tables don't appear in the summary).
 
 | ID | Section | Title | Cost | Blocked on |
 |----|---------|-------|------|-----------|
@@ -46,7 +46,6 @@ Items flagged during development that need revisiting. Organized by section with
 | CR-A11Y | CR | Search/settings a11y polish + design-level popover/menu semantics — slam-dunk ARIA tweaks (settings error paras `role=alert`; `BlockPropertyEditor` ref-search `aria-label`; `StatusPanel` syncError live role), the keyboard-unreachable per-row search-history delete (tied to the dead history `activeIndex` wiring), the cross-group SR active-descendant on multi-group results, and the hand-rolled `aria-modal` popovers without a focus trap (`JournalCalendarDropdown`/`TemplatePicker`) + `MenuPopoverContent` lacking `role=menu`. All pre-existing; apply as one a11y pass. | M | — |
 | CR-DSL-QUOTE | CR | Search DSL: no quoting for `prop:`/`tag:`/`path:` filter values containing spaces — `serialize.ts tokenSource` emits them verbatim so they can't round-trip; CR8 made `PropFilterForm` reject such input rather than corrupt it (a v1 limitation). Fix: support `prop:key="value with space"` in `serialize.ts` + `register.ts parsePropToken` + the tokenizer, then lift the form restriction. | M | — |
 | CR-PERF | CR | Perf trio (all bounded/by-design today): exit-save `block_on` has no timeout (`lib.rs RunEvent::Exit` — needs a *measured* large-workspace save duration before sizing); periodic snapshot holds the registry mutex across all-space export (`loro/registry.rs` — fine at the 5-min cadence); breadcrumb `batchResolve` re-fires for unresolvable page_ids (`useSearchResults.ts`). | M | Measured exit-save duration |
-| CR-PERSIST | CR | `tabs` + `journal` zustand persist stores set `version` but provide no `migrate` (`stores/tabs.ts:424`, `stores/journal.ts:142`) — the day anyone bumps to `version:2`, the persisted blob is silently discarded to defaults (open tabs / per-space journal dates lost). No current bug (both at v1); `search-history.ts` added a no-op `migrate` placeholder for exactly this. Fix: add a pass-through/coercing `migrate` (not a one-liner — mirror search-history's care). | M | — |
 | CR-UX | CR | Search-view touch/UX residuals (from PEND-58g): UX-A8 always-visible/long-press toggle-mode explanation for touch (Radix tooltips don't fire on tap; inline labels overflow a narrow row), plus UX-A10/A12/A13 (history dropdown overlay vs inline; capped+error co-render; RTL physical spacing). | S | Design decision + runtime verification |
 | CR-E2E-TAURI | CR | Tauri-driven e2e harness (from PEND-58g E2E-A6/A3) — the web+mock `search_blocks` returns the whole match set in one page and never runs the real Rust FTS/regex pipeline, so `<mark>` highlight, real FTS/regex behavior, and multi-page Load-More are all unreachable on the current Playwright+mock harness. The only way to cover them. | L | — |
 | TEST-PROPTEST-B | TEST | Property-test coverage — Tier B (DB-bound). proptest invariants for `reverse::compute_reverse` (inverse law + `OpType`→inverse mapping), `dag::walk_edit_chain`/`find_lca` (termination within `MAX_LCA_STEPS` / cycle / LCA-commutativity), `soft_delete` cascade/restore (idempotence/inverse/subtree-isolation), and block-descendant/position tree CTEs (closure / soft-delete filtering / position monotonicity). Cost is the shared seeded-DB fixture harness, not the assertions. Tier A (`word_diff` + `space_filter_canonical`) shipped 2026-05-25. Test-only. | M-L (harness is the bulk) | — |
@@ -386,15 +385,6 @@ re-locate before editing.
   (`useSearchResults.ts`): soft-deleted/missing parents are never cached, so they
   re-fetch on every `loadMore`. Bounded; track attempted ids in a ref.
 - **Cost:** M. **Status:** Deferred (exit-save blocked on measured data).
-
-### CR-PERSIST — tabs/journal persist stores lack `migrate`
-- `tabs` (`stores/tabs.ts:424`) + `journal` (`stores/journal.ts:142`) set `version`
-  but provide no `migrate`; zustand feeds `undefined` to `merge` on a version mismatch
-  → the persisted blob is silently discarded to defaults. No current bug (both at v1),
-  but the day anyone bumps to `version:2` users lose open tabs / per-space journal dates.
-- **Fix:** add a pass-through/coercing `migrate` with the same care as `search-history.ts`'s
-  coercion (not a one-liner).
-- **Cost:** M. **Status:** Deferred — latent, no current bug.
 
 ### CR-UX — search touch toggle-mode explanation + runtime-verify items
 - **UX-A8:** an always-visible / long-press toggle-mode explanation for touch — Radix

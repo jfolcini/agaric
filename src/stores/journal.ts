@@ -80,6 +80,39 @@ export function parseISODate(s: string): Date | null {
   return date
 }
 
+const JOURNAL_MODES: ReadonlySet<string> = new Set<JournalMode>([
+  'daily',
+  'weekly',
+  'monthly',
+  'agenda',
+])
+
+/**
+ * CR-PERSIST — coerce a persisted value into a `Record<string, string>` of
+ * ISO `YYYY-MM-DD` dates, dropping any entry whose value isn't a valid
+ * calendar date. `localStorage` can hold anything (manual edits, a corrupt
+ * write, a future-shape downgrade); validating on read keeps a malformed
+ * blob from poisoning the date selectors.
+ */
+function coerceDateBySpace(raw: unknown): Record<string, string> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && parseISODate(value) !== null) out[key] = value
+  }
+  return out
+}
+
+/** CR-PERSIST — coerce a persisted value into a `Record<string, JournalMode>`. */
+function coerceModeBySpace(raw: unknown): Record<string, JournalMode> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, JournalMode> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value === 'string' && JOURNAL_MODES.has(value)) out[key] = value as JournalMode
+  }
+  return out
+}
+
 export const useJournalStore = create<JournalStore>()(
   persist(
     (set) => ({
@@ -151,6 +184,20 @@ export const useJournalStore = create<JournalStore>()(
         currentDateBySpace: state.currentDateBySpace,
         modeBySpace: state.modeBySpace,
       }),
+      // CR-PERSIST — coercing migrate. Without it, a future `version: 2`
+      // bump makes zustand's persist middleware feed `undefined` to
+      // `merge`, silently discarding the persisted blob to defaults — the
+      // user loses every space's last-active date and mode. It also runs
+      // on any legacy/version-mismatched blob, dropping entries with
+      // invalid dates / unknown modes so a corrupt payload can't poison
+      // the rehydrate path.
+      migrate: (persisted, _version): Pick<JournalStore, 'currentDateBySpace' | 'modeBySpace'> => {
+        const blob = (persisted ?? {}) as Record<string, unknown>
+        return {
+          currentDateBySpace: coerceDateBySpace(blob['currentDateBySpace']),
+          modeBySpace: coerceModeBySpace(blob['modeBySpace']),
+        }
+      },
     },
   ),
 )
