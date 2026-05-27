@@ -46,5 +46,10 @@ jobs:
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
           prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # claude-code-action refuses to run on bot-triggered PRs by default
+          # ("Workflow initiated by non-human actor: dependabot (type: Bot)").
+          # Explicitly allow `dependabot[bot]` so weekly bump PRs get the same
+          # review pass as human PRs; every other bot is still blocked.
+          allowed_bots: 'dependabot[bot]'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
