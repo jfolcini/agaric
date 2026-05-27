@@ -98,14 +98,6 @@ vi.mock('../GoogleCalendarSettingsTab', () => ({
   ),
 }))
 
-// FEAT-5: BugReportDialog is rendered by SettingsView but its heavy internal
-// logic (IPC + logs) is orthogonal to the SettingsView tests here. Mock it
-// as an inert marker so the original tab tests keep their existing scope.
-vi.mock('../BugReportDialog', () => ({
-  BugReportDialog: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="bug-report-dialog">Bug Report Dialog</div> : null,
-}))
-
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
@@ -212,21 +204,26 @@ describe('SettingsView', () => {
     expect(screen.getByTestId('google-calendar-settings-tab')).toBeInTheDocument()
   })
 
-  it('Help tab opens the bug-report dialog on click', async () => {
+  it('Help tab dispatches BUG_REPORT_EVENT on click', async () => {
     const user = userEvent.setup()
-    render(<SettingsView />)
+    const listener = vi.fn()
+    window.addEventListener('agaric:report-bug', listener)
+    try {
+      render(<SettingsView />)
 
-    const helpTab = screen.getByRole('tab', { name: t('settings.tabHelp') })
-    await user.click(helpTab)
-    expect(helpTab).toHaveAttribute('aria-selected', 'true')
+      const helpTab = screen.getByRole('tab', { name: t('settings.tabHelp') })
+      await user.click(helpTab)
+      expect(helpTab).toHaveAttribute('aria-selected', 'true')
 
-    // Dialog is not open by default.
-    expect(screen.queryByTestId('bug-report-dialog')).not.toBeInTheDocument()
+      expect(listener).not.toHaveBeenCalled()
 
-    const reportBtn = screen.getByRole('button', { name: t('help.reportBugButton') })
-    await user.click(reportBtn)
+      const reportBtn = screen.getByRole('button', { name: t('help.reportBugButton') })
+      await user.click(reportBtn)
 
-    expect(screen.getByTestId('bug-report-dialog')).toBeInTheDocument()
+      expect(listener).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('agaric:report-bug', listener)
+    }
   })
 
   it('General tab shows deadline warning section by default (UX-202: no TaskStatesSection)', () => {
