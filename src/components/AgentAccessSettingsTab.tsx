@@ -268,7 +268,7 @@ export function AgentAccessSettingsTab(): React.ReactElement {
         </CardHeader>
         <CardContent className="space-y-6">
           {error !== null && (
-            <p className="text-sm text-destructive" role="status">
+            <p className="text-sm text-destructive" role="alert">
               {error}
             </p>
           )}

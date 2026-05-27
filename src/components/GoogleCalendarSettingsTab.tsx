@@ -370,7 +370,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
           </p>
 
           {statusError !== null && (
-            <p className="text-sm text-destructive" role="status">
+            <p className="text-sm text-destructive" role="alert">
               {statusError}
             </p>
           )}

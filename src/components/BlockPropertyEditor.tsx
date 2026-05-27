@@ -281,6 +281,7 @@ export function BlockPropertyEditor({
             }}
             type="text"
             className="rounded border px-2 py-1 text-sm w-full"
+            aria-label={t('block.searchPages')}
             placeholder={t('block.searchPages')}
             data-testid="ref-search-input"
             value={refSearch}
