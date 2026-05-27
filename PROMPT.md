@@ -4,11 +4,19 @@ Before starting work, compact your conversation context (`/compact`) to free up 
 
 # Goal
 
-Work through markdown files in pending folder in manageable batches, fixing items that are already listed there.
+Work through planned tasks in manageable batches, fixing items already scoped on GitHub or in `pending/`.
+
+**Where the work lives:**
+
+- **GitHub issues with the [`plan` label](https://github.com/jfolcini/agaric/issues?q=is%3Aissue+is%3Aopen+label%3Aplan)** — one issue per major plan (the former `pending/PEND-NN-*.md` files, migrated 2026-05-27). The issue body is the full plan; comments are reviewer corrections + status updates. The curated recommended order lives in `pending/README.md`.
+- **`pending/REVIEW-LATER.md`** — multi-item backlog of CR-* / OSSF-* / PERF-* / MAINT-* small tickets that don't warrant their own issue.
+- **`pending/IDEAS.md`** — long-running idea backlog (not work-plan tickets).
 
 ## 1. PLAN
 
-Read markdown files in pending folder. Group 3-6 related items into a batch (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
+Pick **either** a single `plan`-labelled GitHub issue (each issue is a self-contained plan; group its internal sub-items into a 3-6 item batch) **or** 3-6 related items from `pending/REVIEW-LATER.md` (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
+
+**Before starting a `plan` issue:** read its body in full and verify all "Open Qs" sections have been resolved (look for answers in the issue's comments). If any Q is still open, surface it to the maintainer and stop — do not guess.
 
 Use **docs/FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
@@ -99,11 +107,16 @@ Stage all changes. Run `prek run --all-files` — this is the single point where
 
 Update SESSION-LOG.md with a summary of what was done (follow the existing format — phase heading, file/change table, stats).
 
-In REVIEW-LATER.md: remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
+**For `plan`-labelled GitHub issues:**
+- If the session fully resolves a plan, the commit message must include `Closes #NN` (GitHub auto-closes the issue when the commit lands on `main`).
+- If the session resolves part of a plan, post a status comment on the issue summarizing what shipped and what remains — don't close it.
+- Reviewer corrections that surface during the session belong as comments on the issue, not edits to the body.
+
+**For REVIEW-LATER.md:** remove resolved items entirely — both the summary table row AND the detail section. Update the summary count at the top and the "Previously resolved" line. Never add "Resolved" sections.
 
 **Keep docs/FEATURE-MAP.md in sync:** If the session added new commands, components, hooks, stores, database tables, or other user-facing features, update the relevant section of docs/FEATURE-MAP.md. Also update the deferred features list (section 22) when REVIEW-LATER items are added or resolved.
 
-**Concurrent edits to markdown files in pending folder:** Other agents may be working on markfown files in pending folder at the same time (resolving items, adding new ones, updating counts). Before writing to the file, always re-read it first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes.
+**Concurrent edits to REVIEW-LATER.md / IDEAS.md / pending/README.md:** Other agents may be editing these at the same time. Before writing, always re-read first to get the latest content. Never cache or assume stale state. If you read the file, make edits in memory, and then write — re-read immediately before writing to avoid overwriting another agent's changes. (GitHub issues don't have this race: GitHub serializes comment writes, and the issue body is rarely edited.)
 
 ### Session log entry template
 
@@ -116,7 +129,7 @@ Every session entry follows this shape:
 |----------|-------|
 | **Date** | YYYY-MM-DD |
 | **Subagents** | <count> build + <count> review (or "orchestrator-only") |
-| **Items closed** | <ID list, or "—"> |
+| **Items closed** | <ID list — issue `#NN` for plans, or REVIEW-LATER IDs (CR-*, PERF-*, etc.), or "—"> |
 | **Items modified** | <ID list, or "—"> |
 | **Tests added** | +N (frontend) / +M (backend) |
 | **Files touched** | <count> |
@@ -161,6 +174,8 @@ Apply this template to NEW sessions. Older sessions (590-597 included) stay as-i
 - **Serializing parallelizable work** — if 4 subagents have independent file targets, launch all 4 in one batch; don't queue them.
 - **Running prek inside subagents** — subagents only run their own targeted tests. Orchestrator runs `prek run --all-files` once at commit time.
 - **Forgetting to re-read REVIEW-LATER.md before writing** — other agents may concurrently edit it. Always re-read immediately before write.
+- **Starting a `plan` issue with unresolved Open Qs** — every plan issue has a section at the bottom listing maintainer decisions. If any are still open, surface them and stop. Subagents will silently guess and produce wrong scope.
+- **Closing a plan issue from a partial fix** — only use `Closes #NN` when the full plan ships. Otherwise comment-update the issue and leave it open.
 - **Forgetting docs/FEATURE-MAP.md updates** — new commands / components / hooks / stores / tables must be reflected in the feature map.
 - **Mixing refactoring with feature work in one commit** — keep them separate so reverts stay surgical.
 - **Subagent prompts that paste long doc contents inline** — keep prompts minimal; reference paths instead.
