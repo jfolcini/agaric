@@ -9,11 +9,21 @@ import { relaunchApp } from '@/lib/relaunch-app'
 // stays out of the initial chunk. The root ErrorBoundary mounts in
 // `main.tsx` before App renders, so a static import here would defeat
 // the matching `React.lazy` in `App.tsx` and pull jszip into the entry
-// bundle. We pay the dynamic import cost only after the user clicks the
-// "Report a bug" button on a crash screen.
+// bundle. We pay the dynamic import cost only after a crash is caught
+// (see `componentDidCatch` — we prefetch then so the chunk is warm by
+// the time the user reads the error screen and clicks "Report").
 const BugReportDialog = React.lazy(() =>
   import('./BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
 )
+
+function preloadBugReportDialog(): void {
+  // Fire-and-forget: the import resolves into the module cache so the
+  // matching `React.lazy` factory above hits the cache instantly when
+  // the user clicks "Report this crash". Errors are swallowed because
+  // we are already inside an error-handling code path; a failed preload
+  // just degrades to the normal on-click fetch.
+  void import('./BugReportDialog').catch(() => {})
+}
 
 interface ErrorBoundaryProps {
   children: React.ReactNode
@@ -40,6 +50,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
       stack: error.stack ?? '',
       componentStack: errorInfo.componentStack ?? '',
     })
+    // Warm the lazy chunk in parallel with the user reading the crash
+    // screen so the dialog opens instantly if they click "Report this
+    // crash". See the comment above `preloadBugReportDialog`.
+    preloadBugReportDialog()
   }
 
   render() {
