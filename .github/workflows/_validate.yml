@@ -158,12 +158,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION=lychee-v0.24.2
-          TARBALL=lychee-x86_64-unknown-linux-gnu.tar.gz
+          DIR=lychee-x86_64-unknown-linux-gnu
+          TARBALL="${DIR}.tar.gz"
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
           mkdir -p "${HOME}/.local/bin"
-          tar -xzf /tmp/lychee.tar.gz -C "${HOME}/.local/bin" lychee
-          chmod +x "${HOME}/.local/bin/lychee"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
+          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           "${HOME}/.local/bin/lychee" --version
 
