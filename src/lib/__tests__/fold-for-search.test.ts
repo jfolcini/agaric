@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { foldForSearch, indexOfFolded, matchesSearchFolded } from '../fold-for-search'
+import {
+  findFoldedMatch,
+  foldForSearch,
+  indexOfFolded,
+  matchesSearchFolded,
+} from '../fold-for-search'
 
 describe('foldForSearch', () => {
   describe('ASCII fast path', () => {
@@ -262,5 +267,106 @@ describe('indexOfFolded', () => {
       expect(indexOfFolded(haystack, 'lazy')).toBe(haystack.toLowerCase().indexOf('lazy'))
       expect(indexOfFolded(haystack, 'cat')).toBe(-1)
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// PAGES-FOLD-MARK — `findFoldedMatch` returns both start AND length of
+// the original-string span that produced the folded match, so the
+// `<mark>` highlight bound stays correct even when the fold changes
+// character length (ß → ss, ﬁ → fi, decomposed combining marks).
+// `indexOfFolded` is the start-only thin wrapper; both are tested here
+// against the same canonical cases.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
+  it('empty needle returns zero-length match at start', () => {
+    expect(findFoldedMatch('anything', '')).toEqual({ start: 0, length: 0 })
+  })
+
+  it('returns null when no folded match exists', () => {
+    expect(findFoldedMatch('İstanbul', 'ankara')).toBeNull()
+  })
+
+  it('ASCII match: length equals needle.length (no fold expansion)', () => {
+    expect(findFoldedMatch('Hello World', 'hello')).toEqual({ start: 0, length: 5 })
+    expect(findFoldedMatch('Hello World', 'world')).toEqual({ start: 6, length: 5 })
+  })
+
+  it('Straße + "strasse": match covers the original 6 code units, not 7', () => {
+    // The fold of "Straße" is "strasse" (length 7) but the original
+    // string is 6 code units. Using `needle.length` would slice past
+    // the end; `findFoldedMatch` returns the correct original length.
+    expect(findFoldedMatch('Straße', 'strasse')).toEqual({ start: 0, length: 6 })
+  })
+
+  it('"abc Straße." + "strasse": match covers only "Straße", not the period after it', () => {
+    // The regression case: with the previous `slice(start, start + needle.length)`
+    // approach, the highlight would have extended one char past "Straße"
+    // and covered the period. `findFoldedMatch` returns the correct span.
+    const haystack = 'abc Straße.'
+    const match = findFoldedMatch(haystack, 'strasse')
+    expect(match).toEqual({ start: 4, length: 6 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('Straße')
+  })
+
+  it('"Straße" + "rasse": match covers "raße" (4 code units), not "rasse" (5)', () => {
+    // Partial-match-through-fold case: the folded "rasse" overlaps the
+    // ß boundary. The original span that produces "rasse" via folding
+    // is "raße" — 4 code units, not 5.
+    const haystack = 'Straße'
+    const match = findFoldedMatch(haystack, 'rasse')
+    expect(match).toEqual({ start: 2, length: 4 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('raße')
+  })
+
+  it('ligature ﬁ (U+FB01) + "fi": match covers the single ligature code unit', () => {
+    // `ﬁ` folds to `fi` (length 2). The original span is just the
+    // ligature itself (length 1). Using `needle.length` would extend
+    // past the ligature; `findFoldedMatch` returns 1.
+    const haystack = 'aﬁx'
+    const match = findFoldedMatch(haystack, 'fi')
+    expect(match).toEqual({ start: 1, length: 1 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('ﬁ')
+  })
+
+  it('İstanbul + "istanbul": length 8 in the original (İ is one code unit)', () => {
+    // `İ` is U+0130 — one code unit in the original. It folds to "i"
+    // + U+0307, so the folded haystack is 9 code units but the original
+    // is 8. The match span in the original is 8.
+    const haystack = 'İstanbul'
+    const match = findFoldedMatch(haystack, 'istanbul')
+    expect(match).toEqual({ start: 0, length: 8 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('İstanbul')
+  })
+
+  it('café + "cafe": precomposed é counts as one code unit', () => {
+    const haystack = 'café'
+    const match = findFoldedMatch(haystack, 'cafe')
+    expect(match).toEqual({ start: 0, length: 4 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('café')
+  })
+
+  it('decomposed cafe + U+0301: combining mark is consumed inside the match span', () => {
+    // The decomposed form is "café" — 5 code units. The folded
+    // form is "cafe" — 4. The match span in the original is 5 (the
+    // combining mark belongs to the visible "e").
+    const haystack = 'café'
+    const match = findFoldedMatch(haystack, 'cafe')
+    expect(match).toEqual({ start: 0, length: 5 })
+  })
+
+  it('indexOfFolded stays consistent with findFoldedMatch.start', () => {
+    // Spot-check the wrapper across the cases above.
+    expect(indexOfFolded('Straße', 'strasse')).toBe(0)
+    expect(indexOfFolded('İstanbul', 'istanbul')).toBe(0)
+    expect(indexOfFolded('aﬁx', 'fi')).toBe(1)
+    expect(indexOfFolded('Hello World', 'world')).toBe(6)
+    expect(indexOfFolded('İstanbul', 'ankara')).toBe(-1)
   })
 })
