@@ -335,7 +335,9 @@ export function StatusPanel(): React.ReactElement {
                 </div>
 
                 {syncError && (
-                  <p className="sync-panel-error text-sm text-destructive">{syncError}</p>
+                  <p className="sync-panel-error text-sm text-destructive" role="alert">
+                    {syncError}
+                  </p>
                 )}
 
                 <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
