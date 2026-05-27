@@ -9,14 +9,27 @@ Work through planned tasks in manageable batches, fixing items already scoped on
 **Where the work lives:**
 
 - **GitHub issues with the [`plan` label](https://github.com/jfolcini/agaric/issues?q=is%3Aissue+is%3Aopen+label%3Aplan)** — one issue per major plan (the former `pending/PEND-NN-*.md` files, migrated 2026-05-27). The issue body is the full plan; comments are reviewer corrections + status updates. The curated recommended order lives in `pending/README.md`.
+- **All other open GitHub issues** — anything in [the open issues list](https://github.com/jfolcini/agaric/issues?q=is%3Aissue+is%3Aopen) that **doesn't** carry the `plan` label: bug reports, small feature requests, UX polish, regressions, doc fixes, etc. These are typically narrower than a `plan` issue (no multi-phase scope, no Open Qs section). Treat each one as a self-contained ticket and ship it as its own PR.
+- **GitHub code-scanning + security alerts** — [code-scanning alerts](https://github.com/jfolcini/agaric/security/code-scanning?query=is%3Aopen) (CodeQL findings) and [Dependabot security alerts](https://github.com/jfolcini/agaric/security/dependabot) (`gh api /repos/jfolcini/agaric/code-scanning/alerts?state=open` / `…/dependabot/alerts?state=open`) are first-class work items. CodeQL findings often surface real correctness bugs *or* false positives caused by stale code; either way the resolution is concrete (fix or dismiss-with-reason). Dependabot security alerts that can be resolved by bumping a dep are quick wins.
 - **`pending/REVIEW-LATER.md`** — multi-item backlog of CR-* / OSSF-* / PERF-* / MAINT-* small tickets that don't warrant their own issue.
 - **`pending/IDEAS.md`** — long-running idea backlog (not work-plan tickets).
 
 ## 1. PLAN
 
-Pick **either** a single `plan`-labelled GitHub issue (each issue is a self-contained plan; group its internal sub-items into a 3-6 item batch) **or** 3-6 related items from `pending/REVIEW-LATER.md` (same domain: e.g., all sync items, all test gaps, all Android items). Leave the rest for future batches — don't try to clear everything at once.
+Pick **one** of:
+
+- A single `plan`-labelled GitHub issue (each issue is a self-contained plan; group its internal sub-items into a 3-6 item batch), **or**
+- A single non-`plan`-labelled GitHub issue (typically narrower scope; ship as its own PR), **or**
+- A single open code-scanning / Dependabot security alert (resolve or dismiss-with-reason), **or**
+- 3-6 related items from `pending/REVIEW-LATER.md` (same domain: e.g., all sync items, all test gaps, all Android items).
+
+Leave the rest for future batches — don't try to clear everything at once.
 
 **Before starting a `plan` issue:** read its body in full and verify all "Open Qs" sections have been resolved (look for answers in the issue's comments). If any Q is still open, surface it to the maintainer and stop — do not guess.
+
+**Before starting a non-`plan` issue:** scan its comment thread for any maintainer-supplied scope clarifications or acceptance criteria before coding. If the issue body is ambiguous *and* no clarifying comment exists, surface the ambiguity to the maintainer and stop — do not guess at intent.
+
+**Before resolving a code-scanning alert:** check whether the flagged behaviour is real or a false positive caused by surrounding context (a mocked type, a test-only stub, an unreachable branch). A real bug warrants a code fix; a false positive warrants a CodeQL `# nosemgrep` / `// codeql[js/...]: ignore — <reason>` dismissal comment OR a structural change to the surrounding code that removes the trigger entirely. Don't suppress without a comment that says *why*.
 
 Use **docs/FEATURE-MAP.md** for feature discovery: when picking items to work on, consult the feature map to understand how the feature fits into the broader system (related commands, stores, components, database tables). This avoids blind spots during planning.
 
