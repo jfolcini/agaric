@@ -63,8 +63,13 @@ afterEach(() => {
 })
 
 // jsdom stubs — APIs missing from jsdom that Radix UI and shadcn/ui components need.
+// Constructors take and ignore the same callback their real counterparts do, so
+// CodeQL doesn't flag production callers as passing superfluous arguments
+// (`js/superfluous-trailing-arguments` would fire on `new ResizeObserver(cb)`
+// when the mock's constructor declared zero parameters).
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
+    constructor(_callback: ResizeObserverCallback) {}
     observe() {}
     unobserve() {}
     disconnect() {}
@@ -76,6 +81,7 @@ if (typeof globalThis.IntersectionObserver === 'undefined') {
     readonly root = null
     readonly rootMargin = '0px'
     readonly thresholds: readonly number[] = [0]
+    constructor(_callback: IntersectionObserverCallback, _options?: IntersectionObserverInit) {}
     observe() {}
     unobserve() {}
     disconnect() {}
