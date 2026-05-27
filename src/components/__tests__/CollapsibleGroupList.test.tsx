@@ -17,6 +17,7 @@
 
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { GroupItem } from '../CollapsibleGroupList'
@@ -29,14 +30,19 @@ vi.mock('@/components/ui/chevron-toggle', () => ({
 }))
 
 vi.mock('../PageLink', () => ({
+  // The real PageLink renders `children ?? title`. Mirror that contract
+  // so the namespaced-display tests (PEND-83 Bug 1) can verify the
+  // leaf/breadcrumb children the header passes in.
   PageLink: ({
     pageId,
     title,
     className,
+    children,
   }: {
     pageId: string
     title: string
     className?: string
+    children?: React.ReactNode
   }) => (
     <button
       type="button"
@@ -47,7 +53,7 @@ vi.mock('../PageLink', () => ({
         // The real PageLink calls navigateToPage; in tests we verify via onPageTitleClick
       }}
     >
-      {title}
+      {children ?? title}
     </button>
   ),
 }))
@@ -554,6 +560,96 @@ describe('CollapsibleGroupList', () => {
     )
 
     expect(screen.getByText('(2)')).toBeInTheDocument()
+  })
+
+  // ---------------------------------------------------------------------------
+  // PEND-83 Bug 1: namespaced titles render leaf + breadcrumb in the header
+  // ---------------------------------------------------------------------------
+
+  describe('hierarchical page-title display (PEND-83 Bug 1)', () => {
+    // Surface contract: when `group.page_title` is namespaced
+    // (`Notes/2026/Quarterly`), the header renders the leaf as the
+    // primary text and the joined ancestor segments as a smaller muted
+    // line below — mirroring the picker's `formatNamespacedLabel`
+    // treatment. The full path stays available via `title=""` for hover.
+
+    it('renders leaf as the primary label for namespaced titles (button branch)', () => {
+      const groups = [makeGroup('P1', 'Notes/2026/Quarterly', [{ id: 'B1', content: 'block' }])]
+
+      render(
+        <CollapsibleGroupList
+          groups={groups}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          untitledLabel="Untitled"
+          renderBlock={defaultRenderBlock}
+        />,
+      )
+
+      // The leaf is now the visible text alongside the count.
+      expect(screen.getByText(/^Quarterly\s+\(1\)$/)).toBeInTheDocument()
+      // The breadcrumb is rendered as a muted secondary line.
+      const breadcrumb = screen.getByTestId('group-header-breadcrumb')
+      expect(breadcrumb).toHaveTextContent('Notes / 2026')
+    })
+
+    it('full path stays available via title="" tooltip (button branch)', () => {
+      const groups = [makeGroup('P1', 'Notes/2026/Quarterly', [{ id: 'B1', content: 'block' }])]
+
+      render(
+        <CollapsibleGroupList
+          groups={groups}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          untitledLabel="Untitled"
+          renderBlock={defaultRenderBlock}
+        />,
+      )
+
+      const button = screen.getByRole('button', { expanded: false })
+      expect(button).toHaveAttribute('title', 'Notes/2026/Quarterly')
+    })
+
+    it('does not render a breadcrumb element for non-namespaced titles', () => {
+      const groups = [makeGroup('P1', 'Inbox', [{ id: 'B1', content: 'block' }])]
+
+      render(
+        <CollapsibleGroupList
+          groups={groups}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          untitledLabel="Untitled"
+          renderBlock={defaultRenderBlock}
+        />,
+      )
+
+      expect(screen.queryByTestId('group-header-breadcrumb')).not.toBeInTheDocument()
+      expect(screen.getByText('Inbox (1)')).toBeInTheDocument()
+    })
+
+    it('renders leaf + breadcrumb in the PageLink branch (onPageTitleClick provided)', () => {
+      const groups = [makeGroup('P1', 'Notes/2026/Quarterly', [{ id: 'B1', content: 'block' }])]
+
+      render(
+        <CollapsibleGroupList
+          groups={groups}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          untitledLabel="Untitled"
+          onPageTitleClick={vi.fn()}
+          renderBlock={defaultRenderBlock}
+        />,
+      )
+
+      const pageLink = screen.getByTestId('page-link-P1')
+      // Leaf is the primary text inside the link.
+      expect(pageLink).toHaveTextContent('Quarterly')
+      // Breadcrumb is nested beside it.
+      const breadcrumb = screen.getByTestId('group-header-breadcrumb')
+      expect(breadcrumb).toHaveTextContent('Notes / 2026')
+      // The link wrapper carries the full-path tooltip.
+      expect(pageLink.querySelector('[title="Notes/2026/Quarterly"]')).not.toBeNull()
+    })
   })
 
   // 24. When onPageTitleClick provided, aria-expanded stays on the chevron button

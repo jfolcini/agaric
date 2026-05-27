@@ -217,6 +217,58 @@ describe('RecentPagesStrip', () => {
     expect(chip).toHaveAttribute('title', 'Untitled')
   })
 
+  // ---------------------------------------------------------------------------
+  // PEND-83 Bug 1: hierarchical page-title display
+  // ---------------------------------------------------------------------------
+
+  describe('hierarchical page-title display (PEND-83 Bug 1)', () => {
+    it('displays the leaf segment of a namespaced title in the chip body', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Notes/2026/Quarterly' })
+
+      render(<RecentPagesStrip />)
+
+      // The chip's accessible name is the leaf — namespaced ancestors are
+      // hoisted to the tooltip, not the visible text.
+      const chip = screen.getByRole('button', { name: 'Quarterly' })
+      expect(chip).toBeInTheDocument()
+    })
+
+    it('keeps the full path available via title="" for hover', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Notes/2026/Quarterly' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Quarterly' })
+      expect(chip).toHaveAttribute('title', 'Notes/2026/Quarterly')
+    })
+
+    it('navigates with the FULL path (not the leaf) — store contract is unchanged', async () => {
+      const user = userEvent.setup()
+      const navigateSpy = vi.fn()
+      useTabsStore.setState({ navigateToPage: navigateSpy })
+
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Notes/2026/Quarterly' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Quarterly' })
+      await user.click(chip)
+
+      // Navigation MUST receive the raw stored title — the display
+      // transformation is a UI-only concern.
+      expect(navigateSpy).toHaveBeenCalledWith('A', 'Notes/2026/Quarterly')
+    })
+
+    it('non-namespaced titles render verbatim (no transformation)', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Inbox' })
+
+      render(<RecentPagesStrip />)
+
+      const chip = screen.getByRole('button', { name: 'Inbox' })
+      expect(chip).toHaveAttribute('title', 'Inbox')
+    })
+  })
+
   it('has no a11y violations when populated', async () => {
     const { recordVisit } = useRecentPagesStore.getState()
     recordVisit({ pageId: 'A', title: 'Alpha' })

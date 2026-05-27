@@ -4464,6 +4464,82 @@ async fn eval_unlinked_refs_excludes_own_page_blocks() {
     );
 }
 
+// ======================================================================
+// PEND-83 Bug 2 — title-block filter
+//
+// The trigram FTS tokenizer is substring-based, so a child page like
+// `Notes/2026` (a `block_type = 'page'` row whose `content =
+// 'Notes/2026'`) is an FTS hit for the parent page `Notes` via the
+// trigrams `Not`, `ote`, `tes`. Those title-block hits leaked into the
+// unlinked-references panel (the bug). The fix adds `b.block_type !=
+// 'page'` to the FTS base set so refs surface body matches only.
+//
+// Regression guards:
+//   (1) the `Notes/2026` title block must NOT surface as an unlinked
+//       ref for `Notes`;
+//   (2) an unrelated page (`Aardvark`) whose body block contains the
+//       literal word `Notes` MUST still surface — the filter must not
+//       over-shoot and drop body matches.
+// ======================================================================
+#[tokio::test]
+async fn eval_unlinked_refs_excludes_title_blocks() {
+    let (pool, _dir) = test_pool().await;
+    // Parent page whose title is "Notes".
+    insert_block_with_parent(&pool, "TARGET", "page", "Notes", None, None).await;
+    // Child page `Notes/2026` — title block content matches the parent
+    // name as a substring via the trigram tokenizer.
+    insert_block_with_parent(&pool, "CHILD", "page", "Notes/2026", None, None).await;
+    insert_fts(&pool, "CHILD", "Notes/2026").await;
+    // Unrelated page with a body block that mentions "Notes" literally.
+    insert_block_with_parent(&pool, "AARDVARK", "page", "Aardvark", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "BLK_AARDVARK",
+        "content",
+        "Today I took some Notes on burrows",
+        Some("AARDVARK"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "BLK_AARDVARK", "Today I took some Notes on burrows").await;
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    // (1) The child page's title block must not surface.
+    let surfaced_block_ids: Vec<&str> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.as_str()))
+        .collect();
+    assert!(
+        !surfaced_block_ids.contains(&"CHILD"),
+        "child page title block leaked into unlinked refs: {surfaced_block_ids:?}"
+    );
+    let surfaced_group_ids: Vec<&str> = resp.groups.iter().map(|g| g.page_id.as_str()).collect();
+    assert!(
+        !surfaced_group_ids.contains(&"CHILD"),
+        "child page surfaced as its own source group: {surfaced_group_ids:?}"
+    );
+
+    // (2) The unrelated body match MUST still surface (over-filter guard).
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "exactly one source group expected — `Aardvark`"
+    );
+    assert_eq!(resp.groups[0].page_id, "AARDVARK");
+    assert_eq!(resp.groups[0].blocks.len(), 1);
+    assert_eq!(resp.groups[0].blocks[0].id, "BLK_AARDVARK");
+    // Counts must also reflect the filter: pre-filter total = 1 (only
+    // the body match survives the title-block drop and the self-ref
+    // walk).
+    assert_eq!(resp.total_count, 1, "title-block hit excluded pre-filter");
+    assert_eq!(resp.filtered_count, 1);
+}
+
 #[tokio::test]
 async fn eval_unlinked_refs_handles_special_chars_in_title() {
     let (pool, _dir) = test_pool().await;

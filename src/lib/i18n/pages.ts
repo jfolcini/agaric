@@ -242,6 +242,14 @@ export const pages: Record<string, string> = {
   'pages.outline.empty': 'No headings found',
   'pageTree.toggleNamespace': 'Toggle {{path}} namespace',
   'pageTree.toggleHybrid': 'Toggle {{path}} (hybrid namespace)',
+  // PEND-83 Bug 2 — child-pages tree section at the bottom of PageEditor.
+  // Renders only when the current page actually has descendants (the
+  // section hides itself otherwise), so `pagesTree.empty` is reserved
+  // for the deliberate "no descendants" copy if a caller chooses to
+  // surface it (e.g. a debug view).
+  'pagesTree.title': 'Pages tree',
+  'pagesTree.empty': 'No child pages.',
+  'pagesTree.ariaLabel': 'Child pages of {{title}}',
   'pageProperty.tableErrorBoundary': 'Failed to load properties.',
   // PEND-56 — DensityRow metadata badges + density tooltip
   'pageBrowser.metadata.inbound_one': '{{count}} inbound link',

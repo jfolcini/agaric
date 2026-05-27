@@ -53,6 +53,20 @@ vi.mock('../LinkedReferences', () => ({
   },
 }))
 
+let capturedPagesTreeSectionProps: { pageId: string; pageTitle: string } | undefined
+vi.mock('../PagesTreeSection', () => ({
+  PagesTreeSection: (props: { pageId: string; pageTitle: string; onNavigateToPage?: unknown }) => {
+    capturedPagesTreeSectionProps = { pageId: props.pageId, pageTitle: props.pageTitle }
+    return (
+      <div
+        data-testid="pages-tree-section"
+        data-page-id={props.pageId}
+        data-page-title={props.pageTitle}
+      />
+    )
+  },
+}))
+
 let capturedUnlinkedRefsProps: { pageId: string; pageTitle: string } | undefined
 vi.mock('../UnlinkedReferences', () => ({
   UnlinkedReferences: (props: {
@@ -121,6 +135,7 @@ beforeEach(() => {
   capturedParentId = undefined
   capturedAutoCreateFirstBlock = undefined
   capturedLinkedRefsPageId = undefined
+  capturedPagesTreeSectionProps = undefined
   capturedUnlinkedRefsProps = undefined
   capturedPageHeaderProps = null
   capturedDuePanelDate = undefined
@@ -192,6 +207,19 @@ describe('PageEditor', () => {
     expect(unlinkedRefs).toHaveAttribute('data-page-id', 'PAGE_123')
     expect(unlinkedRefs).toHaveAttribute('data-page-title', 'Test Title')
     expect(capturedUnlinkedRefsProps).toEqual({
+      pageId: 'PAGE_123',
+      pageTitle: 'Test Title',
+    })
+  })
+
+  it('renders PagesTreeSection with correct pageId and pageTitle (PEND-83)', () => {
+    render(<PageEditor pageId="PAGE_123" title="Test Title" />)
+
+    const pagesTree = screen.getByTestId('pages-tree-section')
+    expect(pagesTree).toBeInTheDocument()
+    expect(pagesTree).toHaveAttribute('data-page-id', 'PAGE_123')
+    expect(pagesTree).toHaveAttribute('data-page-title', 'Test Title')
+    expect(capturedPagesTreeSectionProps).toEqual({
       pageId: 'PAGE_123',
       pageTitle: 'Test Title',
     })

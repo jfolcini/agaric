@@ -51,6 +51,7 @@ import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { getPageDisplayName } from '../lib/page-display'
 import {
   type PageRef,
   selectRecentPagesForSpace,
@@ -219,7 +220,14 @@ export function RecentPagesStrip(): React.ReactElement | null {
       >
         <div className="flex items-center gap-1.5 px-4 md:px-6 py-1">
           {visible.map((ref, idx) => {
-            const displayTitle = ref.title || t('recent.untitled')
+            // PEND-83 Bug 1: chips are space-constrained (`max-w-[160px]`)
+            // and full namespaced paths overflow fast. Render the LEAF only
+            // and surface the full path via `title=""` for hover. The
+            // empty-title fallback to "Untitled" is preserved verbatim so
+            // the existing fallback test keeps passing — `getPageDisplayName`
+            // treats it as non-namespaced and returns the same label.
+            const fullTitle = ref.title || t('recent.untitled')
+            const displayTitle = getPageDisplayName(fullTitle, 'leaf').label
             return (
               <RecentPageChip
                 key={ref.pageId}
@@ -233,7 +241,7 @@ export function RecentPagesStrip(): React.ReactElement | null {
                 }}
                 tabIndex={idx === focusedIndex ? 0 : -1}
                 className="truncate justify-start"
-                title={displayTitle}
+                title={fullTitle}
                 onClick={(e) => handleClick(ref, e)}
                 onAuxClick={(e) => {
                   // Middle-click (button === 1) does not fire `onClick` in

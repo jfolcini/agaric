@@ -1,5 +1,6 @@
 import type React from 'react'
 import type { BlockLinkNode } from '../../../editor/types'
+import { getPageDisplayName } from '../../../lib/page-display'
 import { cn } from '../../../lib/utils'
 import type { RenderContext } from '../context'
 
@@ -36,16 +37,21 @@ export function renderBlockLink(
   const linkId = node.attrs.id
   const title = ctx.resolveBlockTitle?.(linkId) ?? `[[${linkId.slice(0, 8)}...]]`
   const status = ctx.resolveBlockStatus?.(linkId) ?? 'active'
+  // PEND-83 Bug 1: inline `[[link]]` chip renders the LEAF only. The full
+  // path stays available via the `title=""` tooltip — the chip lives inside
+  // flowing text where a full namespaced path overflows the line.
+  const { label } = getPageDisplayName(title, 'leaf')
   const deletedProps = status === 'deleted' ? { 'aria-label': `${title} (deleted)` } : {}
   return (
     <span
       key={key}
       className={cn('block-link-chip cursor-pointer', status === 'deleted' && 'block-link-deleted')}
       data-testid="block-link-chip"
+      title={title}
       {...deletedProps}
       {...blockLinkProps(linkId, ctx.onNavigate, ctx.interactive)}
     >
-      {title}
+      {label}
     </span>
   )
 }
