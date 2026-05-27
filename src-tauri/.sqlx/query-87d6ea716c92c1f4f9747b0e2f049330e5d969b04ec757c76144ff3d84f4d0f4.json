@@ -6,12 +6,19 @@
       {
         "name": "space_id!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
       },
       {
         "name": "cnt!: i64",
         "ordinal": 1,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -19,7 +26,7 @@
     },
     "nullable": [
       true,
-      null
+      false
     ]
   },
   "hash": "87d6ea716c92c1f4f9747b0e2f049330e5d969b04ec757c76144ff3d84f4d0f4"

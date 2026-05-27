@@ -6,7 +6,13 @@
       {
         "name": "fs_path",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "fs_path"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,7 +6,13 @@
       {
         "name": "id!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "block_id"
+          }
+        }
       }
     ],
     "parameters": {

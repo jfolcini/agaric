@@ -6,12 +6,19 @@
       {
         "name": "date",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agenda_cache",
+            "name": "date"
+          }
+        }
       },
       {
         "name": "cnt!: i64",
         "ordinal": 1,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -19,7 +26,7 @@
     },
     "nullable": [
       false,
-      null
+      false
     ]
   },
   "hash": "29f159afca08a03ec642270b93aa6647f293bf9f53720f1681175b594248373a"

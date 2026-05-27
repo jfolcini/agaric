@@ -6,77 +6,167 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
       },
       {
         "name": "block_type",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
       },
       {
         "name": "content",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
       },
       {
         "name": "parent_id",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
       },
       {
         "name": "position",
         "ordinal": 4,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
       },
       {
         "name": "deleted_at",
         "ordinal": 5,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "deleted_at"
+          }
+        }
       },
       {
         "name": "todo_state",
         "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "todo_state"
+          }
+        }
       },
       {
         "name": "priority",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "priority"
+          }
+        }
       },
       {
         "name": "due_date",
         "ordinal": 8,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "due_date"
+          }
+        }
       },
       {
         "name": "scheduled_date",
         "ordinal": 9,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "scheduled_date"
+          }
+        }
       },
       {
         "name": "page_id",
         "ordinal": 10,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
       },
       {
         "name": "repeat_rule",
         "ordinal": 11,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
       },
       {
         "name": "repeat_until",
         "ordinal": 12,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
       },
       {
         "name": "repeat_count",
         "ordinal": 13,
-        "type_info": "Float"
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
       },
       {
         "name": "repeat_seq",
         "ordinal": 14,
-        "type_info": "Float"
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
       }
     ],
     "parameters": {

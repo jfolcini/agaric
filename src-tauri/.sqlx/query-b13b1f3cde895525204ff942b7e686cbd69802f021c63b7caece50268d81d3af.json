@@ -6,42 +6,90 @@
       {
         "name": "device_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
       },
       {
         "name": "seq",
         "ordinal": 1,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
       },
       {
         "name": "parent_seqs",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "parent_seqs"
+          }
+        }
       },
       {
         "name": "hash",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "hash"
+          }
+        }
       },
       {
         "name": "op_type",
         "ordinal": 4,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
       },
       {
         "name": "payload",
         "ordinal": 5,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
       },
       {
         "name": "created_at",
         "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "created_at"
+          }
+        }
       },
       {
         "name": "block_id",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "block_id"
+          }
+        }
       }
     ],
     "parameters": {

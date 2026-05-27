@@ -6,12 +6,24 @@
       {
         "name": "key",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_settings",
+            "name": "key"
+          }
+        }
       },
       {
         "name": "value",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_settings",
+            "name": "value"
+          }
+        }
       }
     ],
     "parameters": {

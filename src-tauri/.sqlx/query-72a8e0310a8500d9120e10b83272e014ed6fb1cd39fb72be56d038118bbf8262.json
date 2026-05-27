@@ -6,27 +6,47 @@
       {
         "name": "page_id!",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
       },
       {
         "name": "mat_in!: i64",
         "ordinal": 1,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "inbound_link_count"
+          }
+        }
       },
       {
         "name": "mat_ch!: i64",
         "ordinal": 2,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "child_block_count"
+          }
+        }
       },
       {
         "name": "calc_in!: i64",
         "ordinal": 3,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": "Expression"
       },
       {
         "name": "calc_ch!: i64",
         "ordinal": 4,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {

@@ -6,12 +6,24 @@
       {
         "name": "i!: i64",
         "ordinal": 0,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "inbound_link_count"
+          }
+        }
       },
       {
         "name": "c!: i64",
         "ordinal": 1,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "child_block_count"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,12 +6,24 @@
       {
         "name": "data",
         "ordinal": 0,
-        "type_info": "Blob"
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "data"
+          }
+        }
       },
       {
         "name": "up_to_hash",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "up_to_hash"
+          }
+        }
       }
     ],
     "parameters": {

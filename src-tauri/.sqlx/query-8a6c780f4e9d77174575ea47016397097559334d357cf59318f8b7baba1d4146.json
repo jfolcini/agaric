@@ -6,32 +6,68 @@
       {
         "name": "key",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "key"
+          }
+        }
       },
       {
         "name": "value_text",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
       },
       {
         "name": "value_num",
         "ordinal": 2,
-        "type_info": "Float"
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
       },
       {
         "name": "value_date",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
       },
       {
         "name": "value_ref",
         "ordinal": 4,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
       },
       {
         "name": "value_bool",
         "ordinal": 5,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_bool"
+          }
+        }
       }
     ],
     "parameters": {

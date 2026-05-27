@@ -6,7 +6,8 @@
       {
         "name": "MIN(created_at)",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       }
     ],
     "parameters": {

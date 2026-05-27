@@ -6,12 +6,24 @@
       {
         "name": "op_type",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
       },
       {
         "name": "payload",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,22 +6,46 @@
       {
         "name": "date",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_agenda_event_map",
+            "name": "date"
+          }
+        }
       },
       {
         "name": "gcal_event_id",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_agenda_event_map",
+            "name": "gcal_event_id"
+          }
+        }
       },
       {
         "name": "last_pushed_hash",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_agenda_event_map",
+            "name": "last_pushed_hash"
+          }
+        }
       },
       {
         "name": "last_pushed_at",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_agenda_event_map",
+            "name": "last_pushed_at"
+          }
+        }
       }
     ],
     "parameters": {

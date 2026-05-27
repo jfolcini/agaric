@@ -6,20 +6,27 @@
       {
         "name": "root_id!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "descendants",
+            "name": "root_id"
+          }
+        }
       },
       {
         "name": "descendant_count!: i64",
         "ordinal": 1,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      null,
-      null
+      false,
+      false
     ]
   },
   "hash": "a832ef4af3dbe6b7cc5be8b9fbde165027ea458be4148c0b9f9023bbce4f4723"

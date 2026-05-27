@@ -6,7 +6,13 @@
       {
         "name": "device_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
       }
     ],
     "parameters": {

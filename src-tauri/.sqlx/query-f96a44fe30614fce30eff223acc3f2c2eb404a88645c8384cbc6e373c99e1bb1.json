@@ -6,17 +6,35 @@
       {
         "name": "block_type!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
       },
       {
         "name": "content",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
       },
       {
         "name": "parent_id",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,47 +6,101 @@
       {
         "name": "peer_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "peer_id"
+          }
+        }
       },
       {
         "name": "last_hash",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "last_hash"
+          }
+        }
       },
       {
         "name": "last_sent_hash",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "last_sent_hash"
+          }
+        }
       },
       {
         "name": "synced_at",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "synced_at"
+          }
+        }
       },
       {
         "name": "reset_count!: i64",
         "ordinal": 4,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "reset_count"
+          }
+        }
       },
       {
         "name": "last_reset_at",
         "ordinal": 5,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "last_reset_at"
+          }
+        }
       },
       {
         "name": "cert_hash",
         "ordinal": 6,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "cert_hash"
+          }
+        }
       },
       {
         "name": "device_name",
         "ordinal": 7,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "device_name"
+          }
+        }
       },
       {
         "name": "last_address",
         "ordinal": 8,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "last_address"
+          }
+        }
       }
     ],
     "parameters": {

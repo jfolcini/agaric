@@ -6,7 +6,13 @@
       {
         "name": "attempts!: i64",
         "ordinal": 0,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "attempts"
+          }
+        }
       }
     ],
     "parameters": {

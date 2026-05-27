@@ -6,12 +6,24 @@
       {
         "name": "page_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
       },
       {
         "name": "title",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "title"
+          }
+        }
       }
     ],
     "parameters": {
