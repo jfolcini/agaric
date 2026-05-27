@@ -62,7 +62,7 @@ type RecentState = RecentPagesState
  * selector contract is read-only; every consumer treats the returned
  * array as immutable. We don't widen the public return type to
  * `readonly PageRef[]` to avoid a TS ripple across every consumer
- * (`RecentPagesStrip`, `App.tsx`, tests).
+ * (`QuickAccessBar`, `App.tsx`, tests).
  */
 const EMPTY_PAGE_REFS: readonly PageRef[] = Object.freeze([])
 
