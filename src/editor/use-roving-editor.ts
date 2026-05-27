@@ -125,7 +125,15 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
     return {
       ...this.parent?.(),
       [configKeyToTipTap(getShortcutKeys('codeBlock'))]: () => {
-        this.editor.chain().focus().toggleCodeBlock().run()
+        // `focus('end')` after the toggle works around a tiptap 3.23.6
+        // regression (PR #7848) where `deleteSelection` on an emptied
+        // doc leaves the selection at position 0 — subsequent toggle
+        // creates the code block but the cursor stays outside it, so
+        // the next keystroke inserts a paragraph instead of code-block
+        // content. Re-anchoring to doc-end after the toggle lands the
+        // cursor inside the resulting node (works whether the toggle
+        // opened or closed a code block).
+        this.editor.chain().focus().toggleCodeBlock().focus('end').run()
         return true
       },
     }
