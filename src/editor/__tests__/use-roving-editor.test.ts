@@ -427,6 +427,32 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.isActive('codeBlock')).toBe(true)
   })
 
+  // Regression: tiptap 3.23.6 (#7848) tightened `deleteSelection` so that on
+  // an emptied doc the selection collapses to position 0 — outside the
+  // first node. The subsequent toggleCodeBlock then creates the code block
+  // but leaves the cursor outside it, so the next keystroke would land in
+  // a paragraph instead. The shortcut handler appends `focus('end')` to
+  // the chain to keep the cursor inside the toggled node; this test pins
+  // the resulting JSON shape so future bumps cannot silently re-break it.
+  it('CodeBlockWithShortcut chain keeps cursor inside the code block after deleteSelection', () => {
+    editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
+    editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] })
+    editor.commands.selectAll()
+    editor.commands.deleteSelection()
+    editor.chain().focus().toggleCodeBlock().focus('end').run()
+    editor.commands.insertContent('x = 1')
+    expect(editor.getJSON()).toEqual({
+      type: 'doc',
+      content: [
+        {
+          type: 'codeBlock',
+          attrs: { language: null },
+          content: [{ type: 'text', text: 'x = 1' }],
+        },
+      ],
+    })
+  })
+
   it('PriorityShortcuts dispatches set-priority-1 event via shortcut handler', () => {
     editor = createEditor([PriorityShortcuts])
     const ext = editor.extensionManager.extensions.find((e) => e.name === 'priorityShortcuts')
