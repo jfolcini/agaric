@@ -57,7 +57,7 @@ What's not yet shipped is tracked in `pending/REVIEW-LATER.md` (canonical backlo
 
 - **OS notifications** for due tasks (Org-mode parity; mobile especially).
 - **Per-space GCal connector** — foundation in place; M2/M3 wire `space_id` through the push pipeline.
-- **iroh transport** — scoped, not started. Approved adoption plan replacing the mDNS + WebSocket + TLS + TOFU stack with a higher-level p2p library. See `pending/PEND-10-iroh-transport-adoption.md`.
+- **iroh transport** — scoped, not started. Approved adoption plan replacing the mDNS + WebSocket + TLS + TOFU stack with a higher-level p2p library. See [#78](https://github.com/jfolcini/agaric/issues/78).
 - **rmcp migration** — M1 landed (RO tools/list); M2 (`tools/call`) + M3 (delete hand-rolled framing) remain.
 - **`ActiveBlockId` newtype M3** — completes the type-system lift of invariant #9 (recursive-CTE conflict filtering); dispatcher decision pending.
 - **PropertyRowEditor decomposition** — done.

@@ -1,56 +1,58 @@
 # `pending/` — planned tasks
 
-> **These are plans, not commits.** Scoped, time-estimated work with explicit cost / impact / risk. Each one is independently approve-able — pick what you want, when you want.
+> **Workplans now live as GitHub issues**, not files in this directory.
 >
-> **Convention:** when a task is done (or rejected), delete its plan file. `git log` + `SESSION-LOG.md` are the audit trail. The index below mirrors what's actually in `pending/` — no historical "Resolved" rows.
+> Browse: [`plan` label](https://github.com/jfolcini/agaric/issues?q=is%3Aissue+is%3Aopen+label%3Aplan). When a plan is finished or rejected, close the issue — `git log` + the issue is the audit trail.
+>
+> This file curates a recommended order across the open `plan`-labelled issues. It is **not** the index; the label is. If the recommended order goes stale and nobody is reading it, delete it.
 
-## Index
+## What's still in this directory
 
-| ID | Title | Cost | Status |
-| --- | --- | --- | --- |
-| PEND-10 | iroh transport adoption (replaces mDNS+WebSocket+TLS+TOFU stack) | L (14-19 weeks) | ready as a **planned spike + multi-phase migration** (iroh wire-format stability + v1.0 minor-version churn policy is the headline kill criterion) |
-| PEND-36 | Publish Agaric on Google Play Store (AAB build job + privacy policy URL + Play Console paperwork + 14-day closed test) | S (~1 day eng) + M-L (process, mostly waiting) | engineering work scoped; 3 maintainer decisions open (D1-D3); separate paperwork path |
-| PEND-49 | OpenSSF Best Practices **Passing → Silver** roadmap (Passing achieved 2026-05-17; 14 unmet Silver criteria triaged into 5 buckets — only ~4 need engineering work, the rest are auto-meet / deliberate non-policy / upstream-blocked) | ~10-20 person-hours for cheap wins + L multi-week (`PEND-48` reproducible builds is the tentpole) | catalogued; 3 open questions (pursue Silver at all? platform sequencing? review cadence enforcement?) |
-| PEND-57 | **Pages view — multi-select + bulk operations + saved views.** Reuses `useListMultiSelect` + `BatchActionToolbar` verbatim. Five new `*_by_ids` RW commands (bulk trash / tag / untag / move-to-space / set-property), each one `BEGIN IMMEDIATE` + `MAX_BATCH_BLOCK_IDS=1000` + single op-log seq range → one activity-feed entry per bulk op with `additionalOpRefs`. Saved views in localStorage v1 (schemaVersion-guarded; backend graduation deferred). | M-L (~17-22 h) | scoped; 5 open Qs |
-| PEND-66 | **Replace `document.execCommand` in palette page-link insertion.** Tracking PEND. PEND-51 uses deprecated `execCommand('insertText')` because it preserves undo. No action until browsers actually remove support; revisit quarterly. | (watch-and-act) | 2 open Qs |
-| PEND-68 | **Dedicated star/delete page actions + quick-nav in the recent strip.** (A) Extract a shared `PageQuickActions` (star + delete) and wire it into the page editor header (dedicated delete, not just kebab) and journal day headers (neither today), with a confirmed + undoable soft-delete. (B) Turn `RecentPagesStrip` into a two-zone `QuickAccessBar` — sticky destination chips (Pages/Tags/Graph/Search → `setView`, `aria-current`) + the existing scrollable recents — segmented per best-practice. FE-only; no schema migrations, no new always-on commands. | M (~10-14 h) | scoped; 5 open Qs |
-| PEND-69 | **Tooling hygiene + suppression-directive tech debt** (tracking). The low-risk burndown shipped in #50 and the toolchain is squeaky clean. **Remaining open debt:** `noExcessiveCognitiveComplexity` ×13 prod (a deliberately-deferred, regression-risky sub-function-extraction refactor — suppressed so CI stays green) + MAINT-227 (dep-blocked `tauri-plugin-opener` migration that removes the lone `deprecated` allow). | M (the complexity refactor) | open; low-risk items done, complexity refactor deferred |
-| PEND-81 | **Make sync complete & rock-solid.** Inbound sync silently diverges on metadata (remote tag/property/delete changes never reach SQL — the dual-model engine↔SQL mismatch) and is unverified end-to-end (every sync test is single-process). Phased: data-completeness (depends on PEND-80) → a two-instance over-real-TLS E2E + failure-mode + multi-device convergence harness → robustness (incremental sync via per-space vv, progress events, backoff) → threat-model security decisions. Transport-independent (orthogonal to PEND-10 iroh). Renumbered from a transient PEND-78 collision. | L (multi-month, phased) | scoped; depends on PEND-80; latent until sync is used |
-| PEND-80 | **Extend Loro's role: typed engine model + LoroTree + lossless projection.** Make the Loro engine hold a complete model (typed property values, real `deleted_at`, the block tree via `LoroTree`) so engine↔SQL re-projection is lossless — removing the reduced-model root cause of sync metadata loss and *deleting* custom tree-move logic. Keeps the boundary explicit (op_log = canonical typed history; SQLite = query layer; enums/validation/derivations = app-side). Migration via op-log replay. Foundation for PEND-81. | L (multi-month, phased) | scoped; foundation for PEND-81; latent until sync is used |
-| PEND-82 | **Migrate from Biome to the OXC toolchain (oxlint + oxfmt).** Replace single-binary Biome with oxlint v1.0 (stable Aug 2025) + oxfmt Beta (Feb 2026, 100% Prettier-conformant). Hand-port `biome.json` → `.oxlintrc.json` + `.oxfmtrc`; rewrite 396 `biome-ignore` directives via a generated rename table; swap the `prek` hook and Dependabot group. 3 rule-coverage holes (`noExcessiveCognitiveComplexity` metric drift, `noEvolvingTypes`, `noUndeclaredDependencies`) gate the migration via D1-D3. Latent — Biome is currently squeaky-clean (PEND-69), so this is ecosystem-alignment, not pain relief. | S-M (~2-3 days) | scoped; 4 open Qs (D1-D4) |
-| PEND-83 | **Hierarchical pages: pill display consistency + dedicated child-pages tree.** Two related UX bugs on namespaced (`A/B`) pages: (1) the page pill renders inconsistently — full path in tabs/recents/inline `[[link]]`/refs group headers, leaf-only in the picker and `PageTreeItem`. Introduce a shared `getPageDisplayName(fullPath, mode)` utility and adopt an explicit per-surface policy. (2) Opening parent page `A` leaks its children (`A/B`) into the **Unlinked references** panel because the FTS trigram tokenizer matches `A`-trigrams in the child page's title block; some rows render as raw `[[ULID]]` placeholders. Add a new `PagesTreeSection` between Linked and Unlinked references, filter children out of unlinked refs (FE post-filter or backend `WHERE`), and pre-warm the resolve cache. | S-M (~6-10 h) | scoped; 5 open Qs |
-| PEND-76 | **Pre-existing data-integrity & wiring bugs** (verified by the 2026-05-24 CR campaign; none introduced by #50). **F1 (CRITICAL) cascade-wipe + edit-resurrection: FIXED** (2026-05-24 — `project_block_full_to_sql` now UPSERTs core columns instead of `INSERT OR REPLACE`, so tags/props/caches/soft-delete survive every sync); the remote-change *propagation* residual (per-op projection in the sync path) is deferred. Remaining: F2 attachments unwired end-to-end (verify intent), F3 pairing junk `peer_refs` row, F4 session-tags missing `space`, F5 dead cross-space validators. | F1 residual: M-L; F2-F5: S-M each | F1 cascade-wipe shipped; F2-F5 + F1-propagation open |
-| design-system-perf-review-2026-05-09 | Tier 1.3 (lazy-load the TipTap stack from JournalPage's static path) + Tier 2.6 follow-up (windowing for BlockListRenderer + BlockTree). | M-L | two open items |
+- `IDEAS.md` — long-running idea backlog (not work-plan tickets).
+- `REVIEW-LATER.md` — single-task notes that don't warrant their own issue.
+- `README.md` — this file.
 
-Single-task plans live in `REVIEW-LATER.md` instead of as standalone files.
+## Recommended order (curated, 2026-05-27)
 
-## Recommended order
+Dependency- and impact-ordered. The quick wins are independent of each other and of the sync epic.
 
-**Active order (locked 2026-05-24).** Dependency- and impact-ordered; the quick wins are independent of each other and of the sync epic.
+**Recently shipped (closed issues, kept here for context):**
 
-1. ✅ **PEND-76** — pre-existing data-integrity fixes (F1–F5). Shipped; **PR #53**. Deferred residuals fold into the sync epic (F1 remote-change *propagation* + F5 sync-ingress gating → PEND-80/81); F2/F3 need a real-device smoke test (manual checklist).
-2. ✅ **PEND-78 / PEND-79 / PEND-77 Tier A** — quick wins shipped together on `pend-78-79-77-quick-wins`: recent-strip cross-space leak fix, AppImage Linux desktop self-integration, and `word_diff` + `space_filter_canonical` property tests. PEND-77 **Tier B** (DB-bound property tests behind a seeded-tree fixture harness) moved to `REVIEW-LATER.md` as `TEST-PROPTEST-B`; the PEND-77 plan file is retired.
-3. **Sync epic — Option A locked.** **PEND-80** (enrich the Loro engine: typed values, real `deleted_at`, `LoroTree`) is the committed foundation — do its Phase 0→1 (→2) first; **then PEND-81** re-projects remote changes to SQL from the now-lossless engine. Option B (op-based sync) is **rejected**. Latent until sync is actually used (the maintainer doesn't currently sync) — weigh before scheduling ahead of in-use features.
-4. **Strategic / decision-gated (below)** — PEND-10, PEND-36, PEND-49, plus the FE features PEND-57 / PEND-68; PEND-66 is watch-only; PEND-69's complexity refactor stays deferred.
+- PEND-76 — pre-existing data-integrity fixes (F1–F5). Shipped via PR #53. F1 remote-change propagation + F5 sync-ingress gating fold into the sync epic; F2/F3 still want a real-device smoke test.
+- PEND-78 / PEND-79 / PEND-77 Tier A — quick wins shipped together: recent-strip cross-space leak fix, AppImage Linux desktop self-integration, and `word_diff` + `space_filter_canonical` property tests.
 
-**Strategic** — independent decisions with multi-phase timelines:
+**Active — pick a quick win:**
 
-- PEND-10 (iroh transport adoption) — 14-19 weeks. Start with 3-week time-boxed Phase 0 spike. Headline kill criterion: iroh v1.0 wire-format stability + minor-version churn policy.
-- PEND-36 (Play Store publishing) — ~1 day engineering + multi-week process/paperwork. Has 3 maintainer decisions (D1-D3) that gate the engineering.
-- PEND-49 (OpenSSF Silver roadmap) — Passing achieved 2026-05-17. ~10-20 person-hours for cheap wins (form update + assurance case + security review); `PEND-48` reproducible builds is the multi-week tentpole. Read the 3 open questions before scheduling — answering "should the maintainer pursue Silver at all while solo?" determines whether anything past the form update is worth doing.
+- [#89 — PEND-83](https://github.com/jfolcini/agaric/issues/89) Hierarchical pages: pill display + child-pages leak into Unlinked refs. **~6-10 h, FE-only, in-use.** Recommended first.
+- [#83 — PEND-68](https://github.com/jfolcini/agaric/issues/83) Dedicated star/delete page actions + quick-nav in the recent strip. ~10-14 h, FE-only, complements PEND-83.
+- [#81 — PEND-57](https://github.com/jfolcini/agaric/issues/81) Pages view: multi-select + bulk operations + saved views. ~17-22 h; resolve the 5 open Qs before coding.
 
-**Search overhaul — SHIPPED (2026-05-17/18).** PEND-50 / 51 / 52 / 53 / 54 / 55 all landed in six autonomous-loop cycles. See `pending/NOTES-AUTONOMOUS-2026-05-17.md` for the per-cycle decision log + review-worthy deviations.
+**Sync epic — Option A locked, latent until sync is in use:**
 
-**Search overhaul — shipped + hardened.** PEND-60 (caret autocomplete) shipped 2026-05-18; PEND-61 / PEND-67 / **PEND-62 (mobile unified search)** shipped 2026-05-19 via the cmdk PR. The PEND-58f hardening (deep-review round 1 + the FE-2/FE-3/FE-9/FE-10 performance trilogy) shipped 2026-05-23, and **PEND-58g** (deep-review round 2 — the ~50-item consolidated plan of record) shipped in full across 8 batches via #50. **Remaining search work:** **PEND-66** (watch-and-act on `execCommand` deprecation, no immediate action), plus the low-priority deferred residuals folded into `REVIEW-LATER.md` (the `CR-*` IDs: a11y polish, DSL quoting, a Tauri-driven e2e harness, touch UX). The verified pre-existing CRITICAL/MAJOR bugs the search-view CR campaign surfaced (incl. the F1 inbound-sync cascade-wipe) are tracked in **PEND-76**.
+- [#86 — PEND-80](https://github.com/jfolcini/agaric/issues/86) Extend Loro engine: typed values, real `deleted_at`, `LoroTree`. Foundation for the rest.
+- [#87 — PEND-81](https://github.com/jfolcini/agaric/issues/87) Make sync complete & rock-solid (re-projects remote changes once PEND-80 lands).
 
-**Pages view overhaul:** PEND-56 (density + sort + per-page metadata IPC) and PEND-58 (compound filters; shared `FilterPrimitive` extraction) both **shipped** (their plan files were deleted on completion). Remaining: **PEND-57** (bulk ops + saved views — overlays a selection layer on the density rows). PEND-58d's hardening shipped; its lone deferred item (fold-`<mark>` highlight bounding) moved to `REVIEW-LATER.md` as `PAGES-FOLD-MARK`.
+Option B (op-based sync) is rejected. The maintainer doesn't currently sync — weigh against in-use features before scheduling.
+
+**Strategic / decision-gated:**
+
+- [#78 — PEND-10](https://github.com/jfolcini/agaric/issues/78) iroh transport adoption. 14-19 weeks; start with a 3-week time-boxed Phase 0 spike. Kill criterion: iroh v1.0 wire-format stability.
+- [#79 — PEND-36](https://github.com/jfolcini/agaric/issues/79) Publish on Google Play Store. ~1 day eng + multi-week paperwork; 3 maintainer decisions (D1-D3) gate the engineering.
+- [#80 — PEND-49](https://github.com/jfolcini/agaric/issues/80) OpenSSF Best Practices Passing → Silver. ~10-20 h cheap wins; answer the meta-question ("pursue Silver at all while solo?") before doing more than the form update.
+
+**Watch-only / deferred:**
+
+- [#82 — PEND-66](https://github.com/jfolcini/agaric/issues/82) Replace `document.execCommand` once browsers actually drop support. Revisit quarterly.
+- [#84 — PEND-69](https://github.com/jfolcini/agaric/issues/84) `noExcessiveCognitiveComplexity` ×13 prod refactor — deliberately deferred (regression-risky sub-function extraction).
+- [#88 — PEND-82](https://github.com/jfolcini/agaric/issues/88) Biome → OXC toolchain migration. Latent — Biome is currently clean, this is ecosystem alignment, not pain relief.
+
+**Cross-cutting / dated notes:**
+
+- [#90 — Design-system performance review (2026-05-09)](https://github.com/jfolcini/agaric/issues/90) Tier 1.3 + Tier 2.6 follow-up.
 
 ## Workflow notes
 
-- Each plan is self-contained. Read its file before starting.
-- Reviewer corrections are folded into the body of each file with reviewer attribution where they surfaced a real bug.
-- Cost / Impact / Risk live near the bottom of each plan. Review those three before deciding to schedule.
-- When a task is done, **delete its file from `pending/`** (matching the REVIEW-LATER.md convention of "delete on completion, no historical record"). Land the work in a normal commit; the git history (and `SESSION-LOG.md`) are the audit trail.
-- If a task is started but not finished, leave the file in place and add a short status note at the top.
-- Tasks that get rejected: also delete the file. Don't keep "rejected" plans around; that's documentation rot.
-- The README index above mirrors what's actually in `pending/`. If you add or remove a plan file, update the index in the same commit.
+- Open each issue's body before starting — it has the full plan, cost/impact/risk, and open questions.
+- Reviewer corrections go in issue comments. The body is the plan; comments are the diff.
+- When a plan is done or rejected, **close the issue** (don't delete it — closed issues remain searchable and the body stays as historical record).
+- Keep this `recommended order` curated by hand; otherwise the `plan` label filter on GitHub is the index.
