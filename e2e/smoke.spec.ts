@@ -16,14 +16,18 @@ test.describe('Smoke tests', () => {
     await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
 
     // Nav labels that are always exactly their own text (no count badge).
+    // Scope to the sidebar so the new `QuickAccessBar` quick-nav chips
+    // (PEND-68 B — `Pages`/`Tags`/`Graph`/`Search` with `aria-label`)
+    // don't collide with the sidebar buttons under strict mode.
+    const sidebar = page.locator('[data-slot="sidebar"]')
     const exactNavLabels = ['Journal', 'Pages', 'Tags', 'Status']
     for (const label of exactNavLabels) {
-      await expect(page.getByRole('button', { name: label, exact: true })).toBeVisible()
+      await expect(sidebar.getByRole('button', { name: label, exact: true })).toBeVisible()
     }
     // Trash has an optional count badge that becomes part of the
     // accessible name when non-zero — match on prefix instead of exact.
     // (Conflicts nav-item removed in Session 700 / PEND-09 Phase 5.)
-    await expect(page.getByRole('button', { name: /^Trash/ })).toBeVisible()
+    await expect(sidebar.getByRole('button', { name: /^Trash/ })).toBeVisible()
   })
 
   test('no console errors on load', async ({ page }) => {
