@@ -6,17 +6,35 @@
       {
         "name": "key",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_settings",
+            "name": "key"
+          }
+        }
       },
       {
         "name": "value",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_settings",
+            "name": "value"
+          }
+        }
       },
       {
         "name": "updated_at",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "gcal_settings",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {

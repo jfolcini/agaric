@@ -6,22 +6,46 @@
       {
         "name": "block_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "block_id"
+          }
+        }
       },
       {
         "name": "task_kind",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "task_kind"
+          }
+        }
       },
       {
         "name": "attempts",
         "ordinal": 2,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "attempts"
+          }
+        }
       },
       {
         "name": "last_error",
         "ordinal": 3,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "materializer_retry_queue",
+            "name": "last_error"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,7 +6,13 @@
       {
         "name": "peer_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peer_refs",
+            "name": "peer_id"
+          }
+        }
       }
     ],
     "parameters": {

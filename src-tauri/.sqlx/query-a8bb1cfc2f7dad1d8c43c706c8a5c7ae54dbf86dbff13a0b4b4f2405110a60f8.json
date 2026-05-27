@@ -6,7 +6,13 @@
       {
         "name": "created_at",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "created_at"
+          }
+        }
       }
     ],
     "parameters": {

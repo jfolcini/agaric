@@ -6,20 +6,27 @@
       {
         "name": "device_id!: String",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
       },
       {
         "name": "seq!: i64",
         "ordinal": 1,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      false,
-      null
+      true,
+      false
     ]
   },
   "hash": "6433207d34effedbc1c94819bdcf4f99f5ac1908f26b703ed5e157d85110103b"

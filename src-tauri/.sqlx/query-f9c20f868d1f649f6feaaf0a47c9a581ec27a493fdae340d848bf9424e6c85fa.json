@@ -6,7 +6,13 @@
       {
         "name": "seq",
         "ordinal": 0,
-        "type_info": "Integer"
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
       }
     ],
     "parameters": {

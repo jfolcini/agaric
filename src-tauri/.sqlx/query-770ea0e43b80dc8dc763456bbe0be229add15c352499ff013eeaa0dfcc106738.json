@@ -6,7 +6,13 @@
       {
         "name": "value_ref",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
       }
     ],
     "parameters": {

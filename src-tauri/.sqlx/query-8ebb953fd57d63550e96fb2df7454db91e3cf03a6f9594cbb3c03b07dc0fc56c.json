@@ -6,12 +6,24 @@
       {
         "name": "block_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "block_id"
+          }
+        }
       },
       {
         "name": "content",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "content"
+          }
+        }
       }
     ],
     "parameters": {

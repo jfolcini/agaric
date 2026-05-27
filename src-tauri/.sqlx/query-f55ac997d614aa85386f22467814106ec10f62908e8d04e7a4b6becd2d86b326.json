@@ -6,7 +6,13 @@
       {
         "name": "source",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agenda_cache",
+            "name": "source"
+          }
+        }
       }
     ],
     "parameters": {

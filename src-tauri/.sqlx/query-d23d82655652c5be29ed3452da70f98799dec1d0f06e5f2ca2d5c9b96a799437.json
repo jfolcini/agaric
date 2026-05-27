@@ -6,7 +6,13 @@
       {
         "name": "block_type",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
       }
     ],
     "parameters": {

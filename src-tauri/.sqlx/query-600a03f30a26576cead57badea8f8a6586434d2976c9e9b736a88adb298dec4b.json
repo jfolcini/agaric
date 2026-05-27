@@ -6,14 +6,15 @@
       {
         "name": "valid: bool",
         "ordinal": 0,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      null
+      false
     ]
   },
   "hash": "600a03f30a26576cead57badea8f8a6586434d2976c9e9b736a88adb298dec4b"

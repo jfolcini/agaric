@@ -6,22 +6,41 @@
       {
         "name": "id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
       },
       {
         "name": "title",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
       },
       {
         "name": "block_type",
         "ordinal": 2,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
       },
       {
         "name": "deleted: bool",
         "ordinal": 3,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -31,7 +50,7 @@
       false,
       true,
       false,
-      null
+      false
     ]
   },
   "hash": "0537a5cc57b52cfeb6b4ea82c9b84c88003c32c9b4e101cd6bf6fd3db3ff7f69"

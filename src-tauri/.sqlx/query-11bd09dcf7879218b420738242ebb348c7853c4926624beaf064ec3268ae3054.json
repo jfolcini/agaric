@@ -6,14 +6,15 @@
       {
         "name": "ok: i32",
         "ordinal": 0,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
       "Right": 1
     },
     "nullable": [
-      null
+      false
     ]
   },
   "hash": "11bd09dcf7879218b420738242ebb348c7853c4926624beaf064ec3268ae3054"

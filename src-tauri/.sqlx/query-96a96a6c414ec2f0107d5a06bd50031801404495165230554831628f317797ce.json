@@ -6,7 +6,13 @@
       {
         "name": "data",
         "ordinal": 0,
-        "type_info": "Blob"
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "data"
+          }
+        }
       }
     ],
     "parameters": {

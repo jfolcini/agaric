@@ -6,17 +6,30 @@
       {
         "name": "due_date",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "due_date"
+          }
+        }
       },
       {
         "name": "scheduled_date",
         "ordinal": 1,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "scheduled_date"
+          }
+        }
       },
       {
         "name": "deleted: bool",
         "ordinal": 2,
-        "type_info": "Null"
+        "type_info": "Integer",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -25,7 +38,7 @@
     "nullable": [
       true,
       true,
-      null
+      false
     ]
   },
   "hash": "94783a50064f4cbe57f0e9db230d10fdb914f12cd1c7ad7210712cd6fbfe67db"

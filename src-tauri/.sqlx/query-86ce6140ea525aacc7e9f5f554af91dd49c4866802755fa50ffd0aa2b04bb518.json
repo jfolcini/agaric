@@ -6,7 +6,13 @@
       {
         "name": "source_id",
         "ordinal": 0,
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_refs",
+            "name": "source_id"
+          }
+        }
       }
     ],
     "parameters": {
