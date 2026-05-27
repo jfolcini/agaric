@@ -93,6 +93,19 @@ vi.mock('../../editor/use-roving-editor', () => ({
   },
 }))
 
+// The /code slash command and the code-language picker route through
+// the dedicated `toggleCodeBlockSafely` helper module. Forward to the
+// editor's `chain()` so the mock chain assertions in this test file
+// (`mockToggleCodeBlock` etc.) continue to fire just as if
+// `editor.chain().focus().toggleCodeBlock(...)` were called directly.
+vi.mock('../../editor/toggle-code-block-safely', () => ({
+  toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
+    // biome-ignore lint/suspicious/noExplicitAny: traversing the test's mock chain
+    const c = editor.chain() as any
+    c.focus().toggleCodeBlock(attributes).focus('end').run()
+  },
+}))
+
 // Capture useBlockKeyboard callbacks to test focus/delete handlers
 let capturedBlockKeyboardOpts:
   | {

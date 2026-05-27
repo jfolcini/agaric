@@ -24,17 +24,23 @@ import { CODE_LANGUAGES } from '@/lib/toolbar-config'
 import { CodeLanguageSelector } from '../CodeLanguageSelector'
 
 // ── TipTap editor chain mock ──────────────────────────────────────────────
-// The component invokes one of three chain shapes:
-//   chain().focus().toggleCodeBlock().updateAttributes('codeBlock', { language }).run()  // not-in-code-block path
-//   chain().focus().updateAttributes('codeBlock', { language }).run()                    // already-in-code-block path
-//   chain().focus().toggleCodeBlock().run()                                              // plain-text on non-code-block
+// The component invokes one of two paths:
+//   already-in-code-block: chain().focus().updateAttributes('codeBlock', { lang }).run()
+//   not-in-code-block:     toggleCodeBlockSafely(editor) + chain().focus().updateAttributes(...)
+//                          where `toggleCodeBlockSafely` runs
+//                          chain().focus().toggleCodeBlock(attrs).focus('end').run()
 // The mock records every link's arguments so tests can assert the exact call sequence.
+// `mockFocus` returns itself so the second `.focus('end')` after `toggleCodeBlock`
+// resolves (the chain reuses the same focus surface to keep the mock graph flat).
 
 const mockRun = vi.fn()
 const mockUpdateAttributes = vi.fn(() => ({ run: mockRun }))
 const mockToggleCodeBlock = vi.fn(() => ({
   run: mockRun,
   updateAttributes: mockUpdateAttributes,
+  // `.focus(...)` is what `toggleCodeBlockSafely` appends after the
+  // toggle to land the cursor inside the new node.
+  focus: (..._args: unknown[]) => ({ run: mockRun }),
 }))
 const mockFocus = vi.fn(() => ({
   toggleCodeBlock: mockToggleCodeBlock,
@@ -143,7 +149,7 @@ describe('CodeLanguageSelector', () => {
       expect(onClose).toHaveBeenCalledTimes(1)
     })
 
-    it('outside a code block: clicking a language also calls toggleCodeBlock before updateAttributes', async () => {
+    it('outside a code block: clicking a language calls toggleCodeBlock with the language attrs (single chain via toggleCodeBlockSafely)', async () => {
       const user = userEvent.setup()
       const onClose = vi.fn()
       render(
@@ -157,16 +163,15 @@ describe('CodeLanguageSelector', () => {
 
       await user.click(screen.getByRole('button', { name: 'python' }))
 
+      // toggleCodeBlockSafely(editor, { language: 'python' }) runs a
+      // single chain: focus → toggleCodeBlock(attrs) → focus('end') → run.
+      // The language is set as part of the toggle, so updateAttributes
+      // is not called separately.
       expect(mockToggleCodeBlock).toHaveBeenCalledTimes(1)
-      expect(mockUpdateAttributes).toHaveBeenCalledTimes(1)
-      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'python' })
+      expect(mockToggleCodeBlock).toHaveBeenCalledWith({ language: 'python' })
+      expect(mockUpdateAttributes).not.toHaveBeenCalled()
       expect(mockRun).toHaveBeenCalledTimes(1)
       expect(onClose).toHaveBeenCalledTimes(1)
-
-      // toggleCodeBlock must be called BEFORE updateAttributes
-      const toggleOrder = mockToggleCodeBlock.mock.invocationCallOrder[0] ?? 0
-      const updateOrder = mockUpdateAttributes.mock.invocationCallOrder[0] ?? 0
-      expect(toggleOrder).toBeLessThan(updateOrder)
     })
   })
 

@@ -10,6 +10,7 @@
  */
 
 import { useMemo } from 'react'
+import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { applyContentEdit, readCurrentContent } from './helpers'
 import type { SlashCommandContext, SlashHandlerTables } from './types'
 
@@ -64,7 +65,8 @@ export function useSlashCommandStructural(): SlashHandlerTables {
           ctx.rovingEditor.editor?.chain().focus().insertContent('@').run()
         },
         code: (ctx) => {
-          ctx.rovingEditor.editor?.chain().focus().toggleCodeBlock().run()
+          const editor = ctx.rovingEditor.editor
+          if (editor) toggleCodeBlockSafely(editor)
         },
         quote: (ctx) => {
           ctx.rovingEditor.editor?.chain().focus().toggleBlockquote().run()
