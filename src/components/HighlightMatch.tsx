@@ -10,7 +10,7 @@
  */
 
 import type React from 'react'
-import { indexOfFolded } from '@/lib/fold-for-search'
+import { findFoldedMatch } from '@/lib/fold-for-search'
 
 export function HighlightMatch({
   text,
@@ -20,13 +20,18 @@ export function HighlightMatch({
   filterText: string
 }): React.ReactElement {
   if (!filterText) return <>{text}</>
-  const idx = indexOfFolded(text, filterText)
-  if (idx === -1) return <>{text}</>
+  // PAGES-FOLD-MARK: use the original-span length the fold produced,
+  // not `filterText.length`. When the fold changes character length
+  // (e.g. ß → ss in `Straße` matched against `strasse`) the two are
+  // not equal, and using `filterText.length` mis-bounds the `<mark>`.
+  const match = findFoldedMatch(text, filterText)
+  if (match === null) return <>{text}</>
+  const { start, length } = match
   return (
     <>
-      {text.slice(0, idx)}
-      <mark className="bg-highlight rounded-sm">{text.slice(idx, idx + filterText.length)}</mark>
-      {text.slice(idx + filterText.length)}
+      {text.slice(0, start)}
+      <mark className="bg-highlight rounded-sm">{text.slice(start, start + length)}</mark>
+      {text.slice(start + length)}
     </>
   )
 }

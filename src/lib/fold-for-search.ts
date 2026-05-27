@@ -79,53 +79,84 @@ export function matchesSearchFolded(haystack: string, needle: string): boolean {
  * Locate the index of the first folded match of `needle` in
  * `haystack`.  Returns `-1` when no match exists.
  *
- * NFKD decomposition can change string length (e.g., `İ` expands
- * from 1 code unit to 2).  This helper maps the index in the folded
- * haystack back to the equivalent code-unit offset in the original
- * haystack by scanning one character at a time.  `slice(index,
- * index + needle.length)` on the original string then gives the
- * caller a visually-correct substring to highlight.
- *
- * If the folded match spans a position where decomposition injected
- * code units, the returned slice may be off by a combining-mark
- * character.  For interactive highlight UI this is acceptable — the
- * mismatch is cosmetic at worst.
+ * Thin wrapper around [`findFoldedMatch`] for callers that only need
+ * the start offset.  Use `findFoldedMatch` when you also need the
+ * length of the matched span in the original string — slicing the
+ * original with `needle.length` is incorrect when the fold changes
+ * character length (e.g., `ß` → `ss`, `ﬁ` → `fi`).
  */
 export function indexOfFolded(haystack: string, needle: string): number {
-  if (needle === '') return 0
+  const match = findFoldedMatch(haystack, needle)
+  return match === null ? -1 : match.start
+}
+
+/**
+ * Locate the first folded match of `needle` in `haystack`, returning
+ * both the start offset AND the length of the original-string slice
+ * that produced the folded match.  Returns `null` when no match exists.
+ *
+ * This is the highlight-correctness counterpart to [`indexOfFolded`].
+ * When the fold changes character length, using `needle.length` to
+ * slice the original overshoots or undershoots the visual match:
+ *
+ *  - "Straße" with needle "rasse": folded haystack is "strasse", folded
+ *    needle is "rasse" (length 5). The original substring covering the
+ *    match is "raße" — only 4 code units, not 5. Highlighting
+ *    `slice(start, start + 5)` would extend one character past the
+ *    visual match (PAGES-FOLD-MARK).
+ *  - "İstanbul" with needle "istanbul": folded "istanbul" is 8 code
+ *    units, but `İ` is a single code unit in the original. The original
+ *    span is 8 code units (İ + 7 ASCII), so for this case needle-length
+ *    happens to coincide with original-span length — but in general
+ *    NFKD decomposition can inject code units (combining marks) that
+ *    `findFoldedMatch` handles by walking original code units one at
+ *    a time and accumulating their folded output.
+ *
+ * Walks haystack one code unit at a time, accumulating the fold of
+ * each code unit onto a running buffer.  Per-code-unit folding is
+ * safe because NFKD decomposes individual code points independently
+ * and combining-mark stripping never re-introduces context across
+ * characters.  O(n) on the haystack length.
+ */
+export function findFoldedMatch(
+  haystack: string,
+  needle: string,
+): { start: number; length: number } | null {
+  if (needle === '') return { start: 0, length: 0 }
   if (isAsciiOnly(haystack) && isAsciiOnly(needle)) {
-    // Fast path: direct case-insensitive ASCII search.
-    return haystack.toLowerCase().indexOf(needle.toLowerCase())
+    // Fast path: ASCII folds 1:1, so original-span length == needle.length.
+    const idx = haystack.toLowerCase().indexOf(needle.toLowerCase())
+    return idx === -1 ? null : { start: idx, length: needle.length }
   }
   const foldedNeedle = foldForSearch(needle)
   const haystackFolded = foldForSearch(haystack)
   const foldedIdx = haystackFolded.indexOf(foldedNeedle)
-  if (foldedIdx === -1) return -1
-  // Map folded offset back to an original-string offset.  PEND-27 P2 —
-  // walk the haystack one code unit at a time and accumulate the fold of
-  // each code unit onto a running buffer, instead of refolding the
-  // growing prefix from scratch on every iteration.  Reduces the scan
-  // from O(n²) to O(n) on non-ASCII input.  Per-code-unit folding is
-  // safe because NFKD decomposes individual code points independently
-  // and combining-mark stripping never re-introduces context across
-  // characters.
-  const foldedPrefix = haystackFolded.slice(0, foldedIdx)
+  if (foldedIdx === -1) return null
+  const foldedEnd = foldedIdx + foldedNeedle.length
   let originalCursor = 0
   let foldedSoFar = ''
-  while (originalCursor <= haystack.length) {
-    if (foldedSoFar === foldedPrefix) return originalCursor
-    if (originalCursor === haystack.length) break
-    // `charAt` returns `string` (not `string | undefined`); the
-    // `originalCursor === haystack.length` break above guarantees we're in
-    // bounds, so this reads the same code unit as `haystack[originalCursor]`
-    // without a non-null assertion.
-    const nextChar = haystack.charAt(originalCursor)
-    foldedSoFar += foldForSearch(nextChar)
+  let start: number | null = null
+  while (true) {
+    if (start === null && foldedSoFar.length >= foldedIdx) {
+      start = originalCursor
+    }
+    if (start !== null && foldedSoFar.length >= foldedEnd) {
+      // Greedily absorb trailing code units that fold to nothing (e.g.
+      // standalone combining marks) — they visually attach to the last
+      // matched base character so they belong inside the highlight span.
+      if (originalCursor < haystack.length) {
+        const nextFold = foldForSearch(haystack.charAt(originalCursor))
+        if (nextFold === '') {
+          originalCursor++
+          continue
+        }
+      }
+      return { start, length: originalCursor - start }
+    }
+    if (originalCursor >= haystack.length) break
+    foldedSoFar += foldForSearch(haystack.charAt(originalCursor))
     originalCursor++
   }
-  // Defensive fallback: if the scan fails (should not happen for
-  // well-formed input), return the folded index — it will be off
-  // for exotic inputs but is better than returning -1 and hiding
-  // the match entirely.
-  return foldedIdx
+  // Defensive fallback: should not happen for well-formed input.
+  return null
 }
