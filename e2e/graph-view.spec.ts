@@ -27,7 +27,10 @@ test.describe('Graph view', () => {
   })
 
   test('graph view renders SVG with nodes', async ({ page }) => {
-    await page.getByRole('button', { name: 'Graph', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
 
     // Wait for the SVG to appear (loading skeleton resolves)
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
@@ -40,7 +43,10 @@ test.describe('Graph view', () => {
   })
 
   test('graph view renders edges between linked pages', async ({ page }) => {
-    await page.getByRole('button', { name: 'Graph', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Seed data has [[link]] references between pages (e.g. Getting Started ↔ Quick Notes),
@@ -52,7 +58,10 @@ test.describe('Graph view', () => {
   })
 
   test('clicking a node navigates to that page', async ({ page }) => {
-    await page.getByRole('button', { name: 'Graph', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
 
     // Target a non-date-titled page. `tabsStore.navigateToPage` routes
@@ -78,7 +87,10 @@ test.describe('Graph view', () => {
   })
 
   test('graph view shows the graph container with data-testid', async ({ page }) => {
-    await page.getByRole('button', { name: 'Graph', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
 
     // The graph-view wrapper should appear once loading completes
     await expect(page.locator('[data-testid="graph-view"]')).toBeVisible()
@@ -89,7 +101,10 @@ test.describe('Graph view', () => {
   })
 
   test('graph view eventually renders after loading', async ({ page }) => {
-    await page.getByRole('button', { name: 'Graph', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
 
     // The graph should eventually render — SVG becomes visible
     await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()

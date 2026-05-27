@@ -29,7 +29,10 @@ import { expect, test, waitForBoot } from './helpers'
  */
 
 async function openPagesView(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   // Wait for the page-list grid to render (MAINT-162 — flipped from
   // `role="listbox"` so the mixed-mode flat/tree rows have a uniform
   // ARIA contract).

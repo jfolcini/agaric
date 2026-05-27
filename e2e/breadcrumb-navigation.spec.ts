@@ -190,7 +190,10 @@ test.describe('Breadcrumb navigation — PageHeader namespace path (FEAT-13)', (
   test('namespaced page renders crumbs and clicking one navigates to Pages', async ({ page }) => {
     // Create a page with a `/`-separated title via the Pages-view "New page"
     // input (the same flow used by editor-lifecycle.spec.ts).
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.locator('header').getByText('Pages')).toBeVisible()
 
     const newPageInput = page.getByPlaceholder('New page name...')

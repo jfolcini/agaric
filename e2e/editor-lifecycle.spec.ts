@@ -12,7 +12,10 @@ import { expect, test } from './helpers'
  */
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   // Scope to the page list so we don't match the page-title textbox or a
   // block-link-chip that also renders "Getting Started" (strict-mode
   // violation under parallel load — TEST-3 flake, session 679).
@@ -120,7 +123,10 @@ test.describe('Editor lifecycle', () => {
     const headerLabel = page.getByTestId('header-label')
 
     // Navigate to Tags
-    await page.getByRole('button', { name: 'Tags', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Tags', exact: true })
+      .click()
     await expect(headerLabel).toHaveText('Tags')
 
     // Navigate to Trash
@@ -139,7 +145,10 @@ test.describe('Editor lifecycle', () => {
   })
 
   test('pages view allows creating a new page', async ({ page }) => {
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     const input = page.getByPlaceholder('New page name...')

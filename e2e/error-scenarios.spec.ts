@@ -16,7 +16,10 @@ interface MockErrorWindow extends Window {
  */
 
 async function openGettingStarted(page: import('@playwright/test').Page) {
-  await page.getByRole('button', { name: 'Pages', exact: true }).click()
+  await page
+    .locator('[data-slot="sidebar"]')
+    .getByRole('button', { name: 'Pages', exact: true })
+    .click()
   await page.getByText('Getting Started').click()
   await expect(page.locator('[aria-label="Page title"]')).toBeVisible({ timeout: 5000 })
 }

@@ -343,8 +343,12 @@ test.describe('Inner links — link persistence', () => {
     const chip = page.locator('[data-testid="block-link-chip"]', { hasText: 'Quick Notes' })
     await expect(chip).toBeVisible()
 
-    // Navigate away to another sidebar view (use exact match to avoid the Tags tab button)
-    await page.getByRole('button', { name: 'Tags', exact: true }).first().click()
+    // Navigate away to another sidebar view (sidebar scope avoids the Tags tab
+    // button in the page body AND the quick-access Tags chip — PEND-68 B).
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Tags', exact: true })
+      .click()
     await expect(page.locator('[data-testid="header-label"]', { hasText: 'Tags' })).toBeVisible()
 
     // Navigate back to Getting Started

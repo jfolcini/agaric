@@ -35,7 +35,10 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
     // Move focus out of the editor (the palette shortcut is gated on
     // "focus is outside any TipTap surface" per PEND-51's context-aware
     // dispatch). Clicking the sidebar's Pages button takes focus there.
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     await page.keyboard.down('Control')
@@ -71,7 +74,10 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
   })
 
   test('Escape closes the palette without navigating', async ({ page }) => {
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     await page.keyboard.down('Control')
@@ -98,7 +104,10 @@ test.describe('desktop palette (PEND-73 Phase 5.T2)', () => {
     // (`features-coverage.spec.ts`, `editor-lifecycle.spec.ts`) so the
     // assertion doesn't depend on a fixture we don't own.
     await openPage(page, 'Getting Started')
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
 
     await page.keyboard.down('Control')
     await page.keyboard.press('k')

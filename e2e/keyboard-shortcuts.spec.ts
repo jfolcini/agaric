@@ -359,7 +359,10 @@ test.describe('Global shortcuts', () => {
     // from `search-palette-input` to `command-palette-input` along
     // with the SearchPalette → CommandPalette rename.
     // Click on the sidebar to take focus out of the editor.
-    await page.getByRole('button', { name: 'Pages', exact: true }).click()
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Pages', exact: true })
+      .click()
     await expect(page.getByTestId('header-label')).toHaveText('Pages')
 
     await page.keyboard.down('Control')
