@@ -89,7 +89,29 @@ describe('HighlightMatch', () => {
     const { container } = render(<HighlightMatch text="Straße" filterText="strasse" />)
     const mark = container.querySelector('mark')
     expect(mark).toBeInTheDocument()
-    expect(mark?.textContent).toBe('Straße'.slice(0, 'strasse'.length))
+    expect(mark?.textContent).toBe('Straße')
+  })
+
+  // PAGES-FOLD-MARK regression: the <mark> bound must use the original-
+  // string span length (not filterText.length) so the highlight stops at
+  // the end of "Straße" and does not bleed into the next character.
+  it('does not bleed past Straße when surrounding chars exist (ß→ss fold)', () => {
+    const { container } = render(<HighlightMatch text="abc Straße." filterText="strasse" />)
+    const mark = container.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('Straße')
+    expect(container.textContent).toBe('abc Straße.')
+  })
+
+  // PAGES-FOLD-MARK: ligature ﬁ (U+FB01) folds to "fi" (length 2). The
+  // <mark> must cover only the ligature (1 code unit) — not the next
+  // character.
+  it('highlights only the ﬁ ligature, not the next character', () => {
+    const { container } = render(<HighlightMatch text="aﬁx" filterText="fi" />)
+    const mark = container.querySelector('mark')
+    expect(mark).toBeInTheDocument()
+    expect(mark?.textContent).toBe('ﬁ')
+    expect(container.textContent).toBe('aﬁx')
   })
 
   it('highlights accented café when filter is cafe', () => {
