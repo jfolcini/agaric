@@ -211,7 +211,7 @@ async fn fetch_prior_text_batch(
     // surrounding `SELECT ? AS idx, op_type, payload FROM (…)` so the
     // ordering binds locally. Same shape applies to every per-type
     // batch fetch below.
-    let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new("");
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
     for (i, &op_idx) in idxs.iter().enumerate() {
         let payload: EditBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
         let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
@@ -256,7 +256,7 @@ async fn fetch_prior_position_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new("");
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
     for (i, &op_idx) in idxs.iter().enumerate() {
         let payload: MoveBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
         let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
@@ -305,7 +305,7 @@ async fn fetch_prior_property_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new("");
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
     for (i, &op_idx) in idxs.iter().enumerate() {
         let record = &ops[op_idx];
         // Both SetPropertyPayload and DeletePropertyPayload carry a
@@ -358,7 +358,7 @@ async fn fetch_prior_attachment_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new("");
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
     for (i, &op_idx) in idxs.iter().enumerate() {
         let record = &ops[op_idx];
         let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
@@ -535,7 +535,7 @@ pub async fn get_op_records_batch(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<'_, Sqlite> = QueryBuilder::new("");
+    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
     for (i, r) in refs.iter().enumerate() {
         if i == 0 {
             qb.push("SELECT ");

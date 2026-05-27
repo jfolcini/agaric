@@ -1517,7 +1517,7 @@ mod explain_query_plan_tests {
                ) \
                AND {fragment}"
         );
-        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(&sql)
+        let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(TEST_SPACE_ID)
             .fetch_all(pool)
             .await

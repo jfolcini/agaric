@@ -899,7 +899,8 @@ async fn explain_query_plan_for_filter(
     let sql = format!("EXPLAIN QUERY PLAN {composed}");
     // Bind ?1 = space_id, then each compiled filter bind in order, then the
     // trailing LIMIT placeholder — matching the IPC's bind order.
-    let mut query = sqlx::query_as::<_, (i64, i64, i64, String)>(&sql).bind(&filter.space_id);
+    let mut query = sqlx::query_as::<_, (i64, i64, i64, String)>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(&filter.space_id);
     for b in filter_binds_text {
         query = query.bind(*b);
     }
@@ -994,7 +995,7 @@ async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
                 first = false;
                 sql.push_str("(?, 'content', 'body', ?, 0, ?)");
             }
-            let mut q = sqlx::query(&sql);
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for &i in chunk {
                 q = q.bind(body_id(i)).bind(&page_ids[i]).bind(&page_ids[i]);
             }
@@ -1032,7 +1033,7 @@ async fn bulk_seed_link_skew(pool: &SqlitePool, page_ids: &[String]) {
             first = false;
             sql.push_str("(?, ?)");
         }
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for &(s, t) in chunk {
             // Edge: source body block → target page block (inbound to target).
             q = q.bind(body_id(s)).bind(&page_ids[t]);
@@ -1100,7 +1101,7 @@ async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: u
             first = false;
             sql.push_str("(?, 'test-device', 'CreateBlock', '{}', ?, 'deadbeef', ?)");
         }
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (s, ts, bid) in chunk {
             q = q.bind(*s).bind(ts).bind(bid);
         }

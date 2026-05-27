@@ -232,7 +232,7 @@ pub async fn query_by_property(
             "due_date" | "scheduled_date" => value_date.or(value_text),
             _ => value_text.or(value_date),
         };
-        sqlx::query_as::<_, BlockRow>(&sql)
+        sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(filter_value) // ?1
             .bind(cursor_flag) // ?2
             .bind(cursor_id) // ?3
@@ -276,7 +276,7 @@ pub async fn query_by_property(
             cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
             sql_op = sql_op,
         );
-        sqlx::query_as::<_, BlockRow>(&sql)
+        sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(key) // ?1
             .bind(value_text) // ?2
             .bind(value_date) // ?3

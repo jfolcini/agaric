@@ -106,7 +106,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // matches `CACHE_TABLES` for reviewability.
     for (table, _rebuild_task) in CACHE_TABLES {
         let sql = format!("DELETE FROM {table}");
-        sqlx::query(&sql).execute(&mut *tx).await?;
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
     }
 
     // Wipe core tables (children before parents purely for reviewability —
@@ -213,7 +215,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
                     COLUMNS.join(", "),
                     placeholders.join(", "),
                 );
-                let mut $query = sqlx::query(&sql);
+                let mut $query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
                 for $row in chunk {
                     $query = $bind;
                 }

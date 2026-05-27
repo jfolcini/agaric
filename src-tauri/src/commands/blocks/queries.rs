@@ -535,7 +535,7 @@ pub async fn first_child_for_blocks_inner(
          SELECT {cols} FROM ranked WHERE rn = 1",
         cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
-    let rows = sqlx::query_as::<_, BlockRow>(&sql)
+    let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(ids_json)
         .fetch_all(pool)
         .await?;
@@ -616,7 +616,7 @@ pub async fn get_blocks_inner(
          WHERE id IN (SELECT value FROM json_each(?1))",
         crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
-    let rows = sqlx::query_as::<_, BlockRow>(&sql)
+    let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(ids_json)
         .fetch_all(pool)
         .await?;

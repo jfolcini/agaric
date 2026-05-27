@@ -879,7 +879,7 @@ async fn regex_mode_query(
         block_type_idx,
     );
 
-    let mut db_query = sqlx::query_as::<_, RegexScanRow>(&sql);
+    let mut db_query = sqlx::query_as::<_, RegexScanRow>(sqlx::AssertSqlSafe(sql.as_str()));
     if let Some(pid) = parent_id {
         db_query = db_query.bind(pid);
     }
@@ -1167,7 +1167,7 @@ async fn filter_only_scan(
         after_idx,
     );
 
-    let mut db_query = sqlx::query_as::<_, RegexScanRow>(&sql);
+    let mut db_query = sqlx::query_as::<_, RegexScanRow>(sqlx::AssertSqlSafe(sql.as_str()));
     if let Some(pid) = parent_id {
         db_query = db_query.bind(pid);
     }

@@ -240,7 +240,7 @@ async fn flush_projection_chunk(
              (block_id, projected_date, source) VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (block_id, date, source) in chunk {
             q = q.bind(block_id).bind(date).bind(source);
         }

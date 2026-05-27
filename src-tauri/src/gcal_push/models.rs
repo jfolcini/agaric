@@ -194,7 +194,7 @@ pub async fn get_settings_batch(
     // fixed so the loss of compile-time validation is acceptable here.
     let placeholders = vec!["?"; keys.len()].join(", ");
     let sql = format!("SELECT key, value FROM gcal_settings WHERE key IN ({placeholders})");
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for key in keys {
         q = q.bind(key.as_str());
     }

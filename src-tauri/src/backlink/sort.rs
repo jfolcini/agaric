@@ -123,7 +123,8 @@ async fn fetch_text_props_for_ids(
             "SELECT block_id, value_text FROM block_properties \
              WHERE key = ? AND block_id IN ({placeholders})"
         );
-        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        let mut query =
+            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()));
         query = query.bind(key);
         for id in ids {
             query = query.bind(*id);
@@ -159,7 +160,8 @@ async fn fetch_num_props_for_ids(
             "SELECT block_id, value_num FROM block_properties \
              WHERE key = ? AND block_id IN ({placeholders})"
         );
-        let mut query = sqlx::query_as::<_, (String, Option<f64>)>(&sql);
+        let mut query =
+            sqlx::query_as::<_, (String, Option<f64>)>(sqlx::AssertSqlSafe(sql.as_str()));
         query = query.bind(key);
         for id in ids {
             query = query.bind(*id);
@@ -195,7 +197,8 @@ async fn fetch_date_props_for_ids(
             "SELECT block_id, value_date FROM block_properties \
              WHERE key = ? AND block_id IN ({placeholders})"
         );
-        let mut query = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+        let mut query =
+            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()));
         query = query.bind(key);
         for id in ids {
             query = query.bind(*id);

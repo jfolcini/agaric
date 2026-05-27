@@ -84,7 +84,7 @@ async fn apply_tags_diff(
             "DELETE FROM tags_cache WHERE tag_id IN ({})",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for id in chunk {
             q = q.bind(id);
         }
@@ -97,7 +97,7 @@ async fn apply_tags_diff(
             "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (tag_id, name, usage_count) in chunk {
             q = q.bind(tag_id).bind(name).bind(usage_count).bind(now);
         }

@@ -3948,9 +3948,9 @@ async fn purge_handler_runs_cleanly_when_invoked_consecutively() {
         handle_foreground_task(&pool, &task, &empty_gcal_handle())
             .await
             .unwrap();
-        let after: i64 = sqlx::query_scalar(&format!(
+        let after: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM blocks WHERE id LIKE '{root_id}%'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();

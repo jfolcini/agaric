@@ -131,8 +131,8 @@ impl MetaBind {
     /// correct SQLite affinity.
     pub fn bind<'q, O>(
         &'q self,
-        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>> {
+        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments> {
         match self {
             MetaBind::Str(s) => q.bind(s),
             MetaBind::NullableStr(s) => q.bind(s),

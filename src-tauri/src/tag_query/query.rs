@@ -105,7 +105,7 @@ pub async fn eval_tag_query(
     // `id as "id: ActiveBlockId"` cast is implicit — sqlx::query_as
     // calls FromRow which decodes via `sqlx::Type` for ActiveBlockId
     // (transparent over String).
-    let mut query = sqlx::query_as::<_, ActiveBlockRow>(&query_str);
+    let mut query = sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str.as_str()));
     for id in &actual_ids {
         query = query.bind(*id);
     }

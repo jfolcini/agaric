@@ -1268,7 +1268,8 @@ pub async fn list_all_pages_in_space_inner(
                    SELECT block_id FROM block_tags WHERE tag_id IN ({placeholders})) \
              ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
         );
-        let mut q = sqlx::query_as::<_, PageHeading>(&sql).bind(space_id);
+        let mut q =
+            sqlx::query_as::<_, PageHeading>(sqlx::AssertSqlSafe(sql.as_str())).bind(space_id);
         for t in tags {
             q = q.bind(t);
         }
@@ -1663,8 +1664,8 @@ impl<'a> SqlBind<'a> {
     /// one-liner per parameter.
     fn bind_to<'q, O>(
         self,
-        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>
+        q: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>
     where
         'a: 'q,
     {
@@ -1681,8 +1682,8 @@ impl<'a> SqlBind<'a> {
     /// a `QueryScalar`-shaped sibling of [`Self::bind_to`].
     fn bind_to_scalar<'q, O>(
         self,
-        q: sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments<'q>>
+        q: sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
+    ) -> sqlx::query::QueryScalar<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>
     where
         'a: 'q,
     {
@@ -2244,7 +2245,8 @@ pub async fn list_pages_with_metadata_inner(
                    WHERE bp.key = 'space' AND bp.value_ref = ?1 \
                ){filter_sql}"
         );
-        let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql).bind(&filter.space_id);
+        let mut count_query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()))
+            .bind(&filter.space_id);
         for bind in filter_binds.clone() {
             count_query = bind.bind_to_scalar(count_query);
         }
@@ -2264,7 +2266,8 @@ pub async fn list_pages_with_metadata_inner(
     // Bind order: ?1 = space_id, then the filter binds (?2 ..), then the
     // keyset binds (?{base+1} ..) — exactly matching the `?` appearance
     // order in the composed SQL.
-    let mut query = sqlx::query_as::<_, PageWithMetadataRow>(&sql).bind(&filter.space_id);
+    let mut query = sqlx::query_as::<_, PageWithMetadataRow>(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(&filter.space_id);
     for bind in filter_binds {
         query = bind.bind_to(query);
     }
