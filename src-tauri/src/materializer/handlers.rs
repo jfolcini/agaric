@@ -323,7 +323,14 @@ async fn dispatch_restore_descendants(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
         );
-        crate::merge::engine_apply(&op_id, &payload, &root_record.device_id, &space_id, state);
+        crate::merge::engine_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            &space_id,
+            &root_record.created_at,
+            state,
+        );
     }
 }
 
@@ -398,7 +405,14 @@ async fn dispatch_delete_descendants(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
         );
-        crate::merge::engine_apply(&op_id, &payload, &root_record.device_id, space_id, state);
+        crate::merge::engine_apply(
+            &op_id,
+            &payload,
+            &root_record.device_id,
+            space_id,
+            &root_record.created_at,
+            state,
+        );
     }
 }
 
@@ -1630,12 +1644,13 @@ async fn apply_set_property_via_loro(
 
 /// Apply DeleteBlock through the engine then project to SQL.
 ///
-/// Engine `apply_delete_block` writes a fixed-marker `deleted_at` (the
-/// CRDT only needs "deleted vs not"); the SQL projection stamps the
-/// real `record.created_at` so cohort identity for restore lookups
-/// remains accurate. The cascade (descendant fanout) is handled on
-/// the SQL side via the projection's CTE-driven UPDATE; the engine
-/// only sees the seed block's apply, with the post-commit
+/// Engine `apply_delete_block` now stores the real `record.created_at`
+/// timestamp on the seed (PEND-80 Phase 2) — the same value the SQL
+/// projection stamps — so cohort identity for restore lookups is
+/// consistent between the engine and SQL, and lossless across sync.
+/// The cascade (descendant fanout) is handled on the SQL side via the
+/// projection's CTE-driven UPDATE; the engine only sees the seed
+/// block's apply, with the post-commit
 /// `dispatch_delete_descendants` fanning out the cohort to the
 /// engine. An unresolvable space falls back to the SQL-only path.
 async fn apply_delete_block_via_loro(
@@ -1656,7 +1671,7 @@ async fn apply_delete_block_via_loro(
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        engine.apply_delete_block(p.block_id.as_str())?;
+        engine.apply_delete_block(p.block_id.as_str(), now)?;
         drop(guard);
     }
 
@@ -2966,9 +2981,12 @@ mod restore_cascade_tests {
         engine
             .apply_create_block(CHILD_3, "content", "C", Some(CHILD_2), 0)
             .unwrap();
-        // Soft-delete all four.
+        // Soft-delete all four at the same cohort timestamp (mirrors the
+        // SQL "all four deleted at the same ref" shape).
         for id in [PAGE_ID, CHILD_1, CHILD_2, CHILD_3] {
-            engine.apply_delete_block(id).unwrap();
+            engine
+                .apply_delete_block(id, "2025-01-15T12:00:00Z")
+                .unwrap();
         }
     }
 

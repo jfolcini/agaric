@@ -733,6 +733,99 @@ pub async fn reproject_block_tags_from_engine(
     Ok(())
 }
 
+/// Re-project a block's soft-delete state from the engine into SQL
+/// after a sync-pull import (PEND-80 Phase 2).
+///
+/// [`project_block_full_to_sql`] deliberately preserves `deleted_at`
+/// (re-deriving it per-block would resurrect soft-deleted descendants),
+/// so remote `DeleteBlock` / `RestoreBlock` changes never reach SQL
+/// through it. This helper closes that gap. `apply_remote` calls it per
+/// changed block with the engine's post-import seed timestamp
+/// (`engine_deleted_at`, from
+/// [`crate::loro::engine::LoroEngine::read_deleted_at`]).
+///
+/// The engine stores `deleted_at` on the **delete seed only** (the
+/// descendant cascade is an SQL/app derivation per the PEND-80
+/// boundary), so this helper re-derives the cascade in SQL rather than
+/// trusting per-block engine state:
+///
+/// * `Some(ts)` — the block is deleted on the remote. Cascade-soft-
+///   delete the block + every still-active descendant at `ts` (via
+///   [`project_delete_block_to_sql`]). Idempotent: rows already deleted
+///   (at any timestamp) are skipped by the active-CTE `deleted_at IS
+///   NULL` filter.
+/// * `None` — the block is alive on the remote. Restore it **only if it
+///   is a genuine delete seed** — i.e. currently soft-deleted in SQL
+///   *and* with no soft-deleted ancestor. A block whose ancestor is
+///   still deleted is a descendant of a live soft-delete cohort, not a
+///   restore target; clearing it would resurrect a soft-deleted subtree
+///   (the exact bug [`project_block_full_to_sql`] guards against — the
+///   engine's seed-only marking means a descendant reads back `None`
+///   here even though it must stay deleted). When it IS a seed, the
+///   cohort is cleared by `deleted_at` value (via
+///   [`project_restore_block_to_sql`]).
+///
+/// ## Ordering within `apply_remote`
+///
+/// Must run AFTER the core-column pass ([`project_block_full_to_sql`])
+/// so every changed block's `parent_id` row exists — the descendant /
+/// ancestor CTE walks rely on it. Order relative to the property / tag
+/// passes does not matter (they touch disjoint columns).
+pub async fn reproject_block_deleted_at_from_engine(
+    conn: &mut SqliteConnection,
+    block_id: &crate::ulid::BlockId,
+    engine_deleted_at: Option<&str>,
+) -> Result<(), AppError> {
+    match engine_deleted_at {
+        Some(ts) => {
+            // Cascade soft-delete the seed + active descendants at the
+            // engine's timestamp. Re-uses the local delete projection so
+            // the inbound-sync and local paths share one cascade shape.
+            project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
+        }
+        None => {
+            // The remote says this block is alive. Read SQL's current
+            // soft-delete state: nothing to do if it is already alive or
+            // absent.
+            let current: Option<Option<String>> =
+                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                    .bind(block_id.as_str())
+                    .fetch_optional(&mut *conn)
+                    .await?;
+            let Some(Some(deleted_at_ref)) = current else {
+                return Ok(());
+            };
+
+            // Resurrection guard: only a genuine delete seed (no
+            // soft-deleted ancestor) is a restore target. A block under a
+            // still-deleted ancestor must stay deleted — the engine marks
+            // only the seed, so its `None` here means "descendant of a
+            // live cohort", not "restore me". `ancestors_cte_standard!()`
+            // emits the seed at depth 0; the `a.depth > 0` filter
+            // restricts the check to strict ancestors.
+            let has_deleted_ancestor: bool = sqlx::query_scalar(concat!(
+                crate::ancestors_cte_standard!(),
+                "SELECT EXISTS( \
+                     SELECT 1 FROM ancestors a \
+                     JOIN blocks b ON b.id = a.id \
+                     WHERE a.depth > 0 AND b.deleted_at IS NOT NULL \
+                 )",
+            ))
+            .bind(block_id.as_str())
+            .fetch_one(&mut *conn)
+            .await?;
+            if has_deleted_ancestor {
+                return Ok(());
+            }
+
+            // Genuine seed restore: clear the cohort (seed + descendants
+            // soft-deleted at the same timestamp).
+            project_restore_block_to_sql(conn, block_id.as_str(), &deleted_at_ref).await?;
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

@@ -31,10 +31,26 @@ hot-path keys (`todo_state`/`priority`/`due_date`/`scheduled_date`, authoritativ
 replace in `reproject_block_properties_from_engine`) + their agenda derivation on
 inbound sync (the inbound-sync cache fan-out rebuilds `agenda_cache` /
 `projected_agenda_cache`); tag re-projection + `block_tag_inherited` rebuild (session
-836). **Remaining Phase-1:** real `deleted_at`/restore (Phase 2 — engine needs the
-real timestamp + descendant marking before remote delete/restore can re-project
-without resurrecting soft-deleted descendants). `LoroTree` (Phase 3) is independent
-of this.
+836).
+
+**PROGRESS (2026-05-25): Phase 2 (real `deleted_at` + restore) shipped.** The engine
+now stores the **real** `deleted_at` timestamp on the delete seed
+(`apply_delete_block(block_id, deleted_at)` — was a fixed marker that collapsed every
+delete onto one timestamp, breaking cross-peer cohort identity) and exposes it via
+`LoroEngine::read_deleted_at`. The originating op's `created_at` is threaded through
+`merge::engine_apply` so all local seed-apply paths agree on the cohort timestamp.
+Inbound sync re-projects it: `apply_remote` Pass C calls the new
+`reproject_block_deleted_at_from_engine`, which re-derives the SQL descendant cascade
+from the seed timestamp (`Some(ts)` ⇒ cascade soft-delete; `None` ⇒ restore the
+cohort **only** for a genuine seed — an ancestor check keeps descendants of a still-
+deleted subtree soft-deleted, so a snapshot re-import never resurrects them). This
+keeps the descendant cascade an SQL/app derivation per the §0 boundary (engine stores
+the seed timestamp only). Closes the PEND-76 F1 delete/restore residual and unblocks
+PEND-81 §2A #3 (soft-delete/restore propagation). **Remaining Phase-1:** none.
+**Note for §2A #5 (purge cascade):** purge is a separate path (`apply_purge_block`
+hard-deletes the block from the engine map) and is still re-projected blindly — its
+inbound cascade is the next §2A item, now unblocked. `LoroTree` (Phase 3) is
+independent of this.
 
 ## 0. The boundary this plan respects (read first)
 
@@ -103,9 +119,12 @@ the current shape is an early simplification, not a Loro limit.
   accept all variants (today they reject non-`String`); add `read_all_properties`;
   lossless property re-projection; migration; round-trip + typed-filter tests.
   → unblocks remote property propagation in PEND-81.
-- **Phase 2 — real `deleted_at` + restore (S–M).** Store/read the real timestamp;
-  projection applies it + the SQL descendant cascade; restore cohort by timestamp;
-  tests (incl. "re-project does not resurrect a soft-deleted subtree").
+- **Phase 2 — real `deleted_at` + restore (S–M). ✅ shipped 2026-05-25.** Engine
+  stores/reads the real timestamp on the seed (`apply_delete_block` + `read_deleted_at`);
+  `reproject_block_deleted_at_from_engine` (in `apply_remote`) applies it + the SQL
+  descendant cascade and restores the cohort by timestamp, with an ancestor guard so a
+  re-project does not resurrect a soft-deleted subtree (test
+  `apply_remote_reimport_does_not_resurrect_soft_deleted_subtree`).
 - **Phase 3 — `LoroTree` adoption (L — the big one; candidate for its own PEND).**
   Model blocks as a `LoroTree`; migrate; rewrite create/move/delete onto tree ops;
   derive `parent_id`/`position`/`page_id` for SQL; **delete** the naive move/position

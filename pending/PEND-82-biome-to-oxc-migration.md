@@ -48,7 +48,7 @@ Baseline (2026-05-27) — what the migration has to land replacements for:
 
 ### `biome-ignore` distribution (production + test)
 
-```
+```text
 164  suspicious/noExplicitAny           (mostly tests per PEND-69)
 122  a11y/*                              (semantic-roles, focus, etc.)
  56  correctness/useExhaustiveDependencies
@@ -108,7 +108,7 @@ Biome formatter options in use → oxfmt support:
 | `indentWidth` | `2` (`tabWidth`) | ✅ supported |
 | `lineWidth` | `100` (`printWidth`) | ✅ supported (default also 100) |
 | `javascript.formatter.quoteStyle` | `single` (`singleQuote: true`) | ✅ supported |
-| `javascript.formatter.semicolons` | `asNeeded` (`semi: false` + ASI fixups) | ⚠️ **Verify.** Prettier exposes `semi: true|false`; oxfmt advertises `semi` but the "as needed" / ASI-safe variant isn't documented as a distinct value. May need to choose between always-on or always-off, or accept that oxfmt + the codebase agree on the same ASI-driven outcomes Biome produced. |
+| `javascript.formatter.semicolons` | `asNeeded` (`semi: false` + ASI fixups) | ⚠️ **Verify.** Prettier exposes `semi: true\|false`; oxfmt advertises `semi` but the "as needed" / ASI-safe variant isn't documented as a distinct value. May need to choose between always-on or always-off, or accept that oxfmt + the codebase agree on the same ASI-driven outcomes Biome produced. |
 | `files.includes` (`!dist`, `!src-tauri/target`, …) | ignore list | ✅ supported via `ignore` patterns |
 | `overrides[].includes` for `noDefaultExport` off in `src/main.tsx` + `*.config.ts` | per-glob disables | ✅ supported via `.oxlintrc.json` `overrides[]` (same shape) |
 
@@ -148,7 +148,7 @@ are tolerable, **before** committing to a multi-day migration.
 Assumes Phase 0 green-lighted.
 
 1. **`.oxlintrc.json`** — full hand-port of `biome.json`'s 13 customized rules
-   + 3 override blocks. Includes a top-level `ignorePatterns` mirroring
+   plus 3 override blocks. Includes a top-level `ignorePatterns` mirroring
    Biome's `files.includes` exclusions (`dist`, `src-tauri/target`,
    `src-tauri/gen`, `.sqlx`, `src/lib/bindings.ts`, `coverage`, `*.css`,
    `public/pdf.worker.min.mjs`).

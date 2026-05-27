@@ -379,14 +379,27 @@ impl LoroEngine {
     }
 
     /// Soft-delete a block — mirrors the production `DeleteBlock` op.
-    /// Sets `deleted_at` to a fixed marker; the production caller
-    /// re-stamps with the real timestamp at the materializer
-    /// boundary.  Concurrent deletes converge on the same "deleted"
-    /// state via LWW.
-    pub fn apply_delete_block(&mut self, block_id: &str) -> Result<(), AppError> {
+    /// Stores the real `deleted_at` timestamp (RFC-3339; the
+    /// originating op's `created_at`) on the seed's block map, so the
+    /// value is **lossless across sync**: a peer that imports this doc
+    /// reads the same timestamp back via [`Self::read_deleted_at`] and
+    /// re-derives the SQL descendant cascade + restore cohort from it
+    /// (PEND-80 Phase 2 — was a fixed marker that collapsed every
+    /// delete onto one timestamp, breaking cross-peer cohort identity).
+    /// Concurrent delete/restore converge on the `deleted_at` slot via
+    /// Loro's per-key LWW.
+    ///
+    /// **Scope: seed only.** The descendant cascade stays an SQL/app
+    /// derivation (per the PEND-80 boundary); this writes only the
+    /// seed's timestamp. The local materializer mirrors the same
+    /// timestamp onto the descendant cohort for engine parity via the
+    /// post-commit `dispatch_delete_descendants` fanout, but **inbound
+    /// sync does not depend on that** — `reproject_block_deleted_at_from_engine`
+    /// re-derives the cascade in SQL from the seed timestamp alone.
+    pub fn apply_delete_block(&mut self, block_id: &str, deleted_at: &str) -> Result<(), AppError> {
         let block_map = self.get_block_map(block_id, "delete block")?;
         block_map
-            .insert(FIELD_DELETED_AT, LoroValue::from("2025-01-15T12:00:00Z"))
+            .insert(FIELD_DELETED_AT, LoroValue::from(deleted_at))
             .map_err(|e| {
                 AppError::Validation(format!(
                     "loro: delete block {block_id}: set deleted_at: {e}"
@@ -878,6 +891,45 @@ impl LoroEngine {
                     ))
                 })?;
                 Ok(!matches!(value, LoroValue::Null))
+            }
+        }
+    }
+
+    /// Read the real `deleted_at` timestamp set on this block, or
+    /// `None` when the block is alive (no `deleted_at` slot, or an
+    /// explicit `Null`) or absent from the engine.
+    ///
+    /// Lossless counterpart to [`Self::read_deleted`] (which returns
+    /// only the boolean): inbound-sync re-projection
+    /// (`reproject_block_deleted_at_from_engine`) reads the actual
+    /// timestamp so the SQL descendant cascade + restore cohort key off
+    /// the same value the originating peer wrote (PEND-80 Phase 2).
+    ///
+    /// Returns `Ok(None)` for an absent block (rather than erroring like
+    /// the `get_block_map`-based readers) so a purged/missing id maps to
+    /// the same "not deleted" answer — the re-projection caller treats
+    /// absence and aliveness identically.
+    pub fn read_deleted_at(&self, block_id: &str) -> Result<Option<String>, AppError> {
+        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        if blocks.get(block_id).is_none() {
+            return Ok(None);
+        }
+        let block_map = self.get_block_map(block_id, "read deleted_at")?;
+        match block_map.get(FIELD_DELETED_AT) {
+            None => Ok(None),
+            Some(voc) => {
+                let value = voc.into_value().map_err(|_| {
+                    AppError::Validation(format!(
+                        "loro: read_deleted_at block {block_id} deleted_at is not a scalar"
+                    ))
+                })?;
+                match value {
+                    LoroValue::Null => Ok(None),
+                    LoroValue::String(s) => Ok(Some((*s).clone())),
+                    other => Err(AppError::Validation(format!(
+                        "loro: read_deleted_at block {block_id}: expected String|Null, got {other:?}"
+                    ))),
+                }
             }
         }
     }
@@ -1442,7 +1494,9 @@ mod op_coverage_tests {
     #[test]
     fn apply_restore_block_clears_deleted_at() {
         let mut engine = engine_with_block(BLOCK_A);
-        engine.apply_delete_block(BLOCK_A).expect("delete");
+        engine
+            .apply_delete_block(BLOCK_A, "2025-01-15T12:00:00Z")
+            .expect("delete");
         assert!(engine.read_deleted(BLOCK_A).unwrap(), "must be deleted");
         engine.apply_restore_block(BLOCK_A).expect("restore");
         assert!(
@@ -1453,6 +1507,44 @@ mod op_coverage_tests {
         // remove the block from the doc).
         let snap = engine.read_block(BLOCK_A).unwrap().expect("present");
         assert_eq!(snap.content, "hello");
+    }
+
+    #[test]
+    fn read_deleted_at_round_trips_real_timestamp() {
+        let mut engine = engine_with_block(BLOCK_A);
+        // Alive block: no deleted_at slot → None.
+        assert_eq!(
+            engine.read_deleted_at(BLOCK_A).unwrap(),
+            None,
+            "an alive block must read back deleted_at = None"
+        );
+        // After delete, the real timestamp round-trips losslessly
+        // (PEND-80 Phase 2 — was a fixed marker before).
+        engine
+            .apply_delete_block(BLOCK_A, "2026-05-25T09:30:00Z")
+            .expect("delete");
+        assert_eq!(
+            engine.read_deleted_at(BLOCK_A).unwrap(),
+            Some("2026-05-25T09:30:00Z".to_string()),
+            "the stored deleted_at timestamp must round-trip exactly"
+        );
+        // Restore clears the slot back to None.
+        engine.apply_restore_block(BLOCK_A).expect("restore");
+        assert_eq!(
+            engine.read_deleted_at(BLOCK_A).unwrap(),
+            None,
+            "post-restore deleted_at must read back None"
+        );
+    }
+
+    #[test]
+    fn read_deleted_at_is_none_for_absent_block() {
+        let engine = LoroEngine::new();
+        assert_eq!(
+            engine.read_deleted_at(BLOCK_A).unwrap(),
+            None,
+            "an absent block maps to None (not deleted), not an error"
+        );
     }
 
     #[test]
