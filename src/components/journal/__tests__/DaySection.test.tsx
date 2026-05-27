@@ -105,6 +105,11 @@ vi.mock('../../../stores/page-blocks', () => ({
 }))
 
 // ── Mock UI button ──────────────────────────────────────────────────
+// PEND-68 Part A — DaySection now hosts a `ConfirmDialog` via
+// `usePageDeleteAction`. The shared `ConfirmDialog` imports
+// `buttonVariants` for the destructive-style action button, so the
+// mock must export it too (otherwise the dialog throws on first
+// render). Returning a no-op string keeps the surface minimal.
 vi.mock('@/components/ui/button', () => ({
   Button: ({
     children,
@@ -114,6 +119,7 @@ vi.mock('@/components/ui/button', () => ({
       {children}
     </button>
   ),
+  buttonVariants: () => '',
 }))
 
 import type { DayEntry } from '../../../lib/date-utils'
@@ -658,6 +664,70 @@ describe('DaySection', () => {
     await waitFor(async () => {
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ── PEND-68 Part A — page-quick-actions (star + delete) ───────────
+  describe('PageQuickActions integration', () => {
+    // The shared `Button` mock at the top of this file flattens
+    // `IconButton` to a bare `<button>` (it passes through children +
+    // props). The Tooltip wrapper inside IconButton renders unchanged
+    // — we query by aria-label, not tooltip text.
+
+    it('renders star + delete in the weekly/monthly header when entry.pageId is set', () => {
+      const entry = makeDayEntry({ pageId: 'PAGE_1', displayDate: 'Sun, Jun 15, 2025' })
+
+      render(
+        <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={() => {}} />,
+      )
+
+      expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
+    })
+
+    it('renders star + delete in the daily-mode (hideHeading) header when entry.pageId is set', () => {
+      const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
+
+      render(
+        <DaySection
+          entry={entry}
+          mode="daily"
+          hideHeading
+          onAddBlock={noop}
+          onNavigateToPage={() => {}}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /delete page/i })).toBeInTheDocument()
+    })
+
+    it('does NOT render star/delete when entry.pageId is null (auto-create placeholder)', () => {
+      const entry = makeDayEntry({ pageId: null, displayDate: 'Sun, Jun 15, 2025' })
+
+      render(
+        <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={() => {}} />,
+      )
+
+      // No star, no delete — only the empty-state CTA is visible.
+      expect(screen.queryByRole('button', { name: /star this page/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /delete page/i })).not.toBeInTheDocument()
+    })
+
+    it('clicking delete opens the confirm dialog with the journal-specific copy', async () => {
+      const user = userEvent.setup()
+      const entry = makeDayEntry({ pageId: 'PAGE_1', displayDate: 'Sun, Jun 15, 2025' })
+
+      render(
+        <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={() => {}} />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /delete page/i }))
+
+      // Journal-specific title interpolates the displayDate.
+      expect(await screen.findByText('Delete the note for Sun, Jun 15, 2025?')).toBeInTheDocument()
+      // Description references Trash + Undo.
+      expect(screen.getByText(/moves the day's note .* to Trash/i)).toBeInTheDocument()
     })
   })
 

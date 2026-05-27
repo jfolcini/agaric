@@ -6,9 +6,10 @@
 
 import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { cn } from '@/lib/utils'
 import { getSourceColor, getSourceLabel } from '../../lib/date-property-colors'
 import type { DayEntry } from '../../lib/date-utils'
@@ -22,6 +23,7 @@ import { DonePanel } from '../DonePanel'
 import { DuePanel } from '../DuePanel'
 import { EmptyState } from '../EmptyState'
 import { LinkedReferences } from '../LinkedReferences'
+import { PageQuickActions } from '../PageQuickActions'
 
 interface DaySectionProps {
   entry: DayEntry
@@ -115,6 +117,26 @@ function DaySectionInner({
   const Heading = headingLevel === 'h2' ? 'h2' : 'h3'
   const isClickable = mode !== 'daily'
 
+  // PEND-68 Part A — page-delete flow (confirm dialog → IPC → success
+  // toast with Undo). The journal uses higher-stakes copy
+  // ("Delete the note for {{date}}?") because a daily note is a
+  // distinguished entry, not just another page.
+  const { requestDelete, deletingId, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
+  const dayPageId = entry.pageId
+  const isDeletingThisDay = dayPageId != null && deletingId === dayPageId
+
+  const handleRequestDayDelete = useCallback(
+    (pageId: string) => {
+      requestDelete(pageId, entry.displayDate, {
+        confirmCopy: {
+          title: t('journal.deleteDayTitle', { date: entry.displayDate }),
+          description: t('journal.deleteDayDescription'),
+        },
+      })
+    },
+    [entry.displayDate, requestDelete, t],
+  )
+
   // Lazy-mount the BlockTree only when (a) the caller opted in via
   // `lazyMount` and (b) reduced-motion is NOT requested. Reduced-motion
   // users get eager mount to avoid the one-frame placeholder→tree swap
@@ -131,7 +153,10 @@ function DaySectionInner({
     <section
       id={`journal-${entry.dateStr}`}
       aria-label={t('journal.dayAriaLabel', { date: entry.displayDate })}
-      className={cn(isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
+      // `group` enables the hover-reveal opacity on `PageQuickActions
+      // variant="journal"` (matches the `DensityRow` pattern); coarse-
+      // pointer devices always show the actions, no group-hover needed.
+      className={cn('group', isToday && 'bg-accent/[0.08] px-3 py-2 -mx-3')}
     >
       {/* Day heading — hidden in daily mode since header shows the date */}
       {!hideHeading && (
@@ -211,6 +236,20 @@ function DaySectionInner({
               <ExternalLink className="h-3.5 w-3.5" />
             </Button>
           )}
+          {/* PEND-68 Part A — star + delete affordance next to the
+              "open in editor" button. Guarded on `entry.pageId` so the
+              auto-create placeholder day (no note yet) doesn't show
+              destructive controls. Hover-reveal on desktop, always-
+              visible on touch (handled inside PageQuickActions). */}
+          {entry.pageId && (
+            <PageQuickActions
+              pageId={entry.pageId}
+              title={entry.displayDate}
+              variant="journal"
+              deleting={isDeletingThisDay}
+              onDeleteRequest={handleRequestDayDelete}
+            />
+          )}
         </div>
       )}
       {/* In daily mode (heading hidden), still show the "open in editor" link */}
@@ -226,8 +265,19 @@ function DaySectionInner({
             <ExternalLink className="h-3.5 w-3.5 mr-1" />
             {t('journal.openInEditor')}
           </Button>
+          {/* PEND-68 Part A — same affordance for daily mode (hideHeading). */}
+          <PageQuickActions
+            pageId={entry.pageId}
+            title={entry.displayDate}
+            variant="journal"
+            deleting={isDeletingThisDay}
+            onDeleteRequest={handleRequestDayDelete}
+          />
         </div>
       )}
+      {/* Single delete-confirm dialog (PEND-68 Part A) — both header
+          branches above route through `usePageDeleteAction.requestDelete`. */}
+      {deleteConfirmDialog}
 
       {entry.pageId &&
         (shouldLazyMount && !hasEntered ? (

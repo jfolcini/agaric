@@ -1470,8 +1470,15 @@ describe('PageHeader error paths', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
     await user.click(confirmBtn)
 
+    // PEND-68 Part A — the delete flow now routes through
+    // `usePageDeleteAction`, which surfaces a Retry action on failure.
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to delete page')
+      expect(mockedToastError).toHaveBeenCalledWith(
+        'Failed to delete page',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Retry' }),
+        }),
+      )
     })
     expect(onBack).not.toHaveBeenCalled()
   })
@@ -2033,5 +2040,106 @@ describe('PageHeader screen reader announcements (UX-282)', () => {
     await waitFor(() => {
       expect(mockedAnnounce).toHaveBeenCalledWith('Export failed')
     })
+  })
+})
+
+// ── PEND-68 Part A — dedicated delete button + Undo toast ──────────
+describe('PageHeader dedicated delete button (PEND-68 Part A)', () => {
+  it('renders the dedicated trash button next to the star in the title row', () => {
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    // Exactly one star + one trash button live in the inline quick-actions
+    // cluster (the kebab "Delete page" item is inside a popup, not a button
+    // in the title row).
+    expect(screen.getByRole('button', { name: /star this page/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^delete page$/i })).toBeInTheDocument()
+  })
+
+  it('clicking the dedicated trash button opens the confirm dialog (one dialog only — no double-confirm)', async () => {
+    const user = userEvent.setup()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+
+    // Exactly one AlertDialog mounts (scoped by the dialog title role).
+    const headings = await screen.findAllByRole('heading', { name: /^Delete page$/i })
+    expect(headings).toHaveLength(1)
+
+    // The dialog's destructive confirm is reachable.
+    expect(screen.getByRole('button', { name: /^Delete page$/i })).toBeInTheDocument()
+  })
+
+  it('confirms delete, fires the success toast with an Undo action, and navigates back', async () => {
+    const user = userEvent.setup()
+    const onBack = vi.fn()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={onBack} />)
+
+    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
+    await user.click(confirmBtn)
+
+    // IPC reached the backend with the expected shape.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'PAGE_1' })
+    })
+
+    // Success toast carries an Undo action (PEND-68 Part A A3).
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(
+        'Page deleted',
+        expect.objectContaining({
+          action: expect.objectContaining({ label: 'Undo' }),
+        }),
+      )
+    })
+
+    // onBack was fired after successful delete — preserves the
+    // pre-refactor navigation contract.
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('Undo toast action restores the just-deleted page via restore_blocks_by_ids', async () => {
+    const user = userEvent.setup()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+
+    await user.click(screen.getByRole('button', { name: /^delete page$/i }))
+    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
+    await user.click(confirmBtn)
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalled()
+    })
+
+    // Reach into the toast.success call to invoke the Undo handler.
+    const successCalls = mockedToastSuccess.mock.calls
+    const lastCall = successCalls[successCalls.length - 1]
+    const opts = lastCall?.[1] as { action: { onClick: () => void } } | undefined
+    expect(opts?.action?.onClick).toBeTypeOf('function')
+
+    opts?.action?.onClick()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['PAGE_1'],
+      })
+    })
+  })
+
+  it('kebab "Delete page" item routes through the same confirm dialog (no double-confirm)', async () => {
+    const user = userEvent.setup()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" onBack={vi.fn()} />)
+
+    // Open kebab + click the kebab's "Delete page" item.
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Delete page/i))
+
+    // Still exactly one dialog (kebab item and dedicated button share the
+    // single `usePageDeleteAction.confirmDialog` instance).
+    const headings = await screen.findAllByRole('heading', { name: /^Delete page$/i })
+    expect(headings).toHaveLength(1)
   })
 })

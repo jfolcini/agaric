@@ -5,14 +5,13 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft, Star } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { PageQuickActions } from '@/components/PageQuickActions'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
-import { IconButton } from '@/components/ui/icon-button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
@@ -20,10 +19,10 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useBlockTags } from '../hooks/useBlockTags'
 import { usePageAliases } from '../hooks/usePageAliases'
+import { usePageDeleteAction } from '../hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '../hooks/usePageTemplateMeta'
-import { useStarredPages } from '../hooks/useStarredPages'
 import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { deleteBlock, editBlock, exportPageMarkdown, getBlock, setProperty } from '../lib/tauri'
+import { editBlock, exportPageMarkdown, getBlock, setProperty } from '../lib/tauri'
 import { useNavigationStore } from '../stores/navigation'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useResolveStore } from '../stores/resolve'
@@ -49,18 +48,15 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const { t } = useTranslation()
   const pageStore = usePageBlockStoreApi()
 
-  // --- Star / favourite ---
-  // `useStarredPages` owns the localStorage shape and broadcasts
-  // changes via a `starred-pages-changed` window event so this header
-  // and any mounted `PageBrowser` instance stay in sync without the
-  // legacy `starredRevision` re-render counter.
-  const { isStarred, toggle: toggleStar } = useStarredPages()
-
-  const handleToggleStar = useCallback(() => {
-    toggleStar(pageId)
-  }, [pageId, toggleStar])
-
-  const starred = isStarred(pageId)
+  // --- Page-delete flow (PEND-68 Part A) ---
+  // `usePageDeleteAction` owns the confirm dialog + success-toast-with-
+  // Undo wiring. The header has TWO delete entry points — the dedicated
+  // trash button in the quick-actions cluster AND the kebab "Delete
+  // page" item — and both route through `requestDelete()`. Because the
+  // hook renders a single `ConfirmDialog` instance, there is no double-
+  // confirm risk from the two trigger paths.
+  const { requestDelete, deletingId, confirmDialog: deleteConfirmDialog } = usePageDeleteAction()
+  const isDeletingThis = deletingId === pageId
 
   // --- Breadcrumb navigation for namespaced pages ---
   const navigateToNamespace = useCallback(() => {
@@ -151,9 +147,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   const handlePageUndo = createUndoRedoHandler('undo')
   const handlePageRedo = createUndoRedoHandler('redo')
 
-  // --- Kebab + delete-dialog + property-expand state ---
+  // --- Kebab + property-expand state ---
+  // Delete-dialog state lives in `usePageDeleteAction` (see top of the
+  // component); the kebab and the dedicated trash button both call its
+  // `requestDelete()` so only ONE `ConfirmDialog` ever mounts.
   const [kebabOpen, setKebabOpen] = useState(false)
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [forcePropertyExpanded, setForcePropertyExpanded] = useState(false)
 
   // --- Template + space metadata (extracted to `usePageTemplateMeta`) ---
@@ -224,20 +222,25 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     return () => document.removeEventListener('keydown', handleExportShortcut)
   }, [pageId, t])
 
-  const handleDeletePage = useCallback(async () => {
-    try {
-      await deleteBlock(pageId)
-      notify.success(t('pageHeader.pageDeleted'))
-      announce(t('announce.pageDeleted'))
-      onBack?.()
-    } catch (err) {
-      logger.error('PageHeader', 'Failed to delete page', { pageId }, err)
-      notify.error(t('pageHeader.deleteFailed'))
-      announce(t('announce.pageDeleteFailed'))
-    }
-    setDeleteDialogOpen(false)
+  // Both delete entry points (dedicated trash button + kebab "Delete
+  // page" item) call this. `usePageDeleteAction` opens its single
+  // ConfirmDialog and, on confirm, runs the IPC + emits the success
+  // toast with an Undo action. We pass `onDeleted` so the header can
+  // still navigate back + announce to AT — preserving the previous
+  // behaviour of `handleDeletePage`. The hook's own success toast
+  // covers the sighted-user feedback (was `notify.success(...)` here).
+  const handleRequestDelete = useCallback(() => {
     setKebabOpen(false)
-  }, [pageId, onBack, t])
+    requestDelete(pageId, title, {
+      onDeleted: () => {
+        announce(t('announce.pageDeleted'))
+        onBack?.()
+      },
+      onFailed: () => {
+        announce(t('announce.pageDeleteFailed'))
+      },
+    })
+  }, [onBack, pageId, requestDelete, t, title])
 
   const handleKebabAddAlias = useCallback(() => {
     startEditingAliases()
@@ -386,16 +389,17 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               onBlur={handleTitleBlur}
               onKeyDown={handleTitleKeyDown}
             />
-            <IconButton
-              variant="ghost"
-              onClick={handleToggleStar}
-              tooltip={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
-              ariaLabel={starred ? t('pageHeader.unstarPage') : t('pageHeader.starPage')}
-              className="shrink-0 text-muted-foreground hover:text-star data-[starred=true]:text-star"
-              data-starred={starred}
-            >
-              <Star className="h-4 w-4" fill={starred ? 'currentColor' : 'none'} />
-            </IconButton>
+            {/* PEND-68 Part A — unified star + dedicated delete affordance.
+                The kebab below KEEPS its "Delete page" item as a secondary
+                path; both routes call `requestDelete()` on the shared
+                `usePageDeleteAction` so only one ConfirmDialog mounts. */}
+            <PageQuickActions
+              pageId={pageId}
+              title={title}
+              variant="header"
+              deleting={isDeletingThis}
+              onDeleteRequest={handleRequestDelete}
+            />
             <PageOutline />
             <PageHeaderMenu
               canRedo={canRedo}
@@ -411,10 +415,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               onToggleTemplate={handleToggleTemplate}
               onToggleJournalTemplate={handleToggleJournalTemplate}
               onExport={handleExport}
-              onDeleteRequest={() => {
-                setKebabOpen(false)
-                setDeleteDialogOpen(true)
-              }}
+              onDeleteRequest={handleRequestDelete}
               onOpenInNewTab={handleOpenInNewTab}
               isSpaceBlock={isSpaceBlock}
               moveTargets={moveTargets}
@@ -471,18 +472,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         </div>
       </ViewHeader>
 
-      {/* Delete page confirmation dialog (rendered outside the header outlet —
-          it's a portal-mounted AlertDialog, so placement here is just to keep
-          the dialog lifecycle tied to the PageHeader mount). */}
-      <ConfirmDialog
-        open={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        title={t('pageHeader.deletePageTitle')}
-        description={t('pageHeader.deletePageDescription')}
-        cancelLabel={t('pageHeader.cancel')}
-        actionLabel={t('pageHeader.deletePage')}
-        onConfirm={handleDeletePage}
-      />
+      {/* Single delete-confirm dialog (PEND-68 Part A) — both the dedicated
+          trash button in the quick-actions cluster and the kebab "Delete
+          page" item route through `usePageDeleteAction.requestDelete`, so
+          only this dialog mounts. */}
+      {deleteConfirmDialog}
     </>
   )
 }
