@@ -59,7 +59,7 @@ async fn count_space_blocks(pool: &SqlitePool) -> i64 {
 
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
     let sql = format!("SELECT COUNT(*) FROM {}", table);
-    sqlx::query_scalar::<_, i64>(&sql)
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()))
         .fetch_one(pool)
         .await
         .unwrap()

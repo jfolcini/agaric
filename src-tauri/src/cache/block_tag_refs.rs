@@ -299,7 +299,7 @@ async fn apply_block_tag_refs_diff(
             "DELETE FROM block_tag_refs WHERE (source_id, tag_id) IN ({})",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (source, tag) in chunk {
             q = q.bind(source).bind(tag);
         }
@@ -312,7 +312,7 @@ async fn apply_block_tag_refs_diff(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (source, tag) in chunk {
             q = q.bind(source).bind(tag);
         }

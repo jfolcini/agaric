@@ -42,7 +42,7 @@ async fn apply_agenda_diff(
             "DELETE FROM agenda_cache WHERE (date, block_id) IN ({})",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (date, block_id) in chunk {
             q = q.bind(date).bind(block_id);
         }
@@ -55,7 +55,7 @@ async fn apply_agenda_diff(
             "INSERT OR IGNORE INTO agenda_cache (date, block_id, source) VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for ((date, block_id), source) in chunk {
             q = q.bind(date).bind(block_id).bind(source);
         }

@@ -88,7 +88,10 @@ async fn set_property(pool: &SqlitePool, block_id: &str, key: &str, value_date: 
 /// Count rows in a table (test-only convenience).
 async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
     let query = format!("SELECT COUNT(*) FROM {table}");
-    let (count,): (i64,) = sqlx::query_as(&query).fetch_one(pool).await.unwrap();
+    let (count,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     count
 }
 

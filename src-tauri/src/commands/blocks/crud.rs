@@ -2049,143 +2049,144 @@ pub async fn purge_blocks_by_ids_inner(
          ) ";
 
     // block_tags
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_tags \
          WHERE block_id IN (SELECT id FROM descendants) \
             OR tag_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // block_tag_inherited
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_tag_inherited \
          WHERE block_id IN (SELECT id FROM descendants) \
             OR tag_id IN (SELECT id FROM descendants) \
             OR inherited_from IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // block_properties: owned by descendants
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_properties \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // block_properties: value_ref pointing into the subtree — DELETE the
     // row (post-migration-0062, see header rationale).
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_properties \
          WHERE value_ref IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // block_links: either end may be in the subtree
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_links \
          WHERE source_id IN (SELECT id FROM descendants) \
             OR target_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // agenda_cache
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM agenda_cache \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // tags_cache (keyed on tag_id)
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM tags_cache \
          WHERE tag_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // pages_cache (keyed on page_id)
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM pages_cache \
          WHERE page_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // Collect attachment paths BEFORE deleting rows so the post-commit
     // unlink loop has the on-disk paths.
-    let attachment_rows: Vec<String> = sqlx::query_scalar::<_, String>(&format!(
-        "{cte}SELECT fs_path FROM attachments \
+    let attachment_rows: Vec<String> =
+        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(format!(
+            "{cte}SELECT fs_path FROM attachments \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
-    .bind(&ids_json)
-    .fetch_all(&mut **tx)
-    .await?;
+        )))
+        .bind(&ids_json)
+        .fetch_all(&mut **tx)
+        .await?;
 
     // attachments
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM attachments \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // block_drafts
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM block_drafts \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM fts_blocks \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // page_aliases (keyed on page_id)
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM page_aliases \
          WHERE page_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // projected_agenda_cache
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM projected_agenda_cache \
          WHERE block_id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;
 
     // Delete blocks themselves (deferred FK lets this single DELETE sweep
     // the whole multi-root subtree).
-    let result = sqlx::query(&format!(
+    let result = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte}DELETE FROM blocks \
          WHERE id IN (SELECT id FROM descendants)"
-    ))
+    )))
     .bind(&ids_json)
     .execute(&mut **tx)
     .await?;

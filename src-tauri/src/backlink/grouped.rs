@@ -439,12 +439,13 @@ pub async fn eval_unlinked_references(
          LIMIT {}",
         FTS_ROW_CAP + 1
     );
-    let fts_rows: Vec<String> = sqlx::query_scalar::<_, String>(&fts_sql)
-        .bind(&fts_query)
-        .bind(page_id)
-        .bind(space_id)
-        .fetch_all(pool)
-        .await?;
+    let fts_rows: Vec<String> =
+        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
+            .bind(&fts_query)
+            .bind(page_id)
+            .bind(space_id)
+            .fetch_all(pool)
+            .await?;
 
     let truncated = fts_rows.len() > FTS_ROW_CAP;
     let matching_ids: FxHashSet<String> = if truncated {

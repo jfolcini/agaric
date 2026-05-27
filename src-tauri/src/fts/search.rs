@@ -897,7 +897,7 @@ async fn fts_fetch_rows(
     sql.push_str("\n         LIMIT ?5");
 
     // Build and bind the query dynamically.
-    let mut db_query = sqlx::query_as::<_, FtsSearchRow>(&sql)
+    let mut db_query = sqlx::query_as::<_, FtsSearchRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(sanitized) // ?1
         .bind(cursor_flag) // ?2
         .bind(cursor_rank) // ?3

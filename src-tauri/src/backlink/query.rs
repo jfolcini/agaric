@@ -276,7 +276,7 @@ async fn eval_created_sort_keyset(
         None => None,
     };
 
-    let rows: Vec<BlockRow> = sqlx::query_as::<_, BlockRow>(&sql)
+    let rows: Vec<BlockRow> = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(block_id) // ?1
         .bind(space_id) // ?2
         .bind(cursor_flag) // ?3
@@ -488,7 +488,7 @@ pub(super) async fn resolve_root_pages(
         root_title: Option<String>,
     }
 
-    let mut query = sqlx::query_as::<_, RootPageRow>(&sql);
+    let mut query = sqlx::query_as::<_, RootPageRow>(sqlx::AssertSqlSafe(sql.as_str()));
     for id in block_ids {
         query = query.bind(id.as_str());
     }
@@ -527,7 +527,7 @@ pub(super) async fn fetch_block_rows_by_ids(
             "SELECT {} FROM blocks WHERE id IN ({placeholders})",
             crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
         );
-        let mut query = sqlx::query_as::<_, BlockRow>(&sql);
+        let mut query = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()));
         for id in ids {
             query = query.bind(*id);
         }
@@ -538,7 +538,7 @@ pub(super) async fn fetch_block_rows_by_ids(
             "SELECT {} FROM blocks WHERE id IN (SELECT value FROM json_each(?))",
             crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
         );
-        let rows = sqlx::query_as::<_, BlockRow>(&sql)
+        let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&json_ids)
             .fetch_all(pool)
             .await?;
@@ -586,7 +586,7 @@ pub(super) async fn resolve_root_pages_cte(
         root_title: Option<String>,
     }
 
-    let mut query = sqlx::query_as::<_, RootPageRow>(&sql);
+    let mut query = sqlx::query_as::<_, RootPageRow>(sqlx::AssertSqlSafe(sql.as_str()));
     for id in block_ids {
         query = query.bind(id.as_str());
     }

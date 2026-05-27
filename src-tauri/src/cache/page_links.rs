@@ -240,7 +240,7 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
              VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (src, tgt, count) in chunk {
             q = q.bind(src).bind(tgt).bind(count);
         }
@@ -298,7 +298,7 @@ async fn rebuild_page_link_cache_split_impl(
              VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (src, tgt, count) in chunk {
             q = q.bind(src).bind(tgt).bind(count);
         }

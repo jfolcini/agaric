@@ -107,7 +107,7 @@ async fn fetch_edit_chain_rows(
          ORDER BY depth"
     );
 
-    let rows = sqlx::query_as::<_, ChainRow>(&sql)
+    let rows = sqlx::query_as::<_, ChainRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&start.0)
         .bind(start.1)
         .fetch_all(pool)

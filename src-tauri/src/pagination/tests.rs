@@ -4805,7 +4805,7 @@ async fn space_filter_does_not_scan_blocks_post_section_5_3() {
     ];
 
     for (label, sql) in plans {
-        let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sql)
+        let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(*sql))
             .bind("PLACEHOLDER_1")
             .bind(Some("PLACEHOLDER_2"))
             .fetch_all(&pool)

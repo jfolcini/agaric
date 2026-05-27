@@ -178,7 +178,7 @@ pub async fn snapshot_block(
     Ok(BlockDateSnapshot {
         due_date: row.due_date.as_deref().and_then(parse_iso_date),
         scheduled_date: row.scheduled_date.as_deref().and_then(parse_iso_date),
-        was_deleted: row.deleted.unwrap_or(false),
+        was_deleted: row.deleted,
         missing: false,
     })
 }

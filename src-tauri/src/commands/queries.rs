@@ -1605,7 +1605,7 @@ pub async fn filtered_blocks_query_inner(
     sql.push_str(" ORDER BY b.id ASC LIMIT ?3");
 
     // ----- Bind in declared param order (?1..?N) -----------------------------
-    let mut q = sqlx::query_as::<_, BlockRow>(&sql)
+    let mut q = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(cursor_flag) // ?1
         .bind(cursor_id) // ?2
         .bind(fetch_limit) // ?3

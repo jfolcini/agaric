@@ -441,7 +441,7 @@ async fn migrate_pages_to_personal_space_batched(
              VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for page_id in chunk {
             q = q
                 .bind(page_id)

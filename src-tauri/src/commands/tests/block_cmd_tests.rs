@@ -1641,11 +1641,13 @@ async fn purge_blocks_by_ids_clears_all_related_state() {
         ("projected_agenda_cache", "block_id"),
     ];
     for (table, col) in assertions {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?"))
-            .bind("PBBISTATE")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {col} = ?"
+        )))
+        .bind("PBBISTATE")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             n, 0,
             "{table}.{col}=PBBISTATE rows should be gone after purge"

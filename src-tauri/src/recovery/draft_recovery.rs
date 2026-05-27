@@ -59,8 +59,7 @@ pub(super) async fn recover_single_draft(
         draft.block_id
     )
     .fetch_one(pool)
-    .await?
-    .unwrap_or(false);
+    .await?;
 
     if !parent_valid {
         tracing::info!(block_id = %draft.block_id, "skipping draft: parent block is deleted or missing");

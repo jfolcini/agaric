@@ -53,7 +53,10 @@ async fn hard_delete_block(pool: &SqlitePool, id: &str) {
 
 async fn count_where(pool: &SqlitePool, table: &str, where_clause: &str) -> i64 {
     let sql = format!("SELECT COUNT(*) FROM {table} WHERE {where_clause}");
-    let (count,): (i64,) = sqlx::query_as(&sql).fetch_one(pool).await.unwrap();
+    let (count,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        .fetch_one(pool)
+        .await
+        .unwrap();
     count
 }
 

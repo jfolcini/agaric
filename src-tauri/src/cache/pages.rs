@@ -58,7 +58,7 @@ async fn apply_pages_diff(
             "DELETE FROM pages_cache WHERE page_id IN ({})",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for id in chunk {
             q = q.bind(id);
         }
@@ -71,7 +71,7 @@ async fn apply_pages_diff(
             "INSERT OR IGNORE INTO pages_cache (page_id, title, updated_at) VALUES {}",
             placeholders.join(", ")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         for (page_id, title) in chunk {
             q = q.bind(page_id).bind(title).bind(now);
         }

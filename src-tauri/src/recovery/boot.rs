@@ -189,7 +189,7 @@ pub async fn recover_at_boot(
             let sql = format!(
                 "SELECT id FROM blocks WHERE id IN ({placeholders}) AND deleted_at IS NULL"
             );
-            let mut q = sqlx::query_scalar::<_, String>(&sql);
+            let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
             for draft in chunk {
                 q = q.bind(&draft.block_id);
             }

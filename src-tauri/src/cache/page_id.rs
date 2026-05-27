@@ -134,7 +134,7 @@ async fn rebuild_page_ids_split_impl(
             "UPDATE blocks SET page_id = CASE id {case_clauses} ELSE page_id END \
              WHERE id IN ({in_placeholders})",
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         // CASE binds: (block_id, page_id) per row.
         for (block_id, page_id) in chunk {
             q = q.bind(block_id).bind(page_id);

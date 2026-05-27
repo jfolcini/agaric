@@ -43,7 +43,7 @@ async fn insert_fts_rows_tx(
         if chunk.is_empty() {
             continue;
         }
-        let mut qb: QueryBuilder<'_, Sqlite> =
+        let mut qb: QueryBuilder<Sqlite> =
             QueryBuilder::new("INSERT INTO fts_blocks(block_id, stripped) ");
         qb.push_values(chunk, |mut b, (id, stripped)| {
             b.push_bind(id).push_bind(stripped);

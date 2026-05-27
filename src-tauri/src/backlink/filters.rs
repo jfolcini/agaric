@@ -165,7 +165,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                        AND bp.value_text {sql_op} ?2{escape_clause} \
                        AND b.deleted_at IS NULL"
                 );
-                let rows = sqlx::query_scalar::<_, String>(&sql)
+                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
                     .bind(key)
                     .bind(&bind_value)
                     .fetch_all(pool)
@@ -204,7 +204,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                        AND bp.value_num {sql_op} ?2 \
                        AND b.deleted_at IS NULL"
                 );
-                let rows = sqlx::query_scalar::<_, String>(&sql)
+                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
                     .bind(key)
                     .bind(*value)
                     .fetch_all(pool)
@@ -247,7 +247,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                        AND bp.value_date {sql_op} ?2{escape_clause} \
                        AND b.deleted_at IS NULL"
                 );
-                let rows = sqlx::query_scalar::<_, String>(&sql)
+                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()))
                     .bind(key)
                     .bind(&bind_value)
                     .fetch_all(pool)
@@ -407,7 +407,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                     sql.push_str(&format!(" AND id < ?{bind_idx}"));
                 }
 
-                let mut query = sqlx::query_scalar::<_, String>(&sql);
+                let mut query = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
                 if let Some(ref lo) = after_prefix {
                     query = query.bind(lo.as_str());
                 }
@@ -493,7 +493,8 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                                ) SELECT id FROM desc \
                              )"
                         );
-                        let mut q = sqlx::query_scalar::<_, String>(&sql);
+                        let mut q =
+                            sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
                         for id in excluded {
                             q = q.bind(id);
                         }
@@ -583,7 +584,8 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                         "SELECT id FROM blocks WHERE deleted_at IS NULL \
                          AND id NOT IN ({placeholders})"
                     );
-                    let mut query = sqlx::query_scalar::<_, String>(&sql);
+                    let mut query =
+                        sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
                     for id in &inner_set {
                         query = query.bind(id.as_str());
                     }
@@ -633,7 +635,7 @@ async fn fetch_descendants_of(
                 SELECT b.id, d.depth + 1 FROM blocks b JOIN desc d ON b.parent_id = d.id WHERE b.deleted_at IS NULL AND d.depth < 100 \
             ) SELECT id FROM desc"
         );
-        let mut q = sqlx::query_scalar::<_, String>(&sql);
+        let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.as_str()));
         for id in roots {
             q = q.bind(id);
         }
