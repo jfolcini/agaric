@@ -79,7 +79,7 @@
     "date-fns": "^4.3.0",
     "highlight.js": "^11.11.1",
     "html5-qrcode": "^2.3.8",
-    "i18next": "^26.2.0",
+    "i18next": "^26.3.0",
     "jszip": "^3.10.1",
     "lowlight": "^3.3.0",
     "lucide-react": "^1.16.0",
