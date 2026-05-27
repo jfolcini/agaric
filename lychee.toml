@@ -47,4 +47,12 @@ exclude = [
     # Local dev server references in docs (PROMPT.md, playwright config examples).
     "^http://localhost(:\\d+)?(/|$)",
     "^http://127\\.0\\.0\\.1(:\\d+)?(/|$)",
+    # oxc.rs occasionally fails TLS handshake from GitHub Actions runners
+    # (CI run 26502240317: "TLS handshake failed" on the oxfmt-beta blog
+    # post despite the 5-retry/exp-backoff config above). The site is up —
+    # `curl` from the maintainer's box and browsers reach it fine — but
+    # lychee's reqwest+rustls combination handshakes inconsistently from
+    # GHA. Narrowed to the one URL that's been flaky; other oxc.rs URLs
+    # cited in PEND-82 (docs/, blog/) check fine and are not excluded.
+    "^https?://oxc\\.rs/blog/2026-02-24-oxfmt-beta",
 ]
