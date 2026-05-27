@@ -2,10 +2,61 @@
 
 ## Quick Reference
 
-- **This file:** sessions 801 – 842 (latest entry 2026-05-27).
+- **This file:** sessions 801 – 843 (latest entry 2026-05-27).
 - **Archived sessions:** 1 – 400 in [`docs/session-log/2024-2025.md`](docs/session-log/2024-2025.md); 401 – 800 in [`docs/session-log/2026-sessions-401-800.md`](docs/session-log/2026-sessions-401-800.md).
-- **Previously-resolved counter:** 1349+ REVIEW-LATER items across 842 sessions.
+- **Previously-resolved counter:** 1350+ REVIEW-LATER items across 843 sessions.
 - **Entry format:** see `PROMPT.md` § "Session log entry template". Each entry has a metadata table, summary, REVIEW-LATER impact, files touched, verification, optional process notes / lessons, commit plan.
+
+## Session 843 — overnight loop: PR-chain hygiene + 4 small PRs (2026-05-27)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-27 / 2026-05-28 |
+| **Subagents** | orchestrator-only (autonomous /loop) |
+| **Items closed** | CodeQL alert #129 (`js/superfluous-trailing-arguments` — mock signature); CR-A11Y slam-dunk subset (4 ARIA attributes); PAGES-FOLD-MARK (highlight `<mark>` bound regression class) |
+| **Items modified** | PR #94 (CI failures: lychee install + e2e sidebar-scope past quick-nav chips); PROMPT.md broadened to all GH issues + code-scanning / Dependabot alerts |
+| **Tests added** | +11 frontend (9 `findFoldedMatch` cases + 2 `HighlightMatch` render assertions) |
+| **Files touched** | 19 across 4 chained PRs |
+
+**Summary:** Autonomous loop session driven by `/loop` after the user asked to fix failing tests on PR #94. Four chained PRs landed in sequence, each branched off the prior PR's head:
+
+- **PR #94** (`chore/lychee-fix-and-pend-68-part-a`) — fixed two failure classes on the pre-existing PR: (a) `validate / lint` failed because the local-hook lychee variant (commit bd3dc79c) invoked the system `lychee` binary but `_validate.yml` never installed one — added an explicit prebuilt-binary install step (`lychee-v0.24.2` from GitHub Releases into `~/.local/bin`); (b) `validate / playwright (1) + (2)` failed across dozens of tests with `strict mode violation: getByRole('button', { name: 'Pages', exact: true }) resolved to 2 elements` because PEND-68 B's `QuickAccessBar` chips collide with sidebar nav buttons — scoped every unscoped sidebar nav click (helpers + 15 spec files + the smoke-spec's loop-variable case) to `.locator('[data-slot="sidebar"]')`. Three commits (`caecbc4a`, `170c415f` tarball-layout follow-up, `9b7d37f7` CodeQL #129 mock signatures).
+- **PR #95** (`fix/cr-a11y-slam-dunks`) — carved out CR-A11Y's slam-dunk subset (4 single-attribute fixes): `AgentAccessSettingsTab.tsx` + `GoogleCalendarSettingsTab.tsx` error paragraphs `role="status"` → `role="alert"`; `BlockPropertyEditor.tsx` ref-picker input gained `aria-label`; `StatusPanel.tsx` syncError paragraph gained `role="alert"`. The rest of CR-A11Y (focus-trap popovers, MenuPopoverContent role=menu + arrow roving, cross-group SR active-descendant) stays open — coordinated pass, not a single attribute.
+- **PR #96** (`fix/pages-fold-mark-highlight`) — closed PAGES-FOLD-MARK by introducing `findFoldedMatch(haystack, needle): { start, length } | null` in `src/lib/fold-for-search.ts`. The previous `HighlightMatch` rendered `<mark>` as `text.slice(start, start + filterText.length)` — wrong when the fold changes character length (ß→ss, ﬁ→fi, decomposed combining marks). The new helper returns both the start offset AND the original-string code-unit span that produced the folded match; `HighlightMatch.tsx` switched. `indexOfFolded` is now a thin wrapper around `findFoldedMatch` — preserves the existing API + every existing test case.
+- **PR #97** (`chore/prompt-md-broaden-scope`) — broadened `PROMPT.md` § "Where the work lives" + § 1 PLAN to cover non-`plan`-labelled GitHub issues, code-scanning alerts, and Dependabot security alerts as first-class work sources, not just plan-issues + REVIEW-LATER. The doc was lagging actual practice (CodeQL #129 was already picked up alongside PR #94).
+
+CI chained-PR limitation noted: `ci.yml`'s `pull_request:` trigger only fires on PRs targeting `main`, so PRs #95/#96/#97 only got `claude-review`. Full validate runs trigger when each PR is rebased onto main (i.e. after the prior PR in the chain merges).
+
+**Chained-merge recovery — important nuance:** The maintainer's overnight merge of PRs #95 and #96 used the chain-PR "merge into base branch" path rather than "merge into main", so those merges landed on the intermediate branches (`chore/lychee-fix-and-pend-68-part-a` for #95, `fix/cr-a11y-slam-dunks` for #96) but **never reached `main`** — PR #94 had already cut the chain by merging to main *first*, before #95/#96 were merged. The next loop iteration discovered this during a base-rebase attempt and recovered the lost content by force-pushing the rebased `chore/prompt-md-broaden-scope` branch (PR #97) onto `main` — that branch now carries all of PR #95 + PR #96 + the original PR #97 PROMPT.md change as **one merge** to main. PR #98 (this session-log entry) chains on top. Net effect: same final main state as if the original chain had merged cleanly; PRs #95 and #96 stay as MERGED in the GitHub UI for audit history but their canonical commits live under PR #97's diff.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** 29 → 28 (PAGES-FOLD-MARK removed).
+- **Previously resolved:** 1349+ → 1350+ across 842 → 843 sessions.
+
+**Files touched (this session):**
+- `.github/workflows/_validate.yml` (+24, -1 — lychee install step)
+- `e2e/{smoke,editor-lifecycle,error-scenarios,graph-view,inner-links,import-export,breadcrumb-navigation,spaces-coverage,starred-pages,keyboard-shortcuts,search-sheet-mobile,palette-desktop,pages-filter,pages-view,search-view-mobile}.spec.ts` + `e2e/helpers.ts` (+115, -24 — sidebar scoping)
+- `src/test-setup.ts` (+6, -0 — mock constructor signatures)
+- `src/components/AgentAccessSettingsTab.tsx`, `GoogleCalendarSettingsTab.tsx`, `BlockPropertyEditor.tsx`, `StatusPanel.tsx` (+6, -3 — ARIA attrs)
+- `src/lib/fold-for-search.ts` (+~60, -~25 — `findFoldedMatch`)
+- `src/components/HighlightMatch.tsx` (+~10, -~5)
+- `src/lib/__tests__/fold-for-search.test.ts` + `src/components/__tests__/HighlightMatch.test.tsx` (+~140, -~5 — new cases)
+- `pending/REVIEW-LATER.md` (+1, -17 — PAGES-FOLD-MARK removal + count)
+- `PROMPT.md` (+14, -1 — scope broadening)
+
+**Verification:**
+- `npx vitest run` — 10852/10852 pass (full suite on the highlight branch).
+- `npx tsc -b --noEmit` clean across all four branches.
+- `prek run biome-check` / `actionlint` / `zizmor` / `lychee` pass on touched files.
+- PR #94 CI — all main checks pass (lint 4m50s, playwright (1) 7m29s, playwright (2) 7m44s, vitest 1/2/3 + coverage, cargo-tests 10m42s, mcp-tests 15m46s, CodeQL).
+
+**Process notes:** chained PR pattern surfaces a real limitation: `ci.yml` triggers on `pull_request: branches: [main]`, so child PRs only get `claude-review` until they become main-targeting. Acceptable for review-cadence but reviewers can't rely on green-CI signal until the chain unwinds.
+
+**Lessons learned (for future sessions):** when a regression cascade is rooted in a new accessibility-equivalent ARIA name (the quick-nav chip's `aria-label="Pages"` colliding with the sidebar's `Pages` button), a literal-string `grep -F "name: 'Pages'"` misses loop-variable callsites (`for (const label of …)` in smoke.spec). Pair literal-string sweeps with a structural `getByRole('button', { name: \w+, exact: true })` regex sweep before declaring the fix complete.
+
+**Commit plan:** PR #94 merged directly to main; PRs #95 and #96 merged into intermediate branches only (see Chained-merge recovery above) — their content reaches main via PR #97. PR #98 (this session log entry) chains on top.
+
+---
 
 ## Session 842 — lychee hook fix + PEND-68 Part A page actions (2026-05-27)
 
