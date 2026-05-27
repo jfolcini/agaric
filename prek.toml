@@ -346,12 +346,29 @@ types = ["markdown"]
 exclude = "^(SESSION-LOG\\.md|node_modules/|dist/)"
 
 # Broken link check
+#
+# Uses a locally-installed `lychee` binary instead of the upstream
+# pre-commit hook from `lycheeverse/lychee`. The upstream hook is
+# broken on a normal dev box (verified 2026-05-27): both the
+# `lychee-v0.24.2` script (`git describe --tags --exact-match` fails
+# because prek's shallow clone strips tags) and the `lychee-v0.24.0`
+# fallback (`cargo-binstall` extracted without an executable bit →
+# Permission denied) fail in different ways, with no easy workaround.
+#
+# A `local`-language hook calling the system `lychee` binary
+# sidesteps both failure modes entirely. Install via
+# `cargo install lychee` if missing. CI installs lychee explicitly
+# in the workflow, so this stays consistent across environments.
 [[repos]]
-repo = "https://github.com/lycheeverse/lychee"
-rev = "lychee-v0.24.2"
-hooks = [
-    { id = "lychee", args = ["--no-progress", "--max-concurrency=4", "--cache"], types = ["markdown"] },
-]
+repo = "local"
+[[repos.hooks]]
+id = "lychee"
+name = "lychee"
+entry = "lychee"
+args = ["--no-progress", "--max-concurrency=4", "--cache"]
+language = "system"
+types = ["markdown"]
+pass_filenames = true
 
 # SQL: sqruff (SQLite migrations lint — MAINT-88)
 # Scope: src-tauri/migrations/*.sql only. Inline `sqlx::query!` strings in Rust
