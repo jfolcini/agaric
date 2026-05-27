@@ -4,7 +4,16 @@ import { Button } from '@/components/ui/button'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { relaunchApp } from '@/lib/relaunch-app'
-import { BugReportDialog } from './BugReportDialog'
+
+// Lazy so the BugReportDialog → bug-report-zip.ts → jszip graph (~96 KB)
+// stays out of the initial chunk. The root ErrorBoundary mounts in
+// `main.tsx` before App renders, so a static import here would defeat
+// the matching `React.lazy` in `App.tsx` and pull jszip into the entry
+// bundle. We pay the dynamic import cost only after the user clicks the
+// "Report a bug" button on a crash screen.
+const BugReportDialog = React.lazy(() =>
+  import('./BugReportDialog').then((m) => ({ default: m.BugReportDialog })),
+)
 
 interface ErrorBoundaryProps {
   children: React.ReactNode
@@ -62,12 +71,16 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               </Button>
             </div>
           </div>
-          <BugReportDialog
-            open={this.state.reportOpen}
-            onOpenChange={(open) => this.setState({ reportOpen: open })}
-            initialTitle={error?.message ?? ''}
-            initialDescription={error?.stack ?? ''}
-          />
+          {this.state.reportOpen && (
+            <React.Suspense fallback={null}>
+              <BugReportDialog
+                open={this.state.reportOpen}
+                onOpenChange={(open) => this.setState({ reportOpen: open })}
+                initialTitle={error?.message ?? ''}
+                initialDescription={error?.stack ?? ''}
+              />
+            </React.Suspense>
+          )}
         </div>
       )
     }

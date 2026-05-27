@@ -27,10 +27,10 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { dispatchBugReport } from '@/lib/bug-report-events'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
-import { BugReportDialog } from './BugReportDialog'
 import { DeviceManagement } from './DeviceManagement'
 import { GoogleCalendarSettingsTab } from './GoogleCalendarSettingsTab'
 import { KeyboardSettingsTab } from './KeyboardSettingsTab'
@@ -111,7 +111,6 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
-  const [bugReportOpen, setBugReportOpen] = useState<boolean>(false)
 
   // Persist active tab so navigating away and back restores the user's place
   // (UX-276). Validation happens on read in `readActiveTab` — stored values
@@ -215,10 +214,10 @@ export function SettingsView(): React.ReactElement {
 
         {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
 
-        {activeTab === 'help' && <HelpTab onReportBugClick={() => setBugReportOpen(true)} />}
+        {activeTab === 'help' && (
+          <HelpTab onReportBugClick={() => dispatchBugReport({ message: '' })} />
+        )}
       </div>
-
-      <BugReportDialog open={bugReportOpen} onOpenChange={setBugReportOpen} />
     </div>
   )
 }

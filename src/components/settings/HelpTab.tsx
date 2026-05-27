@@ -1,9 +1,13 @@
 /**
  * HelpTab — Help / Report-a-bug + Updates panel (FEAT-5 + updater wire-up).
  *
- * The bug-report dialog itself is mounted by `SettingsView` so its open
- * state can outlive a tab switch; this panel just exposes the trigger
- * button and forwards the click through `onReportBugClick`.
+ * The bug-report dialog is mounted at App level (lazy) and listens for
+ * `BUG_REPORT_EVENT`. This panel just exposes the trigger button and
+ * forwards the click through `onReportBugClick`, which SettingsView
+ * wires up to `dispatchBugReport()`. Keeping the import indirection
+ * here means HelpTab does not pull `BugReportDialog` into its module
+ * graph — that was the source of the INEFFECTIVE_DYNAMIC_IMPORT
+ * warning that defeated App.tsx's `React.lazy` for the dialog.
  *
  * The Updates card is self-contained — it reads the last-check
  * timestamp from `localStorage` (key managed by `useUpdateCheck`) and

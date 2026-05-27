@@ -202,7 +202,9 @@ describe('ErrorBoundary', () => {
 
     await user.click(screen.getByRole('button', { name: /Report this crash/i }))
 
-    expect(screen.getByTestId('bug-report-dialog')).toBeInTheDocument()
+    // Dialog is mounted via React.lazy + Suspense (so jszip stays out of the
+    // initial chunk), so wait for the lazy chunk to resolve.
+    expect(await screen.findByTestId('bug-report-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('bug-dialog-title')).toHaveTextContent('crash with stack')
     expect(screen.getByTestId('bug-dialog-description')).toHaveTextContent(
       'at mock (file.ts:10:20)',
