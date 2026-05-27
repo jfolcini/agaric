@@ -18,6 +18,7 @@ import { matchSorter } from 'match-sorter'
 import type React from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { CODE_LANGUAGES } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
@@ -50,7 +51,11 @@ export function CodeLanguageSelector({
   function applyLanguage(lang: string): void {
     const attrs = { language: lang }
     if (!isCodeBlock) {
-      editor.chain().focus().toggleCodeBlock().updateAttributes('codeBlock', attrs).run()
+      // toggleCodeBlockSafely handles the tiptap 3.23.6 deleteSelection
+      // regression (see use-roving-editor.ts). Passing `attrs` here means
+      // the language is set as part of the toggle — single chain, single
+      // `run()`.
+      toggleCodeBlockSafely(editor, attrs)
     } else {
       editor.chain().focus().updateAttributes('codeBlock', attrs).run()
     }
@@ -107,7 +112,7 @@ export function CodeLanguageSelector({
           if (isCodeBlock) {
             editor.chain().focus().updateAttributes('codeBlock', { language: '' }).run()
           } else {
-            editor.chain().focus().toggleCodeBlock().run()
+            toggleCodeBlockSafely(editor)
           }
           onClose()
         }}

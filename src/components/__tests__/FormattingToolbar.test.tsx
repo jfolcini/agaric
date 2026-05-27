@@ -44,6 +44,26 @@ vi.mock('@tiptap/react', () => ({
   },
 }))
 
+// `CodeLanguageSelector` routes through this helper (see
+// `toggle-code-block-safely.ts`). Forward to the editor's `chain()` —
+// minus the `.focus('end')` re-anchor (which is the upstream tiptap
+// 3.23.6 workaround) — so the existing mock chain assertions
+// (`mockToggleCodeBlock`, `mockUpdateAttributes`, `mockRun`) continue
+// to fire exactly as if `editor.chain().focus().toggleCodeBlock(attrs).updateAttributes(...).run()`
+// were called directly. The helper itself is unit-tested in
+// `src/editor/__tests__/use-roving-editor.test.ts`.
+vi.mock('@/editor/toggle-code-block-safely', () => ({
+  toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
+    // biome-ignore lint/suspicious/noExplicitAny: traversing the test's mock chain
+    const c = editor.chain() as any
+    if (attributes) {
+      c.focus().toggleCodeBlock().updateAttributes('codeBlock', attributes).run()
+    } else {
+      c.focus().toggleCodeBlock().run()
+    }
+  },
+}))
+
 // Mock Separator — Radix UI Separator needs browser APIs
 vi.mock('../ui/separator', () => ({
   Separator: ({ orientation, className }: { orientation?: string; className?: string }) => (

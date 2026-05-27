@@ -9,6 +9,7 @@ import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { logger } from '../../lib/logger'
 import { parse, serialize } from '../markdown-serializer'
+import { toggleCodeBlockSafely } from '../toggle-code-block-safely'
 import type { DocNode } from '../types'
 import {
   CodeBlockWithShortcut,
@@ -429,17 +430,18 @@ describe('custom extension keyboard shortcuts', () => {
 
   // Regression: tiptap 3.23.6 (#7848) tightened `deleteSelection` so that on
   // an emptied doc the selection collapses to position 0 — outside the
-  // first node. The subsequent toggleCodeBlock then creates the code block
-  // but leaves the cursor outside it, so the next keystroke would land in
-  // a paragraph instead. The shortcut handler appends `focus('end')` to
-  // the chain to keep the cursor inside the toggled node; this test pins
-  // the resulting JSON shape so future bumps cannot silently re-break it.
-  it('CodeBlockWithShortcut chain keeps cursor inside the code block after deleteSelection', () => {
+  // first node. A naive `toggleCodeBlock` then creates the code block but
+  // leaves the cursor outside it, so the next keystroke would land in a
+  // paragraph above the empty block. `toggleCodeBlockSafely` re-anchors
+  // the selection with `focus('end')`; this test exercises the helper
+  // (not an inline chain) so removing the workaround from the helper
+  // re-breaks the test, not just the production paths.
+  it('toggleCodeBlockSafely keeps cursor inside the code block after deleteSelection', () => {
     editor = createEditor([CodeBlockWithShortcut.configure({ lowlight: createLowlight(common) })])
     editor.commands.setContent({ type: 'doc', content: [{ type: 'paragraph' }] })
     editor.commands.selectAll()
     editor.commands.deleteSelection()
-    editor.chain().focus().toggleCodeBlock().focus('end').run()
+    toggleCodeBlockSafely(editor)
     editor.commands.insertContent('x = 1')
     expect(editor.getJSON()).toEqual({
       type: 'doc',

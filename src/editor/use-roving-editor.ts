@@ -47,6 +47,7 @@ import { notifyUnknownNodeTypeToast } from './markdown-serialize-toast'
 import { parse, serialize } from './markdown-serializer'
 import type { PickerItem } from './SuggestionList'
 import { cleanupOrphanedPopups } from './suggestion-renderer'
+import { toggleCodeBlockSafely } from './toggle-code-block-safely'
 import type { DocNode } from './types'
 
 const suggestionPluginKeys = [
@@ -125,15 +126,7 @@ export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
     return {
       ...this.parent?.(),
       [configKeyToTipTap(getShortcutKeys('codeBlock'))]: () => {
-        // `focus('end')` after the toggle works around a tiptap 3.23.6
-        // regression (PR #7848) where `deleteSelection` on an emptied
-        // doc leaves the selection at position 0 — subsequent toggle
-        // creates the code block but the cursor stays outside it, so
-        // the next keystroke inserts a paragraph instead of code-block
-        // content. Re-anchoring to doc-end after the toggle lands the
-        // cursor inside the resulting node (works whether the toggle
-        // opened or closed a code block).
-        this.editor.chain().focus().toggleCodeBlock().focus('end').run()
+        toggleCodeBlockSafely(this.editor as Editor)
         return true
       },
     }
