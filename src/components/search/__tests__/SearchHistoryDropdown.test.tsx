@@ -179,6 +179,20 @@ describe('SearchHistoryDropdown', () => {
     }
   })
 
+  // CR-A11Y (#151) — the listbox container hosts `aria-activedescendant`
+  // pointing at the active row id, matching the VirtualizedResultListbox
+  // convention. This is the load-bearing wiring that makes the roving
+  // selection (and the keyboard per-row delete it enables) announce to AT.
+  it('points aria-activedescendant at the active row id', () => {
+    renderDropdown({ entries: ['alpha', 'beta', 'gamma'], listboxId: 'lbx', activeIndex: 1 })
+    expect(screen.getByRole('listbox')).toHaveAttribute('aria-activedescendant', 'lbx-opt-1')
+  })
+
+  it('omits aria-activedescendant when no row is active', () => {
+    renderDropdown({ entries: ['alpha', 'beta'], listboxId: 'lbx', activeIndex: -1 })
+    expect(screen.getByRole('listbox')).not.toHaveAttribute('aria-activedescendant')
+  })
+
   // UX-A7 — the per-row delete affordance already had a coarse-pointer 44px
   // target; the row body, Clear-history, and the enable/disable toggle did not.
   it('gives the rows and footer controls a coarse-pointer 44px target', () => {

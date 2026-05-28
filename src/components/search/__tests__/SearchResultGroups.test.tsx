@@ -416,6 +416,135 @@ describe('SearchResultGroups (virtualized)', () => {
     })
   })
 
+  // CR-A11Y (#151) — when roving arrows carry the active row across a group
+  // boundary, DOM focus must follow onto the newly-active group's listbox so
+  // `aria-activedescendant` (which only the owning group carries) is always
+  // exposed on the FOCUSED element. Without this the screen reader loses the
+  // active descendant at the boundary because focus stays on the old group's
+  // `<ul>`, which no longer points at any option.
+  describe('CR-A11Y #151: focus follows the active row across group boundaries', () => {
+    function makeGroups() {
+      const a1 = makeRow({ id: 'A1', page_id: 'PAGE_A' })
+      const b1 = makeRow({ id: 'B1', page_id: 'PAGE_B' })
+      return {
+        a1,
+        b1,
+        groups: [
+          { page_id: 'PAGE_A', page_title: 'Alpha', has_page_name_match: false, blocks: [a1] },
+          { page_id: 'PAGE_B', page_title: 'Beta', has_page_name_match: false, blocks: [b1] },
+        ],
+      }
+    }
+
+    it('moves DOM focus to the next group listbox when the active row crosses the boundary', () => {
+      const { a1, b1, groups } = makeGroups()
+      const { rerender } = render(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={0} // A1 active → PAGE_A owns the active row
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+        />,
+      )
+      const lbA = screen.getByTestId('search-result-group-PAGE_A')
+      const lbB = screen.getByTestId('search-result-group-PAGE_B')
+      // Simulate the user having Tabbed into / roving the results: DOM focus is
+      // on the active group's listbox (PAGE_A).
+      lbA.focus()
+      expect(document.activeElement).toBe(lbA)
+
+      // Arrow down crosses into PAGE_B: focusedIndex now points at B1.
+      rerender(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={1} // B1 active → PAGE_B owns the active row
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+        />,
+      )
+
+      // Focus followed the active row to PAGE_B's listbox.
+      expect(document.activeElement).toBe(lbB)
+      // aria-activedescendant is on the FOCUSED listbox and points at B1.
+      expect(lbB).toHaveAttribute('aria-activedescendant', 'search-result-B1')
+      // The old group no longer carries an active descendant.
+      expect(lbA).not.toHaveAttribute('aria-activedescendant')
+    })
+
+    it('does NOT steal focus from the search input on initial render', () => {
+      const { a1, b1, groups } = makeGroups()
+      // A standalone input simulates the search box keeping DOM focus while
+      // results render (focusedIndex defaults to 0 / first row).
+      const input = document.createElement('input')
+      document.body.appendChild(input)
+      input.focus()
+      expect(document.activeElement).toBe(input)
+
+      render(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={0}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+        />,
+      )
+
+      // The first group is the active group, but focus is on the input (not on
+      // a sibling results listbox), so we must NOT hijack it.
+      expect(document.activeElement).toBe(input)
+      input.remove()
+    })
+
+    it('keeps aria-activedescendant resolving to a mounted descendant of the focused listbox', () => {
+      const { a1, b1, groups } = makeGroups()
+      const { rerender } = render(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={0}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+        />,
+      )
+      screen.getByTestId('search-result-group-PAGE_A').focus()
+      rerender(
+        <SearchResultGroups
+          groups={groups}
+          flatRows={[a1, b1]}
+          focusedIndex={1}
+          expandedGroups={{}}
+          onToggleGroup={vi.fn()}
+          onResultClick={vi.fn()}
+          loadingResultId={null}
+          onKeyDown={vi.fn(() => false)}
+        />,
+      )
+      const focused = document.activeElement as HTMLElement
+      const adId = focused.getAttribute('aria-activedescendant')
+      expect(adId).toBe('search-result-B1')
+      // The active descendant id resolves to a real element that is a
+      // descendant of the focused listbox (mounted by the virtualizer).
+      const ad = document.getElementById(adId as string)
+      expect(ad).not.toBeNull()
+      expect(focused.contains(ad)).toBe(true)
+    })
+  })
+
   it('has no a11y violations (focused row state)', async () => {
     const { container } = setup({
       groups: [

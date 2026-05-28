@@ -1920,6 +1920,8 @@ describe('AgentAccessSettingsTab — status load error', () => {
 
     // Error banner surfaces the failure.
     expect(await screen.findByText('Failed to load MCP status')).toBeInTheDocument()
+    // The banner is an assertive live region so screen readers announce it.
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load MCP status')
     // Component still renders the rest of the sections.
     expect(screen.getByText('Read-only access')).toBeInTheDocument()
     expect(screen.getByText('Read-write access')).toBeInTheDocument()

@@ -520,6 +520,10 @@ describe('StatusPanel', () => {
       render(<StatusPanel />)
       await screen.findByText('Materializer Status')
       expect(screen.getByText('Connection lost')).toBeInTheDocument()
+      // The sync error must be a live region so screen readers announce it.
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Connection lost')
+      expect(alert).toHaveClass('sync-panel-error')
     })
 
     it('shows sync metrics (peers count, ops received/sent)', async () => {

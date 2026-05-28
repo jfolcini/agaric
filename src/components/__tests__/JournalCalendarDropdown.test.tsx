@@ -144,12 +144,12 @@ describe('JournalCalendarDropdown', () => {
     expect(screen.getByRole('dialog', { name: /date picker/i })).toBeInTheDocument()
   })
 
-  it('marks the dialog as modal via aria-modal', () => {
+  it('does NOT claim aria-modal (it is a non-trapping anchored dropdown)', () => {
+    // CR-A11Y (#151): aria-modal="true" would lie to assistive tech because
+    // this dropdown does not trap focus or auto-focus on open. Dismissal is
+    // still covered by the Escape and backdrop-click tests below.
     render(<JournalCalendarDropdown {...defaultProps} />)
-    expect(screen.getByRole('dialog', { name: /date picker/i })).toHaveAttribute(
-      'aria-modal',
-      'true',
-    )
+    expect(screen.getByRole('dialog', { name: /date picker/i })).not.toHaveAttribute('aria-modal')
   })
 
   it('renders the calendar component', () => {

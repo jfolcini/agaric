@@ -16,6 +16,38 @@ export interface TemplatePickerProps {
   onClose: () => void
 }
 
+/**
+ * Tab / Shift+Tab cycle focus *within* the picker so it honours its
+ * aria-modal="true" claim (CR-A11Y, #151). Without this, Tab escapes to the
+ * rest of the document while the dialog still announces itself as modal — a
+ * lie to assistive tech.
+ */
+function trapTabFocus(dialog: HTMLElement, shiftKey: boolean): void {
+  const buttons = dialog.querySelectorAll<HTMLElement>('button')
+  if (buttons.length === 0) return
+  const first = buttons[0]
+  const last = buttons[buttons.length - 1]
+  const active = document.activeElement as HTMLElement | null
+  const atEdge = shiftKey ? active === first : active === last
+  if (atEdge || !dialog.contains(active)) {
+    ;(shiftKey ? last : first)?.focus()
+    return
+  }
+  const idx = Array.from(buttons).indexOf(active as HTMLElement)
+  buttons[shiftKey ? idx - 1 : idx + 1]?.focus()
+}
+
+/** ArrowUp/ArrowDown roving focus between the template buttons (wrapping). */
+function moveFocusWithArrows(dialog: HTMLElement, key: 'ArrowDown' | 'ArrowUp'): void {
+  const buttons = dialog.querySelectorAll<HTMLElement>('button')
+  if (buttons.length === 0) return
+  const current = document.activeElement as HTMLElement
+  const idx = Array.from(buttons).indexOf(current)
+  const next =
+    key === 'ArrowDown' ? (idx + 1) % buttons.length : (idx - 1 + buttons.length) % buttons.length
+  buttons[next]?.focus()
+}
+
 export function TemplatePicker({
   templatePages,
   onSelect,
@@ -32,20 +64,18 @@ export function TemplatePicker({
         onClose()
         return
       }
+      const dialog = dialogRef.current
+      if (!dialog) return
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        e.stopPropagation()
+        trapTabFocus(dialog, e.shiftKey)
+        return
+      }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         e.stopPropagation()
-        const dialog = dialogRef.current
-        if (!dialog) return
-        const buttons = dialog.querySelectorAll<HTMLElement>('button')
-        if (buttons.length === 0) return
-        const current = document.activeElement as HTMLElement
-        const idx = Array.from(buttons).indexOf(current)
-        const next =
-          e.key === 'ArrowDown'
-            ? (idx + 1) % buttons.length
-            : (idx - 1 + buttons.length) % buttons.length
-        buttons[next]?.focus()
+        moveFocusWithArrows(dialog, e.key)
       }
     }
     // Capture phase so the picker sees Escape/Arrow keys BEFORE the TipTap
@@ -61,8 +91,15 @@ export function TemplatePicker({
   }, [onClose])
 
   useEffect(() => {
+    // Remember whoever was focused before the picker opened (typically the
+    // editor / trigger) so we can restore focus to it on close — the second
+    // half of a real focus trap (CR-A11Y, #151).
+    const previouslyFocused = document.activeElement as HTMLElement | null
     const btn = dialogRef.current?.querySelector<HTMLElement>('button')
     btn?.focus()
+    return () => {
+      previouslyFocused?.focus?.()
+    }
   }, [])
 
   return (

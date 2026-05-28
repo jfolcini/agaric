@@ -188,6 +188,9 @@ describe('GoogleCalendarSettingsTab — rendering', () => {
     render(<GoogleCalendarSettingsTab />)
 
     expect(await screen.findByText('Failed to load Google Calendar status')).toBeInTheDocument()
+    // The error banner is an assertive live region so screen readers announce
+    // it (distinct from the experimental warning, which stays role="status").
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load Google Calendar status')
     // Component still renders the rest of the UI
     expect(screen.getByText('Google Calendar')).toBeInTheDocument()
     expect(mockedLoggerError).toHaveBeenCalledWith(

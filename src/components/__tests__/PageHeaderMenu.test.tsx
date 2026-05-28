@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +16,9 @@ vi.mock('lucide-react', () => ({
   ),
   ExternalLink: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="external-link-icon" {...props} />
+  ),
+  FolderOutput: (props: React.SVGProps<SVGSVGElement>) => (
+    <svg data-testid="folder-output-icon" {...props} />
   ),
   LayoutTemplate: (props: React.SVGProps<SVGSVGElement>) => (
     <svg data-testid="layout-template-icon" {...props} />
@@ -339,6 +342,165 @@ describe('PageHeaderMenu export shortcut hint (UX-158)', () => {
 
     expect(screen.getByText(/Export as Markdown/i)).toBeInTheDocument()
     expect(screen.getByText('Ctrl + Shift + E')).toBeInTheDocument()
+  })
+})
+
+describe('PageHeaderMenu ARIA menu semantics (CR-A11Y #151)', () => {
+  it('renders the popover content with role="menu" and the page-actions label', () => {
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    expect(menu).toBeInTheDocument()
+  })
+
+  it('marks every top-level action as role="menuitem"', () => {
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    const items = within(menu).getAllByRole('menuitem')
+    // addAlias, addTag, addProperty, toggleTemplate, toggleJournalTemplate,
+    // export, delete = 7 (no openInNewTab / no move entry by default).
+    expect(items).toHaveLength(7)
+    expect(within(menu).getByText('Add alias').closest('button')).toHaveAttribute(
+      'role',
+      'menuitem',
+    )
+    expect(
+      within(menu)
+        .getByText(/Delete page/i)
+        .closest('button'),
+    ).toHaveAttribute('role', 'menuitem')
+  })
+
+  it('focuses the first menuitem when the menu opens', async () => {
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    const firstItem = within(menu).getByText('Add alias').closest('button')
+    await waitFor(() => {
+      expect(firstItem).toHaveFocus()
+    })
+  })
+
+  it('applies roving tabindex: only the active menuitem is tabbable', async () => {
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    const firstItem = within(menu).getByText('Add alias').closest('button')
+    await waitFor(() => {
+      expect(firstItem).toHaveFocus()
+    })
+
+    expect(firstItem).toHaveAttribute('tabindex', '0')
+    const tag = within(menu).getByText('Add tag').closest('button')
+    expect(tag).toHaveAttribute('tabindex', '-1')
+  })
+
+  it('ArrowDown moves focus to the next menuitem', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    const firstItem = within(menu).getByText('Add alias').closest('button')
+    await waitFor(() => {
+      expect(firstItem).toHaveFocus()
+    })
+
+    await user.keyboard('{ArrowDown}')
+    expect(within(menu).getByText('Add tag').closest('button')).toHaveFocus()
+  })
+
+  it('ArrowUp from the first item wraps to the last (delete)', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    })
+
+    await user.keyboard('{ArrowUp}')
+    expect(
+      within(menu)
+        .getByText(/Delete page/i)
+        .closest('button'),
+    ).toHaveFocus()
+  })
+
+  it('Home and End jump to first and last menuitems', async () => {
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    })
+
+    await user.keyboard('{End}')
+    expect(
+      within(menu)
+        .getByText(/Delete page/i)
+        .closest('button'),
+    ).toHaveFocus()
+
+    await user.keyboard('{Home}')
+    expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+  })
+
+  it('still fires the click callback after keyboard navigation', async () => {
+    const onAddTag = vi.fn()
+    const user = userEvent.setup()
+    renderMenu({ kebabOpen: true, onAddTag })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    await waitFor(() => {
+      expect(within(menu).getByText('Add alias').closest('button')).toHaveFocus()
+    })
+
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{Enter}')
+    expect(onAddTag).toHaveBeenCalledOnce()
+  })
+
+  it('includes the open-in-new-tab menuitem when the callback is provided', () => {
+    renderMenu({ kebabOpen: true, onOpenInNewTab: vi.fn() })
+
+    const menu = screen.getByRole('menu', { name: /page actions/i })
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(8)
+  })
+
+  it('keeps the move-to-space sub-menu working without counting its items in the top-level set', async () => {
+    const onMoveToSpace = vi.fn()
+    const user = userEvent.setup()
+    renderMenu({
+      kebabOpen: true,
+      onMoveToSpace,
+      moveTargets: [
+        { id: 'sp-1', name: 'Space One' },
+        { id: 'sp-2', name: 'Space Two' },
+      ],
+    })
+
+    const topMenu = screen.getByRole('menu', { name: /page actions/i })
+    // 7 default + the move-to entry = 8 top-level menuitems.
+    expect(within(topMenu).getAllByRole('menuitem')).toHaveLength(8)
+
+    // Expand the sub-menu and pick a target.
+    await user.click(within(topMenu).getByText(/move to/i))
+    const subMenu = screen.getByRole('menu', { name: /move to/i })
+    await user.click(within(subMenu).getByText('Space One'))
+    expect(onMoveToSpace).toHaveBeenCalledWith('sp-1')
+  })
+
+  it('has no a11y violations with the menu open', async () => {
+    const { container } = renderMenu({ kebabOpen: true })
+
+    await waitFor(
+      async () => {
+        expect(await axe(container)).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
   })
 })
 

@@ -192,7 +192,10 @@ export function JournalCalendarDropdown({
       <div
         ref={calRef}
         role="dialog"
-        aria-modal="true"
+        // Intentionally NOT aria-modal: this is a lightweight anchored dropdown.
+        // It does not trap focus or auto-focus on open, so claiming modality
+        // would mislead assistive tech (CR-A11Y, #151). The backdrop is only a
+        // click-to-dismiss helper, not a true modal barrier.
         aria-busy={loading}
         aria-label={t('journal.datePickerLabel')}
         className={cn(
