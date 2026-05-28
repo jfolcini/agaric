@@ -1760,10 +1760,14 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     // without first finishing iteration 1's body (recv_binary,
     // write, send ACK).
     let responder_task = tokio::spawn(async move {
-        // 1. Receive FileRequest for both files.
+        // 1. Receive FileRequest for both files. `find_missing_attachments`
+        //    fans the per-row metadata probe through `buffer_unordered(16)`
+        //    (sync_files.rs:237) so the request order is non-deterministic
+        //    in concurrent runs — assert set membership, not order (#162).
         let req: SyncMessage = server_conn.recv_json().await.unwrap();
         match req {
-            SyncMessage::FileRequest { attachment_ids } => {
+            SyncMessage::FileRequest { mut attachment_ids } => {
+                attachment_ids.sort();
                 assert_eq!(
                     attachment_ids,
                     vec!["ATT_M47_1".to_string(), "ATT_M47_2".to_string()],
