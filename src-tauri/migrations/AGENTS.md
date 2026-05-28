@@ -47,6 +47,25 @@ CREATE INDEX idx_block_links_source ON block_links (source_id);
 - `FOREIGN KEY (block_id) REFERENCES blocks(id) ON DELETE CASCADE` is the common shape; specify `ON DELETE` explicitly.
 - Cascade rules are part of the data model — a future plan changing them is a breaking change.
 
+## Timestamp columns: INTEGER ms since the Unix epoch
+
+Issue #109 — every **new** timestamp column must use INTEGER milliseconds-since-the-Unix-epoch, never TEXT ISO-8601. The canonical shape is:
+
+```sql
+CREATE TABLE example (
+  id      TEXT NOT NULL PRIMARY KEY,
+  updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+) STRICT;
+```
+
+- **Column suffix:** `_ms` — makes the encoding visible at every read site without consulting the schema.
+- **CHECK predicate:** `>= 0` — rejects pre-epoch nonsense at insert time, matching the same defence-in-depth posture as the per-column `CHECK` constraints elsewhere in the schema (0062 `exactly_one_value`, 0073 `page_id_self_for_pages`).
+- **Writer helper:** `crate::db::now_ms()` (`src-tauri/src/db.rs`) is the single source of truth for the current value. No call site should open-code `chrono::Utc::now().timestamp_millis()`.
+
+Rationale: range scans on staleness windows are direct integer comparisons (`WHERE updated_at_ms <= ?`), with no `strftime` parsing and no `Z` vs `+00:00` lex-collation hazard. SQLite INTEGER columns sort and range-scan natively without relying on every writer producing the same `YYYY-MM-DDTHH:MM:SS.sssZ` shape that the legacy TEXT encoding required.
+
+Precedent: `loro_doc_state.updated_at` (migration 0052) and `app_settings.updated_at` (migration 0053) already follow this shape. The legacy TEXT columns (`blocks.deleted_at`, `op_log.created_at`, `materializer_retry_queue.created_at`, etc.) keep `crate::now_rfc3339` until Phase 2 of #109 migrates each one in turn.
+
 ## Op log: never write to it from a migration
 
 The op log (`op_log`) is the event-sourcing root. Migrations that change schema MUST NOT backfill op log rows for the new schema — that would inject synthetic ops into the user's history. Backfill should happen lazily through normal command paths, OR through a one-time materializer task triggered after the schema is in place.

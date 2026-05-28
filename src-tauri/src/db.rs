@@ -37,6 +37,39 @@ pub const SLOW_SEARCH_ACQUIRE_WARN_MS: u128 = 50;
 /// so the chunking constant has a single source of truth.
 pub const MAX_SQL_PARAMS: usize = 999;
 
+/// Issue #109 Phase 1 — return the current UTC time as milliseconds
+/// since the Unix epoch.
+///
+/// This is the **canonical timestamp encoding for new tables** in
+/// Agaric's SQLite schema. Going forward, every new timestamp column
+/// must be declared `<col_name>_ms INTEGER NOT NULL CHECK (<col_name>_ms >= 0)`
+/// and every writer must source the value from this helper.
+///
+/// **Rationale:**
+/// - Range scans on staleness windows are direct integer comparisons
+///   (`WHERE col_ms <= ?`) — no `strftime` parsing, no string-collation
+///   surprises around the `Z` vs `+00:00` lex-monotonicity hazard that
+///   [`crate::now_rfc3339`] documents in its own header comment.
+/// - SQLite INTEGER columns sort and range-scan natively without
+///   relying on every writer producing the same `YYYY-MM-DDTHH:MM:SS.sssZ`
+///   shape.
+/// - The PEND-09 tables (`loro_doc_state.updated_at` and
+///   `app_settings.updated_at`, migrations 0052 / 0053) already use
+///   this encoding; this helper formalises what was previously a
+///   per-callsite `chrono::Utc::now().timestamp_millis()` open-code.
+///
+/// The legacy TEXT ISO-8601 tables (`blocks.deleted_at`, `op_log.created_at`,
+/// `materializer_retry_queue.created_at`, etc.) keep
+/// [`crate::now_rfc3339`] for their writes — migrating those columns to
+/// INTEGER ms is Phase 2 of #109 and ships per-table.
+///
+/// Returns `i64` so the value lands directly in `sqlx`'s `INTEGER`
+/// binding without a `try_from` step. `i64` covers ±292M years around
+/// 1970, well past any horizon that matters.
+pub fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
 /// Acquire a connection from the pool, logging at `warn` if the acquire
 /// itself took longer than [`SLOW_ACQUIRE_WARN_MS`].
 ///
@@ -544,6 +577,30 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let pools = init_pools(&db_path).await.unwrap();
         (pools, dir)
+    }
+
+    /// Issue #109 Phase 1 — `now_ms()` returns a sensible, monotonically
+    /// non-decreasing value for every call within the same process. The
+    /// test deliberately doesn't pin a value range against
+    /// `chrono::Utc::now()` to avoid a circular self-test; it pins the
+    /// invariants every downstream call site relies on (positive value,
+    /// non-decreasing within a tight loop, well below i64::MAX).
+    #[test]
+    fn now_ms_returns_positive_monotonically_nondecreasing_109() {
+        let a = now_ms();
+        let b = now_ms();
+        assert!(a > 0, "now_ms() must be positive (post-epoch)");
+        assert!(
+            b >= a,
+            "now_ms() must be non-decreasing across successive calls in the same process"
+        );
+        // Well below i64::MAX, where chrono panics. Year 2262-04-11
+        // overflows i64 milliseconds; current date is in the 2020s, so
+        // there's ~7 orders of magnitude of headroom.
+        assert!(
+            b < i64::MAX / 1000,
+            "now_ms() must stay comfortably below i64::MAX for the foreseeable future"
+        );
     }
 
     #[tokio::test]
