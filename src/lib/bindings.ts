@@ -2194,6 +2194,14 @@ export type StatusInfo = {
 	 *  whether tasks are being lost to persist failures.
 	 */
 	retry_queue_persist_errors: number,
+	/**
+	 *  Issue #157 sub-item D — number of retry-queue rows the sweeper
+	 *  has permanently given up on (hit `attempts >= MAX_ATTEMPTS` or
+	 *  `created_at < now - GIVE_UP_AGE_DAYS`). A non-zero value means
+	 *  at least one persisted task was permanently dropped on this
+	 *  run; pair with the `give_up_reason=…` warn lines for triage.
+	 */
+	retry_queue_giveup_total: number,
 	/**  RFC 3339 timestamp of the most recent successful batch, if any. */
 	last_materialize_at: string | null,
 	/**

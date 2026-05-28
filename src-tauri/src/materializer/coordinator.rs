@@ -869,6 +869,10 @@ impl Materializer {
                 .metrics
                 .retry_queue_persist_errors
                 .load(Ordering::Relaxed),
+            retry_queue_giveup_total: self
+                .metrics
+                .retry_queue_giveup_total
+                .load(Ordering::Relaxed),
             last_materialize_at,
             time_since_last_materialize_secs,
             total_ops_in_log,
