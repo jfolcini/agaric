@@ -1180,6 +1180,80 @@ async fn find_missing_attachments_all_files_present() {
     );
 }
 
+// ── find_missing_attachments concurrent probe (#112 sub-item 4) ───────
+
+/// Issue #112 sub-item 4: with the `buffer_unordered(16)` rewrite the
+/// per-row `tokio::fs::metadata` probes run concurrently and may complete
+/// in any order. This test seeds ~100 attachments (mix of present /
+/// missing / truncated) and asserts the returned set matches the expected
+/// IDs **order-independently** — the previous serial loop happened to
+/// preserve `SELECT` row order, but callers never relied on that and the
+/// new shape no longer guarantees it.
+#[tokio::test]
+async fn find_missing_attachments_concurrent_probe_set_equality() {
+    use std::collections::HashSet;
+
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'test')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let att_dir = dir.path().join("attachments");
+    std::fs::create_dir_all(&att_dir).unwrap();
+
+    // 100 attachments total. Classification by id mod 3:
+    //   0 → present on disk with matching size_bytes (NOT missing)
+    //   1 → row in DB, file absent on disk            (missing, NotFound)
+    //   2 → file present but truncated (size mismatch) (missing, M-48)
+    const TOTAL: usize = 100;
+    let mut expected_missing: HashSet<String> = HashSet::new();
+    let payload: &[u8] = b"concurrent-probe-payload"; // 24 bytes
+    let truncated: &[u8] = b"short"; // 5 bytes ≠ stored size_bytes (24)
+
+    for i in 0..TOTAL {
+        let id = format!("ATT{i:03}");
+        let fs_path = format!("attachments/att{i:03}.bin");
+        let on_disk = att_dir.join(format!("att{i:03}.bin"));
+        match i % 3 {
+            0 => {
+                std::fs::write(&on_disk, payload).unwrap();
+            }
+            1 => {
+                // intentionally no file on disk
+                expected_missing.insert(id.clone());
+            }
+            _ => {
+                std::fs::write(&on_disk, truncated).unwrap();
+                expected_missing.insert(id.clone());
+            }
+        }
+
+        sqlx::query(
+            "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, 'BLK1', 'application/octet-stream', ?, 24, ?, '2025-01-15T12:00:00Z')",
+        )
+        .bind(&id)
+        .bind(format!("att{i:03}.bin"))
+        .bind(&fs_path)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+
+    let got: HashSet<String> = missing.into_iter().map(|m| m.id).collect();
+    assert_eq!(
+        got, expected_missing,
+        "buffer_unordered(16) probe must return the same set as the serial loop \
+         regardless of completion order"
+    );
+}
+
 // ── read_attachment_file hash determinism ─────────────────────────────
 
 #[test]
