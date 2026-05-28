@@ -382,7 +382,7 @@ Cross-surface filter contract. Detail and rationale live in [`docs/architecture/
 | `docs/FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
 
-For orchestrator workflow details, see [the `batch-issues` skill § 2. BUILD](.claude/skills/batch-issues/skill.md).
+For orchestrator workflow details, see [the `batch-issues` skill § 2. BUILD](.claude/skills/batch-issues/SKILL.md).
 
 <!-- code-review-graph MCP tools -->
 ## MCP Tools: code-review-graph
