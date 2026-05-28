@@ -931,7 +931,11 @@ mod tests {
                     let payload = make_create_payload(&format!("BLK-C{i:03}"));
                     match append_local_op_at(&pool, "dev-conc", payload, FIXED_TS.into()).await {
                         Ok(rec) => return rec,
-                        Err(AppError::Database(_)) => {
+                        // Issue #106 split `Database` and `PoolTimedOut`
+                        // into distinct variants; either signals SQLite
+                        // busy / writer contention from this test's
+                        // perspective, both are retryable.
+                        Err(AppError::Database(_) | AppError::PoolTimedOut) => {
                             // Back-off and retry — SQLite busy under contention.
                             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                         }

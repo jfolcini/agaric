@@ -3719,12 +3719,15 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         .await
         .expect_err("apply_snapshot must surface the chunk-2 PK violation");
 
-    // The duplicate (block_id, key) must surface as a database-layer
-    // error from sqlx (UNIQUE/PK violation). Anything else means the
-    // failure path changed.
+    // The duplicate (block_id, key) must surface as a unique-constraint
+    // conflict from sqlx (PK violation). Anything else means the
+    // failure path changed.  Issue #106 lifted UNIQUE/PK violations out
+    // of `AppError::Database` into a dedicated `Conflict` variant so the
+    // frontend can discriminate; the SQL-layer guarantee (the second
+    // chunk's INSERT must trip the PK index) is unchanged.
     match err {
-        AppError::Database(_) => {}
-        other => panic!("expected Database error from PK violation, got {other:?}"),
+        AppError::Conflict(_) => {}
+        other => panic!("expected Conflict error from PK violation, got {other:?}"),
     }
 
     // Atomicity invariant: chunk-1's 166 rows must NOT be visible.

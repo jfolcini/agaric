@@ -3740,9 +3740,14 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
     )
     .await;
 
+    // Issue #106: `From<sqlx::Error>` now lifts unique-constraint
+    // violations out of the generic `Database` bucket into a dedicated
+    // `Conflict` variant so the frontend can render a tailored toast.
+    // The schema guarantee being pinned here is unchanged — the partial
+    // unique index still has to trip — only the discriminant moved.
     assert!(
-        matches!(result, Err(AppError::Database(_))),
-        "M-30: duplicate fs_path must surface as AppError::Database, got: {result:?}"
+        matches!(result, Err(AppError::Conflict(_))),
+        "M-30: duplicate fs_path must surface as AppError::Conflict, got: {result:?}"
     );
 
     // Schema guarantee: only one row exists for this fs_path. The

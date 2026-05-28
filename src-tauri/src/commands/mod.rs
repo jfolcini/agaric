@@ -881,8 +881,12 @@ impl RepeatingBlockRow {
 /// available for debugging without being serialized to the UI.
 ///
 /// User-facing variants (`NotFound`, `Validation`, `InvalidOperation`,
-/// `NonReversible`, `Ulid`) pass through unchanged — they already carry
-/// messages suitable for rendering in the frontend.
+/// `NonReversible`, `Ulid`, `Conflict`, `PoolTimedOut`) pass through
+/// unchanged — they already carry messages suitable for rendering in
+/// the frontend.  Issue #106 added `Conflict` / `PoolTimedOut` to the
+/// pass-through list: both are call-site-recoverable signals (unique
+/// violation, writer busy) that the frontend can surface as targeted
+/// toasts rather than the generic "an internal error occurred" string.
 ///
 /// Agaric's threat model is benign (single-user, local-first, no remote
 /// peers), so this sanitization exists purely for UX consistency and to

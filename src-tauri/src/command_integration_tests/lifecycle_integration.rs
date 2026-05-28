@@ -316,12 +316,18 @@ async fn create_50_blocks_paginate_through_all_verify_count() {
     });
     futures_util::future::try_join_all(creates).await.unwrap();
 
+    // Drain bg dispatches before paginating. Post-MAINT-112 every
+    // `create_block_inner` enqueues a bg op record; with the parallel
+    // `try_join_all` above, all 50 dispatches must settle before the
+    // pagination loop reads materializer-affected joined state.
+    settle(&mat).await;
+    assign_all_to_test_space(&pool).await;
+
     let mut all_ids = Vec::new();
     let mut cursor: Option<String> = None;
     let mut pages = 0;
 
     loop {
-        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
