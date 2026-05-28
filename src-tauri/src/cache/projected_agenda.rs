@@ -160,7 +160,7 @@ async fn rebuild_projected_agenda_cache_impl(
     // Atomicity: DELETE + every chunked INSERT live in the same `tx`,
     // so a partial-flush failure rolls back cleanly via the
     // `Transaction` Drop guard.
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_rebuild").await?;
 
     sqlx::query("DELETE FROM projected_agenda_cache")
         .execute(&mut *tx)
@@ -399,7 +399,9 @@ async fn rebuild_projected_agenda_cache_split_impl(
     // DELETE + every chunked INSERT live in the same `tx` — a
     // partial-flush failure rolls back cleanly via the `Transaction`
     // Drop guard.
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_projected_agenda_rebuild_write")
+            .await?;
 
     sqlx::query("DELETE FROM projected_agenda_cache")
         .execute(&mut *tx)

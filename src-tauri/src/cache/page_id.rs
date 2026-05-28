@@ -107,7 +107,8 @@ async fn rebuild_page_ids_split_impl(
 
     // Write phase — single tx wrapping the NULL-reset and every chunked
     // UPDATE. Mirrors the single-pool variant's atomic semantics.
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_page_id_rebuild_write").await?;
 
     // Reset every block's `page_id` to NULL. Mirrors the single-pool
     // UPDATE semantics: blocks not present in the CTE result (orphans)

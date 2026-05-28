@@ -4132,3 +4132,53 @@ async fn page_link_cache_read_path_matches_legacy_query() {
         assert_eq!(got.ref_count, want.2, "ref_count parity");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Issue #103: contention-mode regression guard for the
+// `pool.begin()` → `begin_immediate_logged` migration. A cache rebuild
+// must wait (up to `busy_timeout`) for a competing writer, not fail with
+// `SQLITE_BUSY_SNAPSHOT` mid-tx the way the DEFERRED form would.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reindex_block_links_waits_for_competing_writer() {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "S", "content", "[[T]]").await;
+    insert_block(&pool, "T", "page", "target").await;
+
+    let pool = Arc::new(pool);
+
+    // Holder: take a writer lock for ~100 ms, then release.
+    let holder = {
+        let pool = Arc::clone(&pool);
+        tokio::spawn(async move {
+            let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            // Force the writer lock to be acquired now, not lazily.
+            sqlx::query("SELECT 1").execute(&mut *tx).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            tx.commit().await.unwrap();
+        })
+    };
+
+    // Give the holder a beat to acquire the lock first.
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    // Contender: the rebuild must wait for the holder, not fail.
+    let start = Instant::now();
+    let result = super::block_links::reindex_block_links(&pool, "S").await;
+    let waited = start.elapsed();
+
+    holder.await.unwrap();
+
+    result.expect(
+        "reindex_block_links must wait for the competing writer (busy_timeout), \
+         not fail with SQLITE_BUSY_SNAPSHOT — see issue #105",
+    );
+    assert!(
+        waited >= Duration::from_millis(50),
+        "rebuild should have waited for the holder (>=50ms); waited {waited:?}"
+    );
+}

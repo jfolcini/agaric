@@ -364,7 +364,7 @@ async fn rebuild_agenda_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // stale-while-revalidate semantics to the split-pool variant.
     let mut desired_conn = pool.acquire().await?;
     let mut current_conn = pool.acquire().await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_agenda_rebuild").await?;
 
     let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
 
@@ -421,7 +421,8 @@ async fn rebuild_agenda_cache_split_impl(
     // exists for.
     let mut desired_conn = read_pool.acquire().await?;
     let mut current_conn = read_pool.acquire().await?;
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_agenda_rebuild_write").await?;
 
     let changed = apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx).await?;
 

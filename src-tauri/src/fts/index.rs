@@ -92,7 +92,7 @@ pub async fn update_fts_for_block_with_maps(
     tag_names: &std::collections::HashMap<String, String>,
     page_titles: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "fts_update_block").await?;
 
     let row = sqlx::query!(
         r#"SELECT id, content, deleted_at FROM blocks WHERE id = ?"#,
@@ -203,7 +203,7 @@ pub async fn update_fts_for_block_split_with_maps(
     let stripped = strip_for_fts_with_maps(&content, tag_names, page_titles);
 
     // Phase 2b: Write — minimal transaction
-    let mut tx = write_pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
     sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
         .bind(block_id)
         .execute(&mut *tx)
@@ -296,7 +296,8 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
     for chunk in unique_ids.chunks(FTS_REINDEX_CHUNK) {
         let ids_json = serde_json::to_string(chunk)?;
 
-        let mut tx = pool.begin().await?;
+        let mut tx =
+            crate::db::begin_immediate_logged(pool, "fts_reindex_references_chunk").await?;
 
         // Batch fetch this chunk's block metadata (1 query per chunk)
         let rows = sqlx::query(
@@ -395,7 +396,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // INSERT loop. The DELETE itself is one statement and commits in
     // milliseconds.
     {
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_clear").await?;
         sqlx::query("DELETE FROM fts_blocks")
             .execute(&mut *tx)
             .await?;
@@ -422,7 +423,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
             let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
             to_insert.push((row.id.clone(), stripped));
         }
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_chunk").await?;
         // PEND-25 L7: multi-row INSERT.
         insert_fts_rows_tx(&mut tx, &to_insert).await?;
         tx.commit().await?;
@@ -475,7 +476,8 @@ async fn rebuild_fts_index_split_impl(
 
     // PEND-20 D: clear in its own transaction (see `rebuild_fts_index_impl`).
     {
-        let mut tx = write_pool.begin().await?;
+        let mut tx =
+            crate::db::begin_immediate_logged(write_pool, "fts_rebuild_index_clear_write").await?;
         sqlx::query("DELETE FROM fts_blocks")
             .execute(&mut *tx)
             .await?;
@@ -492,7 +494,8 @@ async fn rebuild_fts_index_split_impl(
             let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
             to_insert.push((row.id.clone(), stripped));
         }
-        let mut tx = write_pool.begin().await?;
+        let mut tx =
+            crate::db::begin_immediate_logged(write_pool, "fts_rebuild_index_chunk_write").await?;
         insert_fts_rows_tx(&mut tx, &to_insert).await?;
         tx.commit().await?;
         total += chunk.len() as u64;

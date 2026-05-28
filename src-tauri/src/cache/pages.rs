@@ -203,7 +203,7 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // `rebuild_agenda_cache_impl` (M-19b).
     let mut desired_conn = pool.acquire().await?;
     let mut current_conn = pool.acquire().await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rebuild").await?;
 
     let changed =
         apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx, &now).await?;
@@ -250,7 +250,7 @@ async fn rebuild_pages_cache_split_impl(
     let now = crate::now_rfc3339();
     let mut desired_conn = read_pool.acquire().await?;
     let mut current_conn = read_pool.acquire().await?;
-    let mut tx = write_pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_pages_rebuild_write").await?;
 
     let changed =
         apply_sort_merge_rebuild(&mut desired_conn, &mut current_conn, &mut tx, &now).await?;

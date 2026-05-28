@@ -40,7 +40,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 /// purge time). Soft-deleted source blocks clear their rows as their
 /// content is unreadable under the `WHERE deleted_at IS NULL` filter.
 pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_reindex").await?;
 
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
@@ -185,7 +185,8 @@ pub async fn reindex_block_tag_refs_split(
     }
 
     // Write phase on write_pool.
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_reindex_write").await?;
 
     // PERF-24: batch DELETE/INSERT via `json_each` — one round-trip per
     // side regardless of the number of changed targets, replacing the
@@ -413,7 +414,7 @@ async fn rebuild_block_tag_refs_cache_impl(pool: &SqlitePool) -> Result<u64, App
     // `rebuild_agenda_cache_impl` (M-19b).
     let mut desired_conn = pool.acquire().await?;
     let mut current_conn = pool.acquire().await?;
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_rebuild").await?;
 
     let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
     let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;
@@ -447,7 +448,8 @@ async fn rebuild_block_tag_refs_cache_split_impl(
 ) -> Result<u64, AppError> {
     let mut desired_conn = read_pool.acquire().await?;
     let mut current_conn = read_pool.acquire().await?;
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_rebuild_write").await?;
 
     let desired_sorted = compute_desired_pairs(&mut desired_conn).await?;
     let changed = diff_against_current(&desired_sorted, &mut current_conn, &mut tx).await?;

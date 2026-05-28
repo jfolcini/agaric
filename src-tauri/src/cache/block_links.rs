@@ -14,7 +14,7 @@ use crate::error::AppError;
 /// 3. Parses all `[[ULID]]` and `((ULID))` tokens via regex.
 /// 4. Diffs: deletes removed links, inserts added links within the same tx.
 pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_links_reindex").await?;
 
     // 1. Get current content (combined with step 2 in the same tx to
     //    avoid an extra connection round-trip). Soft-deleted blocks
@@ -174,7 +174,8 @@ pub async fn reindex_block_links_split(
     }
 
     // Write phase on write pool
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_links_reindex_write").await?;
 
     // L-24: batch DELETE/INSERT via `json_each` — one round-trip per side
     // regardless of the number of changed targets, replacing the previous
