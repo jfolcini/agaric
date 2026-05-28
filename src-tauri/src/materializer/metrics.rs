@@ -95,6 +95,17 @@ pub struct QueueMetrics {
     /// task may not be in `materializer_retry_queue`, so the boot-time
     /// sweeper cannot recover it.
     pub retry_queue_persist_errors: AtomicU64,
+    /// Issue #157 sub-item D — count of retry-queue rows that the
+    /// sweeper gave up on because they hit one of the give-up triggers:
+    /// `attempts >= MAX_ATTEMPTS` (a permanently failing task) or
+    /// `created_at < now - GIVE_UP_AGE_DAYS` (a stale row that's been
+    /// sitting in the queue beyond the keep-trying window). Each give-up
+    /// is logged with the trigger reason at warn level and the row is
+    /// deleted (no further retries). A non-zero value here is the
+    /// observability signal that the materializer permanently dropped
+    /// at least one persisted task on this run — pair with the
+    /// `give_up_reason=…` warn lines in the log for triage.
+    pub retry_queue_giveup_total: AtomicU64,
     /// Milliseconds since Unix epoch of the most recent successfully
     /// processed materializer batch (foreground or background). Used to
     /// detect stalled consumers. 0 means the materializer has not yet
@@ -131,6 +142,7 @@ impl Default for QueueMetrics {
             bg_dropped_global: AtomicU64::new(0),
             fg_full_waits: AtomicU64::new(0),
             retry_queue_persist_errors: AtomicU64::new(0),
+            retry_queue_giveup_total: AtomicU64::new(0),
             last_materialize_ms: AtomicU64::new(0),
         }
     }
@@ -204,6 +216,12 @@ pub struct StatusInfo {
     /// `bg_dropped` and `fg_apply_dropped_persisted` to confirm
     /// whether tasks are being lost to persist failures.
     pub retry_queue_persist_errors: u64,
+    /// Issue #157 sub-item D — number of retry-queue rows the sweeper
+    /// has permanently given up on (hit `attempts >= MAX_ATTEMPTS` or
+    /// `created_at < now - GIVE_UP_AGE_DAYS`). A non-zero value means
+    /// at least one persisted task was permanently dropped on this
+    /// run; pair with the `give_up_reason=…` warn lines for triage.
+    pub retry_queue_giveup_total: u64,
     /// RFC 3339 timestamp of the most recent successful batch, if any.
     pub last_materialize_at: Option<String>,
     /// Seconds elapsed since `last_materialize_at`. None when no batch has

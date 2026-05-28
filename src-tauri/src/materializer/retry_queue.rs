@@ -419,10 +419,65 @@ pub(crate) async fn pending_count(pool: &SqlitePool) -> Result<i64, AppError> {
     Ok(n)
 }
 
+/// Issue #157 sub-item D — give-up trigger thresholds.
+///
+/// A row hitting either trigger is permanently dropped by the sweeper:
+/// the underlying task is no longer retried, the row is deleted, the
+/// give-up is logged with the trigger reason, and
+/// `metrics.retry_queue_giveup_total` increments. The two triggers exist
+/// because they cover different shapes of "this will never succeed":
+///
+/// - `MAX_ATTEMPTS` bounds the *active* failure case — a task that keeps
+///   landing in the retry queue and being re-tried. The 2026-05-19 log
+///   spike (8286 warn lines from one permanently-broken op looping every
+///   60 s for days) is the canonical example.
+/// - `GIVE_UP_AGE_DAYS` bounds the *stale* case — a row whose
+///   `next_attempt_at` is so far in the past relative to `created_at`
+///   that it has clearly been abandoned (a sync replay against a peer
+///   that's been offline for a week, an op that depends on a block the
+///   user has since permanently purged, etc.). Without this clock-based
+///   trigger, a row with `attempts < MAX_ATTEMPTS` could sit in the
+///   queue forever if the sweeper kept hitting transient enqueue
+///   failures.
+const MAX_ATTEMPTS: i64 = 10;
+const GIVE_UP_AGE_DAYS: i64 = 7;
+
+/// Issue #157 sub-item D — return the give-up trigger reason for a row,
+/// or `None` if the row should still be retried.
+///
+/// `attempts` exceeding [`MAX_ATTEMPTS`] takes precedence over age — a
+/// permanently-failing task is the canonical case the trigger was
+/// designed for, and the metric/log labels are more useful with the
+/// failure-count signal when both apply.
+///
+/// An unparseable `created_at` is treated as fresh (no age give-up).
+/// This matches the conservative bias of the rest of the module: if the
+/// row was written by a future schema variant the sweeper doesn't
+/// understand, defer to it rather than dropping it.
+fn give_up_reason(row: &DueRow) -> Option<&'static str> {
+    if row.attempts >= MAX_ATTEMPTS {
+        return Some("max_attempts");
+    }
+    let Ok(created) = chrono::DateTime::parse_from_rfc3339(&row.created_at) else {
+        return None;
+    };
+    let age = chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc));
+    if age >= chrono::Duration::days(GIVE_UP_AGE_DAYS) {
+        return Some("age_exceeded");
+    }
+    None
+}
+
 /// One due row ready to be retried.
 pub(crate) struct DueRow {
     pub block_id: String,
     pub task_kind: String,
+    /// Number of times this task has already been retried — gates the
+    /// `MAX_ATTEMPTS` give-up trigger in [`sweep_once`].
+    pub attempts: i64,
+    /// RFC 3339 timestamp the row was first persisted — gates the
+    /// `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once`].
+    pub created_at: String,
 }
 
 /// Return rows where `next_attempt_at <= now`, up to `limit` entries.
@@ -431,7 +486,7 @@ pub(crate) struct DueRow {
 pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRow>, AppError> {
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let rows = sqlx::query!(
-        "SELECT block_id, task_kind FROM materializer_retry_queue \
+        "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue \
          WHERE next_attempt_at <= ? \
          ORDER BY next_attempt_at ASC LIMIT ?",
         now,
@@ -444,6 +499,8 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
         .map(|r| DueRow {
             block_id: r.block_id,
             task_kind: r.task_kind,
+            attempts: r.attempts,
+            created_at: r.created_at,
         })
         .collect())
 }
@@ -498,6 +555,26 @@ pub async fn sweep_once(
     let due = fetch_due(read_pool, SWEEP_BATCH_LIMIT).await?;
     let mut re_enqueued = 0usize;
     for row in &due {
+        // Issue #157 sub-item D — give-up before any further work.
+        // Checked before the ApplyOp special-case below so a permanently
+        // failing apply op is also retired by the same triggers.
+        if let Some(reason) = give_up_reason(row) {
+            tracing::warn!(
+                block_id = %row.block_id,
+                task_kind = %row.task_kind,
+                attempts = row.attempts,
+                created_at = %row.created_at,
+                give_up_reason = reason,
+                "retry queue give-up — task permanently dropped"
+            );
+            materializer
+                .metrics()
+                .retry_queue_giveup_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+            continue;
+        }
+
         // PEND-24 H1: ApplyOp rows are dispatched to the foreground
         // queue (matching the original task's routing). They need a
         // separate path because (a) `task_from_row` cannot reconstruct
@@ -924,6 +1001,8 @@ mod tests {
         let row = DueRow {
             block_id: "BLK_TR".into(),
             task_kind: "UpdateFtsBlock".into(),
+            attempts: 0,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         };
         let t = task_from_row(&row).unwrap();
         assert!(
@@ -933,6 +1012,8 @@ mod tests {
         let unknown = DueRow {
             block_id: "x".into(),
             task_kind: "SomeFutureTaskKind".into(),
+            attempts: 0,
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
         };
         assert!(
             task_from_row(&unknown).is_none(),
@@ -1116,6 +1197,139 @@ mod tests {
         );
     }
 
+    // --- Issue #157 sub-item D: retry_queue_giveup ---
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_once_gives_up_on_max_attempts_157_d() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // A due row that has already failed MAX_ATTEMPTS times — the
+        // sweeper must give up and delete it, not re-enqueue.
+        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let recent_created =
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "BLK_GIVEUP_ATTEMPTS",
+            "UpdateFtsBlock",
+            MAX_ATTEMPTS,
+            recent_created,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 0,
+            "give-up rows are NOT counted as re-enqueued — they're permanently dropped"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(
+            remaining, 0,
+            "give-up row must be deleted (no further retries)"
+        );
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 1,
+            "retry_queue_giveup_total metric must increment exactly once on max-attempts give-up"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_once_gives_up_on_age_exceeded_157_d() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // A due row whose `created_at` is older than GIVE_UP_AGE_DAYS —
+        // the sweeper must give up and delete it even though `attempts`
+        // is still below the cap.
+        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let stale_created = (chrono::Utc::now() - chrono::Duration::days(GIVE_UP_AGE_DAYS + 1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "BLK_GIVEUP_AGE",
+            "UpdateFtsBlock",
+            2_i64,
+            stale_created,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(n, 0, "stale rows are permanently dropped, not re-enqueued");
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(remaining, 0, "stale row must be deleted");
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 1,
+            "retry_queue_giveup_total metric must increment on age-exceeded give-up"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn sweep_once_below_thresholds_still_reenqueues_157_d() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // Both triggers below threshold — the row must follow the normal
+        // re-enqueue path, not the give-up path. Pins the boundary.
+        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let recent_created = (chrono::Utc::now() - chrono::Duration::days(GIVE_UP_AGE_DAYS - 1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "BLK_GIVEUP_BORDER",
+            "UpdateFtsBlock",
+            MAX_ATTEMPTS - 1,
+            recent_created,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let n = sweep_once(&pool, &pool, &mat).await.unwrap();
+        assert_eq!(
+            n, 1,
+            "below both thresholds: row must be re-enqueued, not given up on"
+        );
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 0,
+            "retry_queue_giveup_total must stay zero for normal-path rows"
+        );
+    }
+
     // --- PEND-03: global cache rebuild persistence ---
 
     /// PEND-03: round-trip a global cache rebuild through `record_failure`
@@ -1150,7 +1364,7 @@ mod tests {
 
             // Row landed under the GLOBAL_TASK_SENTINEL with the right kind.
             let row = sqlx::query!(
-                "SELECT block_id, task_kind, attempts, last_error \
+                "SELECT block_id, task_kind, attempts, last_error, created_at \
                  FROM materializer_retry_queue",
             )
             .fetch_one(&pool)
@@ -1169,6 +1383,8 @@ mod tests {
             let due = DueRow {
                 block_id: row.block_id,
                 task_kind: row.task_kind,
+                attempts: row.attempts,
+                created_at: row.created_at,
             };
             let reconstructed = task_from_row(&due).unwrap();
             assert_eq!(
