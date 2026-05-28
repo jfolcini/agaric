@@ -21,6 +21,7 @@ pub mod lifecycle;
 pub mod link_metadata;
 // Loro CRDT engine — the only materializer path.
 pub mod loro;
+pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
 pub mod merge;
@@ -405,6 +406,13 @@ pub struct RetryQueueSweeperShutdown(pub Arc<AtomicBool>);
 /// shutdown handler wants to stop it cleanly; the flag is a no-op in
 /// most graceful-exit paths.
 pub struct OrphanDraftsSweeperShutdown(pub Arc<AtomicBool>);
+
+/// Shutdown flag for the [`maintenance::spawn_daemon`] task (issue #157
+/// sub-item B). The daemon walks its job vector on a
+/// [`maintenance::TICK_INTERVAL`] (60 s) cadence and polls this flag at
+/// the top of each tick. Stored in Tauri managed state so a clean-exit
+/// path can stop it; a no-op in most graceful-exit paths.
+pub struct MaintenanceDaemonShutdown(pub Arc<AtomicBool>);
 
 /// Shutdown flag for the periodic Loro snapshot task.
 ///
@@ -1015,6 +1023,39 @@ pub fn run() {
                 orphan_drafts_shutdown.clone(),
             );
             app.manage(OrphanDraftsSweeperShutdown(orphan_drafts_shutdown));
+
+            // Issue #157 sub-item B — MaintenanceDaemon skeleton seeded
+            // with the wal_checkpoint_truncate job (1 h cadence, idle
+            // predicate). Subsequent sub-items C/E/F/G/H/I/J extend the
+            // job vector without re-wiring the daemon.
+            //
+            // The predicate gates on the lifecycle.is_foreground flag —
+            // the TRUNCATE checkpoint may briefly block other writers
+            // while it compacts the WAL, and the cost is invisible when
+            // the app is backgrounded but a noticeable pause if it
+            // fires while the user is actively editing. Conservative
+            // default: only run while NOT in the foreground. (The
+            // PRAGMA itself also returns `busy != 0` when a concurrent
+            // writer holds the WAL, so the gating is double-belted.)
+            let maintenance_shutdown = Arc::new(AtomicBool::new(false));
+            let lifecycle_for_pred = lifecycle.clone();
+            let wal_write_pool = pools.write.clone();
+            let jobs = vec![maintenance::MaintenanceJob {
+                name: "wal_checkpoint_truncate",
+                interval: std::time::Duration::from_secs(3600),
+                last_run: None,
+                predicate: Box::new(move || {
+                    !lifecycle_for_pred
+                        .is_foreground
+                        .load(std::sync::atomic::Ordering::Acquire)
+                }),
+                run: Box::new(move || {
+                    let pool = wal_write_pool.clone();
+                    Box::pin(async move { maintenance::wal_checkpoint_truncate(&pool).await })
+                }),
+            }];
+            maintenance::spawn_daemon(jobs, maintenance_shutdown.clone());
+            app.manage(MaintenanceDaemonShutdown(maintenance_shutdown));
 
             // Periodic Loro snapshot persistence. Re-instated after the
             // PEND-09 parity flush task (which hosted the snapshot save
