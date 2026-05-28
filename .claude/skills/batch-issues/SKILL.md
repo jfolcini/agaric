@@ -1,6 +1,6 @@
 ---
 name: batch-issues
-description: Work through planned tasks in manageable batches — pick a GitHub issue (plan-labelled, regular, or code-scanning/Dependabot alert), split into parallel subagents, test, review, merge, log, commit, push. Use when the user asks to work on issues, ship a batch, or process the backlog.
+description: Work through planned tasks in manageable batches — pick a GitHub issue (plan-labelled, regular, or code-scanning/Dependabot alert), split into parallel subagents, test, review, log, commit, push, open a PR. Never block on CI: start the next batch immediately and reconcile the previous batch's PR (merge if green, fix if red) at the end of the new one. Use when the user asks to work on issues, ship a batch, or process the backlog.
 ---
 
 # Batch Issues
@@ -174,6 +174,23 @@ Push when you're ready — the **pre-push hook** runs prek's heavier checks (ful
 
 Do NOT run `prek run --all-files` manually. The hooks are the single source of truth for what runs and when; invoking prek by hand bypasses staging boundaries and runs checks that the hook layout deliberately defers to push-time. If a hook is failing, fix the underlying issue and let the hook re-run on the next commit/push — don't paper over it by skipping (`--no-verify`).
 
+## 8. OPEN PR — THEN PIPELINE, NEVER WAIT FOR CI
+
+After pushing, open a PR against `main` (`gh pr create --base main --head <branch>`), with `Closes #NN` in the body so the merge auto-closes the issue.
+
+**Do NOT wait for CI on this PR.** The pre-push hook is your local gate; remote CI (lint, vitest, playwright, cargo-tests, CodeQL, claude-review) runs asynchronously and takes many minutes. Blocking on it idles the loop. Instead:
+
+1. **Record the open PR** — note its number and branch (e.g. in the task list or a one-line log). This is the "pending-CI" PR you'll reconcile next.
+2. **Immediately go back to step 1 (PLAN) and start the next batch.** Branch the new batch from the latest `origin/main` (the prior PR's commits may not have landed yet — that's fine; if the new batch genuinely depends on them, branch from the prior batch's branch instead and merge the chain bottom-up per the chained-PR pitfall).
+3. **Reconcile the previous batch's PR at the END of the new batch** — after the new batch is committed + pushed + its PR opened, check the prior PR before starting yet another batch:
+   - `gh pr checks <prevPR> --json name,state,bucket` (or without `--json` for a quick view).
+   - **All green + mergeable** → merge it (`gh pr merge <prevPR> --squash --delete-branch` or the repo's convention). The `Closes #NN` then fires.
+   - **Any check failed** → diagnose from the failing job's logs (`gh run view --log-failed`), fix on that PR's branch (new commit, push — pre-push re-runs locally), and leave it for the *next* reconciliation pass. Do not merge red.
+   - **Still in progress** → leave it; reconcile it at the end of the batch after this one. Never spin idle waiting.
+4. **Keep the pending-PR list bounded** — typically only the single most-recent PR is awaiting CI at any time (batch N+1's work overlaps batch N's CI run, which is exactly long enough). If PRs pile up because CI is slow, reconcile the oldest still-green one whenever you next pass through this step; don't let more than ~2-3 accumulate unmerged.
+
+This pipelines batches against CI wall-clock: while batch N's CI runs, you build batch N+1; by the time N+1 is pushed, N's CI has finished and you merge it. The loop never blocks on a green checkmark.
+
 ---
 
 ## Principles
@@ -196,4 +213,6 @@ Do NOT run `prek run --all-files` manually. The hooks are the single source of t
 - **Mixing refactoring with feature work in one commit** — keep them separate so reverts stay surgical.
 - **Subagent prompts that paste long doc contents inline** — keep prompts minimal; reference paths instead.
 - **Kitchen-sink refactors handed to subagents** — refactors that touch >10 consumer call sites or require coordinated edits across many test fixtures (prop-drill cleanups, hook-extraction sweeps, IPC-wrapper migrations, etc.) have repeatedly stalled or silent-failed when delegated to subagents (sessions 555 / 557 / 558 → orchestrator-direct close in 559 / 560). For this class of work: either (a) run it orchestrator-direct, or (b) split it explicitly by file boundary into 3-6 narrow subagents where each owns ≤6 files and has no cross-cutting test dependency. Do not hand "refactor X across the codebase" to a single subagent.
+- **Blocking the loop on CI** — never sit watching a PR's checks go green (no `gh pr checks --watch` as a barrier, no idle wakeups polling a run). The pre-push hook already gated the code locally; remote CI is reconciled *asynchronously* per §8 — open the PR, start the next batch, and merge-or-fix the prior PR at the end of the new one. A loop that waits for CI wastes the exact wall-clock window the next batch should fill.
+- **Forgetting to reconcile a pending PR** — the flip side of not waiting: if you open a PR and then never circle back, it rots unmerged and its issue never closes. Every batch must, at its end, check the previous batch's PR and either merge it (green) or fix it (red). Keep the pending-PR count to ~1 (occasionally 2-3 if CI is slow); if you've lost track, `gh pr list --author @me --state open` shows what's outstanding.
 - **Merging chained PRs out of order strands commits on orphan branches** — when PR-B is opened against PR-A's branch (chained), GitHub's "Merge pull request" on PR-B merges *into PR-A's branch*, not into `main`. If PR-A has already merged to `main` by then, PR-B's merge lands on the now-orphan PR-A branch and **never reaches main** (the merge commit exists, the PR shows MERGED, but `main` doesn't see the content). Mitigation: merge the chain bottom-up (oldest first) without skipping levels, or — if a later chained PR already shows MERGED but its content is missing from main — recover by rebasing the next-still-open chained branch onto `main` directly with `git rebase origin/main` (rebase drops the duplicate already-on-main commits and keeps the unique ones), force-push, then edit that PR's base to `main` via `gh api /repos/<owner>/<repo>/pulls/<N> -X PATCH -f base=main`. Session 843 hit this and recovered. The `gh pr edit --base` path is unreliable (GraphQL deprecation warning silently swallows the change) — use the REST PATCH instead.
