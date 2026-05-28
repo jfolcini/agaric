@@ -453,6 +453,27 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free disk space on runner
+        # Run 26569299876 failed with `System.IO.IOException: No space left
+        # on device` (annotation on job 78272043133) during the cargo-llvm-cov
+        # instrumented compile. The instrumented build tree plus the rust-deps
+        # Swatinem cache restore are the heavy consumers; this job uses none
+        # of the preinstalled .NET / Haskell / Android / Swift toolchains, so
+        # deleting them frees the headroom needed before cargo runs. `df -h`
+        # is logged before+after so future tightening can size against real
+        # numbers instead of a guess.
+        run: |
+          set -euo pipefail
+          echo "Before:" && df -h /
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/share/boost \
+                      /usr/local/share/powershell \
+                      /usr/share/swift \
+                      "$AGENT_TOOLSDIRECTORY"
+          echo "After:" && df -h /
+
       - name: Install system dependencies
         # Same apt list as the `lint` sibling — both jobs compile Rust and
         # need the webkit/gtk/ssl/rsvg/soup stack plus mold for fast linking.
