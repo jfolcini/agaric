@@ -624,7 +624,27 @@ pub fn run() {
             let log_dir = log_dir_for_app_data(&app_data_dir);
             let _ = std::fs::create_dir_all(&log_dir);
 
-            let file_appender = tracing_appender::rolling::daily(&log_dir, "agaric.log");
+            // Issue #157 sub-item A — size-bounded daily rotation with a
+            // hard cap on retained files. Replaces the pre-#157 setup that
+            // paired an unbounded `rolling::daily(...)` appender with a
+            // boot-only `cleanup_old_log_files(&log_dir, 30)` retention
+            // sweep. The new builder caps retained files at 14, so
+            // retention is enforced continuously by the appender itself
+            // (no separate sweep needed) and the file count cannot grow
+            // unbounded between boots even if the prune somehow failed.
+            // Drops `cleanup_old_log_files` + its 7 unit tests as part of
+            // this change.
+            //
+            // `tracing-appender` still has no per-file size cap, so a
+            // single bad day can spike a file beyond expectations. See
+            // #157 sub-item D's `retry_queue_giveup` job for the upstream
+            // root-cause fix that prevents the noisy-warn-storm class.
+            let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
+                .rotation(tracing_appender::rolling::Rotation::DAILY)
+                .max_log_files(14)
+                .filename_prefix("agaric.log")
+                .build(&log_dir)
+                .expect("logging directory must be writable");
             let (non_blocking, log_guard) = tracing_appender::non_blocking(file_appender);
 
             // Preserve any user-provided `RUST_LOG` directives for
@@ -658,9 +678,11 @@ pub fn run() {
 
             tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
 
-            // M-45: Clean up log files older than 30 days (best-effort,
-            // boot-time only).
-            cleanup_old_log_files(&log_dir, 30);
+            // Issue #157 sub-item A — retention is now enforced by the
+            // RollingFileAppender::builder().max_log_files(14) call above,
+            // continuously rather than boot-only. The previous M-45 boot
+            // sweep (`cleanup_old_log_files`) was removed along with its
+            // tests.
 
             // Keep the non-blocking appender's worker guard alive for the
             // lifetime of the app so buffered writes are never lost.
@@ -1396,61 +1418,6 @@ pub fn run() {
         });
 }
 
-/// Remove log files in `dir` matching `agaric.log.YYYY-MM-DD` (optionally
-/// followed by a rolling-appender suffix like `.<unique-id>`) that are older
-/// than `max_age_days`. Best-effort: any I/O or parse errors are silently
-/// ignored so a cleanup failure never blocks application startup.
-///
-/// I-Core-4: the matcher accepts both `agaric.log.YYYY-MM-DD` (the canonical
-/// daily-rolled form) and `agaric.log.YYYY-MM-DD.<suffix>` (which
-/// `tracing-appender`'s daily rolling can produce on some platforms / when
-/// a process restarts inside the same day). The previous matcher pinned the
-/// post-prefix portion to exactly 10 chars, so the suffixed variants would
-/// have accumulated forever. The currently-live log `agaric.log` (no date)
-/// is excluded by `strip_prefix("agaric.log.")` itself — no trailing `.`,
-/// no match — and so is preserved across cleanup runs.
-pub fn cleanup_old_log_files(dir: &std::path::Path, max_age_days: u32) {
-    let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(max_age_days as i64);
-
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy();
-
-        // Strip the "agaric.log." prefix; this also keeps the bare live log
-        // `agaric.log` out of consideration (no trailing `.` → no match).
-        let Some(after_prefix) = name.strip_prefix("agaric.log.") else {
-            continue;
-        };
-
-        // The next 10 characters must look like `YYYY-MM-DD`; anything
-        // shorter cannot be a date, so skip.
-        if after_prefix.len() < 10 {
-            continue;
-        }
-        let (date_str, rest) = after_prefix.split_at(10);
-
-        // Either an exact match (`agaric.log.2025-01-15`) or a rolling
-        // suffix introduced by `.` (`agaric.log.2025-01-15.unique-id`).
-        // Anything else (e.g. `agaric.log.2025-01-15extra`) is left alone
-        // so we never delete unrelated files that happen to share a prefix.
-        if !rest.is_empty() && !rest.starts_with('.') {
-            continue;
-        }
-
-        let Ok(file_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
-            continue;
-        };
-
-        if file_date < cutoff {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
 #[cfg(test)]
 mod specta_tests {
     use tauri_specta::Builder;
@@ -1537,155 +1504,6 @@ mod specta_tests {
         let content = std::fs::read_to_string(out_path).expect("read generated bindings");
         std::fs::write(out_path, format!("// @ts-nocheck\n{content}"))
             .expect("write bindings with ts-nocheck header");
-    }
-}
-
-#[cfg(test)]
-mod log_retention_tests {
-    use super::cleanup_old_log_files;
-    use std::fs;
-
-    /// Helper: create a file with the given name inside `dir`.
-    fn touch(dir: &std::path::Path, name: &str) {
-        fs::write(dir.join(name), b"log data").unwrap();
-    }
-
-    #[test]
-    fn deletes_files_older_than_30_days() {
-        let tmp = tempfile::tempdir().unwrap();
-        // 60 days ago — should be deleted
-        let old_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(60))
-            .format("%Y-%m-%d")
-            .to_string();
-        let old_name = format!("agaric.log.{old_date}");
-        touch(tmp.path(), &old_name);
-
-        cleanup_old_log_files(tmp.path(), 30);
-        assert!(
-            !tmp.path().join(&old_name).exists(),
-            "file older than 30 days should be deleted"
-        );
-    }
-
-    #[test]
-    fn keeps_recent_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        // 5 days ago — should be kept
-        let recent_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(5))
-            .format("%Y-%m-%d")
-            .to_string();
-        let recent_name = format!("agaric.log.{recent_date}");
-        touch(tmp.path(), &recent_name);
-
-        cleanup_old_log_files(tmp.path(), 30);
-        assert!(
-            tmp.path().join(&recent_name).exists(),
-            "file younger than 30 days should be kept"
-        );
-    }
-
-    #[test]
-    fn keeps_todays_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let today = chrono::Utc::now()
-            .date_naive()
-            .format("%Y-%m-%d")
-            .to_string();
-        let today_name = format!("agaric.log.{today}");
-        touch(tmp.path(), &today_name);
-
-        cleanup_old_log_files(tmp.path(), 30);
-        assert!(
-            tmp.path().join(&today_name).exists(),
-            "today's log file should be kept"
-        );
-    }
-
-    #[test]
-    fn ignores_non_matching_filenames() {
-        let tmp = tempfile::tempdir().unwrap();
-        touch(tmp.path(), "other.log");
-        touch(tmp.path(), "agaric.log");
-        touch(tmp.path(), "agaric.log.not-a-date");
-        touch(tmp.path(), "agaric.log.2025-13-01"); // invalid month
-
-        cleanup_old_log_files(tmp.path(), 30);
-
-        assert!(tmp.path().join("other.log").exists());
-        assert!(tmp.path().join("agaric.log").exists());
-        assert!(tmp.path().join("agaric.log.not-a-date").exists());
-        assert!(tmp.path().join("agaric.log.2025-13-01").exists());
-    }
-
-    #[test]
-    fn handles_empty_directory() {
-        let tmp = tempfile::tempdir().unwrap();
-        // Should not panic or error
-        cleanup_old_log_files(tmp.path(), 30);
-    }
-
-    #[test]
-    fn handles_nonexistent_directory() {
-        let path = std::path::Path::new("/tmp/agaric-nonexistent-test-dir-42");
-        // Should not panic — silently returns
-        cleanup_old_log_files(path, 30);
-    }
-
-    /// I-Core-4: tracing-appender's daily rolling can produce filenames of
-    /// the shape `agaric.log.YYYY-MM-DD.<unique-suffix>` (e.g. when the
-    /// process restarts within the same day, or on platforms where the
-    /// appender appends a uniquifier). The previous matcher only accepted
-    /// the bare 10-char date variant, so suffixed files would accumulate
-    /// indefinitely. After the I-Core-4 refactor the same retention rules
-    /// apply: an old suffixed file is deleted, a recent one is kept.
-    #[test]
-    fn cleanup_keeps_dated_with_rolling_suffix_i_core_4() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        let old_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(60))
-            .format("%Y-%m-%d")
-            .to_string();
-        let recent_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(5))
-            .format("%Y-%m-%d")
-            .to_string();
-
-        // Two suffixed variants — one well past the cutoff, one inside it.
-        let old_suffixed = format!("agaric.log.{old_date}.unique-suffix");
-        let recent_suffixed = format!("agaric.log.{recent_date}.abc123");
-        touch(tmp.path(), &old_suffixed);
-        touch(tmp.path(), &recent_suffixed);
-
-        cleanup_old_log_files(tmp.path(), 30);
-
-        assert!(
-            !tmp.path().join(&old_suffixed).exists(),
-            "I-Core-4: old `agaric.log.<date>.<suffix>` must be deleted just like \
-             the bare-date form"
-        );
-        assert!(
-            tmp.path().join(&recent_suffixed).exists(),
-            "I-Core-4: recent `agaric.log.<date>.<suffix>` must be kept just like \
-             the bare-date form"
-        );
-    }
-
-    /// I-Core-4 (defense-in-depth): the live, currently-being-written
-    /// `agaric.log` file (no date suffix) must never be touched by the
-    /// retention sweep. The matcher excludes it because `strip_prefix` of
-    /// `"agaric.log."` requires a trailing `.`, but pin that behaviour
-    /// down explicitly so a future refactor can't quietly regress it.
-    #[test]
-    fn cleanup_still_ignores_undated_log_i_core_4() {
-        let tmp = tempfile::tempdir().unwrap();
-        touch(tmp.path(), "agaric.log");
-
-        cleanup_old_log_files(tmp.path(), 30);
-
-        assert!(
-            tmp.path().join("agaric.log").exists(),
-            "I-Core-4: bare `agaric.log` (no date) is the live log file and \
-             must always survive cleanup"
-        );
     }
 }
 
