@@ -45,3 +45,9 @@ pub async fn compute_reverse(
 
 #[cfg(test)]
 mod tests;
+
+// B1 (#150): property tests for `compute_reverse` — inverse law,
+// determinism, and exhaustive OpType -> inverse classification. Driven by
+// the shared seeded-DB harness (`crate::proptest_db_harness`).
+#[cfg(test)]
+mod proptest_b1;

@@ -364,6 +364,12 @@ fn has_directive_for_target(filter: &str, target: &str) -> bool {
 mod command_integration_tests;
 #[cfg(test)]
 mod integration_tests;
+/// TEST-PROPTEST-B (#150): shared seeded-DB proptest fixture harness —
+/// random valid block trees + op chains over a real pool. Reused by the
+/// Tier-B property tests (`reverse::proptest` for B1; materializer / sync
+/// for B2-B4).
+#[cfg(test)]
+mod proptest_db_harness;
 // LoroSync end-to-end integration tests live in
 // `sync_protocol::tests` (`loro_sync_e2e_*`).
 
