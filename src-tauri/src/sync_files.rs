@@ -22,6 +22,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
+use futures_util::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -206,19 +207,41 @@ pub async fn find_missing_attachments(
     .fetch_all(pool)
     .await?;
 
+    // Issue #112 sub-item 4: probe up to 16 attachment files in parallel via
+    // `buffer_unordered(16)` instead of awaiting each `tokio::fs::metadata`
+    // serially. On a vault with thousands of attachments this turns the
+    // per-row syscall latency (cold-cache fs, mobile flash) into a bounded
+    // concurrent fanout, while still capping the open-fd / outstanding-syscall
+    // count so SMB/NFS/rotational mounts do not thrash. The maintainer fixed
+    // the constant at 16 — measured as the safe cross-environment default
+    // (issue #112 comment 2026-05-28T09:38); local SSD shows no measurable
+    // downside vs 32, and slow shares avoid the saturation seen at 32.
+    //
+    // M-49: prefer the async syscall over std's blocking `Path::exists` so
+    // the daemon's runtime is not stalled on cold-cache filesystems
+    // (notably Android with thousands of attachments).
+    //
+    // M-48: cross-check the on-disk length against the DB's `size_bytes`.
+    // A truncated stub (interrupted download, partial write, antivirus
+    // 0-byte quarantine) would otherwise pass the existence check forever.
+    // Any metadata error (incl. permission denied) is treated as missing
+    // so the file is re-requested.
+    let probes: Vec<(String, String, i64, std::io::Result<std::fs::Metadata>)> = stream::iter(rows)
+        .map(|(id, fs_path, size_bytes)| {
+            let full_path = app_data_dir.join(&fs_path);
+            async move {
+                let meta = tokio::fs::metadata(&full_path).await;
+                (id, fs_path, size_bytes, meta)
+            }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+
     let mut missing = Vec::new();
-    for (id, fs_path, size_bytes) in rows {
+    for (id, fs_path, size_bytes, meta) in probes {
         let full_path = app_data_dir.join(&fs_path);
-        // M-49: prefer the async syscall over std's blocking `Path::exists`
-        // so the daemon's runtime is not stalled on cold-cache filesystems
-        // (notably Android with thousands of attachments).
-        //
-        // M-48: cross-check the on-disk length against the DB's
-        // `size_bytes`. A truncated stub (interrupted download, partial
-        // write, antivirus 0-byte quarantine) would otherwise pass the
-        // existence check forever. Any metadata error (incl. permission
-        // denied) is treated as missing so the file is re-requested.
-        match tokio::fs::metadata(&full_path).await {
+        match meta {
             Ok(meta) => {
                 let expected = u64::try_from(size_bytes).unwrap_or(0);
                 if meta.len() != expected {
