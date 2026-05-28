@@ -41,33 +41,22 @@ pub async fn eval_tag_query(
             total_count: None,
         });
     }
-    let mut sorted_ids: Vec<&str> = block_ids.iter().map(String::as_str).collect();
-    sorted_ids.sort();
+
+    // Issue #112 sub-item 1 — push the candidate-ID sort + cursor walk
+    // down into SQL. The resolver hands us an `FxHashSet`, so we hand
+    // SQLite a JSON-array of the IDs via `json_each(?)`, and let the
+    // database do the ordering, cursor filter (`id > ?`), and limit in
+    // one paginated read. Replaces the previous "collect → sort → slice
+    // → second query" round-trip.
+    let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
+    let json_ids = serde_json::to_string(&id_vec)?;
     let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    let filtered: Vec<&str> = if let Some(after_id) = start_after {
-        sorted_ids.into_iter().filter(|id| *id > after_id).collect()
-    } else {
-        sorted_ids
-    };
     // page.limit is a validated positive pagination bound; safe to convert
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    let fetch_limit = limit_usize.saturating_add(1);
-    let page_ids: Vec<&str> = filtered.into_iter().take(fetch_limit).collect();
-    let has_more = page_ids.len() > limit_usize;
-    let actual_ids: Vec<&str> = if has_more {
-        page_ids[..limit_usize].to_vec()
-    } else {
-        page_ids
-    };
-    if actual_ids.is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
-    }
-    let placeholders = actual_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    // Fetch `limit + 1` so we can detect `has_more` without a separate
+    // count query — mirrors the pre-pushdown behaviour.
+    let fetch_limit = page.limit.saturating_add(1);
+
     // I-Search-14: defense-in-depth — `cache::rebuild_tags_cache` and the
     // production tag-resolve paths already exclude soft-deleted rows
     // at the leaves, but making the dependency explicit in the final
@@ -77,48 +66,54 @@ pub async fn eval_tag_query(
     // Mirrors the `deleted_at IS NULL` filter used in
     // `cache::rebuild_tags_cache` and other production read paths.
     //
-    // FEAT-3p4 — the trailing `(? IS NULL OR COALESCE(...))` clause
+    // FEAT-3p4 — the `(? IS NULL OR b.page_id IN (…))` clause
     // mirrors `crate::space_filter_clause!`. Resolves the candidate
-    // block to its owning page via `b.page_id` and
-    // intersects against `block_properties(key = 'space').value_ref`
-    // when `space_id` is `Some`. The single `?` is bound after the
-    // ID-list placeholders below.
+    // block to its owning page via `b.page_id` and intersects against
+    // `block_properties(key = 'space').value_ref` when `space_id` is
+    // `Some`. The single `?` placeholder is bound twice (NULL guard +
+    // value comparison) to keep the short-circuit.
     // PEND-35 Tier 3.4 — `(? IS NULL OR b.block_type = ?)` push-down so
     // GraphView's `pagesResp.items.filter(p => p.block_type === 'page')`
-    // post-filter is replaced by a SQL clause. Bound after the space
-    // filter (two more trailing `?` placeholders).
+    // post-filter is replaced by a SQL clause.
+    // Issue #112 sub-item 1 — `(? IS NULL OR b.id > ?)` is the cursor
+    // walk; combined with `ORDER BY b.id ASC LIMIT ?` it replaces the
+    // Rust-side sort/slice that used to live above.
     let query_str = format!(
         "SELECT {} \
          FROM blocks b \
-         WHERE id IN ({placeholders}) \
-           AND deleted_at IS NULL \
+         WHERE b.id IN (SELECT value FROM json_each(?)) \
+           AND b.deleted_at IS NULL \
            AND (? IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?)) \
            AND (? IS NULL OR b.block_type = ?) \
-         ORDER BY id",
+           AND (? IS NULL OR b.id > ?) \
+         ORDER BY b.id ASC \
+         LIMIT ?",
         crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
     // MAINT-113 M2 — query the rows as ActiveBlockRow directly. The SQL
-    // above filters `deleted_at IS NULL` (lines
-    // ~82-83), so every row sqlx hydrates is active. The
-    // `id as "id: ActiveBlockId"` cast is implicit — sqlx::query_as
-    // calls FromRow which decodes via `sqlx::Type` for ActiveBlockId
-    // (transparent over String).
-    let mut query = sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str.as_str()));
-    for id in &actual_ids {
-        query = query.bind(*id);
+    // filters `deleted_at IS NULL`, so every row sqlx hydrates is
+    // active. The `id as "id: ActiveBlockId"` cast is implicit —
+    // sqlx::query_as calls FromRow which decodes via `sqlx::Type` for
+    // ActiveBlockId (transparent over String).
+    let mut items: Vec<ActiveBlockRow> =
+        sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str.as_str()))
+            .bind(&json_ids)
+            .bind(space_id)
+            .bind(space_id)
+            .bind(block_type)
+            .bind(block_type)
+            .bind(start_after)
+            .bind(start_after)
+            .bind(fetch_limit)
+            .fetch_all(pool)
+            .await?;
+
+    let has_more = items.len() > limit_usize;
+    if has_more {
+        items.truncate(limit_usize);
     }
-    // The trailing `?` placeholders for the space filter are bound twice
-    // (once for the NULL guard, once for the value comparison) so the
-    // dynamic-SQL form keeps the `(? IS NULL OR …)` short-circuit. The
-    // `block_type` push-down (Tier 3.4) follows the same pattern.
-    query = query
-        .bind(space_id)
-        .bind(space_id)
-        .bind(block_type)
-        .bind(block_type);
-    let items: Vec<ActiveBlockRow> = query.fetch_all(pool).await?;
     let next_cursor = if has_more {
         let last = items.last().expect("has_more implies non-empty");
         Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)

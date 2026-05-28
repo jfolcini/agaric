@@ -1,12 +1,17 @@
 //! Sorting utilities for backlink queries: sort block ID sets by creation
 //! time or by text/numeric/date property values.
+//!
+//! Property-value sorts are pushed entirely into SQL (issue #112 sub-item
+//! 1): the database returns the IDs already ordered by
+//! `value_{text,num,date} [ASC|DESC] NULLS LAST, b.id ASC`, eliminating
+//! the prior fetch-into-`FxHashMap` + Rust comparator dance. Pinning the
+//! tiebreaker on `b.id` keeps cursor pagination (which walks the sorted
+//! list looking for the cursor ID) deterministic across runs.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
-use std::cmp::Ordering;
 
 use super::types::{BacklinkSort, SortDir};
-use super::SMALL_IN_LIMIT;
 use crate::error::AppError;
 
 /// Sort a set of block IDs according to the given sort mode.
@@ -28,193 +33,66 @@ pub(crate) async fn sort_ids(
         }
 
         BacklinkSort::PropertyText { key, dir } => {
-            if ids.is_empty() {
-                return Ok(vec![]);
-            }
-            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-            let prop_map = fetch_text_props_for_ids(pool, key, &id_vec).await?;
-            Ok(sort_with_property_map(ids, dir, &prop_map))
+            sort_by_property_column(pool, ids, key, dir, "value_text").await
         }
 
         BacklinkSort::PropertyNum { key, dir } => {
-            if ids.is_empty() {
-                return Ok(vec![]);
-            }
-            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-            let prop_map = fetch_num_props_for_ids(pool, key, &id_vec).await?;
-            Ok(sort_with_property_map(ids, dir, &prop_map))
+            sort_by_property_column(pool, ids, key, dir, "value_num").await
         }
 
         BacklinkSort::PropertyDate { key, dir } => {
-            if ids.is_empty() {
-                return Ok(vec![]);
-            }
-            let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
-            let prop_map = fetch_date_props_for_ids(pool, key, &id_vec).await?;
-            Ok(sort_with_property_map(ids, dir, &prop_map))
+            sort_by_property_column(pool, ids, key, dir, "value_date").await
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Generic comparator (MAINT-148d)
-// ---------------------------------------------------------------------------
-
-/// Sort `ids` by the values in `prop_map` (`block_id → Option<V>`),
-/// generic over the value type `V: PartialOrd`.
+/// SQL-side property sort. The query joins the candidate ID set against
+/// `block_properties(key = ?)` and orders by the requested column with
+/// `NULLS LAST`; rows that share a value (or both lack the property)
+/// fall back to ascending `b.id` so the output is fully deterministic.
 ///
-/// All three former `sort_by_property_{text,num,date}` helpers shared the
-/// same comparator shape:
-///
-/// 1. Some-before-None ordering (blocks without the property sink to the
-///    end), and
-/// 2. fall back on lexicographic block-id order whenever values tie or
-///    both sides lack the property.
-///
-/// The fetch step (`fetch_*_props_for_ids`) varies by `value_text` /
-/// `value_num` / `value_date` and stays per-column, but the comparator
-/// itself is column-agnostic and lives here under a single roof —
-/// future tweaks (e.g. the H-21 deterministic-tiebreaker fix) edit one
-/// site instead of three.
-fn sort_with_property_map<V>(
+/// `column` is a static `&'static str` (`"value_text"` / `"value_num"`
+/// / `"value_date"`) chosen by the caller — never user input — so
+/// splicing it into the SQL string is safe. Same goes for the
+/// `ASC`/`DESC` direction.
+async fn sort_by_property_column(
+    pool: &SqlitePool,
     ids: &FxHashSet<String>,
+    key: &str,
     dir: &SortDir,
-    prop_map: &FxHashMap<String, Option<V>>,
-) -> Vec<String>
-where
-    V: PartialOrd,
-{
-    let mut sorted: Vec<String> = ids.iter().cloned().collect();
-    sorted.sort_by(|a, b| {
-        let va = prop_map.get(a.as_str()).and_then(Option::as_ref);
-        let vb = prop_map.get(b.as_str()).and_then(Option::as_ref);
-        match (va, vb) {
-            (Some(va), Some(vb)) => {
-                let directed = match dir {
-                    SortDir::Asc => va.partial_cmp(vb).unwrap_or(Ordering::Equal),
-                    SortDir::Desc => vb.partial_cmp(va).unwrap_or(Ordering::Equal),
-                };
-                directed.then_with(|| a.cmp(b))
-            }
-            (Some(_), None) => Ordering::Less,
-            (None, Some(_)) => Ordering::Greater,
-            (None, None) => a.cmp(b),
-        }
-    });
-    sorted
-}
+    column: &'static str,
+) -> Result<Vec<String>, AppError> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
 
-// ---------------------------------------------------------------------------
-// Per-column fetchers
-// ---------------------------------------------------------------------------
+    let direction = match dir {
+        SortDir::Asc => "ASC",
+        SortDir::Desc => "DESC",
+    };
 
-/// Fetch text property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
-async fn fetch_text_props_for_ids(
-    pool: &SqlitePool,
-    key: &str,
-    ids: &[&str],
-) -> Result<FxHashMap<String, Option<String>>, AppError> {
-    if ids.len() <= SMALL_IN_LIMIT {
-        let placeholders: String = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT block_id, value_text FROM block_properties \
-             WHERE key = ? AND block_id IN ({placeholders})"
-        );
-        let mut query =
-            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()));
-        query = query.bind(key);
-        for id in ids {
-            query = query.bind(*id);
-        }
-        let rows = query.fetch_all(pool).await?;
-        Ok(rows.into_iter().collect())
-    } else {
-        let json_ids = serde_json::to_string(&ids)?;
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT block_id, value_text FROM block_properties \
-             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
-        )
+    // Pack the candidate IDs into a single JSON-array bind and let
+    // SQLite expand them via `json_each`. This sidesteps the
+    // `SQLITE_MAX_VARIABLE_NUMBER` ceiling regardless of set size, so
+    // there's no need for the small/large split that the per-column
+    // fetchers used to keep.
+    let id_vec: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let json_ids = serde_json::to_string(&id_vec)?;
+
+    let sql = format!(
+        "SELECT b.id \
+         FROM blocks b \
+         LEFT JOIN block_properties bp \
+           ON bp.block_id = b.id AND bp.key = ? \
+         WHERE b.id IN (SELECT value FROM json_each(?)) \
+         ORDER BY bp.{column} {direction} NULLS LAST, b.id ASC"
+    );
+
+    let rows: Vec<(String,)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(key)
         .bind(&json_ids)
         .fetch_all(pool)
         .await?;
-        Ok(rows.into_iter().collect())
-    }
-}
 
-/// Fetch numeric property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
-async fn fetch_num_props_for_ids(
-    pool: &SqlitePool,
-    key: &str,
-    ids: &[&str],
-) -> Result<FxHashMap<String, Option<f64>>, AppError> {
-    if ids.len() <= SMALL_IN_LIMIT {
-        let placeholders: String = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT block_id, value_num FROM block_properties \
-             WHERE key = ? AND block_id IN ({placeholders})"
-        );
-        let mut query =
-            sqlx::query_as::<_, (String, Option<f64>)>(sqlx::AssertSqlSafe(sql.as_str()));
-        query = query.bind(key);
-        for id in ids {
-            query = query.bind(*id);
-        }
-        let rows = query.fetch_all(pool).await?;
-        Ok(rows.into_iter().collect())
-    } else {
-        let json_ids = serde_json::to_string(&ids)?;
-        let rows = sqlx::query_as::<_, (String, Option<f64>)>(
-            "SELECT block_id, value_num FROM block_properties \
-             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(key)
-        .bind(&json_ids)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows.into_iter().collect())
-    }
-}
-
-/// Fetch date property values for a set of block IDs.
-/// Uses bind-parameter IN clause for ≤`SMALL_IN_LIMIT` IDs, `json_each` for larger sets.
-async fn fetch_date_props_for_ids(
-    pool: &SqlitePool,
-    key: &str,
-    ids: &[&str],
-) -> Result<FxHashMap<String, Option<String>>, AppError> {
-    if ids.len() <= SMALL_IN_LIMIT {
-        let placeholders: String = std::iter::repeat_n("?", ids.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT block_id, value_date FROM block_properties \
-             WHERE key = ? AND block_id IN ({placeholders})"
-        );
-        let mut query =
-            sqlx::query_as::<_, (String, Option<String>)>(sqlx::AssertSqlSafe(sql.as_str()));
-        query = query.bind(key);
-        for id in ids {
-            query = query.bind(*id);
-        }
-        let rows = query.fetch_all(pool).await?;
-        Ok(rows.into_iter().collect())
-    } else {
-        let json_ids = serde_json::to_string(&ids)?;
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT block_id, value_date FROM block_properties \
-             WHERE key = ? AND block_id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(key)
-        .bind(&json_ids)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows.into_iter().collect())
-    }
+    Ok(rows.into_iter().map(|(id,)| id).collect())
 }
