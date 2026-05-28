@@ -89,7 +89,7 @@ pub async fn reindex_page_link_cache_for_block(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_links_reindex").await?;
 
     // Resolve the source page (the page the changed block lives on).
     // `parent_id` is the immediate parent — for content blocks under a
@@ -207,7 +207,7 @@ pub async fn rebuild_page_link_cache(pool: &SqlitePool) -> Result<(), AppError> 
 }
 
 async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let mut tx = pool.begin().await?;
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_links_rebuild").await?;
 
     sqlx::query("DELETE FROM page_link_cache")
         .execute(&mut *tx)
@@ -284,7 +284,8 @@ async fn rebuild_page_link_cache_split_impl(
     .fetch_all(read_pool)
     .await?;
 
-    let mut tx = write_pool.begin().await?;
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_page_links_rebuild_write").await?;
 
     sqlx::query("DELETE FROM page_link_cache")
         .execute(&mut *tx)
