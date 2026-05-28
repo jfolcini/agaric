@@ -15,6 +15,15 @@
 
 import type { FilterToken, SearchQueryAST } from './types'
 
+/**
+ * #152 — wrap a `prop:` / `not-prop:` value in `"..."` when it contains
+ * any whitespace; otherwise emit it bare. The form rejects embedded
+ * `"` characters, so we don't need to escape inside the quotes.
+ */
+function quotePropValue(v: string): string {
+  return /\s/.test(v) ? `"${v}"` : v
+}
+
 /** Render a single token back to its canonical source form. */
 export function tokenSource(t: FilterToken): string {
   switch (t.kind) {
@@ -37,9 +46,9 @@ export function tokenSource(t: FilterToken): string {
     case 'scheduled':
       return `scheduled:${t.raw}`
     case 'prop':
-      return `prop:${t.key}=${t.value}`
+      return `prop:${t.key}=${quotePropValue(t.value)}`
     case 'notProp':
-      return `not-prop:${t.key}=${t.value}`
+      return `not-prop:${t.key}=${quotePropValue(t.value)}`
     case 'invalid':
       return t.source
   }

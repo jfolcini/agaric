@@ -55,11 +55,27 @@ describe('PropFilterForm — round-trip validation (PEND-70 CR8 MAJOR-1)', () =>
     expect(screen.getByRole('alert')).toHaveTextContent(t('search.filterHelper.propKeyInvalid'))
   })
 
-  it('rejects a value containing whitespace — Add disabled + inline error', async () => {
+  it('accepts a value containing whitespace (#152) — serialiser wraps it in quotes', async () => {
     const user = userEvent.setup()
     const { onAddFilter } = setup()
     await user.type(keyInput(), 'status')
     await user.type(valueInput(), 'in progress')
+    expect(addButton()).toBeEnabled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await user.click(addButton())
+    expect(onAddFilter).toHaveBeenCalledWith({
+      kind: 'prop',
+      key: 'status',
+      value: 'in progress',
+      span: [0, 0],
+    })
+  })
+
+  it('rejects a value containing `"` — Add disabled + inline error (#152)', async () => {
+    const user = userEvent.setup()
+    const { onAddFilter } = setup()
+    await user.type(keyInput(), 'note')
+    await user.type(valueInput(), 'a"b')
     expect(addButton()).toBeDisabled()
     expect(screen.getByRole('alert')).toHaveTextContent(t('search.filterHelper.propValueInvalid'))
     expect(valueInput()).toHaveAttribute('aria-invalid', 'true')

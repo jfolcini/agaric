@@ -26,6 +26,10 @@ describe('serialize round-trip', () => {
     'not-prop:archived=true',
     'prop:tag=',
     'state:TODO priority:1 due:today prop:status=blocked hello world',
+    // #152 — prop values with whitespace round-trip via "..." quoting.
+    'prop:status="in progress"',
+    'not-prop:owner="Jane Doe"',
+    'tag:#urgent prop:status="in progress" leftover',
   ]
 
   for (const s of canonicalInputs) {
@@ -75,5 +79,20 @@ describe('serialize round-trip', () => {
     const ast = parse('tag:#a hello')
     const next = addFilter(ast, { kind: 'pathInclude', value: 'X/*', span: [0, 0] })
     expect(serialize(next)).toBe('tag:#a path:X/* hello')
+  })
+
+  it('#152 — tokenSource quotes a prop value that contains whitespace', () => {
+    expect(tokenSource({ kind: 'prop', key: 'status', value: 'in progress', span: [0, 0] })).toBe(
+      'prop:status="in progress"',
+    )
+    expect(tokenSource({ kind: 'notProp', key: 'owner', value: 'Jane Doe', span: [0, 0] })).toBe(
+      'not-prop:owner="Jane Doe"',
+    )
+  })
+
+  it('#152 — tokenSource leaves whitespace-free prop values bare', () => {
+    expect(tokenSource({ kind: 'prop', key: 'status', value: 'done', span: [0, 0] })).toBe(
+      'prop:status=done',
+    )
   })
 })

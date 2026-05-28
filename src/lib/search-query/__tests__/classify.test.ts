@@ -350,6 +350,40 @@ describe('classify / parse', () => {
     }
   })
 
+  it('parses prop:key="value with spaces" (#152)', () => {
+    const ast = parse('prop:status="in progress"')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'prop',
+      key: 'status',
+      value: 'in progress',
+    })
+    expect(ast.freeText).toBe('')
+  })
+
+  it('parses not-prop:key="value with spaces" (#152)', () => {
+    const ast = parse('not-prop:owner="Jane Doe"')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'notProp',
+      key: 'owner',
+      value: 'Jane Doe',
+    })
+    expect(ast.freeText).toBe('')
+  })
+
+  it('quoted prop value coexists with other tokens (#152)', () => {
+    const ast = parse('tag:#urgent prop:status="in progress" leftover words')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'urgent' })
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'prop',
+      key: 'status',
+      value: 'in progress',
+    })
+    expect(ast.freeText).toBe('leftover words')
+  })
+
   it('serialise round-trip preserves PEND-53 token shapes', () => {
     // Canonical form is reproduced verbatim.
     const inputs = [
