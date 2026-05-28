@@ -141,46 +141,58 @@ pub async fn reindex_page_link_cache_for_block(
     .map(|(t,)| t)
     .collect();
 
-    // Recompute edge counts for each touched pair. Bounded by the
-    // touched-targets set (one source page → ≤ K targets, where K is
-    // the page's distinct outbound page edges) so this is O(K) round
-    // trips, not O(N) on the whole link table.
-    for target in &touched_targets {
-        let (edge_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM block_links bl
-             JOIN blocks sb ON sb.id = bl.source_id
-             WHERE COALESCE(sb.parent_id, sb.id) = ?
-               AND bl.target_id = ?
-               AND sb.deleted_at IS NULL",
-        )
-        .bind(&source_page)
-        .bind(target)
-        .fetch_one(&mut *tx)
-        .await?;
-
-        if edge_count == 0 {
-            sqlx::query(
-                "DELETE FROM page_link_cache \
-                 WHERE source_page_id = ? AND target_page_id = ?",
-            )
-            .bind(&source_page)
-            .bind(target)
-            .execute(&mut *tx)
-            .await?;
-        } else {
-            sqlx::query(
-                "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
-                 VALUES (?, ?, ?) \
-                 ON CONFLICT(source_page_id, target_page_id) \
-                 DO UPDATE SET edge_count = excluded.edge_count",
-            )
-            .bind(&source_page)
-            .bind(target)
-            .bind(edge_count)
-            .execute(&mut *tx)
-            .await?;
-        }
+    // B-C3 (issue #108): collapse the per-target COUNT + UPSERT/DELETE
+    // loop into two statements regardless of K. The aggregate UPSERT
+    // covers every touched target with a non-zero edge_count; targets
+    // that no longer have any live edges don't appear in the GROUP BY
+    // result and fall through to the zero-edge DELETE below. Net cost:
+    // 2 round-trips instead of 2K, no Rust-side counting.
+    if touched_targets.is_empty() {
+        tx.commit().await?;
+        return Ok(());
     }
+    let targets_json = serde_json::to_string(&touched_targets)?;
+
+    sqlx::query(
+        "WITH desired AS ( \
+             SELECT bl.target_id AS target, COUNT(*) AS edge_count \
+             FROM block_links bl \
+             JOIN blocks sb ON sb.id = bl.source_id \
+             WHERE COALESCE(sb.parent_id, sb.id) = ?1 \
+               AND sb.deleted_at IS NULL \
+               AND bl.target_id IN (SELECT value FROM json_each(?2)) \
+             GROUP BY 1 \
+         ) \
+         INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+         SELECT ?1, target, edge_count FROM desired WHERE true \
+         ON CONFLICT(source_page_id, target_page_id) \
+         DO UPDATE SET edge_count = excluded.edge_count",
+    )
+    .bind(&source_page)
+    .bind(&targets_json)
+    .execute(&mut *tx)
+    .await?;
+
+    // Zero-edge sweep: remove any touched target whose live edge count
+    // is now zero. Inlined `NOT EXISTS` against `block_links` mirrors
+    // the `desired` CTE's filter shape — using the CTE directly is not
+    // an option here because CTEs don't outlive their statement.
+    sqlx::query(
+        "DELETE FROM page_link_cache \
+         WHERE source_page_id = ?1 \
+           AND target_page_id IN (SELECT value FROM json_each(?2)) \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM block_links bl \
+               JOIN blocks sb ON sb.id = bl.source_id \
+               WHERE COALESCE(sb.parent_id, sb.id) = ?1 \
+                 AND sb.deleted_at IS NULL \
+                 AND bl.target_id = page_link_cache.target_page_id \
+           )",
+    )
+    .bind(&source_page)
+    .bind(&targets_json)
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
     Ok(())
