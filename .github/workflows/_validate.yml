@@ -216,7 +216,19 @@ jobs:
         # MAINT-227 closure note in prek.toml: without it, query
         # drift in `#[cfg(test)]` modules slips through CI silently
         # (caught 5 such drifts in session 679's PEND-18 work).
+        #
+        # `DATABASE_URL` is required by sqlx-cli 0.8.x even in
+        # `--check` mode (the CLI verifies the env var before
+        # delegating to `cargo check` with `SQLX_OFFLINE=true`). A
+        # placeholder `sqlite::memory:` is enough — the actual query
+        # validation happens against the committed `.sqlx/` cache, not
+        # against this URL. Locally the same env comes from
+        # `src-tauri/.env` (`DATABASE_URL=sqlite:dev.db`); CI gets the
+        # placeholder explicitly so the check no longer hard-fails on
+        # a fresh sqlx-cli install with no env wired in.
         working-directory: src-tauri
+        env:
+          DATABASE_URL: 'sqlite::memory:'
         run: cargo sqlx prepare --check -- --tests
 
   # ---------------------------------------------------------------------------
