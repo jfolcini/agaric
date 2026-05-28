@@ -299,7 +299,7 @@ function parsePropToken(
     }
   }
   const key = value.slice(0, eq)
-  const propValue = value.slice(eq + 1)
+  let propValue = value.slice(eq + 1)
   if (key.length === 0) {
     return {
       kind: 'invalid',
@@ -307,6 +307,13 @@ function parsePropToken(
       error: `${kind === 'prop' ? 'prop' : 'not-prop'}: key cannot be empty`,
       span,
     }
+  }
+  // #152 — `prop:key="value with spaces"`: strip the surrounding
+  // quotes (the tokeniser keeps a mid-word quoted phrase as part of
+  // the word so the value reaches us intact). Both quotes must be
+  // present; an unmatched leading `"` falls through as a literal.
+  if (propValue.length >= 2 && propValue.startsWith('"') && propValue.endsWith('"')) {
+    propValue = propValue.slice(1, -1)
   }
   return { kind, key, value: propValue, span }
 }

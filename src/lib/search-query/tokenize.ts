@@ -28,8 +28,12 @@ export type RawToken =
  *   the next `"` (verbatim, including any internal whitespace). If no
  *   closing quote is found, the open quote is treated as part of the
  *   word that follows.
- * - Quotes inside a word (e.g. `say"hello`) are kept as part of the
- *   word — they do not start a new phrase.
+ * - A `"` mid-word (e.g. `prop:key="value with spaces"`) opens a
+ *   phrase that extends across whitespace until a matching `"` at a
+ *   token boundary — that lets prefix-glued quoted values survive as a
+ *   single word for the classifier to parse (#152). If no matching
+ *   close exists, the `"` is kept as a literal and the word ends at
+ *   the next whitespace (e.g. `say"hello` still tokenises as one word).
  *
  * Spans are `[startCol, endCol)` over the original input in UTF-16
  * code units (compatible with `string.length`). The quote characters
@@ -55,20 +59,7 @@ export function tokenize(input: string): RawToken[] {
       // scanning; if none qualifies, fall through to word-handling so
       // the stray quote degrades to a word instead of fragmenting the
       // rest of the query into a phantom phrase.
-      let close = input.indexOf('"', i + 1)
-      while (close !== -1) {
-        const after = input[close + 1]
-        if (
-          after === undefined ||
-          after === ' ' ||
-          after === '\t' ||
-          after === '\n' ||
-          after === '\r'
-        ) {
-          break
-        }
-        close = input.indexOf('"', close + 1)
-      }
+      const close = findCloseAtBoundary(input, i)
       if (close !== -1) {
         tokens.push({
           kind: 'quoted',
@@ -80,13 +71,46 @@ export function tokenize(input: string): RawToken[] {
       }
       // Unmatched quote — degrade to word.
     }
-    // Word: consume until whitespace.
+    // Word: consume until whitespace. A mid-word `"` (#152) opens an
+    // embedded phrase that extends through whitespace until a matching
+    // `"` at a token boundary, so `prop:key="v with spaces"` survives
+    // as a single word.
     while (i < n) {
       const c = input[i]
       if (c === ' ' || c === '\t' || c === '\n' || c === '\r') break
+      if (c === '"' && i > start) {
+        const close = findCloseAtBoundary(input, i)
+        if (close !== -1) {
+          i = close + 1
+          continue
+        }
+      }
       i++
     }
     tokens.push({ kind: 'word', text: input.slice(start, i), span: [start, i] })
   }
   return tokens
+}
+
+/**
+ * Given an opening `"` at index `open`, find the index of a matching
+ * close `"` that sits at a token boundary (followed by whitespace or
+ * end-of-input). Returns `-1` if no qualifying close exists.
+ */
+function findCloseAtBoundary(input: string, open: number): number {
+  let close = input.indexOf('"', open + 1)
+  while (close !== -1) {
+    const after = input[close + 1]
+    if (
+      after === undefined ||
+      after === ' ' ||
+      after === '\t' ||
+      after === '\n' ||
+      after === '\r'
+    ) {
+      return close
+    }
+    close = input.indexOf('"', close + 1)
+  }
+  return -1
 }

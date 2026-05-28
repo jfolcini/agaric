@@ -5,13 +5,13 @@
  * space-scoped and not enumerated here) plus an include/exclude toggle.
  * Emits a `prop` or `notProp` `FilterToken` and closes the popover.
  *
- * PEND-70 CR8 MAJOR-1 — round-trip validation. The token is serialised
- * verbatim as `prop:KEY=VALUE` (no quoting in the DSL), then re-tokenised
- * by splitting on whitespace and on the FIRST `=`. So a KEY containing
- * whitespace / `=` / `"`, or a VALUE containing whitespace / `"`, would
- * silently corrupt the executed search and the rendered chip. We reject
- * those at the form so the round-trip is always lossless. (A `=` inside the
- * VALUE is fine — the parser splits on the first `=` only.)
+ * PEND-70 CR8 MAJOR-1 — round-trip validation. KEY is still constrained
+ * (no whitespace, `=`, or `"`) because the serialiser does not quote
+ * keys. #152 relaxed VALUE: serialiser now emits `prop:KEY="VALUE"`
+ * when VALUE contains whitespace and the tokeniser recognises the
+ * mid-word quoted phrase, so spaces round-trip safely. A literal `"`
+ * inside VALUE is still rejected — escaping would expand the DSL
+ * surface without a concrete need.
  */
 
 import type React from 'react'
@@ -32,9 +32,14 @@ function isKeyValid(key: string): boolean {
   return !/[\s="]/.test(key)
 }
 
-/** A property value cannot contain whitespace or `"` (a `=` is allowed). */
+/**
+ * A property value cannot contain `"` (escaping would expand the DSL
+ * surface for no concrete win). Whitespace is permitted as of #152 —
+ * the serialiser wraps such values in `"..."` and the tokeniser
+ * reassembles them on parse.
+ */
 function isValueValid(value: string): boolean {
-  return !/[\s"]/.test(value)
+  return !/"/.test(value)
 }
 
 export function PropFilterForm({ onAddFilter, onBack }: PropFilterFormProps): React.ReactElement {

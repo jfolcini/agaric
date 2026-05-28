@@ -77,4 +77,39 @@ describe('tokenize', () => {
     expect(t0.text).toBe('tag:#日本語')
     expect(t1.text).toBe('#emoji-📌')
   })
+
+  it('extends a mid-word quoted phrase across whitespace (#152)', () => {
+    // `prop:key="value with spaces"` must reach the classifier as a
+    // single `word` token — the embedded `"` opens a phrase that
+    // extends until the matching `"` at the next token boundary.
+    const tokens = tokenize('prop:key="value with spaces"')
+    expect(tokens).toHaveLength(1)
+    const [t0] = tokens
+    if (!t0) throw new Error('expected one token')
+    expect(t0.kind).toBe('word')
+    expect(t0.text).toBe('prop:key="value with spaces"')
+    expect(t0.span).toEqual([0, 28])
+  })
+
+  it('mid-word quote without a matching close still ends the word at whitespace (#152)', () => {
+    // No closing `"` at a boundary — the `"` degrades to a literal,
+    // and the word ends at the next whitespace.
+    const tokens = tokenize('prop:key="unterminated value')
+    expect(tokens).toHaveLength(2)
+    const [t0, t1] = tokens
+    if (!t0 || !t1) throw new Error('expected two tokens')
+    expect(t0.text).toBe('prop:key="unterminated')
+    expect(t1.text).toBe('value')
+  })
+
+  it('mid-word phrase boundary contract matches outer quoted phrase (#152)', () => {
+    // The mid-word close uses the same boundary rule as the outer
+    // quoted-phrase open: a `"` followed by non-whitespace is not a
+    // valid close. So `prop:k="a"b` does NOT close at the inner `"`.
+    const tokens = tokenize('prop:k="a"b')
+    expect(tokens).toHaveLength(1)
+    const [t0] = tokens
+    if (!t0) throw new Error('expected one token')
+    expect(t0.text).toBe('prop:k="a"b')
+  })
 })
