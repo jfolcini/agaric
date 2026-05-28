@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
+    "opener:allow-open-url",
     "process:default",
     "clipboard-manager:allow-write-text",
     "os:default",

@@ -547,12 +547,10 @@ pub async fn begin_gcal_oauth(
         oauth_client.inner().0.as_ref(),
         &token_store.inner().0,
         move |url| {
-            use tauri_plugin_shell::ShellExt;
-            // MAINT-227: migrate to `tauri-plugin-opener` once the dep lands.
-            #[allow(deprecated)]
+            use tauri_plugin_opener::OpenerExt;
             app_for_open
-                .shell()
-                .open(url, None)
+                .opener()
+                .open_url(url, None::<&str>)
                 .map_err(|e| AppError::Validation(format!("oauth.open_browser_failed: {e}")))
         },
     )
