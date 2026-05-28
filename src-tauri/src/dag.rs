@@ -766,3 +766,6 @@ pub async fn has_merge_for_heads(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod proptest_b2;
