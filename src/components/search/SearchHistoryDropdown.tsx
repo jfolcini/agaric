@@ -12,6 +12,14 @@
  * Accessibility:
  *   - `role="listbox"` on the container, `role="option"` on each row.
  *   - `aria-label` on the listbox names the section.
+ *   - CR-A11Y (#151) — the listbox carries `aria-activedescendant`
+ *     pointing at the active row id, matching the established
+ *     `VirtualizedResultListbox` convention. The owning input keeps DOM
+ *     focus (combobox-with-listbox pattern); Up/Down rove `activeIndex`
+ *     and Delete/Backspace on the input removes the active row (see
+ *     `SearchPanel.handleInputKeyDown`). This makes per-row delete
+ *     keyboard-reachable for AT users — previously only the bulk
+ *     "Clear history" action was.
  *   - The "Clear history" control sits in a footer outside the
  *     listbox so it doesn't pollute option counts.
  *   - When `entries.length === 0`, an empty-state message replaces
@@ -96,6 +104,19 @@ export function SearchHistoryDropdown({
           role="listbox"
           id={listboxId}
           aria-label={listboxLabel}
+          // CR-A11Y (#151) — point at the active row id so screen readers
+          // announce the roving selection. Matches the
+          // `VirtualizedResultListbox` convention (the result-list
+          // `role="listbox"` hosts `aria-activedescendant`). `undefined`
+          // when no row is active so no stale descendant is announced.
+          aria-activedescendant={
+            activeIndex >= 0 ? searchHistoryRowId(listboxId, activeIndex) : undefined
+          }
+          // The search input retains DOM focus (combobox pattern); the listbox
+          // hosts `aria-activedescendant`, so it needs a tabIndex to satisfy
+          // `useAriaActivedescendantWithTabindex`. `-1` keeps it out of the tab
+          // order while remaining a valid activedescendant host.
+          tabIndex={-1}
           data-testid="search-history-list"
           className="m-0 list-none p-0"
         >

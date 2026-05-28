@@ -139,6 +139,62 @@ describe('TemplatePicker', () => {
     expect(document.activeElement).toBe(buttons[0])
   })
 
+  it('traps Tab within the picker, cycling forward and wrapping at the end', () => {
+    // CR-A11Y (#151): aria-modal="true" requires a real focus trap. Tab must
+    // cycle within the picker and wrap from last back to first.
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+
+    const buttons = screen.getAllByRole('button')
+    expect(document.activeElement).toBe(buttons[0])
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(buttons[1])
+
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(buttons[2])
+
+    // Wraps from the last focusable element back to the first.
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(document.activeElement).toBe(buttons[0])
+  })
+
+  it('traps Shift+Tab within the picker, cycling backward and wrapping at the start', () => {
+    render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
+
+    const buttons = screen.getAllByRole('button')
+    expect(document.activeElement).toBe(buttons[0])
+
+    // Wraps from the first focusable element back to the last.
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(buttons[2])
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(buttons[1])
+  })
+
+  it('restores focus to the previously focused element on close', () => {
+    // The element focused before the picker opens (the trigger) must regain
+    // focus when the picker unmounts — the second half of a real focus trap.
+    const trigger = document.createElement('button')
+    trigger.textContent = 'trigger'
+    document.body.appendChild(trigger)
+    trigger.focus()
+    expect(document.activeElement).toBe(trigger)
+
+    try {
+      const { unmount } = render(
+        <TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />,
+      )
+      // Picker auto-focuses its first item, moving focus away from the trigger.
+      expect(document.activeElement).not.toBe(trigger)
+
+      unmount()
+      expect(document.activeElement).toBe(trigger)
+    } finally {
+      document.body.removeChild(trigger)
+    }
+  })
+
   it('renders a dialog with correct aria attributes', () => {
     render(<TemplatePicker templatePages={templatePages} onSelect={onSelect} onClose={onClose} />)
 

@@ -506,6 +506,9 @@ describe('BlockPropertyEditor', () => {
       )
       expect(screen.getByTestId('ref-picker')).toBeInTheDocument()
       expect(screen.getByTestId('ref-search-input')).toBeInTheDocument()
+      // The search input has a programmatic name independent of its
+      // placeholder, so it is reachable by its accessible name.
+      expect(screen.getByLabelText('Search pages...')).toBe(screen.getByTestId('ref-search-input'))
       expect(screen.getByText('Page Alpha')).toBeInTheDocument()
       expect(screen.getByText('Page Beta')).toBeInTheDocument()
     })

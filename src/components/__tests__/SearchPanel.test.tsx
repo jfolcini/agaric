@@ -2126,4 +2126,123 @@ describe('SearchPanel', () => {
       expect(status).toHaveTextContent('')
     })
   })
+
+  // CR-A11Y (#151) — keyboard-reachable per-row history delete.
+  //
+  // Previously the per-row delete affordance was mouse-only (a focusable
+  // <button> inside `role="option"` trips axe), so AT users could only
+  // bulk-clear. Now the input keeps DOM focus (combobox-with-listbox), the
+  // listbox carries `aria-activedescendant`, Up/Down rove `activeIndex`, and
+  // Delete/Backspace on the input removes the active row.
+  describe('CR-A11Y #151 — keyboard per-row history delete', () => {
+    // Seed the per-space MRU. `bySpace[*][0]` is the most-recent entry —
+    // ArrowUp from an empty input recalls index 0 first.
+    function seedHistory(entries: string[]) {
+      useSearchHistoryStore.setState({
+        bySpace: { SPACE_TEST: entries },
+        historyEnabled: true,
+      })
+    }
+
+    it('Arrow keys rove aria-activedescendant on the history listbox', async () => {
+      const user = userEvent.setup()
+      seedHistory(['alpha', 'beta', 'gamma'])
+
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      // Auto-focused on mount + empty => the dropdown shows.
+      input.focus()
+
+      const listbox = await screen.findByTestId('search-history-list')
+      // Pre-recall: no active descendant.
+      expect(listbox).not.toHaveAttribute('aria-activedescendant')
+
+      // ArrowUp recalls the most-recent entry (index 0).
+      await user.keyboard('{ArrowUp}')
+      const listboxId = listbox.getAttribute('id')
+      expect(listbox).toHaveAttribute('aria-activedescendant', `${listboxId}-opt-0`)
+      expect(screen.getByTestId('search-history-entry-0')).toHaveAttribute('aria-selected', 'true')
+
+      // Another ArrowUp walks to the older entry (index 1).
+      await user.keyboard('{ArrowUp}')
+      expect(listbox).toHaveAttribute('aria-activedescendant', `${listboxId}-opt-1`)
+      expect(screen.getByTestId('search-history-entry-1')).toHaveAttribute('aria-selected', 'true')
+    })
+
+    it('Delete on the active row removes it via the per-space store', async () => {
+      const user = userEvent.setup()
+      seedHistory(['alpha', 'beta', 'gamma'])
+
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      input.focus()
+      await screen.findByTestId('search-history-list')
+
+      // Rove to index 1 ('beta'), then delete it.
+      await user.keyboard('{ArrowUp}{ArrowUp}')
+      await user.keyboard('{Delete}')
+
+      // Store no longer contains the deleted entry.
+      await waitFor(() => {
+        const remaining = useSearchHistoryStore.getState().bySpace['SPACE_TEST']
+        expect(remaining).toEqual(['alpha', 'gamma'])
+      })
+
+      // Recall resets to typing mode and the input is empty again so the
+      // (shorter) dropdown stays open with the surviving rows.
+      expect((input as HTMLInputElement).value).toBe('')
+      const remainingRows = screen.getAllByRole('option')
+      expect(remainingRows).toHaveLength(2)
+      expect(screen.getByTestId('search-history-list')).not.toHaveAttribute('aria-activedescendant')
+    })
+
+    it('Backspace on the active row deletes it too', async () => {
+      const user = userEvent.setup()
+      seedHistory(['alpha', 'beta'])
+
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      input.focus()
+      await screen.findByTestId('search-history-list')
+
+      await user.keyboard('{ArrowUp}') // recall 'alpha' (index 0)
+      await user.keyboard('{Backspace}')
+
+      await waitFor(() => {
+        expect(useSearchHistoryStore.getState().bySpace['SPACE_TEST']).toEqual(['beta'])
+      })
+    })
+
+    it('Delete/Backspace with no active row does not delete history', async () => {
+      const user = userEvent.setup()
+      seedHistory(['alpha', 'beta'])
+
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      input.focus()
+      await screen.findByTestId('search-history-list')
+
+      // No ArrowUp first — nothing is roved/active. A bare Backspace on the
+      // empty input must not nuke a history row.
+      await user.keyboard('{Backspace}')
+      await user.keyboard('{Delete}')
+
+      expect(useSearchHistoryStore.getState().bySpace['SPACE_TEST']).toEqual(['alpha', 'beta'])
+    })
+
+    it('history dropdown has no axe violations while a row is active', async () => {
+      const user = userEvent.setup()
+      seedHistory(['alpha', 'beta'])
+
+      const { container } = render(<SearchPanel />)
+      const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+      input.focus()
+      await screen.findByTestId('search-history-list')
+      await user.keyboard('{ArrowUp}')
+
+      // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+      const results = await axe(container as any)
+      expect(results).toHaveNoViolations()
+    })
+  })
 })

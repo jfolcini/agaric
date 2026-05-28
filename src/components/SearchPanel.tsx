@@ -264,8 +264,19 @@ export function SearchPanel(): React.ReactElement {
   // screen. The dropdown is shown while the input is focused + empty AND there
   // is either history to recall OR recording is OFF (UX-11 keeps the Enable
   // toggle + "history is off" footer reachable even with zero entries).
+  //
+  // CR-A11Y (#151) — ALSO keep it open while a recall is active
+  // (`cycling.activeIndex >= 0`). ArrowUp/Down fills the input with the
+  // recalled entry, so `query.length` is no longer 0; without this clause the
+  // dropdown — and with it the listbox's `aria-activedescendant` and the
+  // input's roving combobox attrs — would unmount the instant a row became
+  // active, making the roving selection (and the keyboard per-row delete it
+  // gates) impossible to announce to AT. Keeping it open through recall is
+  // also what lets the user SEE which row Delete/Backspace will remove.
   const historyDropdownVisible =
-    inputFocused && query.length === 0 && (historyEntries.length > 0 || !historyEnabled)
+    inputFocused &&
+    (query.length === 0 || cycling.activeIndex >= 0) &&
+    (historyEntries.length > 0 || !historyEnabled)
   // FE-A13 / UX-A2 — the `role="listbox"` element (and its `historyListboxId`)
   // only renders when there are entries, so the combobox's `aria-expanded` /
   // `aria-controls` must track the LISTBOX, not the dropdown shell.
@@ -359,9 +370,42 @@ export function SearchPanel(): React.ReactElement {
         setQueryAndCaret('')
         return
       }
+      // CR-A11Y (#151) — keyboard-reachable per-row history delete. While a
+      // history row is active (roved to via Up/Down, surfaced through the
+      // listbox's `aria-activedescendant`), Delete/Backspace removes THAT
+      // row. Focus stays on the input the whole time (combobox-with-listbox
+      // pattern), so the per-row delete button — which is `aria-hidden` and
+      // mouse-only by design (a focusable control inside `role="option"`
+      // trips axe's nested-interactive rule) — is now reachable for AT
+      // users instead of only the bulk "Clear history" action.
+      //
+      // Gate on the dropdown being on-screen with entries: the active recall
+      // value has just been written into the input (so the row text equals
+      // the live `query`), but the recall replaces the input value, so the
+      // input is no longer empty — re-using `historyDropdownVisible` (which
+      // requires `query.length === 0`) would be wrong here. Resolve the row
+      // text directly from `historyEntries[cycling.activeIndex]`.
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        cycling.activeIndex >= 0 &&
+        historyEntries.length > 0
+      ) {
+        const entry = historyEntries[cycling.activeIndex]
+        if (entry != null) {
+          e.preventDefault()
+          // Reset the recall machine and clear the input first: the removed
+          // entry's text currently fills the input, and the indices shift
+          // once it's gone. Returning to typing mode + empty input re-shows
+          // the (now shorter) MRU list so the user can keep deleting.
+          cycling.reset()
+          setQueryAndCaret('')
+          handleRemoveHistory(entry)
+          return
+        }
+      }
       cycling.handleKeyDown(e)
     },
-    [cycling, setQueryAndCaret],
+    [cycling, setQueryAndCaret, historyEntries, handleRemoveHistory],
   )
 
   // PEND-54 / FE-A12 — chip / helper handlers. Each appends a filter token to

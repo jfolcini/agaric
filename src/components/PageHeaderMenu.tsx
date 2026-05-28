@@ -12,7 +12,7 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
@@ -93,6 +93,98 @@ export function PageHeaderMenu({
   const showMoveEntry =
     !isSpaceBlock && onMoveToSpace != null && moveTargets != null && moveTargets.length > 0
 
+  // CR-A11Y (#151) — roving-tabindex over the TOP-LEVEL menuitems. Items render
+  // conditionally (open-in-new-tab, move-to-space) and are interleaved with
+  // <hr> separators, so we build the ordered id list declaratively below in
+  // render order (which is DOM order) rather than measuring the live DOM. Each
+  // top-level <button> registers its node via `registerItem`, keyed by a stable
+  // id. The nested "move to space" sub-menu has its own role="menu"/
+  // role="menuitem" and is intentionally NOT part of this set, so its targets
+  // are never counted in the top-level roving set.
+  const itemRefs = useRef(new Map<string, HTMLButtonElement>())
+  const [activeId, setActiveId] = useState<string | null>(null)
+
+  // Ordered top-level menuitem ids — mirrors the conditional render order.
+  const orderedIds: string[] = [
+    ...(onOpenInNewTab != null && !isMobile ? ['openInNewTab'] : []),
+    'addAlias',
+    'addTag',
+    'addProperty',
+    'toggleTemplate',
+    'toggleJournalTemplate',
+    'export',
+    ...(showMoveEntry ? ['moveTo'] : []),
+    'delete',
+  ]
+
+  const registerItem = useCallback((id: string, node: HTMLButtonElement | null) => {
+    if (node) itemRefs.current.set(id, node)
+    else itemRefs.current.delete(id)
+  }, [])
+
+  const focusItem = useCallback((id: string | null) => {
+    if (id == null) return
+    setActiveId(id)
+    itemRefs.current.get(id)?.focus()
+  }, [])
+
+  // On open, focus the first menuitem. We wait a frame so conditional items
+  // and the Radix portal content are mounted before we focus.
+  const firstId = orderedIds[0] ?? null
+  useEffect(() => {
+    if (!kebabOpen) {
+      setActiveId(null)
+      return
+    }
+    const raf = requestAnimationFrame(() => focusItem(firstId))
+    return () => cancelAnimationFrame(raf)
+  }, [kebabOpen, firstId, focusItem])
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const ids = orderedIds
+    if (ids.length === 0) return
+    // Only the top-level roving set responds to arrow keys. The nested
+    // "move to space" sub-menu uses normal Tab order, so when focus is inside
+    // it (target is not a registered top-level item) we leave the event alone.
+    const target = event.target as HTMLElement
+    const onTopLevelItem = ids.some((id) => itemRefs.current.get(id) === target)
+    if (!onTopLevelItem) return
+    const current = activeId ?? ids[0]
+    const idx = current ? ids.indexOf(current) : -1
+    switch (event.key) {
+      case 'ArrowDown': {
+        event.preventDefault()
+        focusItem(ids[(idx + 1 + ids.length) % ids.length] ?? null)
+        break
+      }
+      case 'ArrowUp': {
+        event.preventDefault()
+        focusItem(ids[(idx - 1 + ids.length) % ids.length] ?? null)
+        break
+      }
+      case 'Home': {
+        event.preventDefault()
+        focusItem(ids[0] ?? null)
+        break
+      }
+      case 'End': {
+        event.preventDefault()
+        focusItem(ids[ids.length - 1] ?? null)
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  /** Shared props for every top-level menuitem button. */
+  const menuItemProps = (id: string) => ({
+    role: 'menuitem' as const,
+    tabIndex: activeId === id ? 0 : -1,
+    ref: (node: HTMLButtonElement | null) => registerItem(id, node),
+    onFocus: () => setActiveId(id),
+  })
+
   return (
     <div className="flex items-center gap-1">
       <Tooltip>
@@ -155,13 +247,20 @@ export function PageHeaderMenu({
             <MoreVertical className="h-3.5 w-3.5" />
           </Button>
         </PopoverTrigger>
-        <MenuPopoverContent align="end" className="p-1" aria-label={t('pageHeader.pageActions')}>
+        <MenuPopoverContent
+          align="end"
+          className="p-1"
+          role="menu"
+          aria-label={t('pageHeader.pageActions')}
+          onKeyDown={handleMenuKeyDown}
+        >
           {onOpenInNewTab != null && !isMobile && (
             <>
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
                 onClick={onOpenInNewTab}
+                {...menuItemProps('openInNewTab')}
               >
                 <ExternalLink className="h-3.5 w-3.5" />
                 {t('tabs.openInNewTab')}
@@ -173,6 +272,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddAlias}
+            {...menuItemProps('addAlias')}
           >
             <Link className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddAlias')}
@@ -181,6 +281,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddTag}
+            {...menuItemProps('addTag')}
           >
             <Tag className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddTag')}
@@ -189,6 +290,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onAddProperty}
+            {...menuItemProps('addProperty')}
           >
             <Settings2 className="h-3.5 w-3.5" />
             {t('pageHeader.menuAddProperty')}
@@ -198,6 +300,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleTemplate}
+            {...menuItemProps('toggleTemplate')}
           >
             <LayoutTemplate className="h-3.5 w-3.5" />
             {isTemplate ? t('pageHeader.removeTemplate') : t('pageHeader.saveAsTemplate')}
@@ -206,6 +309,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onToggleJournalTemplate}
+            {...menuItemProps('toggleJournalTemplate')}
           >
             <BookTemplate className="h-3.5 w-3.5" />
             {isJournalTemplate
@@ -217,6 +321,7 @@ export function PageHeaderMenu({
             type="button"
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-accent touch-target focus-ring-visible"
             onClick={onExport}
+            {...menuItemProps('export')}
           >
             <Download className="h-3.5 w-3.5" />
             {t('pageHeader.exportMarkdown')}
@@ -233,6 +338,7 @@ export function PageHeaderMenu({
                 aria-haspopup="menu"
                 aria-expanded={moveSubmenuOpen}
                 onClick={() => setMoveSubmenuOpen((open) => !open)}
+                {...menuItemProps('moveTo')}
               >
                 <FolderOutput className="h-3.5 w-3.5" />
                 {t('space.moveTo')}
@@ -271,6 +377,7 @@ export function PageHeaderMenu({
               type="button"
               className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-destructive hover:bg-destructive/10 touch-target focus-ring-visible focus-visible:ring-destructive/50"
               onClick={onDeleteRequest}
+              {...menuItemProps('delete')}
             >
               <Trash2 className="h-3.5 w-3.5" />
               {t('pageHeader.deletePage')}

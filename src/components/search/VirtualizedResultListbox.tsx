@@ -91,6 +91,17 @@ export function VirtualizedResultListbox({
   // row element so the outer/page scroller follows the active descendant
   // too. `block: 'nearest'` is a no-op when the row is already visible, so
   // this never hijacks scroll position unnecessarily.
+  //
+  // CR-A11Y (#151): each page-group is its own `role="listbox"` and only the
+  // group owning the focused row carries `aria-activedescendant`. DOM focus,
+  // however, stays put when roving arrows cross a group boundary — so after a
+  // boundary crossing the focused `<ul>` is the OLD group, which no longer
+  // exposes `aria-activedescendant`, and the screen reader loses the active
+  // descendant. Fix: when THIS group becomes the active one (gains a non-null
+  // `activeRowId`), move DOM focus onto its `<ul>` so the focused element is
+  // always the listbox that points at the active option. We focus AFTER
+  // `scrollToIndex` has mounted the active row, so the freshly-focused
+  // listbox's `aria-activedescendant` already resolves to a real descendant.
   useEffect(() => {
     if (activeRowIndex < 0) return
     virtualizer.scrollToIndex(activeRowIndex, { align: 'auto' })
@@ -99,6 +110,25 @@ export function VirtualizedResultListbox({
     // by its `aria-activedescendant` id and bubble the scroll up the page.
     const el = scrollRef.current?.ownerDocument.getElementById(activeRowId)
     el?.scrollIntoView?.({ block: 'nearest' })
+    // Move DOM focus to this (now-active) listbox ONLY when the user is
+    // already roving the results — i.e. DOM focus currently sits on a DIFFERENT
+    // results listbox (a sibling page-group). That is exactly the group-
+    // boundary crossing this fixes: arrows took the active row into the next
+    // group, but DOM focus stayed on the previous group's `<ul>`, which no
+    // longer carries `aria-activedescendant`. We deliberately do NOT focus
+    // when the active element is the search input or anything outside the
+    // results region, so initial render / typing never steals focus from the
+    // input. The active option is mounted by the `scrollToIndex` above, so the
+    // freshly-focused listbox's `aria-activedescendant` resolves immediately.
+    const ul = scrollRef.current
+    const active = ul?.ownerDocument.activeElement
+    const focusIsOnAnotherResultListbox =
+      active instanceof HTMLElement &&
+      active !== ul &&
+      active.classList.contains('search-result-listbox')
+    if (ul && focusIsOnAnotherResultListbox) {
+      ul.focus({ preventScroll: true })
+    }
   }, [activeRowIndex, activeRowId, virtualizer])
 
   const virtualItems = virtualizer.getVirtualItems()
