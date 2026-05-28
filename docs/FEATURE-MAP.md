@@ -3,7 +3,7 @@
 
 What a user can do with Agaric. Each linked file is self-contained — open just the one you need.
 
-Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) · [`docs/UX.md`](UX.md) (conventions for building UI) · `AGENTS.md` (architectural invariants) · `SESSION-LOG.md` (chronological history) · `pending/REVIEW-LATER.md` (backlog).
+Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) · [`docs/UX.md`](UX.md) (conventions for building UI) · `AGENTS.md` (architectural invariants) · [`docs/session-log/`](session-log/README.md) (chronological history; one file per session) · `pending/REVIEW-LATER.md` (backlog).
 
 ## Feature catalog
 

@@ -9,7 +9,7 @@ Items flagged during development that need revisiting. Organized by section with
 > no "resolved in session X" notes, no reclassification history, no audit narratives.
 > When an item is resolved, delete it completely. When an item is reclassified, update
 > it in place. The git history is the audit trail — this file is not a changelog.
-> Session activity is tracked separately in `SESSION-LOG.md`.
+> Session activity is tracked separately in `docs/session-log/` (one file per session).
 
 **Cost key:** S = <2h, M = 2-8h, L = 8h+
 

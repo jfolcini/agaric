@@ -1,0 +1,34 @@
+## Session 813 — PEND-58e: Pages-view deep-review findings, fully actioned (E1–E21) (2026-05-22)
+
+| Metadata | Value |
+|----------|-------|
+| **Date** | 2026-05-22 |
+| **Subagents** | 5 build (Rust-filters · Rust-materializer · filter-UI · PageBrowser-logic · tauri-mock), parallel by file-ownership + orchestrator-direct (docs, E14 sibling, prek fixups). Verification: full-suite + diff review by orchestrator (no separate review subagents). |
+| **Items closed** | PEND-58e E1–E21 (all 21 post-verification findings) |
+| **Items modified** | PEND-58d (deep-review-findings note cleared; only deferred D23a remains) |
+| **Tests added** | +28 frontend unit (vitest 10497→10525) + e2e cursor-contract/same-page (F3) / +4 backend non-ignored (nextest 3908→3912) + 1 `#[ignore]` perf gate |
+| **Files touched** | 25 (+ the PEND-58e plan file removed) |
+
+**Summary:** Actioned every confirmed finding from the second whole-feature deep review (E1–E21) across SQL, backend Rust, frontend React, the tauri-mock, and docs, in five parallel file-disjoint subagents plus orchestrator-direct docs. **P1:** the Priority facet now drives its offered values from `usePriorityLevels()` (was a hardcoded `A/B/C` against `1/2/3` data → zero matches out of the box) (E1); `docs/PAGES.md`'s limitations note rewritten so it no longer contradicts the shipped D24 exclude / not-equals / not-exists controls (E2). **P2:** `LastEdited` custom Range extends a bare `YYYY-MM-DD` `end` to the last instant of the day (`T23:59:59.999Z`), fixing silent loss of end-day edits (E3); cross-page `MoveBlock` recomputes `child_block_count` for both source and destination pages in-tx and enqueues `RebuildPagesCache` after `RebuildPageIds`, fixing latent count drift (E4); the `tag:` placeholder corrected to "Tag id" and a `tagResolver` wired so the chip shows the tag name (E5); filter pills truncate with `max-w` + title tooltip (E6); the count chip + SR announcement use a distinct matched-**page** count instead of the grouped-row array, fixing namespaced/starred mis-counts (E7); `docs/architecture/filters.md` updated to the D8 `HasProperty { predicate: PropertyPredicate }` shape (E8). **P3:** EXPLAIN tests now plan the IPC's REAL composed SQL via a `#[cfg(test)]` accessor (E9); the materializer parity helper derives counts from first principles (breaks the shared-shape blind spot) + a cross-page-move parity test (E10); `Orphan` reranked to cost tier 3 (its outbound half is a correlated subquery) with realistic perf-gate seeds (link skew, op-log depth) + a filtered-query gate (E11); the tauri-mock mirrors the backend — null `total_count` on cursor pages, emits `RequiresRefresh:`, same-page inbound exclusion — with e2e coverage (E12); count-chip basis shares one "loaded" denominator under a text query (E13); client re-sort tiebreaks by `id ASC` to match the server keyset, in both `usePageBrowserGrouping` and `usePageBrowserSort` (E14); the delete decrement moved out of the `setPages` updater (StrictMode double-fire) (E15); clear-all announces a single dedicated SR message (E16); `sortTopLevelUnits` decorates-once instead of allocating per comparison (E17); the `InvalidFilter:` error prefix is recognised with a specific toast (E18); popover descriptions for the five value facets + clear-all documented (E19); dead `pageBrowser.export*` i18n keys removed (E20); stale recompute comment anchors corrected to cite migration 0070 + `recompute_pages_cache_counts_for_pages` (E21).
+
+- **Parallelization.** Five subagents on disjoint file sets — two Rust by module (filters/validation vs materializer), three frontend by ownership (filter-UI vs PageBrowser+grouping vs tauri-mock). `src/lib/i18n/pages.ts` was shared by two frontend agents but only via surgical, non-overlapping edits (placeholder/descriptions/removals vs two new keys) and reconciled clean. Docs and the E14 `usePageBrowserSort` sibling were orchestrator-direct.
+- **No migrations; no IPC type change** — Priority levels were already on the wire as strings, so `src/lib/bindings.ts` is unchanged.
+
+**REVIEW-LATER impact:**
+- **Top-level open count:** PEND-58e fully resolved and its plan file removed; PEND-58d now lists only the deferred D23a.
+- **Previously resolved:** 1260+ → 1281+ across 812 → 813 sessions.
+
+**Files touched (this session):**
+- backend: `src-tauri/src/filters/primitive.rs`, `commands/pages.rs`, `commands/tests/list_pages_with_metadata_tests.rs`, `materializer/handlers.rs`, `materializer/dispatch.rs`, `materializer/tests.rs`
+- frontend: `src/components/PageBrowser.tsx`, `PageBrowser/AddFilterPopover.tsx`, `PageBrowser/PageBrowserFilterRow.tsx`, `src/components/ui/filter-pill.tsx`, `src/hooks/usePageBrowserGrouping.ts`, `src/hooks/usePageBrowserSort.ts`, `src/lib/i18n/pages.ts`, `src/lib/tauri-mock/handlers.ts`, `src/lib/tauri-mock/seed.ts`, + tests (`__tests__/PageBrowser.test.tsx`, `PageBrowser/__tests__/{AddFilterPopover,PageBrowserFilterRow}.test.tsx`, `ui/__tests__/filter-pill.test.tsx`, `hooks/__tests__/{usePageBrowserGrouping,usePageBrowserSort}.test.ts`, `src/lib/__tests__/tauri-mock.test.ts`, `e2e/pages-view.spec.ts`)
+- docs/meta: `docs/PAGES.md`, `docs/architecture/filters.md`, `pending/README.md`, `pending/PEND-58e-pages-view-deep-review-findings.md` (removed)
+
+**Verification:**
+- `cd src-tauri && cargo nextest run` — 3912 passed, 6 skipped.
+- `npx vitest run` — 10525 passed; `npx tsc -b` — clean.
+- `prek run --all-files` — all hooks pass.
+- `scripts/verify-ci-equivalent.sh` (full pre-push: vitest + cargo + **playwright e2e** + sqlx + MCP smoke) — PASSED.
+
+**Process notes:** The pre-push CI-equivalent (which prek does *not* cover — it adds the full Playwright e2e + sqlx-prepare check) surfaced flakes and a few real e2e breaks that the per-builder vitest gate missed. Stabilized in a follow-up commit: (1) the e2e value-facet selectors and the priority/tag fixtures were updated for the E1/E5/E19 behaviour changes (e2e is not in the prek gate, so the build subagents couldn't have caught these); (2) F3's E12 same-page seed edge was reverted off the shared "Quick Notes" fixture (it reordered rendered blocks and broke the editor/keyboard/inner-links specs) — the same-page exclusion is now covered by a runtime mock unit test instead; (3) **pre-push reliability**: `verify-ci-equivalent.sh` now serializes the vitest and cargo phases (they oversubscribed the box and starved timing-sensitive frontend tests — CI never hits this because it shards them onto separate runners), `src/test-setup.ts` raises the Testing-Library `asyncUtilTimeout` so `axe()` audits survive CPU pressure, and `playwright.config.ts` caps local workers + enables local retries to match CI.
+
+**Commit plan:** two commits onto `pend-58-phase2-pages-primitives` (PR #48) — the PEND-58e delivery, then the e2e/pre-push stabilization — both pushed.

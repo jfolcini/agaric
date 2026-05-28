@@ -438,7 +438,7 @@ pub async fn project_remove_tag_to_sql(
 ///
 ///   [`import_with_changed_blocks`]: crate::loro::engine::LoroEngine::import_with_changed_blocks
 /// * `None` → engine has no record of `block_id`.  The plan
-///   (`SESSION-LOG.md` Session 699 Phase 3 §3 day 4) defers the
+///   (`docs/session-log/2026-sessions-401-800.md` Session 699 Phase 3 §3 day 4) defers the
 ///   purge-from-SQL semantics: an absent engine record could mean
 ///   (a) the block was hard-purged on the remote (legitimate
 ///   delete-from-SQL), or (b) a transient engine miss the caller
