@@ -52,7 +52,7 @@ Each subagent prompt must include:
 
 **Sizing:** Prefer 5-6 focused parallel subagents grouped by domain over fewer sequential ones — you can safely run up to 6 subagents simultaneously. Split work so each subagent touches non-overlapping files. Each worktree pays ~15s cold-compile overhead, but that's recouped if the parallel wall-clock time is shorter. Batch trivial 1-line fixes together and apply them as orchestrator (in parallel with subagent work). Don't serialize work that can be parallelized — launch all build subagents at once.
 
-**Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — the orchestrator runs prek once after merging.
+**Subagent verification scope:** Build subagents verify only their own work by running the relevant tests. Do NOT run clippy, fmt, biome, or prek inside subagents — prek runs automatically via the pre-commit / pre-push git hooks at commit and push time.
 
 ### Subagent prompt template
 
@@ -114,7 +114,11 @@ If worktrees were used, copy changed files back to the main tree. Skip this step
 
 ## 6. COMMIT
 
-Stage all changes. Run `prek run --all-files` — this is the single point where formatting, linting, clippy, and all 15 hooks run. If prek modifies files (e.g., biome auto-fix), re-stage the modified files and retry the commit.
+Stage all changes and commit normally — the **pre-commit hook** runs prek's commit-staged checks (formatting, linting, biome, fast clippy, conventional commit message, etc.). If a hook modifies files (e.g., biome auto-fix), re-stage the modified files and retry the commit.
+
+Push when you're ready — the **pre-push hook** runs prek's heavier checks (full clippy, the `no-commit-to-branch=main` guard, any `stages = ["pre-push"]` hooks in `prek.toml`).
+
+Do NOT run `prek run --all-files` manually. The hooks are the single source of truth for what runs and when; invoking prek by hand bypasses staging boundaries and runs checks that the hook layout deliberately defers to push-time. If a hook is failing, fix the underlying issue and let the hook re-run on the next commit/push — don't paper over it by skipping (`--no-verify`).
 
 ## 7. LOG
 
@@ -159,7 +163,8 @@ Every session entry follows this shape:
 
 **Verification:**
 - `cd src-tauri && cargo nextest run` — N tests run, N passed.
-- `prek run --all-files` — all hooks pass.
+- pre-commit hook — all staged-file checks pass.
+- pre-push hook — full clippy + push-staged checks pass.
 
 **Process notes:** <optional, only when worth capturing>
 
@@ -177,7 +182,7 @@ Apply this template to NEW sessions. Older sessions (590-597 included) stay as-i
 ## Principles
 
 - Be pragmatic but rigorous. Fix what's there, don't gold-plate, don't refactor beyond the scope of the item.
-- Every commit must pass `prek run --all-files`.
+- Every commit must pass the prek pre-commit hook; every push must pass the prek pre-push hook. Both run automatically — never invoke `prek run --all-files` manually, and never bypass with `--no-verify`.
 - Respect architectural invariants in AGENTS.md (append-only op log, event sourcing + materialized views, cursor pagination, single TipTap instance, Biome only, sqlx compile-time queries, foreign keys ON, ULID uppercase normalization).
 - If a Rust change touches SQL queries, run `cargo sqlx prepare -- --tests` to update the `.sqlx/` cache.
 - If a Rust change touches types used in Tauri commands, run `cd src-tauri && cargo test -- specta_tests --ignored` to regenerate `src/lib/bindings.ts`.
@@ -185,7 +190,7 @@ Apply this template to NEW sessions. Older sessions (590-597 included) stay as-i
 ## Common Pitfalls
 
 - **Serializing parallelizable work** — if 4 subagents have independent file targets, launch all 4 in one batch; don't queue them.
-- **Running prek inside subagents** — subagents only run their own targeted tests. Orchestrator runs `prek run --all-files` once at commit time.
+- **Running prek manually or inside subagents** — subagents only run their own targeted tests. Prek runs solely via the pre-commit and pre-push git hooks at commit and push time; never invoke `prek run --all-files` by hand (it bypasses the stage split and runs push-deferred checks too early).
 - **Forgetting to re-read REVIEW-LATER.md before writing** — other agents may concurrently edit it. Always re-read immediately before write.
 - **Starting a `plan` issue with unresolved Open Qs** — every plan issue has a section at the bottom listing maintainer decisions. If any are still open, surface them and stop. Subagents will silently guess and produce wrong scope.
 - **Closing a plan issue from a partial fix** — only use `Closes #NN` when the full plan ships. Otherwise comment-update the issue and leave it open.
