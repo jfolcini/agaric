@@ -1040,6 +1040,7 @@ pub fn run() {
             let maintenance_shutdown = Arc::new(AtomicBool::new(false));
             let lifecycle_for_wal = lifecycle.clone();
             let lifecycle_for_compact = lifecycle.clone();
+            let lifecycle_for_tombstone = lifecycle.clone();
             let wal_write_pool = pools.write.clone();
             let compact_write_pool = pools.write.clone();
             let compact_device_id = device_id.clone();
@@ -1047,6 +1048,9 @@ pub fn run() {
             let materializer_for_cleanup = materializer.clone();
             let materializer_for_fts = materializer.clone();
             let materializer_for_fts_predicate = materializer.clone();
+            let tombstone_write_pool = pools.write.clone();
+            let tombstone_device_id = device_id.clone();
+            let tombstone_materializer = materializer.clone();
             let jobs = vec![
                 maintenance::MaintenanceJob {
                     name: "wal_checkpoint_truncate",
@@ -1094,8 +1098,7 @@ pub fn run() {
                     }),
                 },
                 // Issue #157 sub-item F — enqueue
-                // `CleanupOrphanedAttachments` every 24 h (closes
-                // MAINT-229). Always-on predicate.
+                // `CleanupOrphanedAttachments` every 24 h.
                 maintenance::MaintenanceJob {
                     name: "cleanup_orphaned_attachments_tick",
                     interval: std::time::Duration::from_secs(24 * 3600),
@@ -1124,6 +1127,26 @@ pub fn run() {
                     run: Box::new(move || {
                         let mat = materializer_for_fts.clone();
                         Box::pin(async move { maintenance::enqueue_fts_idle_optimize(&mat).await })
+                    }),
+                },
+                // Issue #157 sub-item E — periodic tombstone purge
+                // (24 h cadence, idle predicate, 90-day retention).
+                maintenance::MaintenanceJob {
+                    name: "tombstone_purge",
+                    interval: std::time::Duration::from_secs(24 * 3600),
+                    last_run: None,
+                    predicate: Box::new(move || {
+                        !lifecycle_for_tombstone
+                            .is_foreground
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    }),
+                    run: Box::new(move || {
+                        let pool = tombstone_write_pool.clone();
+                        let device_id = tombstone_device_id.clone();
+                        let mat = tombstone_materializer.clone();
+                        Box::pin(async move {
+                            maintenance::tombstone_purge(&pool, &device_id, &mat).await
+                        })
                     }),
                 },
             ];

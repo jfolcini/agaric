@@ -136,16 +136,6 @@ pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppE
 
 /// Issue #157 sub-item C — periodic op-log compaction, 24 h cadence,
 /// idle predicate.
-///
-/// Delegates to [`crate::commands::compaction::compact_op_log_cmd_inner`]
-/// with the 90-day retention window — matches the figure named in the
-/// #157 plan table. The inner function is what the user's manual
-/// "Compact op log" UI button calls (`commands/compaction.rs:259`); the
-/// only differences here are (a) the daemon supplies a fixed
-/// `retention_days = 90` so no UI is involved, and (b) the
-/// daemon's idle predicate prevents the compaction (which writes
-/// op-log DELETEs + a snapshot row) from contending with active
-/// editing.
 pub async fn op_log_compact(write_pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
     let result =
         crate::commands::compaction::compact_op_log_cmd_inner(write_pool, device_id, 90).await?;
@@ -169,16 +159,7 @@ pub async fn pragma_optimize(write_pool: &SqlitePool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Issue #157 sub-item F — enqueue `CleanupOrphanedAttachments` on a
-/// 24 h cadence (closes MAINT-229). The materializer's
-/// `cleanup_orphaned_attachments` handler walks the `attachments/`
-/// subtree and reconciles it against the `attachments` table. Prior
-/// to this job the task was only enqueued from the post-compaction
-/// code path and the boot-time shim, so installs that never ran
-/// manual compact accumulated orphan files. Enqueue failures bubble
-/// out as `AppError::Channel`; the bg queue's saturation path
-/// persists shed tasks to `materializer_retry_queue` so nothing is
-/// dropped silently.
+/// Issue #157 sub-item F — enqueue `CleanupOrphanedAttachments`.
 pub async fn enqueue_cleanup_orphaned_attachments(
     materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {
@@ -191,12 +172,7 @@ pub async fn enqueue_cleanup_orphaned_attachments(
     Ok(())
 }
 
-/// Issue #157 sub-item J — enqueue `FtsOptimize` on a 24 h cadence,
-/// gated on `fts_edits_since_optimize > 0`. FTS5 indexes fragment on
-/// delete-/update-heavy workloads; `dispatch.rs` only optimizes on
-/// write paths so a read-only session after some deletes never runs
-/// it. Metric resets in the handler so subsequent ticks see false
-/// until more edits accumulate.
+/// Issue #157 sub-item J — enqueue `FtsOptimize`.
 pub async fn enqueue_fts_idle_optimize(
     materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {
@@ -204,6 +180,62 @@ pub async fn enqueue_fts_idle_optimize(
         .try_enqueue_background(crate::materializer::MaterializeTask::FtsOptimize)
         .map_err(|e| AppError::Channel(format!("fts_idle_optimize enqueue failed: {e}")))?;
     tracing::debug!("fts_idle_optimize tick enqueued");
+    Ok(())
+}
+
+/// Issue #157 sub-item E — retention window for soft-deleted blocks.
+/// 90 days mirrors `op_log_compact`'s retention.
+pub const TOMBSTONE_RETENTION_DAYS: i64 = 90;
+
+/// Per-tick cap matching `MAX_BATCH_BLOCK_IDS`.
+const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 1000;
+
+/// Issue #157 sub-item E — hard-purge soft-deleted blocks whose
+/// `deleted_at` is older than [`TOMBSTONE_RETENTION_DAYS`]. Delegates
+/// to `purge_blocks_by_ids_inner` so the cascade order, FK-defer,
+/// op-log emission, and post-commit dispatch all share one tested
+/// code path with the manual "Empty Trash" UI button.
+pub async fn tombstone_purge(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS);
+    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks \
+         WHERE deleted_at IS NOT NULL AND deleted_at < ? \
+         ORDER BY deleted_at ASC \
+         LIMIT ?",
+    )
+    .bind(&cutoff_str)
+    .bind(TOMBSTONE_PURGE_BATCH_LIMIT)
+    .fetch_all(pool)
+    .await?;
+
+    if ids.is_empty() {
+        tracing::debug!(
+            cutoff = %cutoff_str,
+            "tombstone_purge: nothing eligible past the retention window"
+        );
+        return Ok(());
+    }
+
+    let count = ids.len();
+    let _resp = crate::commands::blocks::crud::purge_blocks_by_ids_inner(
+        pool,
+        device_id,
+        materializer,
+        ids,
+    )
+    .await?;
+
+    tracing::info!(
+        purged = count,
+        cutoff = %cutoff_str,
+        "tombstone_purge: hard-deleted soft-tombstones past the retention window"
+    );
     Ok(())
 }
 
@@ -403,8 +435,7 @@ mod tests {
             .expect("PRAGMA optimize must succeed on a clean pool");
     }
 
-    /// Issue #157 sub-item C — `op_log_compact` smoke test (no-op
-    /// path on a clean pool with no aged op-log rows).
+    /// Issue #157 sub-item C — `op_log_compact` smoke test.
     #[tokio::test]
     async fn op_log_compact_smoke_test_157_c() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -416,8 +447,7 @@ mod tests {
             .expect("op_log_compact must succeed on a clean pool with no aged op-log rows");
     }
 
-    /// Issue #157 sub-item F — `enqueue_cleanup_orphaned_attachments`
-    /// puts a task on the materializer background queue.
+    /// Issue #157 sub-item F — `enqueue_cleanup_orphaned_attachments` smoke test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn enqueue_cleanup_orphaned_attachments_smoke_test_157_f() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -430,9 +460,7 @@ mod tests {
             .expect("enqueue must succeed on a fresh Materializer with empty bg queue");
     }
 
-    /// Issue #157 sub-item J — `enqueue_fts_idle_optimize` puts a
-    /// task on the materializer background queue. Predicate gating
-    /// lives at the spawn site in lib.rs.
+    /// Issue #157 sub-item J — `enqueue_fts_idle_optimize` smoke test.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn enqueue_fts_idle_optimize_smoke_test_157_j() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -443,5 +471,101 @@ mod tests {
         enqueue_fts_idle_optimize(&mat)
             .await
             .expect("enqueue must succeed on a fresh Materializer with empty bg queue");
+    }
+
+    /// Issue #157 sub-item E — `tombstone_purge` is a no-op when no
+    /// rows are past the retention cutoff.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_skips_when_nothing_eligible_157_e() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let recent_deleted_at =
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES ('AAAA', 'content', 'alive', NULL, 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES ('BBBB', 'content', 'recently soft-deleted', NULL, 2, ?)",
+        )
+        .bind(&recent_deleted_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("tombstone_purge must succeed when nothing is eligible");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "neither the alive row nor the recent tombstone may be purged"
+        );
+    }
+
+    /// Issue #157 sub-item E — `tombstone_purge` hard-deletes
+    /// soft-tombstones whose `deleted_at` is past the retention cutoff.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tombstone_purge_removes_aged_tombstones_157_e() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool.clone());
+
+        let aged_deleted_at = (chrono::Utc::now()
+            - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let recent_deleted_at =
+            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES ('AGED', 'content', 'aged tombstone', NULL, 1, ?)",
+        )
+        .bind(&aged_deleted_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES ('REC0', 'content', 'recent tombstone', NULL, 2, ?)",
+        )
+        .bind(&recent_deleted_at)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        tombstone_purge(&pool, "test-device", &mat)
+            .await
+            .expect("tombstone_purge must succeed");
+
+        let aged_present: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'AGED'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(aged_present, 0, "aged tombstone must be hard-purged");
+
+        let recent_present: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'REC0'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            recent_present, 1,
+            "recent tombstone must stay (still inside retention window)"
+        );
     }
 }
