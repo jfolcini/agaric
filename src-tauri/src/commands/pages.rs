@@ -164,7 +164,7 @@ const MAX_PAGE_ALIASES_PREFIX: i64 = 50;
 /// `Page Title (alias: X)` without a second round trip), and the page's
 /// current title (`blocks.content`).
 struct PageAliasPrefixRow {
-    page_id: String,
+    page_id: BlockId,
     alias: String,
     title: Option<String>,
 }
@@ -209,7 +209,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     let space_filter = scope.as_filter_param();
     let rows = sqlx::query_as!(
         PageAliasPrefixRow,
-        r#"SELECT pa.page_id AS "page_id!", pa.alias AS "alias!", b.content AS "title?"
+        r#"SELECT pa.page_id AS "page_id!: BlockId", pa.alias AS "alias!", b.content AS "title?"
          FROM page_aliases pa
          JOIN blocks b ON b.id = pa.page_id
          WHERE pa.alias LIKE ?1 ESCAPE '\' COLLATE NOCASE
@@ -227,7 +227,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     .await?;
     Ok(rows
         .into_iter()
-        .map(|r| (r.page_id, r.alias, r.title))
+        .map(|r| (r.page_id.into_string(), r.alias, r.title))
         .collect())
 }
 
@@ -1220,7 +1220,7 @@ pub async fn list_page_links(
 /// markdown exporter ignores them.
 #[derive(Serialize, Type, Clone, Debug, sqlx::FromRow)]
 pub struct PageHeading {
-    pub id: String,
+    pub id: BlockId,
     pub content: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
@@ -1279,7 +1279,7 @@ pub async fn list_all_pages_in_space_inner(
     let rows = sqlx::query_as!(
         PageHeading,
         r#"SELECT
-               b.id as "id!: String",
+               b.id as "id!: BlockId",
                b.content as "content: String",
                b.todo_state as "todo_state: String",
                b.priority as "priority: String",
@@ -1580,17 +1580,17 @@ pub struct PagePropertyFlags {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PageWithMetadataRow {
-    pub id: String,
+    pub id: BlockId,
     pub block_type: String,
     pub content: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<BlockId>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
-    pub page_id: Option<String>,
+    pub page_id: Option<BlockId>,
     /// max(`op_log.created_at`) over the page itself. None if the
     /// page has no op-log entries (which should never happen — every
     /// active page has at least its own creation row — but the column
@@ -2299,14 +2299,14 @@ fn build_metadata_response(
         rows.last().map(|last| -> Result<String, AppError> {
             let cursor = match sort {
                 PageSort::Alphabetical => Cursor {
-                    id: last.id.clone(),
+                    id: last.id.clone().into_string(),
                     position: disc,
                     deleted_at: last.content.clone(),
                     seq: None,
                     rank: None,
                 },
                 PageSort::RecentlyModified => Cursor {
-                    id: last.id.clone(),
+                    id: last.id.clone().into_string(),
                     position: disc,
                     // RecentlyModified always stashes the COALESCE'd
                     // value (real ISO timestamp OR `LAST_MOD_NULL_SENTINEL`)
@@ -2321,21 +2321,21 @@ fn build_metadata_response(
                     rank: None,
                 },
                 PageSort::MostLinked => Cursor {
-                    id: last.id.clone(),
+                    id: last.id.clone().into_string(),
                     position: disc,
                     deleted_at: None,
                     seq: Some(last.inbound_link_count),
                     rank: None,
                 },
                 PageSort::MostContent => Cursor {
-                    id: last.id.clone(),
+                    id: last.id.clone().into_string(),
                     position: disc,
                     deleted_at: None,
                     seq: Some(last.child_block_count),
                     rank: None,
                 },
                 PageSort::Default => Cursor {
-                    id: last.id.clone(),
+                    id: last.id.clone().into_string(),
                     position: disc,
                     deleted_at: None,
                     seq: None,
