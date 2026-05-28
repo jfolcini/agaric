@@ -119,15 +119,19 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     // Tauri ships WebKitGTK / WebView2 / WKWebView — all current platform
-    // webviews understand ES2023 natively. Using a single uniform target
-    // across desktop and mobile sidesteps an esbuild worker-pipeline bug
-    // that mis-transforms destructuring on lower targets (safari13/14
-    // 'Transforming destructuring … is not supported yet' on
-    // discriminated-union narrowing in workers). WebView2 on Windows is
+    // webviews understand ES2023 natively. WebView2 on Windows is
     // Chromium-based and evergreen; `es2023` is a subset it handles
     // natively, so we don't need the old `chrome105` override. Aligns the
     // runtime target with `tsconfig.app.json target: ES2023`, so what Vite
-    // emits matches what the type-checker already assumes. Post-MAINT-84.
+    // emits matches what the type-checker already assumes.
+    //
+    // MAINT-84 (historical): the single uniform target also sidestepped an
+    // esbuild worker-pipeline bug at lower targets ('Transforming
+    // destructuring … is not supported yet' on discriminated-union
+    // narrowing inside workers). That bug class is structurally off the
+    // codepath now that PEND-82 Track B flipped the minifier to `'oxc'`
+    // below, but the `es2023` target stays — it's minifier-independent
+    // and the type-checker alignment alone is reason enough.
     target: 'es2023',
     // PEND-82 Track B: Vite 8 already runs on Rolldown (oxc-transform +
     // oxc-resolver are on the build path); the minifier is the last
