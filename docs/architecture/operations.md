@@ -60,6 +60,5 @@ What's not yet shipped is tracked in `pending/REVIEW-LATER.md` (canonical backlo
 - **iroh transport** — scoped, not started. Approved adoption plan replacing the mDNS + WebSocket + TLS + TOFU stack with a higher-level p2p library. See [#78](https://github.com/jfolcini/agaric/issues/78).
 - **rmcp migration** — M1 landed (RO tools/list); M2 (`tools/call`) + M3 (delete hand-rolled framing) remain.
 - **`ActiveBlockId` newtype M3** — completes the type-system lift of invariant #9 (recursive-CTE conflict filtering); dispatcher decision pending.
-- **PropertyRowEditor decomposition** — done.
 
 docs/ARCHITECTURE.md doesn't carry the open list; `pending/REVIEW-LATER.md` is canonical.

@@ -61,13 +61,13 @@ There is **one op-application path**, and that path always fans out into the per
 
 ## Database
 
-SQLite, WAL mode, FK on, `synchronous=NORMAL`, `busy_timeout=5000`.
+SQLite, WAL mode, FK on, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autocheckpoint=5000` pages, `journal_size_limit=52428800` (50 MB WAL cap), `cache_size=-65536` (64 MB), `mmap_size=268435456` (256 MB), `temp_store=MEMORY`. Set per-connection on both pools in `src-tauri/src/db.rs`.
 
 **Pool architecture:** type-safe `WritePool` (2 connections) + `ReadPool` (4 connections). The newtypes prevent accidentally reading through the write pool or vice versa. Cache rebuilds use the read pool until the final DELETE+INSERT batch, which acquires a write connection.
 
 **Migrations:** `src-tauri/migrations/*.sql`, versioned SQL, auto-run on boot. `sqlx::query!` / `query_as!` macros validate every query at compile time; the offline cache is `.sqlx/` (committed; CI fails on stale via `sqlx-prepare-check`).
 
-**Triggers:** an append-only enforcement trigger on `op_log` (with a sentinel bypass for compaction). Cache tables are rebuilt by the materializer, not by triggers — kept simple to avoid Sql-side hidden state.
+**Triggers:** an append-only enforcement trigger on `op_log` (with a sentinel bypass for compaction), and `check_block_type_insert` / `check_block_type_update` on `blocks` that enforce the `block_type` enum at the SQL layer (migration `0005_block_type_check.sql`). Cache tables are rebuilt by the materializer, not by triggers — kept simple to avoid Sql-side hidden state.
 
 ## Op log
 
@@ -137,7 +137,7 @@ Rebuilt by the materializer; never read-through:
 
 | Cache | What it stores | Triggered by |
 | --- | --- | --- |
-| `block_links` | `[[ULID]]` / `((ULID))` / `#[ULID]` references parsed out of block content | `edit_block`, `create_block` (content scan) |
+| `block_links` | `[[ULID]]` (page-link) and `((ULID))` (block-ref) tokens parsed out of block content. `#[ULID]` inline tag refs are NOT here — they go to `block_tag_refs`. | `edit_block`, `create_block` (content scan) |
 | `page_link_cache` | Page-level rollup `(source_page, target_page, edge_count)` | derived from `block_links` |
 | `block_tag_refs` | Inline `#[ULID]` references (UX-250) | content scan, separate from explicit tag membership |
 | `block_tag_inherited` | Materialized ancestor-tag inheritance | `add_tag` / `remove_tag` + tree moves |
