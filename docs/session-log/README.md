@@ -21,7 +21,7 @@ For a specific session, the slug helps disambiguate: `session-846-cache-rebuilds
 
 ## Adding a new session
 
-Append a new file at the next session number — never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/skill.md`) § "Session log entry template" for the entry shape.
+Append a new file at the next session number — never rename or edit existing files (reviewer corrections go in the PR / issue comments, not in the log). See the `batch-issues` skill (`.claude/skills/batch-issues/SKILL.md`) § "Session log entry template" for the entry shape.
 
 ## Why per-session files
 

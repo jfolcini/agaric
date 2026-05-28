@@ -1,5 +1,5 @@
 ---
-name: Batch Issues
+name: batch-issues
 description: Work through planned tasks in manageable batches — pick a GitHub issue (plan-labelled, regular, or code-scanning/Dependabot alert), split into parallel subagents, test, review, merge, log, commit, push. Use when the user asks to work on issues, ship a batch, or process the backlog.
 ---
 
