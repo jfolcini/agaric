@@ -151,3 +151,127 @@ async fn rebuild_page_ids_split_impl(
     tx.commit().await?;
     Ok(updated)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Issue #111 — regression tests for migration 0073's
+    //! `page_id_self_for_pages` CHECK constraint on `blocks`. The
+    //! constraint promotes the invariant "every `block_type = 'page'`
+    //! row carries `page_id = id`" from a Rust-side write-time check
+    //! into a storage-layer guarantee. Patterned after the 0062
+    //! `exactly_one_value` regression test in `op_log.rs`.
+    use crate::db::init_pool;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        (pool, dir)
+    }
+
+    /// A fresh database (with every migration applied) must contain no
+    /// page rows violating the invariant. Belt-and-braces against a
+    /// hypothetical future migration that backfills page rows without
+    /// setting `page_id`.
+    #[tokio::test]
+    async fn page_id_invariant_holds_on_fresh_database_111() {
+        let (pool, _dir) = test_pool().await;
+        let bad: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND page_id != id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bad, 0,
+            "page_id_self_for_pages CHECK requires every page row to carry page_id = id"
+        );
+    }
+
+    /// Inserting a page row with `page_id` mismatching `id` must
+    /// violate the CHECK at the storage layer.
+    #[tokio::test]
+    async fn page_id_check_rejects_mismatched_page_id_111() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a parent page so a child page can plausibly point at it
+        // via page_id (the test below would otherwise leave page_id
+        // dangling, which is the second case we want to keep open).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PARENTPAGE000000000000001', 'page', 'parent', NULL, 1, \
+                     'PARENTPAGE000000000000001')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seeding a well-formed parent page must succeed");
+
+        let err = sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('BADPAGEROW00000000000001', 'page', 'bad', NULL, 1, \
+                     'PARENTPAGE000000000000001')",
+        )
+        .execute(&pool)
+        .await
+        .expect_err("page row whose page_id != id must violate page_id_self_for_pages CHECK");
+
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("CHECK constraint failed"),
+            "expected CHECK constraint failure for mismatched page_id, got: {msg}"
+        );
+    }
+
+    /// `block_type != 'page'` rows are exempt — a content block may
+    /// carry any page_id (or none), and the CHECK must not fire.
+    #[tokio::test]
+    async fn page_id_check_allows_non_page_rows_with_any_page_id_111() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('OWNERPAGE0000000000000001', 'page', 'owner', NULL, 1, \
+                     'OWNERPAGE0000000000000001')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seeding the owning page must succeed");
+
+        // A child content block whose page_id points at the owning
+        // page (the normal denormalised shape post-MAINT-187).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('CHILDCONTENT0000000000001', 'content', 'child', \
+                     'OWNERPAGE0000000000000001', 1, 'OWNERPAGE0000000000000001')",
+        )
+        .execute(&pool)
+        .await
+        .expect("content block with page_id pointing at owning page must succeed");
+
+        // A tag block with NULL page_id (tag rows historically carry
+        // NULL page_id; this is the second exempt shape).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('TAGBLOCKROW00000000000001', 'tag', 'tag', NULL, NULL, NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("tag row with NULL page_id must succeed (exempt from page_id_self_for_pages)");
+    }
+
+    /// A well-formed page row (id == page_id) inserts cleanly.
+    #[tokio::test]
+    async fn page_id_check_allows_self_referential_page_rows_111() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('GOODPAGEROW0000000000001', 'page', 'good', NULL, 1, \
+                     'GOODPAGEROW0000000000001')",
+        )
+        .execute(&pool)
+        .await
+        .expect("page row with id = page_id must satisfy the CHECK");
+    }
+}
