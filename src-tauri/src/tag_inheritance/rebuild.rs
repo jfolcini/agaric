@@ -18,7 +18,11 @@ use crate::error::AppError;
 /// Atomic DELETE + recompute in a single transaction. Called as a background
 /// materializer task (safety net / initial population).
 pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
+    // L-94 / issue #117: take the writer lock up-front via BEGIN IMMEDIATE
+    // (same reason as `rebuild_all_split` below). `begin_immediate_logged`
+    // adds the MAINT-30 slow-acquire log so per-rebuild contention is
+    // observable in production traces.
+    let mut tx = crate::db::begin_immediate_logged(pool, "tag_inheritance_rebuild").await?;
 
     sqlx::query("DELETE FROM block_tag_inherited")
         .execute(&mut *tx)
@@ -64,7 +68,10 @@ pub(crate) async fn rebuild_all_split(
     // `apply_op_tag_inheritance` calls serialise behind us. Combined with
     // the single-statement recursive-CTE INSERT below, this means the
     // DELETE + recompute is atomic with respect to incremental updates.
-    let mut tx = write_pool.begin_with("BEGIN IMMEDIATE").await?;
+    // `begin_immediate_logged` adds the MAINT-30 slow-acquire log
+    // (consistency with PR #116's cache/ migrations).
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "tag_inheritance_rebuild_split").await?;
 
     sqlx::query("DELETE FROM block_tag_inherited")
         .execute(&mut *tx)
