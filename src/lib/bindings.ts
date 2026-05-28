@@ -38,6 +38,12 @@ export const commands = {
 	 *  (roots + descendants combined).
 	 */
 	deleteBlocksByIds: (blockIds: string[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	/**
+	 *  Tauri command: move N blocks to a target space (#81 / PEND-57).
+	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
+	 *  blocks actually moved.
+	 */
+	moveBlocksToSpace: (blockIds: string[], spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
 	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
 	restoreBlock: (blockId: string, deletedAtRef: string) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
@@ -96,6 +102,11 @@ export const commands = {
 	batchResolve: (ids: string[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
 	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
 	addTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
+	/**
+	 *  Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
+	 *  [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
+	 */
+	addTagsByIds: (blockIds: string[], tagId: string) => typedError<number, AppError>(__TAURI_INVOKE("add_tags_by_ids", { blockIds, tagId })),
 	/**  Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`]. */
 	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */

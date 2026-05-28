@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { PageTreeItem } from '@/components/PageTreeItem'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
 import type { DensityMode } from '../../hooks/usePageBrowserDensity'
@@ -38,6 +39,15 @@ export interface PageBrowserRowRendererProps {
   onPageSelect: ((pageId: string, title?: string) => void) | undefined
   onCreateUnder: (namespacePath: string) => void
   onDeleteRequest: (target: { id: string; name: string } | null) => void
+  /**
+   * #81 / PEND-57 — batch multi-select. `selectedIds` carries the ids of
+   * every page currently in the selection; `onToggleMultiSelect` flips
+   * one row. Threaded to the leaf page rows so each renders its
+   * selection checkbox. Tree-page and header rows ignore these (the
+   * CORE scope selects flat page rows only).
+   */
+  selectedIds: ReadonlySet<string>
+  onToggleMultiSelect: (pageId: string, e: React.MouseEvent) => void
   /**
    * PEND-56 Phase 3 — when `true`, the leaf `page` row is rendered via
    * `<DensityRow>` (metadata-aware, density-aware). When `false`, the
@@ -225,6 +235,8 @@ function DensityPageRow({
   onPageSelect,
   onDeleteRequest,
   density,
+  selectedIds,
+  onToggleMultiSelect,
 }: DensityPageRowProps): React.ReactElement {
   const { page, pageIndex } = row
   const trimmedFilter = filterText.trim()
@@ -280,6 +292,8 @@ function DensityPageRow({
       hasTodo={hasTodo}
       hasScheduled={hasScheduled}
       hasDue={hasDue}
+      multiSelected={selectedIds.has(page.id)}
+      onToggleMultiSelect={onToggleMultiSelect}
       onSelect={handleSelect}
       onToggleStar={toggleStar}
       onDeleteRequest={onDeleteRequest}
@@ -303,10 +317,13 @@ function PageRow({
   toggleStar,
   onPageSelect,
   onDeleteRequest,
+  selectedIds,
+  onToggleMultiSelect,
 }: PageRowProps): React.ReactElement {
   const { t } = useTranslation()
   const { page, pageIndex } = row
   const pageStarred = isStarred(page.id)
+  const multiSelected = selectedIds.has(page.id)
   const title = page.content ?? t('pageBrowser.untitled')
   const trimmedFilter = filterText.trim()
   const showAliasBadge =
@@ -326,6 +343,7 @@ function PageRow({
       aria-selected={focusedIndex === pageIndex}
       data-page-item
       data-starred={pageStarred}
+      data-selected={multiSelected}
       tabIndex={-1}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50',
@@ -336,6 +354,25 @@ function PageRow({
       )}
       style={rowStyle(virtualRow.start)}
     >
+      {/* #81 / PEND-57 — batch-selection checkbox (additive to the
+          single-row star/delete flow). */}
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner checkbox */}
+      <div role="gridcell" className="shrink-0">
+        <Checkbox
+          checked={multiSelected}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleMultiSelect(page.id, e)
+          }}
+          aria-label={t('pageBrowser.select.toggle')}
+          data-testid={`page-select-${page.id}`}
+          className={cn(
+            'shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity',
+            multiSelected && 'opacity-100',
+          )}
+        />
+      </div>
       {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
       {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">

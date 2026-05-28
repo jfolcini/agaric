@@ -85,6 +85,8 @@ function baseProps(
     onDeleteRequest: vi.fn(),
     flagOn: false,
     density: 'regular',
+    selectedIds: new Set<string>(),
+    onToggleMultiSelect: vi.fn(),
     ...overrides,
   }
 }

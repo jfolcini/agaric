@@ -1222,6 +1222,65 @@ export const HANDLERS: Record<string, Handler> = {
     return { block_id: blockId, tag_id: tagId }
   },
 
+  // #81 / PEND-57 — bulk add one tag to N blocks. Lenient skip of
+  // missing / deleted / self / already-tagged; returns the count newly tagged.
+  add_tags_by_ids: (args) => {
+    const a = args as Record<string, unknown>
+    const inputIds = (a['blockIds'] as string[]) ?? []
+    const tagId = a['tagId'] as string
+    if (inputIds.length === 0) {
+      throw new Error('block_ids list cannot be empty')
+    }
+    let count = 0
+    for (const blockId of inputIds) {
+      const b = blocks.get(blockId)
+      if (!b || b['deleted_at'] || blockId === tagId) continue
+      if (!blockTags.has(blockId)) blockTags.set(blockId, new Set())
+      const tags = blockTags.get(blockId)
+      if (tags?.has(tagId)) continue
+      tags?.add(tagId)
+      pushOp('add_tag', { block_id: blockId, tag_id: tagId })
+      count++
+    }
+    return count
+  },
+
+  // #81 / PEND-57 — bulk move N blocks to a space via the canonical
+  // set_property(space) op. Lenient skip of missing / deleted; returns count moved.
+  move_blocks_to_space: (args) => {
+    const a = args as Record<string, unknown>
+    const inputIds = (a['blockIds'] as string[]) ?? []
+    const spaceId = a['spaceId'] as string
+    if (inputIds.length === 0) {
+      throw new Error('block_ids list cannot be empty')
+    }
+    let count = 0
+    for (const blockId of inputIds) {
+      const b = blocks.get(blockId)
+      if (!b || b['deleted_at']) continue
+      if (!properties.has(blockId)) properties.set(blockId, new Map())
+      properties.get(blockId)?.set('space', {
+        block_id: blockId,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: spaceId,
+        value_bool: null,
+      })
+      pushOp('set_property', {
+        block_id: blockId,
+        key: 'space',
+        value_text: null,
+        value_number: null,
+        value_date: null,
+        value_ref: spaceId,
+      })
+      count++
+    }
+    return count
+  },
+
   // ---------------------------------------------------------------------------
   // Backlinks & history
   // ---------------------------------------------------------------------------

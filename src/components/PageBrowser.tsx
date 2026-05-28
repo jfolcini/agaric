@@ -30,6 +30,7 @@ import { t as i18nT } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { DENSITY_ROW_HEIGHT, usePageBrowserDensity } from '../hooks/usePageBrowserDensity'
 import { usePageBrowserGrouping } from '../hooks/usePageBrowserGrouping'
 import {
@@ -62,6 +63,7 @@ import {
 } from './PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from './PageBrowser/PageBrowserHeader'
 import { PageBrowserRowRenderer } from './PageBrowser/PageBrowserRowRenderer'
+import { PageBrowserBatchToolbar } from './PageBrowserBatchToolbar'
 import { ViewHeader } from './ViewHeader'
 
 const HEADER_ROW_HEIGHT = 36
@@ -606,6 +608,22 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     isSinglePageVault,
   })
 
+  // #81 / PEND-57 — batch multi-select over the visible (flat) page set.
+  // Keyed by page id and driven by the same `useListMultiSelect` primitive
+  // TrashView / HistoryView use. Selection is additive: it does NOT touch
+  // the single-row trash button / `usePageDelete` flow above. `filteredPages`
+  // is the flat page list (post sort/group/filter), so select-all and
+  // shift-range operate over exactly what the user can see.
+  const {
+    selected: multiSelected,
+    handleRowClick: handleMultiSelectRowClick,
+    selectAll: selectAllPages,
+    clearSelection: clearMultiSelection,
+  } = useListMultiSelect({
+    items: filteredPages.filter((p): p is BlockRow => p != null),
+    getItemId: (p: BlockRow) => p.id,
+  })
+
   const virtualItemCount = groupedRows.length
 
   const {
@@ -897,6 +915,34 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [navHandleKeyDown])
 
+  // #81 / PEND-57 — document-level batch-selection shortcuts, mirroring
+  // the `useTrashListShortcuts` precedent: Cmd/Ctrl+A selects every
+  // visible page, Escape clears the selection. Gated on a non-empty
+  // selection for Escape so it doesn't swallow the key for other consumers
+  // (e.g. closing the create form) when nothing is selected.
+  useEffect(() => {
+    function handleSelectionKeys(e: KeyboardEvent) {
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT' ||
+        target.tagName === 'TEXTAREA'
+      )
+        return
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+        e.preventDefault()
+        selectAllPages()
+        return
+      }
+      if (e.key === 'Escape' && multiSelected.size > 0) {
+        e.preventDefault()
+        clearMultiSelection()
+      }
+    }
+    document.addEventListener('keydown', handleSelectionKeys)
+    return () => document.removeEventListener('keydown', handleSelectionKeys)
+  }, [selectAllPages, clearMultiSelection, multiSelected.size])
+
   // Scroll focused item into view. `focusedIndex` indexes into the
   // page-only `filteredPages` array; sentinel headers shift the row
   // index in the virtualizer, so map through `pageIndexToRowIndex`.
@@ -1034,6 +1080,20 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         />
       )}
 
+      {/* #81 / PEND-57 — batch-action toolbar. Rendered only when ≥1 page
+          is selected (mirrors Trash/History). After a successful bulk op
+          it clears the selection and `reload()`s so the existing query
+          refetch path updates the view. */}
+      {multiSelected.size > 0 && (
+        <PageBrowserBatchToolbar
+          selectedIds={Array.from(multiSelected)}
+          currentSpaceId={currentSpaceId}
+          onSelectAll={selectAllPages}
+          onClearSelection={clearMultiSelection}
+          onMutated={reload}
+        />
+      )}
+
       {(!spaceIsReady || (loading && pages.length === 0)) && (
         <LoadingSkeleton count={3} height="h-10" loading className="page-browser-loading" />
       )}
@@ -1141,6 +1201,8 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     onDeleteRequest={setDeleteTarget}
                     flagOn={flagOn}
                     density={density}
+                    selectedIds={multiSelected}
+                    onToggleMultiSelect={handleMultiSelectRowClick}
                   />
                 )
               })}

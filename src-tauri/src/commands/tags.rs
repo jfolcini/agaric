@@ -107,6 +107,56 @@ pub async fn add_tag_inner(
         _ => {}
     }
 
+    // 3-5. Cross-space resolution / orphan adoption + dup-check + op append +
+    //      block_tags insert + inheritance propagation, all via the shared
+    //      `apply_tag_to_block_in_tx` helper (also used by the bulk path).
+    //      `payload` is consumed inside the helper. A `None` result means the
+    //      association already exists — the single-row path surfaces that as
+    //      an explicit `InvalidOperation` error (the bulk path skips it).
+    let op_record = apply_tag_to_block_in_tx(&mut tx, device_id, &block_id, &tag_id, payload)
+        .await?
+        .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
+
+    // 6. Commit + dispatch background cache tasks (fire-and-forget).
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
+
+    // 7. Return response
+    Ok(TagResponse { block_id, tag_id })
+}
+
+/// Apply a single `tag_id → block_id` association inside an existing
+/// transaction. Shared by the single-row [`add_tag_inner`] and the bulk
+/// [`add_tags_by_ids_inner`] so the cross-space / orphan-adoption /
+/// inheritance-propagation logic has ONE source of truth.
+///
+/// Performs, in order:
+/// 1. PEND-15 Phase 2 cross-space guard with PEND-76 F4 orphan adoption —
+///    a tag with no space is adopted into the source block's space (emitting
+///    a `SetProperty(space)` op + materialising the row); a genuine
+///    cross-space pairing is rejected with [`AppError::Validation`].
+/// 2. Duplicate detection — if the `block_tags` row already exists this
+///    returns `Ok(None)` WITHOUT appending any op. Callers decide whether a
+///    duplicate is an error (single path) or a silent skip (bulk path).
+/// 3. Appends the supplied `AddTag` `payload` to the op_log (via
+///    `append_local_op_in_tx`, so the `LAST_APPEND` task-local sees it).
+/// 4. Inserts the `block_tags` row.
+/// 5. Propagates the inherited tag to descendants (P-4).
+///
+/// On success returns `Ok(Some(op_record))` — the `AddTag` op record the
+/// caller must `enqueue_background` for post-commit dispatch. The caller is
+/// responsible for commit + dispatch.
+///
+/// Pre-conditions the caller MUST have already validated (this helper does
+/// NOT re-check): `block_id` exists + is live, `tag_id` exists + is live +
+/// has `block_type = 'tag'`, and `block_id != tag_id`.
+async fn apply_tag_to_block_in_tx(
+    tx: &mut CommandTx,
+    device_id: &str,
+    block_id: &str,
+    tag_id: &str,
+    payload: OpPayload,
+) -> Result<Option<op_log::OpRecord>, AppError> {
     // PEND-15 Phase 2 (Path A) — tags are space-scoped; a tag may not be
     // applied across spaces.
     //
@@ -120,9 +170,9 @@ pub async fn add_tag_inner(
     // `tags.addFailed` toast until the next launch.
     {
         let src_space =
-            crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&block_id)).await?;
+            crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(block_id)).await?;
         let tag_space =
-            crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(&tag_id)).await?;
+            crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id)).await?;
         if src_space != tag_space {
             match (&src_space, &tag_space) {
                 // Orphan tag + spaced source block — adopt the tag into the
@@ -130,7 +180,7 @@ pub async fn add_tag_inner(
                 (Some(space_id), None) => {
                     let space_ref = space_id.as_str().to_owned();
                     let set_space = OpPayload::SetProperty(SetPropertyPayload {
-                        block_id: BlockId::from_trusted(&tag_id),
+                        block_id: BlockId::from_trusted(tag_id),
                         key: "space".to_owned(),
                         value_text: None,
                         value_num: None,
@@ -138,8 +188,7 @@ pub async fn add_tag_inner(
                         value_ref: Some(space_ref.clone()),
                         value_bool: None,
                     });
-                    op_log::append_local_op_in_tx(&mut tx, device_id, set_space, now_rfc3339())
-                        .await?;
+                    op_log::append_local_op_in_tx(tx, device_id, set_space, now_rfc3339()).await?;
                     // Materialise the property row inside the same tx so the
                     // downstream dup-check / projection see the adopted space.
                     sqlx::query!(
@@ -149,53 +198,48 @@ pub async fn add_tag_inner(
                         tag_id,
                         space_ref,
                     )
-                    .execute(&mut **tx)
+                    .execute(&mut ***tx)
                     .await?;
                 }
                 // Genuine cross-space (both spaced but differ) or a spaced
                 // tag on an unspaced source block — reject.
                 _ => {
                     return Err(AppError::Validation(format!(
-                        "cross-space tag: block '{}' (space {:?}) cannot use tag '{}' (space {:?})",
-                        block_id, src_space, tag_id, tag_space,
+                        "cross-space tag: block '{block_id}' (space {src_space:?}) cannot use tag '{tag_id}' (space {tag_space:?})",
                     )));
                 }
             }
         }
     }
 
-    // Check for existing association (TOCTOU-safe)
+    // Check for existing association (TOCTOU-safe). A duplicate is reported
+    // to the caller as `Ok(None)` — NO op is appended — so the single-row
+    // path can raise `InvalidOperation` while the bulk path silently skips.
     let dup = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
         block_id,
         tag_id
     )
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut ***tx)
     .await?;
     if dup.is_some() {
-        return Err(AppError::InvalidOperation("tag already applied".into()));
+        return Ok(None);
     }
 
-    // 3. Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+    // Append the AddTag op to the op_log (records the OpRef in LAST_APPEND).
+    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
 
-    // 4. Insert into block_tags within same transaction
+    // Insert into block_tags within the same transaction.
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-        .bind(&block_id)
-        .bind(&tag_id)
-        .execute(&mut **tx)
+        .bind(block_id)
+        .bind(tag_id)
+        .execute(&mut ***tx)
         .await?;
 
-    // P-4: Propagate inherited tag to descendants
-    crate::tag_inheritance::propagate_tag_to_descendants(&mut tx, &block_id, &tag_id).await?;
+    // P-4: Propagate inherited tag to descendants.
+    crate::tag_inheritance::propagate_tag_to_descendants(tx, block_id, tag_id).await?;
 
-    // 5. Commit + dispatch background cache tasks (fire-and-forget).
-    tx.enqueue_background(op_record);
-    tx.commit_and_dispatch(materializer).await?;
-
-    // 6. Return response
-    Ok(TagResponse { block_id, tag_id })
+    Ok(Some(op_record))
 }
 
 /// Remove a tag from a block.
@@ -456,6 +500,161 @@ pub async fn add_tag(
     add_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
         .await
         .map_err(sanitize_internal_error)
+}
+
+/// #81 / PEND-57 — bulk variant of [`add_tag_inner`]: apply ONE `tag_id`
+/// to N `block_ids` in a single `BEGIN IMMEDIATE` transaction (the Pages
+/// multi-select "tag selected" action).
+///
+/// Collapses what the frontend would otherwise drive as one `add_tag` IPC
+/// per selected row into a single round-trip, a single writer-lock window,
+/// and a single op-log seq range. One `AddTag` op is appended per block
+/// that is actually newly tagged; the `LAST_APPEND` task-local therefore
+/// drains as ONE activity-feed entry covering the whole batch (the first
+/// op is the primary `OpRef`, the rest `additionalOpRefs`).
+///
+/// **Tag validation runs ONCE** (mirrors `add_tag_inner`): `tag_id` must
+/// resolve to a live block carrying `block_type = 'tag'`. A bad tag aborts
+/// the whole batch with the same `NotFound` / `InvalidOperation` error the
+/// single path raises — that's a caller error, not data drift.
+///
+/// **Per-block leniency** (mirrors `set_todo_state_batch_inner` /
+/// `delete_blocks_by_ids_inner`): for each id the batch silently SKIPS
+/// — without aborting — when the block is missing / soft-deleted, equals
+/// `tag_id` (self-tag), or already carries the tag. The per-block
+/// cross-space / orphan-adoption resolution is shared with the single path
+/// via [`apply_tag_to_block_in_tx`]; a genuine cross-space pairing DOES
+/// abort the whole tx (consistent with the single path's hard rejection —
+/// silently dropping a cross-space target would hide a real data error).
+///
+/// Returns the number of blocks newly tagged (NOT the input list length).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
+/// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
+/// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
+#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+pub async fn add_tags_by_ids_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+    tag_id: String,
+) -> Result<i64, AppError> {
+    use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
+
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
+            block_ids.len()
+        )));
+    }
+
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — normalise every id (block
+    // ids + tag id) to canonical uppercase before any SQL touch so the
+    // byte-exact ULID membership probes match regardless of caller casing.
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+    let tag_id = tag_id.to_ascii_uppercase();
+
+    // One IMMEDIATE tx covers the whole batch: tag validation + every
+    // per-block op_log append + block_tags insert + inheritance propagation.
+    let mut tx = CommandTx::begin_immediate(pool, "add_tags_by_ids").await?;
+
+    // Validate `tag_id` ONCE: live block with block_type = 'tag' (TOCTOU-safe
+    // inside the tx). Mirrors `add_tag_inner`.
+    let tag_row = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        tag_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    match tag_row {
+        None => {
+            return Err(AppError::NotFound(format!(
+                "tag block '{tag_id}' (not found or deleted)"
+            )));
+        }
+        Some(ref r) if r.block_type != "tag" => {
+            return Err(AppError::InvalidOperation(format!(
+                "block '{tag_id}' has block_type '{}', expected 'tag'",
+                r.block_type
+            )));
+        }
+        _ => {}
+    }
+
+    let mut tagged: i64 = 0;
+    for block_id in &block_ids {
+        // L-34 mirror — a block cannot tag itself. Skip rather than abort:
+        // a multi-select that happens to include the tag block is a benign
+        // gesture, not a caller error.
+        if block_id == &tag_id {
+            continue;
+        }
+
+        // Probe existence inside the tx so a row deleted between FE selection
+        // and this call cleanly skips rather than aborting the whole batch.
+        let exists = sqlx::query_scalar!(
+            r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            block_id
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+        if exists.is_none() {
+            continue;
+        }
+
+        let payload = OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(block_id),
+            tag_id: BlockId::from_trusted(&tag_id),
+        });
+
+        // Shared per-block logic: cross-space/orphan resolution, dup-check,
+        // op append, block_tags insert, inheritance propagation. `None` means
+        // the tag was already applied — silently skip (lenient batch).
+        if let Some(op_record) =
+            apply_tag_to_block_in_tx(&mut tx, device_id, block_id, &tag_id, payload).await?
+        {
+            tx.enqueue_background(op_record);
+            tagged += 1;
+        }
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(tagged)
+}
+
+/// Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
+/// [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn add_tags_by_ids(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+    tag_id: String,
+) -> Result<i64, AppError> {
+    add_tags_by_ids_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        block_ids,
+        tag_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`].

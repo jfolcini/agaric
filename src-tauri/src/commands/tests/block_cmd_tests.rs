@@ -4794,6 +4794,256 @@ async fn delete_blocks_by_ids_normalises_lowercase_block_id() {
 }
 
 // ======================================================================
+// #81 / PEND-57 — move_blocks_to_space (bulk move-to-space)
+// ======================================================================
+
+/// Seed the synthetic test space as a real space block (so the upfront
+/// `is_space = 'true'` validation passes).
+async fn seed_space(pool: &SqlitePool, space_id: &str) {
+    insert_block(pool, space_id, "page", "Space", None, None).await;
+    mark_block_as_space(pool, space_id).await;
+}
+
+/// Happy path: N blocks moved to a target space writes N `set_property`
+/// (space) ops in a single contiguous seq range and N materialised
+/// `block_properties(space)` rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_moves_all_in_one_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS_SPACE").await;
+    let mut ids = Vec::new();
+    for i in 0..4 {
+        let id = format!("MBS_BLK_{i}");
+        insert_block(&pool, &id, "page", "pg", None, Some(i + 1)).await;
+        ids.push(id);
+    }
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let moved = move_blocks_to_space_inner(&pool, DEV, &mat, ids.clone(), "MBS_SPACE".into())
+        .await
+        .unwrap();
+    assert_eq!(moved, 4, "all four blocks should be reported as moved");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        post_max - pre_max,
+        4,
+        "the 4 set_property(space) ops must occupy a single contiguous seq range"
+    );
+
+    for id in &ids {
+        let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+        )
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .flatten();
+        assert_eq!(
+            space_ref.as_deref(),
+            Some("MBS_SPACE"),
+            "block {id} must carry the target space ref"
+        );
+    }
+}
+
+/// Re-homing: a block already in space A moves to space B (the `space`
+/// ref is overwritten, not duplicated).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rehomes_existing_member() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS2_SPACE_A").await;
+    seed_space(&pool, "MBS2_SPACE_B").await;
+    insert_block(&pool, "MBS2_BLK", "page", "pg", None, Some(1)).await;
+    assign_to_space(&pool, "MBS2_BLK", "MBS2_SPACE_A").await;
+
+    let moved = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS2_BLK".into()],
+        "MBS2_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, 1);
+
+    // Exactly one `space` row, pointing at B.
+    let rows: Vec<Option<String>> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind("MBS2_BLK")
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1, "INSERT OR REPLACE keeps a single space row");
+    assert_eq!(rows[0].as_deref(), Some("MBS2_SPACE_B"));
+}
+
+/// Lenient batch: missing / soft-deleted ids are silently skipped; only
+/// the live subset is moved.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_skips_missing_and_deleted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS3_SPACE").await;
+    let live = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "live".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let deleted = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "gone".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let moved = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![live.id.clone(), deleted.id.clone(), "MBS3_GHOST".into()],
+        "MBS3_SPACE".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, 1, "only the live block is moved");
+
+    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind(&live.id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(space_ref.as_deref(), Some("MBS3_SPACE"));
+}
+
+/// ULID normalisation: lowercase block + space ids resolve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_normalises_lowercase_ids() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS4_SPACE").await;
+    insert_block(&pool, "MBS4_BLK01", "page", "pg", None, Some(1)).await;
+
+    let moved = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["mbs4_blk01".into()],
+        "mbs4_space".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(moved, 1, "lowercase ids must normalise to uppercase match");
+}
+
+/// Empty input list rejected up-front.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rejects_empty_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, "MBS5_SPACE").await;
+
+    let result = move_blocks_to_space_inner(&pool, DEV, &mat, vec![], "MBS5_SPACE".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty block_ids must be rejected, got {result:?}"
+    );
+}
+
+/// Over-cap input list rejected up-front.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    seed_space(&pool, "MBS6_SPACE").await;
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("MBS6_{i:026}"))
+        .collect();
+    let result = move_blocks_to_space_inner(&pool, DEV, &mat, oversize, "MBS6_SPACE".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize block_ids must be rejected, got {result:?}"
+    );
+}
+
+/// A `space_id` that is not a live `is_space = 'true'` block aborts the
+/// whole batch with `Validation` and writes nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_rejects_non_space_target() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // A plain page that is NOT flagged is_space.
+    insert_block(&pool, "MBS7_NOTSPACE", "page", "not a space", None, None).await;
+    insert_block(&pool, "MBS7_BLK", "page", "pg", None, Some(1)).await;
+
+    let result = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS7_BLK".into()],
+        "MBS7_NOTSPACE".into(),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "non-space target must be rejected, got {result:?}"
+    );
+
+    // Nothing was written by the aborted batch.
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind("MBS7_BLK")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0, "aborted batch must write no space property rows");
+}
+
+// ======================================================================
 // PEND-35 Tier 4.3 — create_blocks_batch
 // ======================================================================
 
