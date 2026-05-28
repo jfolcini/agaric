@@ -37,10 +37,11 @@
 //!     shrinks the WAL file even when it could.
 
 use crate::error::AppError;
+use chrono::Datelike;
 use sqlx::SqlitePool;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
@@ -256,6 +257,41 @@ pub async fn loro_snapshot_if_dirty(write_pool: &SqlitePool) -> Result<(), AppEr
     };
     let ok = crate::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
     tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
+    Ok(())
+}
+
+/// Issue #157 sub-item H — fire `RebuildProjectedAgendaCache` at most
+/// once per UTC calendar day. The daemon's outer ticker fires every
+/// `TICK_INTERVAL` (60 s); this body keeps a "last-fired UTC
+/// day-number" in a shared atomic, compares it to today's day-number,
+/// and enqueues only when the value advances. Sentinel `i32::MIN` =
+/// "never fired" so the first tick post-boot always fires (the
+/// projected agenda may be stale if the previous session ended
+/// before its own midnight tick). CAS-on-update prevents double-
+/// enqueue under concurrent ticks racing across midnight.
+pub async fn projected_agenda_midnight_tick(
+    materializer: &crate::materializer::Materializer,
+    last_fired_day: &AtomicI32,
+) -> Result<(), AppError> {
+    let today = chrono::Utc::now().date_naive().num_days_from_ce();
+    let previous = last_fired_day.load(Ordering::Acquire);
+    if previous == today {
+        return Ok(());
+    }
+    if last_fired_day
+        .compare_exchange(previous, today, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Ok(());
+    }
+    materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::RebuildProjectedAgendaCache)
+        .map_err(|e| AppError::Channel(format!("projected_agenda_midnight enqueue failed: {e}")))?;
+    tracing::info!(
+        previous_day = previous,
+        today,
+        "projected_agenda_midnight: UTC day rolled — RebuildProjectedAgendaCache enqueued"
+    );
     Ok(())
 }
 
@@ -600,5 +636,74 @@ mod tests {
         loro_snapshot_if_dirty(&pool)
             .await
             .expect("loro_snapshot_if_dirty must succeed when shared::get() returns None");
+    }
+
+    /// Issue #157 sub-item H — first call post-boot fires (sentinel
+    /// `i32::MIN`), and the atomic advances to today's day-number.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_midnight_fires_on_first_call_157_h() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let last_day = AtomicI32::new(i32::MIN);
+
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("first call must succeed (enqueue path)");
+
+        let today = chrono::Utc::now().date_naive().num_days_from_ce();
+        assert_eq!(
+            last_day.load(Ordering::Acquire),
+            today,
+            "last_fired_day must be updated to today's day-number after the first enqueue"
+        );
+    }
+
+    /// Issue #157 sub-item H — same-day tick is a no-op.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_midnight_skips_same_day_157_h() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let today = chrono::Utc::now().date_naive().num_days_from_ce();
+        let last_day = AtomicI32::new(today);
+
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("same-day tick must succeed (short-circuit path)");
+
+        assert_eq!(
+            last_day.load(Ordering::Acquire),
+            today,
+            "last_fired_day must NOT change on a same-day tick"
+        );
+    }
+
+    /// Issue #157 sub-item H — day-rollover tick fires and advances
+    /// the atomic to today.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn projected_agenda_midnight_fires_on_day_rollover_157_h() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        let today = chrono::Utc::now().date_naive().num_days_from_ce();
+        let yesterday = today - 1;
+        let last_day = AtomicI32::new(yesterday);
+
+        projected_agenda_midnight_tick(&mat, &last_day)
+            .await
+            .expect("day-rollover tick must succeed (enqueue path)");
+
+        assert_eq!(
+            last_day.load(Ordering::Acquire),
+            today,
+            "last_fired_day must advance to today after the rollover enqueue"
+        );
     }
 }
