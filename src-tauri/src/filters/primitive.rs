@@ -1544,8 +1544,8 @@ mod explain_query_plan_tests {
         // `block_links bl JOIN blocks src ON bl.source_id = src.id JOIN
         // blocks tgt ON bl.target_id = tgt.id WHERE src.page_id = b.id` —
         // that subquery IS allowed to touch block_links (it drives from
-        // `source_id` via idx_block_links_source / autoindex, then joins the
-        // target block by integer PK). The PEND-58d D19 `tgt` join filters
+        // `source_id` via the PK autoindex on (source_id, target_id),
+        // then joins the target block by integer PK). The PEND-58d D19 `tgt` join filters
         // deleted / same-page targets. The previous *inbound* `target_id`
         // index scan (driving the subquery from `block_links.target_id`)
         // must NOT appear — inbound is served by the materialised
