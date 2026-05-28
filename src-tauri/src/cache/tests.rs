@@ -4182,3 +4182,108 @@ async fn reindex_block_links_waits_for_competing_writer() {
         "rebuild should have waited for the holder (>=50ms); waited {waited:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Issue #108 B-C3: aggregate UPSERT + NOT EXISTS DELETE rewrite must
+// produce the same end state as the original per-target loop across the
+// full mix of {insert / update / delete} operations in one call.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn reindex_page_link_cache_for_block_multi_target_full_lifecycle() {
+    let (pool, _dir) = test_pool().await;
+
+    // Source page PA + three target pages PB, PC, PD.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('PA00000000000000000000000A', 'page', 'A')")
+        .execute(&pool).await.unwrap();
+    for tgt in [
+        "PB00000000000000000000000B",
+        "PC00000000000000000000000C",
+        "PD00000000000000000000000D",
+    ] {
+        sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES (?, 'page', 'target')")
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Two content blocks under PA: one links to PB twice (count=2),
+    // another links to PC once (count=1). PD will appear only as a
+    // stale cache row.
+    for (cid, target, pos) in [
+        (
+            "CB100000000000000000000000",
+            "PB00000000000000000000000B",
+            1,
+        ),
+        (
+            "CB200000000000000000000000",
+            "PB00000000000000000000000B",
+            2,
+        ),
+        (
+            "CC100000000000000000000000",
+            "PC00000000000000000000000C",
+            3,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) VALUES (?, 'content', '', ?, ?)",
+        )
+        .bind(cid).bind("PA00000000000000000000000A").bind(pos)
+        .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(cid)
+            .bind(target)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    // Seed a stale cache row for PD (the "now zero" target the DELETE must sweep).
+    sqlx::query(
+        "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+         VALUES ('PA00000000000000000000000A', 'PD00000000000000000000000D', 7)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Seed a stale cache row for PC with the wrong count (the UPSERT must update it).
+    sqlx::query(
+        "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+         VALUES ('PA00000000000000000000000A', 'PC00000000000000000000000C', 99)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Single reindex from one of the source page's blocks should drive
+    // INSERT (PB), UPDATE (PC: 99→1), and DELETE (PD: zero edges left).
+    reindex_page_link_cache_for_block(&pool, "CB100000000000000000000000")
+        .await
+        .unwrap();
+
+    let mut rows: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         WHERE source_page_id = 'PA00000000000000000000000A' ORDER BY target_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "PA00000000000000000000000A".to_string(),
+                "PB00000000000000000000000B".to_string(),
+                2
+            ),
+            (
+                "PA00000000000000000000000A".to_string(),
+                "PC00000000000000000000000C".to_string(),
+                1
+            ),
+        ],
+        "aggregate UPSERT + NOT EXISTS DELETE must produce {{PB:2, PC:1}} and sweep PD's stale row"
+    );
+}

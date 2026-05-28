@@ -581,33 +581,41 @@ async fn recompute_pages_cache_counts_for_pages(
     conn: &mut sqlx::SqliteConnection,
     page_ids: &[String],
 ) -> Result<(), AppError> {
+    if page_ids.is_empty() {
+        return Ok(());
+    }
+    // B-C2 (issue #108): dedupe the touched set and apply both counts
+    // in one statement, replacing the per-page loop. The correlated
+    // subqueries reference the outer UPDATE's `pages_cache.page_id`
+    // (one row at a time), so a multi-row UPDATE is semantically
+    // identical to N single-row UPDATEs but does it in one round-trip.
     use std::collections::HashSet;
     let unique: HashSet<&String> = page_ids.iter().collect();
-    for page_id in unique {
-        sqlx::query(
-            "UPDATE pages_cache SET \
-                 inbound_link_count = ( \
-                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                         JOIN blocks descendant ON bl.target_id = descendant.id \
-                         JOIN blocks src ON src.id = bl.source_id \
-                         WHERE descendant.page_id = ?1 \
-                           AND descendant.deleted_at IS NULL \
-                           AND src.deleted_at IS NULL \
-                           AND src.page_id IS NOT NULL \
-                           AND src.page_id != ?1 \
-                 ), \
-                 child_block_count = ( \
-                     SELECT COUNT(*) FROM blocks descendant \
-                         WHERE descendant.page_id = ?1 \
-                           AND descendant.deleted_at IS NULL \
-                           AND descendant.id != ?1 \
-                 ) \
-             WHERE page_id = ?1",
-        )
-        .bind(page_id)
-        .execute(&mut *conn)
-        .await?;
-    }
+    let unique: Vec<&String> = unique.into_iter().collect();
+    let json = serde_json::to_string(&unique)?;
+    sqlx::query(
+        "UPDATE pages_cache SET \
+             inbound_link_count = ( \
+                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                     JOIN blocks descendant ON bl.target_id = descendant.id \
+                     JOIN blocks src ON src.id = bl.source_id \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND src.deleted_at IS NULL \
+                       AND src.page_id IS NOT NULL \
+                       AND src.page_id != pages_cache.page_id \
+             ), \
+             child_block_count = ( \
+                 SELECT COUNT(*) FROM blocks descendant \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND descendant.id != pages_cache.page_id \
+             ) \
+         WHERE page_id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(&json)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -1007,45 +1015,46 @@ async fn resolve_owning_page(
     block_id: &str,
     parent_hint: Option<&str>,
 ) -> Result<Option<String>, AppError> {
-    // Walk through ancestors until we hit a page-typed block or run out.
-    // Bound depth like the canonical CTE (`depth < 100`).
-    let mut cur: Option<String> = Some(block_id.to_owned());
-    // First, see if the seed itself is a page.
-    if let Some(seed) = &cur {
-        let row: Option<(String,)> = sqlx::query_as("SELECT block_type FROM blocks WHERE id = ?")
-            .bind(seed)
-            .fetch_optional(&mut *conn)
-            .await?;
-        if let Some((bt,)) = row {
-            if bt == "page" {
-                return Ok(Some(seed.clone()));
-            }
-        }
-        // If the seed row doesn't exist yet (createBlock path may run
-        // this before projection has inserted the row in some legacy
-        // call sites), walk via `parent_hint`.
-        cur = parent_hint.map(std::borrow::ToOwned::to_owned);
+    // B-I1 (issue #108): collapse the per-row ancestor walk into the
+    // canonical `ancestors_cte_standard!()` CTE — one round-trip
+    // (or two, with the `parent_hint` fallback) instead of one per
+    // depth-step. Depth-cap 100 (invariant #9) is preserved by the
+    // macro's recursive guard. The `JOIN blocks` + `ORDER BY depth ASC
+    // LIMIT 1` selects the nearest page-typed ancestor; for a seed that
+    // is itself a page the depth-0 row wins.
+    if let Some(page_id) = nearest_page_ancestor(conn, block_id).await? {
+        return Ok(Some(page_id));
     }
-    let mut depth = 0;
-    while let Some(id) = cur.clone() {
-        if depth >= 100 {
-            break;
-        }
-        let row: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT block_type, parent_id FROM blocks WHERE id = ?")
-                .bind(&id)
-                .fetch_optional(&mut *conn)
-                .await?;
-        match row {
-            Some((bt, _)) if bt == "page" => return Ok(Some(id)),
-            Some((_, parent)) => {
-                cur = parent;
-            }
-            None => return Ok(None),
-        }
-        depth += 1;
+    // Seed row may not exist yet (the createBlock path can call this
+    // before projection has inserted the row in some legacy call sites);
+    // fall back to `parent_hint` if provided.
+    if let Some(hint) = parent_hint {
+        return nearest_page_ancestor(conn, hint).await;
     }
     Ok(None)
+}
+
+/// Issue #108 (B-I1) helper: walk ancestors of `seed` via the canonical
+/// recursive CTE and return the id of the nearest `block_type = 'page'`
+/// ancestor (or the seed itself if it is a page). `None` when the seed
+/// row doesn't exist or no page-typed ancestor is reachable within the
+/// invariant-#9 depth-100 bound.
+async fn nearest_page_ancestor(
+    conn: &mut sqlx::SqliteConnection,
+    seed: &str,
+) -> Result<Option<String>, AppError> {
+    let row: Option<(String,)> = sqlx::query_as(concat!(
+        crate::ancestors_cte_standard!(),
+        "SELECT a.id FROM ancestors a \
+         JOIN blocks b ON b.id = a.id \
+         WHERE b.block_type = 'page' \
+         ORDER BY a.depth ASC \
+         LIMIT 1",
+    ))
+    .bind(seed)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.map(|(id,)| id))
 }
 
 /// Capture the set of pages this block was linking to BEFORE the
