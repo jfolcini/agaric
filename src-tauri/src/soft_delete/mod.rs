@@ -3,6 +3,9 @@
 mod restore;
 mod trash;
 
+#[cfg(test)]
+mod proptest_b3;
+
 pub use restore::restore_block;
 pub use trash::{cascade_soft_delete, soft_delete_block};
 
