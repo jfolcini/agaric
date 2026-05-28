@@ -5689,7 +5689,7 @@ async fn fetch_block_rows_by_ids_small_in_bind() {
     let ids = ["SRC_A", "SRC_B", "SRC_C"];
     let rows = fetch_block_rows_by_ids(&pool, &ids).await.unwrap();
 
-    let fetched: FxHashSet<String> = rows.iter().map(|r| r.id.clone()).collect();
+    let fetched: FxHashSet<String> = rows.iter().map(|r| r.id.to_string()).collect();
     let expected: FxHashSet<String> = ids.iter().map(|s| (*s).to_string()).collect();
     assert_eq!(
         fetched, expected,
@@ -5715,7 +5715,7 @@ async fn fetch_block_rows_by_ids_large_json_each_matches_in_bind() {
 
     // Fallback path (json_each).
     let large_rows = fetch_block_rows_by_ids(&pool, &all_refs).await.unwrap();
-    let large_set: FxHashSet<String> = large_rows.iter().map(|r| r.id.clone()).collect();
+    let large_set: FxHashSet<String> = large_rows.iter().map(|r| r.id.to_string()).collect();
 
     // IN-bind path applied twice to the same id space, unioned.
     let chunk_a: Vec<&str> = all_refs[..300].to_vec();
@@ -5725,7 +5725,7 @@ async fn fetch_block_rows_by_ids_large_json_each_matches_in_bind() {
     let small_set: FxHashSet<String> = small_a
         .iter()
         .chain(small_b.iter())
-        .map(|r| r.id.clone())
+        .map(|r| r.id.to_string())
         .collect();
 
     assert_eq!(

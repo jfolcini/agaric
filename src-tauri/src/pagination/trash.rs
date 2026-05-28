@@ -47,10 +47,11 @@ pub async fn list_trash(
     // change to the filter SQL across every inlined copy.
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: crate::ulid::BlockId", position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
-                page_id
+                page_id as "page_id: crate::ulid::BlockId"
          FROM blocks b
          WHERE b.deleted_at IS NOT NULL
            AND (
@@ -77,7 +78,7 @@ pub async fn list_trash(
     .await?;
 
     build_page_response(rows, page.limit, |last| {
-        Cursor::for_id_and_deleted_at(last.id.clone(), last.deleted_at.clone())
+        Cursor::for_id_and_deleted_at(last.id.clone().into_string(), last.deleted_at.clone())
     })
 }
 

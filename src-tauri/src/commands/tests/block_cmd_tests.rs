@@ -35,7 +35,9 @@ async fn create_block_returns_correct_fields_and_persists() {
     assert!(resp.deleted_at.is_none(), "new block should not be deleted");
 
     // Verify persistence in DB via direct query
-    let row = get_block_inner(&pool, resp.id.clone()).await.unwrap();
+    let row = get_block_inner(&pool, resp.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(row.id, resp.id, "DB row should match response ID");
     assert_eq!(
         row.block_type, "content",
@@ -71,16 +73,16 @@ async fn create_block_generates_valid_ulid() {
     .unwrap();
 
     assert_eq!(
-        resp.id.len(),
+        resp.id.as_str().len(),
         26,
         "ULID should be 26 Crockford base32 characters"
     );
     assert!(
-        resp.id.chars().all(|c| c.is_ascii_alphanumeric()),
+        resp.id.as_str().chars().all(|c| c.is_ascii_alphanumeric()),
         "ULID should only contain alphanumeric characters"
     );
     assert!(
-        BlockId::from_string(&resp.id).is_ok(),
+        BlockId::from_string(resp.id.as_str()).is_ok(),
         "response ID should parse as a valid ULID"
     );
 }
@@ -110,7 +112,7 @@ async fn create_block_with_parent_sets_parent_id() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -164,7 +166,7 @@ async fn create_block_deleted_parent_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone().into_string())
         .await
         .unwrap();
 
@@ -176,7 +178,7 @@ async fn create_block_deleted_parent_returns_not_found() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id),
+        Some(parent.id.into_string()),
         Some(1),
     )
     .await;
@@ -305,7 +307,7 @@ async fn create_block_with_unicode_content_preserves_text() {
     );
 
     // Also verify round-trip through DB
-    let row = get_block_inner(&pool, resp.id).await.unwrap();
+    let row = get_block_inner(&pool, resp.id.into_string()).await.unwrap();
     assert_eq!(
         row.content,
         Some(unicode_content.into()),
@@ -482,7 +484,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     assert_eq!(block.block_type, "page");
     assert_eq!(block.content.as_deref(), Some("Hello space"));
     assert_eq!(
-        block.page_id.as_deref(),
+        block.page_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(block.id.as_str()),
         "page block must materialize page_id = self"
     );
@@ -543,7 +545,7 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     .await
     .unwrap();
     assert!(
-        page.items.iter().any(|b| b.id == block.id),
+        page.items.iter().any(|b| b.id == block.id.as_str()),
         "newly-created page must surface in scoped list_blocks(page, Personal); got {} items",
         page.items.len(),
     );
@@ -581,7 +583,7 @@ async fn create_block_non_page_ignores_space_id() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         None,
         &SpaceScope::Global,
     )
@@ -612,9 +614,15 @@ async fn edit_block_updates_content() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "updated".into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -652,14 +660,26 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     .unwrap();
 
     // First edit
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
 
     // Second edit — should have prev_edit pointing to the first edit
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v3".into(),
+    )
+    .await
+    .unwrap();
 
     // Check the last op_log entry has prev_edit set
     let row = sqlx::query!(
@@ -703,15 +723,33 @@ async fn edit_block_prev_edit_picks_highest_seq_after_b1_rewrite() {
     .await
     .unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
-        .await
-        .unwrap();
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
-        .await
-        .unwrap();
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v4".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v3".into(),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v4".into(),
+    )
+    .await
+    .unwrap();
 
     // The op_log holds: 1 create + 3 edit ops. The latest edit's
     // `prev_edit` must reference the second-latest edit, i.e. the op
@@ -773,11 +811,18 @@ async fn edit_block_deleted_block_returns_not_found() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
 
-    let result = edit_block_inner(&pool, DEV, &mat, created.id, "should fail".into()).await;
+    let result = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.into_string(),
+        "should fail".into(),
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -803,7 +848,7 @@ async fn edit_block_with_unicode_preserves_text() {
     .unwrap();
 
     let unicode = "日本語テスト 🎌 über";
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id, unicode.into())
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), unicode.into())
         .await
         .unwrap();
 
@@ -835,9 +880,15 @@ async fn edit_block_with_empty_to_text() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "".into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -885,9 +936,15 @@ async fn edit_block_with_identical_content_is_noop() {
         .unwrap();
 
     // Edit with identical content
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "same text".into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "same text".into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -937,7 +994,7 @@ async fn edit_block_rejects_oversized_content() {
     .unwrap();
 
     let oversized = "x".repeat(MAX_CONTENT_LENGTH + 1);
-    let result = edit_block_inner(&pool, DEV, &mat, created.id, oversized).await;
+    let result = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), oversized).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -964,7 +1021,7 @@ async fn edit_block_accepts_content_at_max_length() {
     .unwrap();
 
     let at_limit = "x".repeat(MAX_CONTENT_LENGTH);
-    let result = edit_block_inner(&pool, DEV, &mat, created.id, at_limit).await;
+    let result = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), at_limit).await;
 
     assert!(
         result.is_ok(),
@@ -1005,13 +1062,13 @@ async fn delete_block_cascades_to_children() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
     .unwrap();
 
-    let resp = delete_block_inner(&pool, DEV, &mat, parent.id)
+    let resp = delete_block_inner(&pool, DEV, &mat, parent.id.into_string())
         .await
         .unwrap();
 
@@ -1051,11 +1108,11 @@ async fn delete_block_already_deleted_returns_invalid_operation() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
 
-    let result = delete_block_inner(&pool, DEV, &mat, created.id).await;
+    let result = delete_block_inner(&pool, DEV, &mat, created.id.into_string()).await;
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),
         "second delete should return InvalidOperation"
@@ -2705,7 +2762,7 @@ async fn add_attachment_creates_row() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "photo.png".into(),
         "image/png".into(),
         1024,
@@ -2776,7 +2833,7 @@ async fn delete_attachment_removes_row() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "doc.pdf".into(),
         "application/pdf".into(),
         2048,
@@ -2842,7 +2899,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "c3b_happy.pdf".into(),
         "application/pdf".into(),
         64,
@@ -2936,7 +2993,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "c3b_ghost.pdf".into(),
         "application/pdf".into(),
         1,
@@ -3005,7 +3062,7 @@ async fn add_attachment_validates_size_limit() {
         DEV,
         &mat,
         _dir.path(),
-        block.id.clone(),
+        block.id.clone().into_string(),
         "big.bin".into(),
         "application/zip".into(),
         over_limit,
@@ -3049,7 +3106,7 @@ async fn add_attachment_validates_mime_type() {
         DEV,
         &mat,
         _dir.path(),
-        block.id.clone(),
+        block.id.clone().into_string(),
         "virus.exe".into(),
         "application/x-msdownload".into(),
         1024,
@@ -3106,7 +3163,7 @@ async fn add_attachment_size_mismatch_returns_validation_error() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "mismatch.png".into(),
         "image/png".into(),
         64, // declared, not the actual on-disk size
@@ -3180,7 +3237,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "a1.png".into(),
         "image/png".into(),
         100,
@@ -3194,7 +3251,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "a2.pdf".into(),
         "application/pdf".into(),
         200,
@@ -3209,7 +3266,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone(),
+        block_b.id.clone().into_string(),
         "b1.txt".into(),
         "text/plain".into(),
         50,
@@ -3219,7 +3276,7 @@ async fn list_attachments_returns_for_block() {
     .unwrap();
 
     // List for block_a — should get 2
-    let list_a = list_attachments_inner(&pool, block_a.id.clone())
+    let list_a = list_attachments_inner(&pool, block_a.id.clone().into_string())
         .await
         .unwrap();
     assert_eq!(list_a.len(), 2, "block_a should have 2 attachments");
@@ -3233,7 +3290,7 @@ async fn list_attachments_returns_for_block() {
     );
 
     // List for block_b — should get 1
-    let list_b = list_attachments_inner(&pool, block_b.id.clone())
+    let list_b = list_attachments_inner(&pool, block_b.id.clone().into_string())
         .await
         .unwrap();
     assert_eq!(list_b.len(), 1, "block_b should have 1 attachment");
@@ -3304,7 +3361,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "a1.png".into(),
         "image/png".into(),
         10,
@@ -3321,7 +3378,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "a2.pdf".into(),
         "application/pdf".into(),
         20,
@@ -3334,7 +3391,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone(),
+        block_b.id.clone().into_string(),
         "b1.txt".into(),
         "text/plain".into(),
         5,
@@ -3345,12 +3402,18 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
 
     let grouped = list_attachments_batch_inner(
         &pool,
-        vec![block_a.id.clone(), block_b.id.clone(), block_c.id.clone()],
+        vec![
+            block_a.id.to_string(),
+            block_b.id.to_string(),
+            block_c.id.to_string(),
+        ],
     )
     .await
     .unwrap();
 
-    let a_rows = grouped.get(&block_a.id).expect("block_a must be present");
+    let a_rows = grouped
+        .get(block_a.id.as_str())
+        .expect("block_a must be present");
     assert_eq!(a_rows.len(), 2, "block_a should have 2 attachments");
     assert_eq!(
         a_rows[0].filename, "a1.png",
@@ -3363,13 +3426,15 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
     );
     assert_eq!(a_rows[1].mime_type, "application/pdf");
 
-    let b_rows = grouped.get(&block_b.id).expect("block_b must be present");
+    let b_rows = grouped
+        .get(block_b.id.as_str())
+        .expect("block_b must be present");
     assert_eq!(b_rows.len(), 1, "block_b should have 1 attachment");
     assert_eq!(b_rows[0].filename, "b1.txt");
     assert_eq!(b_rows[0].mime_type, "text/plain");
 
     assert!(
-        !grouped.contains_key(&block_c.id),
+        !grouped.contains_key(block_c.id.as_str()),
         "block_c (no attachments) must be absent from the map, not present with an empty Vec"
     );
 
@@ -3438,7 +3503,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "a1.png".into(),
         "image/png".into(),
         10,
@@ -3451,7 +3516,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone(),
+        block_b.id.clone().into_string(),
         "b1.txt".into(),
         "text/plain".into(),
         5,
@@ -3461,15 +3526,17 @@ async fn list_attachments_batch_filters_by_block_id() {
     .unwrap();
 
     // Only ask about block_a — block_b's row must be filtered out by the IN clause.
-    let grouped = list_attachments_batch_inner(&pool, vec![block_a.id.clone()])
+    let grouped = list_attachments_batch_inner(&pool, vec![block_a.id.to_string()])
         .await
         .unwrap();
 
-    let a_rows = grouped.get(&block_a.id).expect("block_a must be present");
+    let a_rows = grouped
+        .get(block_a.id.as_str())
+        .expect("block_a must be present");
     assert_eq!(a_rows.len(), 1, "block_a should have 1 attachment");
     assert_eq!(a_rows[0].filename, "a1.png");
     assert!(
-        !grouped.contains_key(&block_b.id),
+        !grouped.contains_key(block_b.id.as_str()),
         "block_b must not appear when only block_a was requested"
     );
     assert_eq!(
@@ -3511,7 +3578,7 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "shape.png".into(),
         "image/png".into(),
         7,
@@ -3520,16 +3587,16 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
     .await
     .unwrap();
 
-    let single = list_attachments_inner(&pool, block.id.clone())
+    let single = list_attachments_inner(&pool, block.id.clone().into_string())
         .await
         .unwrap();
-    let batch = list_attachments_batch_inner(&pool, vec![block.id.clone()])
+    let batch = list_attachments_batch_inner(&pool, vec![block.id.to_string()])
         .await
         .unwrap();
 
     assert_eq!(single.len(), 1, "single-block IPC should return 1 row");
     let batch_rows = batch
-        .get(&block.id)
+        .get(block.id.as_str())
         .expect("block must be present in batch");
     assert_eq!(batch_rows.len(), 1, "batch IPC should return 1 row");
 
@@ -3592,7 +3659,7 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
     .await
     .unwrap();
 
-    let rows = list_attachments_inner(&pool, block.id.clone())
+    let rows = list_attachments_inner(&pool, block.id.clone().into_string())
         .await
         .unwrap();
     assert_eq!(
@@ -3635,7 +3702,7 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "ghost.png".into(),
         "image/png".into(),
         1024,
@@ -3716,7 +3783,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone(),
+        block_a.id.clone().into_string(),
         "m30_dup.png".into(),
         "image/png".into(),
         16,
@@ -3732,7 +3799,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone(),
+        block_b.id.clone().into_string(),
         "m30_dup.png".into(),
         "image/png".into(),
         16,
@@ -3803,7 +3870,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "m30_reuse.png".into(),
         "image/png".into(),
         8,
@@ -3830,7 +3897,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "m30_reuse.png".into(),
         "image/png".into(),
         8,
@@ -4407,7 +4474,7 @@ async fn delete_blocks_by_ids_cascades_descendants() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -4419,14 +4486,14 @@ async fn delete_blocks_by_ids_cascades_descendants() {
         &mat,
         "content".into(),
         "grandchild".into(),
-        Some(child.id.clone()),
+        Some(child.id.clone().into_string()),
         Some(1),
     )
     .await
     .unwrap();
     settle(&mat).await;
 
-    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.clone()])
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.to_string()])
         .await
         .unwrap();
     assert_eq!(
@@ -4485,7 +4552,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
         &mat,
         "content".into(),
         "r1c".into(),
-        Some(r1.id.clone()),
+        Some(r1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -4496,7 +4563,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
         &mat,
         "content".into(),
         "r2c".into(),
-        Some(r2.id.clone()),
+        Some(r2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -4514,9 +4581,10 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
     .await
     .unwrap();
 
-    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.clone(), r2.id.clone()])
-        .await
-        .unwrap();
+    let affected =
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.to_string(), r2.id.to_string()])
+            .await
+            .unwrap();
     assert_eq!(affected, 4, "2 roots + 2 children = 4 cascade rows");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -4572,12 +4640,12 @@ async fn delete_blocks_by_ids_skips_already_deleted() {
     .unwrap();
     settle(&mat).await;
 
-    let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
+    let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.to_string()])
         .await
         .unwrap();
     assert_eq!(first, 1, "first call soft-deletes the block");
 
-    let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
+    let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.to_string()])
         .await
         .unwrap();
     assert_eq!(
@@ -4657,7 +4725,7 @@ async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
     settle(&mat).await;
 
     let affected =
-        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.clone(), "GHOST".into()])
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.to_string(), "GHOST".into()])
             .await
             .unwrap();
     assert_eq!(affected, 1, "the live root is soft-deleted; ghost ignored");
@@ -4731,7 +4799,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
         &mat,
         "content".into(),
         "desc".into(),
-        Some(ancestor.id.clone()),
+        Some(ancestor.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -4742,7 +4810,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
         &pool,
         DEV,
         &mat,
-        vec![ancestor.id.clone(), descendant.id.clone()],
+        vec![ancestor.id.to_string(), descendant.id.to_string()],
     )
     .await
     .unwrap();
@@ -4929,7 +4997,7 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
     .await
     .unwrap();
     settle(&mat).await;
-    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -4938,7 +5006,11 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
         &pool,
         DEV,
         &mat,
-        vec![live.id.clone(), deleted.id.clone(), "MBS3_GHOST".into()],
+        vec![
+            live.id.to_string(),
+            deleted.id.to_string(),
+            "MBS3_GHOST".into(),
+        ],
         "MBS3_SPACE".into(),
     )
     .await
@@ -5374,14 +5446,14 @@ async fn edit_block_cross_space_content_rejected() {
     )
     .await
     .unwrap();
-    assign_to_space(&pool, &src.id, TEST_SPACE_ID).await;
-    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, src.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, target.id.as_str(), TEST_SPACE_B_ID).await;
 
     let result = edit_block_inner(
         &pool,
         DEV,
         &mat,
-        src.id.clone(),
+        src.id.clone().into_string(),
         format!("see [[{}]]", target.id),
     )
     .await;
@@ -5404,7 +5476,7 @@ async fn create_block_cross_space_content_rejected() {
     let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "Page A".into(), None, None)
         .await
         .unwrap();
-    assign_to_space(&pool, &page_a.id, TEST_SPACE_ID).await;
+    assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
     let target = create_block_inner(
         &pool,
         DEV,
@@ -5416,7 +5488,7 @@ async fn create_block_cross_space_content_rejected() {
     )
     .await
     .unwrap();
-    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, target.id.as_str(), TEST_SPACE_B_ID).await;
 
     // A child under page_a (resolves to space A) referencing the space-B target.
     let result = create_block_inner(
@@ -5425,7 +5497,7 @@ async fn create_block_cross_space_content_rejected() {
         &mat,
         "content".into(),
         format!("see [[{}]]", target.id),
-        Some(page_a.id.clone()),
+        Some(page_a.id.clone().into_string()),
         None,
     )
     .await;
@@ -5463,7 +5535,7 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "photo.png".into(),
         "image/png".into(),
         bytes.clone(),
@@ -5517,7 +5589,7 @@ async fn add_attachment_with_bytes_rejects_disallowed_mime_without_writing() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "evil.exe".into(),
         "application/x-msdownload".into(),
         vec![0u8; 16],

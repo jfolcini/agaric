@@ -270,17 +270,17 @@ pub(crate) async fn create_block_in_tx(
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((
         BlockRow {
-            id: block_id.into_string(),
+            id: block_id,
             block_type,
             content: Some(content),
-            parent_id,
+            parent_id: parent_id.map(|s| BlockId::from_trusted(&s)),
             position: Some(effective_position),
             deleted_at: None,
             todo_state: None,
             priority: None,
             due_date: None,
             scheduled_date: None,
-            page_id,
+            page_id: page_id.map(|s| BlockId::from_trusted(&s)),
         },
         op_record,
     ))
@@ -452,7 +452,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -535,7 +535,7 @@ pub async fn edit_block_inner(
 
     // 6. Return response
     Ok(BlockRow {
-        id: block_id,
+        id: BlockId::from_trusted(&block_id),
         block_type,
         content: Some(to_text),
         parent_id,
@@ -2596,7 +2596,7 @@ pub(crate) async fn set_property_in_tx(
     // 2. Validate block exists and is not deleted (TOCTOU-safe inside tx)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -3116,7 +3116,7 @@ pub async fn create_blocks_batch_inner(
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
                 device_id,
-                block.id.clone(),
+                block.id.clone().into_string(),
                 key,
                 Some(value.clone()),
                 None,

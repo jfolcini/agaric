@@ -62,9 +62,11 @@
 /// requires a `LitStr` token (it cannot interpolate a `const &str`).
 #[allow(dead_code)]
 pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
-    "id, block_type, content, parent_id, position, deleted_at, \
+    "id as \"id!: crate::ulid::BlockId\", block_type, content, \
+     parent_id as \"parent_id: crate::ulid::BlockId\", position, deleted_at, \
      todo_state, \
-     priority, due_date, scheduled_date, page_id";
+     priority, due_date, scheduled_date, \
+     page_id as \"page_id: crate::ulid::BlockId\"";
 
 /// Canonical SELECT column list for the **runtime** sqlx form
 /// (`sqlx::query_as::<_, BlockRow>(&sql)` and the analogous

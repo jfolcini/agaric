@@ -294,5 +294,7 @@ pub async fn query_by_property(
             .await?
     };
 
-    build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.clone().into_string())
+    })
 }

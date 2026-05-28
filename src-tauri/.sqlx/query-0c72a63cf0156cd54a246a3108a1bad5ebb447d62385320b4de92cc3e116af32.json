@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id, position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id\n         FROM blocks b\n         WHERE block_type = ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\"\n         FROM block_links bl\n         JOIN blocks b ON b.id = bl.source_id\n         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY b.id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "d6c27fe48dfc8c507067842cf102eebde77f5d7fb2b0459583dfcfca84290ef0"
+  "hash": "0c72a63cf0156cd54a246a3108a1bad5ebb447d62385320b4de92cc3e116af32"
 }

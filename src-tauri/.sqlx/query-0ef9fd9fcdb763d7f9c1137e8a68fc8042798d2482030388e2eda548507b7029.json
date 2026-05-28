@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                deleted_at, todo_state, priority, due_date,\n                scheduled_date, page_id\n           FROM blocks\n           WHERE page_id = ?1\n             AND id != ?1\n             AND deleted_at IS NULL\n           ORDER BY COALESCE(position, ?2) ASC, id ASC\n           LIMIT ?3",
+  "query": "SELECT id as \"id!: crate::ulid::BlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as \"page_id: crate::ulid::BlockId\" FROM blocks WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id!: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 1
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "9252a31d29f967496cd06fb18e0529208c2fbf91a09ea722544b52e76e403c08"
+  "hash": "0ef9fd9fcdb763d7f9c1137e8a68fc8042798d2482030388e2eda548507b7029"
 }

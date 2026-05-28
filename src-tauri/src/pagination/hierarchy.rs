@@ -51,10 +51,10 @@ pub async fn list_children(
     // fts::search_fts).
     let rows = sqlx::query_as!(
         ActiveBlockRow,
-        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id, position,
+        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
-                page_id
+                page_id as "page_id: crate::ulid::BlockId"
          FROM blocks b
          WHERE parent_id IS ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR (
@@ -111,10 +111,10 @@ pub async fn list_by_type(
     // rather than composed via `crate::space_filter_clause!`.
     let rows = sqlx::query_as!(
         ActiveBlockRow,
-        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id, position,
+        r#"SELECT id as "id: crate::ulid::ActiveBlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
-                page_id
+                page_id as "page_id: crate::ulid::BlockId"
          FROM blocks b
          WHERE block_type = ?1 AND deleted_at IS NULL
            AND (?2 IS NULL OR id > ?3)

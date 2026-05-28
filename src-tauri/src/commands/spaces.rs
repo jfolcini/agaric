@@ -221,7 +221,7 @@ pub async fn create_page_in_space_inner(
         None,
     )
     .await?;
-    let new_page_id = BlockId::from_trusted(&block.id);
+    let new_page_id = block.id.clone();
     tx.enqueue_background(page_op_record);
 
     // 3. Stamp the `space` ref property. Ops are emitted in the order
@@ -231,7 +231,7 @@ pub async fn create_page_in_space_inner(
     let (_block, space_op_record) = set_property_in_tx(
         &mut tx,
         device_id,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "space",
         None,
         None,
@@ -335,7 +335,7 @@ pub async fn create_space_inner(
         None,
     )
     .await?;
-    let new_space_id = BlockId::from_trusted(&block.id);
+    let new_space_id = block.id.clone();
     tx.enqueue_background(create_op);
 
     // 2. Stamp the `is_space = 'true'` text property. This is the flag
@@ -343,7 +343,7 @@ pub async fn create_space_inner(
     let (_block, is_space_op) = set_property_in_tx(
         &mut tx,
         device_id,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "is_space",
         Some("true".to_string()),
         None,
@@ -361,7 +361,7 @@ pub async fn create_space_inner(
         let (_block, accent_op) = set_property_in_tx(
             &mut tx,
             device_id,
-            block.id.clone(),
+            block.id.clone().into_string(),
             "accent_color",
             Some(color),
             None,

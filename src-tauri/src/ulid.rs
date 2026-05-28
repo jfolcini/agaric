@@ -120,6 +120,48 @@ impl PartialEq<str> for BlockId {
     }
 }
 
+impl PartialEq<String> for BlockId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<BlockId> for String {
+    fn eq(&self, other: &BlockId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<BlockId> for str {
+    fn eq(&self, other: &BlockId) -> bool {
+        *self == other.0
+    }
+}
+
+impl PartialEq<BlockId> for &str {
+    fn eq(&self, other: &BlockId) -> bool {
+        *self == other.0
+    }
+}
+
+/// `String → BlockId` for test fixtures and trusted in-process conversions.
+/// Bypasses ULID validation but normalises to uppercase to match
+/// [`BlockId::from_trusted`] and the `Deserialize` impl (AGENTS.md
+/// invariant #8). Production code that needs validation should call
+/// [`BlockId::from_string`] instead.
+impl From<String> for BlockId {
+    fn from(s: String) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+}
+
+/// `&str → BlockId`. Same caveats as the `String` impl above.
+impl From<&str> for BlockId {
+    fn from(s: &str) -> Self {
+        Self(s.to_ascii_uppercase())
+    }
+}
+
 impl From<BlockId> for String {
     fn from(id: BlockId) -> Self {
         id.0

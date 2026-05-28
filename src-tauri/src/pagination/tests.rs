@@ -100,7 +100,7 @@ trait RowIdStr {
 
 impl RowIdStr for BlockRow {
     fn id_str(&self) -> &str {
-        &self.id
+        self.id.as_str()
     }
 }
 
@@ -3250,7 +3250,7 @@ async fn list_children_ifnull_oracle(
     .await?;
 
     build_page_response(rows, page.limit, |last| Cursor {
-        id: last.id.clone(),
+        id: last.id.to_string(),
         position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
         deleted_at: None,
         seq: None,
@@ -4648,7 +4648,7 @@ mod proptest_tests {
 
 mod active_row_conversions {
     use super::*;
-    use crate::ulid::ActiveBlockId;
+    use crate::ulid::{ActiveBlockId, BlockId};
 
     /// Build a non-trivial `ActiveBlockRow` covering every field. The data
     /// is intentionally noisy so any field-reordering in `From<ActiveBlockRow>
@@ -4658,14 +4658,14 @@ mod active_row_conversions {
             id: ActiveBlockId::test_id("ACTROW01"),
             block_type: "content".to_string(),
             content: Some("hello".to_string()),
-            parent_id: Some("PAR_ABC".to_string()),
+            parent_id: Some(BlockId::test_id("PAR_ABC")),
             position: Some(42),
             deleted_at: Some("2024-01-01T00:00:00Z".to_string()),
             todo_state: Some("TODO".to_string()),
             priority: Some("A".to_string()),
             due_date: Some("2024-12-31".to_string()),
             scheduled_date: Some("2024-12-25".to_string()),
-            page_id: Some("PAGE_XYZ".to_string()),
+            page_id: Some(BlockId::test_id("PAGE_XYZ")),
         }
     }
 
@@ -4698,7 +4698,7 @@ mod active_row_conversions {
     #[test]
     fn from_block_row_unchecked_uppercases_id() {
         let row = BlockRow {
-            id: "01arz3ndektsv4rrffq69g5fav".to_string(), // lowercase ULID
+            id: BlockId::from_trusted("01arz3ndektsv4rrffq69g5fav"), // lowercase ULID
             block_type: "content".to_string(),
             content: None,
             parent_id: None,

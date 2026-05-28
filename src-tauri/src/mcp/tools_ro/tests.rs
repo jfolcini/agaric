@@ -319,7 +319,7 @@ async fn get_page_happy_path_returns_subtree() {
         &mat,
         "content".into(),
         "c1".into(),
-        Some(page.id.clone()),
+        Some(page.id.to_string()),
         Some(1),
     )
     .await
@@ -330,7 +330,7 @@ async fn get_page_happy_path_returns_subtree() {
         &mat,
         "content".into(),
         "g1".into(),
-        Some(child1.id.clone()),
+        Some(child1.id.to_string()),
         Some(1),
     )
     .await
@@ -347,7 +347,7 @@ async fn get_page_happy_path_returns_subtree() {
         .call_tool("get_page", json!({"page_id": page.id.clone()}), &test_ctx())
         .await
         .expect("happy path");
-    assert_eq!(result["page"]["id"], page.id);
+    assert_eq!(result["page"]["id"], page.id.as_str());
     let children = result["children"].as_array().expect("children array");
     assert_eq!(
         children.len(),
@@ -393,7 +393,7 @@ async fn get_page_on_non_page_block_validation_error() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(page.id.clone()),
+        Some(page.id.to_string()),
         Some(1),
     )
     .await
@@ -837,7 +837,7 @@ async fn get_block_happy_path() {
         )
         .await
         .expect("happy path");
-    assert_eq!(result["id"], blk.id);
+    assert_eq!(result["id"], blk.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -876,7 +876,7 @@ async fn get_block_accepts_lowercase_ulid_l121() {
 
     // Agaric returns uppercase ULIDs; the agent supplies the
     // *lowercase* form to exercise the L-121 boundary normalisation.
-    let lower = blk.id.to_lowercase();
+    let lower = blk.id.as_str().to_lowercase();
     assert_ne!(
         lower, blk.id,
         "test setup: block id must not already be all-lowercase"
@@ -887,7 +887,8 @@ async fn get_block_accepts_lowercase_ulid_l121() {
         .await
         .expect("lowercase ULID must be accepted at the MCP boundary (L-121)");
     assert_eq!(
-        result["id"], blk.id,
+        result["id"],
+        blk.id.as_str(),
         "response must contain the canonical uppercase id, not the input"
     );
 }
@@ -998,7 +999,7 @@ async fn list_backlinks_global_scope_parity() {
     // Path B: direct call to the migrated `_inner` with the same scope.
     let via_inner = list_backlinks_grouped_inner(
         &tools.pool,
-        target.id.clone(),
+        target.id.to_string(),
         None,
         None,
         None,
@@ -1574,7 +1575,7 @@ proptest::proptest! {
 
             let tool_ids: Vec<String> = via_tool["items"].as_array().unwrap().iter()
                 .map(|i| i["id"].as_str().unwrap().to_string()).collect();
-            let inner_ids: Vec<String> = via_inner.items.iter().map(|b| b.id.clone().into()).collect();
+            let inner_ids: Vec<String> = via_inner.items.iter().map(|b| b.id.as_str().into()).collect();
             assert_eq!(
                 tool_ids, inner_ids,
                 "MCP `search` tool must return the same ids in the same order \
@@ -1769,7 +1770,7 @@ async fn inner_get_page_composes_root_and_subtree() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(page.id.clone()),
+        Some(page.id.to_string()),
         Some(1),
     )
     .await
@@ -1782,7 +1783,7 @@ async fn inner_get_page_composes_root_and_subtree() {
 
     let resp = get_page_inner(
         &pool,
-        &page.id,
+        page.id.as_str(),
         crate::spaces::SPACE_PERSONAL_ULID,
         None,
         Some(10),
@@ -1945,7 +1946,7 @@ async fn snapshot_get_page_response_shape() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.to_string()),
         Some(1),
     )
     .await
@@ -2118,7 +2119,7 @@ async fn snapshot_get_agenda_response_shape() {
         &tools.pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("2099-01-03".into()),
     )
     .await
@@ -2127,7 +2128,7 @@ async fn snapshot_get_agenda_response_shape() {
         &tools.pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,

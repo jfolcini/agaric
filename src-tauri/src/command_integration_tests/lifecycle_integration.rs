@@ -23,7 +23,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     )
     .await
     .unwrap();
-    let bid = created.id.clone();
+    let bid = created.id.clone().into_string();
 
     assert_eq!(
         created.content,
@@ -142,7 +142,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "parent".into(),
-        Some(page_a.id.clone()),
+        Some(page_a.id.clone().into_string()),
         None,
     )
     .await
@@ -155,7 +155,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "leaf".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         None,
     )
     .await
@@ -163,13 +163,15 @@ async fn restore_block_synchronously_refreshes_page_id() {
     settle(&mat).await;
 
     assert_eq!(
-        leaf.page_id.as_deref(),
+        leaf.page_id
+            .as_ref()
+            .map(super::super::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: leaf inherits page_a as its initial page_id"
     );
 
     // Soft-delete the leaf. Its parent stays alive.
-    let del = delete_block_inner(&pool, DEV, &mat, leaf.id.clone())
+    let del = delete_block_inner(&pool, DEV, &mat, leaf.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -190,8 +192,8 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &pool,
         DEV,
         &mat,
-        parent.id.clone(),
-        Some(page_b.id.clone()),
+        parent.id.clone().into_string(),
+        Some(page_b.id.clone().into_string()),
         1,
     )
     .await
@@ -220,9 +222,15 @@ async fn restore_block_synchronously_refreshes_page_id() {
     // rewrites leaf.page_id = page_b inside the restore tx itself.
     // Without M6, the sync path leaves it at page_a (the async
     // RebuildPageIds catch-up is blocked by the shutdown).
-    restore_block_inner(&pool, DEV, &mat, leaf.id.clone(), del.deleted_at)
-        .await
-        .unwrap();
+    restore_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        leaf.id.clone().into_string(),
+        del.deleted_at,
+    )
+    .await
+    .unwrap();
 
     let leaf_page_after_restore: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
@@ -499,7 +507,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         &mat,
         "content".into(),
         "block".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -519,9 +527,15 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     settle(&mat).await;
 
     // 2. Add tag
-    add_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
 
     // 3. Verify tag via list_by_tag
     assign_all_to_test_space(&pool).await;
@@ -529,7 +543,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         &pool,
         None,
         None,
-        Some(tag.id.clone()),
+        Some(tag.id.clone().into_string()),
         None,
         None,
         None,
@@ -541,27 +555,39 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     .await
     .unwrap();
     assert_eq!(tagged.items.len(), 1, "one block tagged");
-    assert_eq!(tagged.items[0].id, block.id, "correct block tagged");
+    assert_eq!(
+        tagged.items[0].id.as_str(),
+        block.id.as_str(),
+        "correct block tagged"
+    );
 
     // 4. Move block to root
-    move_block_inner(&pool, DEV, &mat, block.id.clone(), None, 99)
+    move_block_inner(&pool, DEV, &mat, block.id.clone().into_string(), None, 99)
         .await
         .unwrap();
 
-    let moved = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let moved = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(moved.parent_id.is_none(), "block moved to root");
     assert_eq!(moved.position, Some(99), "position updated");
 
     // 5. Remove tag
-    remove_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    remove_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
 
     let untagged = list_blocks_inner(
         &pool,
         None,
         None,
-        Some(tag.id.clone()),
+        Some(tag.id.clone().into_string()),
         None,
         None,
         None,
@@ -676,7 +702,7 @@ async fn test_move_block_rejects_zero_position() {
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id, None, 0).await;
+    let result = move_block_inner(&pool, DEV, &mat, block.id.into_string(), None, 0).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -706,7 +732,7 @@ async fn test_move_block_rejects_negative_position() {
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id, None, -3).await;
+    let result = move_block_inner(&pool, DEV, &mat, block.id.into_string(), None, -3).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -959,7 +985,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "first".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         None,
     )
     .await
@@ -973,7 +999,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "second".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         None,
     )
     .await
@@ -987,7 +1013,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "third".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         None,
     )
     .await

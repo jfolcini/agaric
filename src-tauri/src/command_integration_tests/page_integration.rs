@@ -25,10 +25,13 @@ async fn set_and_get_page_aliases() {
     settle(&mat).await;
 
     // Set aliases
-    let inserted =
-        set_page_aliases_inner(&pool, &page.id, vec!["my-alias".into(), "another".into()])
-            .await
-            .unwrap();
+    let inserted = set_page_aliases_inner(
+        &pool,
+        page.id.as_str(),
+        vec!["my-alias".into(), "another".into()],
+    )
+    .await
+    .unwrap();
 
     assert_eq!(inserted.len(), 2, "both aliases must be inserted");
     assert!(
@@ -41,7 +44,9 @@ async fn set_and_get_page_aliases() {
     );
 
     // Get aliases (returned sorted alphabetically)
-    let fetched = get_page_aliases_inner(&pool, &page.id).await.unwrap();
+    let fetched = get_page_aliases_inner(&pool, page.id.as_str())
+        .await
+        .unwrap();
     assert_eq!(
         fetched,
         vec!["another", "my-alias"],
@@ -67,7 +72,7 @@ async fn resolve_page_by_alias() {
     .unwrap();
     settle(&mat).await;
 
-    set_page_aliases_inner(&pool, &page.id, vec!["my-alias".into()])
+    set_page_aliases_inner(&pool, page.id.as_str(), vec!["my-alias".into()])
         .await
         .unwrap();
 
@@ -124,7 +129,7 @@ async fn alias_collision_returns_error() {
     settle(&mat).await;
 
     // Page A claims the alias first
-    let inserted_a = set_page_aliases_inner(&pool, &page_a.id, vec!["shared-alias".into()])
+    let inserted_a = set_page_aliases_inner(&pool, page_a.id.as_str(), vec!["shared-alias".into()])
         .await
         .unwrap();
     assert_eq!(
@@ -134,7 +139,7 @@ async fn alias_collision_returns_error() {
     );
 
     // Page B tries to claim the same alias — INSERT OR IGNORE silently skips it
-    let inserted_b = set_page_aliases_inner(&pool, &page_b.id, vec!["shared-alias".into()])
+    let inserted_b = set_page_aliases_inner(&pool, page_b.id.as_str(), vec!["shared-alias".into()])
         .await
         .unwrap();
     assert!(
@@ -222,7 +227,9 @@ async fn navigate_journal_creates_page_for_date() {
     );
 
     // Verify persisted in DB
-    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, page.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(fetched.id, page.id);
     assert_eq!(fetched.block_type, "page");
 
@@ -310,7 +317,9 @@ async fn quick_capture_block_creates_today_journal_and_block() {
     );
 
     let parent_id = block.parent_id.clone().unwrap();
-    let parent = get_block_inner(&pool, parent_id.clone()).await.unwrap();
+    let parent = get_block_inner(&pool, parent_id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         parent.block_type, "page",
         "parent of a quick-captured block must be a page (the journal)"
@@ -341,7 +350,10 @@ async fn quick_capture_block_reuses_existing_journal_page() {
     settle(&mat).await;
 
     assert_eq!(
-        block.parent_id.as_deref(),
+        block
+            .parent_id
+            .as_ref()
+            .map(super::super::ulid::BlockId::as_str),
         Some(page.id.as_str()),
         "quick capture must reuse the pre-existing today journal page"
     );
@@ -425,7 +437,7 @@ async fn restore_page_to_op_reverts_edits_after_target() {
         &mat,
         "content".into(),
         "content-A".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -433,9 +445,15 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     settle(&mat).await;
 
     // Edit block: A → B
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-B".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "content-B".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Record the seq of the op that set content to B
@@ -446,14 +464,20 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit block: B → C (this should be reverted)
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-C".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "content-C".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Verify block is at C before restore
     assert_eq!(
-        get_block_inner(&pool, child.id.clone())
+        get_block_inner(&pool, child.id.clone().into_string())
             .await
             .unwrap()
             .content,
@@ -462,10 +486,16 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     );
 
     // Restore to the seq that set content to B
-    let result =
-        restore_page_to_op_inner(&pool, DEV, &mat, page.id.clone(), DEV.into(), target_seq)
-            .await
-            .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.clone().into_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Verify content reverted to B and ops_reverted > 0
@@ -474,7 +504,10 @@ async fn restore_page_to_op_reverts_edits_after_target() {
         "should have reverted at least one op"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id).await.unwrap().content,
+        get_block_inner(&pool, child.id.into_string())
+            .await
+            .unwrap()
+            .content,
         Some("content-B".into()),
         "block content should revert to B after restore"
     );
@@ -507,7 +540,7 @@ async fn restore_page_to_op_with_all_pages_target() {
         &mat,
         "content".into(),
         "orig-1".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -533,7 +566,7 @@ async fn restore_page_to_op_with_all_pages_target() {
         &mat,
         "content".into(),
         "orig-2".into(),
-        Some(page2.id.clone()),
+        Some(page2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -548,13 +581,25 @@ async fn restore_page_to_op_with_all_pages_target() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit blocks on both pages
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        "changed-1".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
-    edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "changed-2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into_string(),
+        "changed-2".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Restore to early seq with page_id = "__all__"
@@ -566,12 +611,18 @@ async fn restore_page_to_op_with_all_pages_target() {
 
     assert_eq!(result.ops_reverted, 2, "should revert edits on both pages");
     assert_eq!(
-        get_block_inner(&pool, b1.id).await.unwrap().content,
+        get_block_inner(&pool, b1.id.into_string())
+            .await
+            .unwrap()
+            .content,
         Some("orig-1".into()),
         "b1 should revert to original"
     );
     assert_eq!(
-        get_block_inner(&pool, b2.id).await.unwrap().content,
+        get_block_inner(&pool, b2.id.into_string())
+            .await
+            .unwrap()
+            .content,
         Some("orig-2".into()),
         "b2 should revert to original"
     );
@@ -621,7 +672,7 @@ async fn restore_page_to_op_invalid_seq_returns_empty() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -634,9 +685,16 @@ async fn restore_page_to_op_invalid_seq_returns_empty() {
         .unwrap();
     let latest_seq = ops.last().unwrap().seq;
 
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), latest_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.into_string(),
+        DEV.into(),
+        latest_seq,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.ops_reverted, 0,
@@ -676,7 +734,7 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -691,14 +749,26 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Make edits that will be reverted
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-1".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "edited-1".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "edited-2".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     let ops_before_restore = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
@@ -707,9 +777,16 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     let count_before = ops_before_restore.len();
 
     // Restore to target — should revert both edits
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.into_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     assert_eq!(result.ops_reverted, 2, "should revert exactly 2 edit ops");
@@ -829,7 +906,7 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p2.id),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -851,7 +928,7 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
     // Assert result has link with source_id = P1.id, target_id = P2.id (rolled up)
     let p1_to_p2 = links
         .iter()
-        .find(|l| l.source_id == p1.id && l.target_id == p2.id);
+        .find(|l| l.source_id.as_str() == p1.id.as_str() && l.target_id.as_str() == p2.id.as_str());
     assert!(
         p1_to_p2.is_some(),
         "should find link P1→P2 rolled up from content block B1→P2"
@@ -898,7 +975,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         &mat,
         "content".into(),
         format!("link [[{}]]", p2.id),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -914,7 +991,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
 
     // Soft-delete the source block
-    delete_block_inner(&pool, DEV, &mat, b1.id.clone())
+    delete_block_inner(&pool, DEV, &mat, b1.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -924,7 +1001,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
     let has_link = links
         .iter()
-        .any(|l| l.source_id == p1.id && l.target_id == p2.id);
+        .any(|l| l.source_id.as_str() == p1.id.as_str() && l.target_id.as_str() == p2.id.as_str());
     assert!(
         !has_link,
         "should NOT include links from deleted source blocks"
@@ -958,7 +1035,7 @@ async fn list_page_links_excludes_self_links() {
         &mat,
         "content".into(),
         format!("self [[{}]]", p1.id),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1024,7 +1101,7 @@ async fn list_page_links_deduplicates() {
         &mat,
         "content".into(),
         format!("first [[{}]]", p2.id),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1037,7 +1114,7 @@ async fn list_page_links_deduplicates() {
         &mat,
         "content".into(),
         format!("second [[{}]]", p2.id),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -1065,7 +1142,9 @@ async fn list_page_links_deduplicates() {
     // Both b1 and b2 roll up to P1 → P2; DISTINCT should collapse to 1 edge
     let p1_to_p2_count = links
         .iter()
-        .filter(|l| l.source_id == p1.id && l.target_id == p2.id)
+        .filter(|l| {
+            l.source_id.as_str() == p1.id.as_str() && l.target_id.as_str() == p2.id.as_str()
+        })
         .count();
     assert_eq!(
         p1_to_p2_count, 1,

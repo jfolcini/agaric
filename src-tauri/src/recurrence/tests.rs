@@ -630,8 +630,8 @@ async fn set_date_property(
 async fn find_recurrence_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
     sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         original_id
     )
@@ -664,7 +664,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -676,7 +676,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -684,7 +684,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     mat.flush_background().await.unwrap();
 
     // Set repeat = daily
-    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Mark DONE to trigger handle_recurrence via set_todo_state_inner
@@ -692,7 +692,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -700,7 +700,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     mat.flush_background().await.unwrap();
 
     // Verify sibling was created with shifted due_date
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         1,
@@ -724,7 +724,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     );
 
     // Original should be DONE
-    let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let original = get_block_inner(&pool, block.id.to_string()).await.unwrap();
     assert_eq!(
         original.todo_state.as_deref(),
         Some("DONE"),
@@ -756,7 +756,7 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -768,7 +768,7 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -776,11 +776,11 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
     mat.flush_background().await.unwrap();
 
     // Set repeat = daily
-    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-until to 2025-06-15 — shifted date (2025-06-16) > until date
-    set_date_property(&pool, &mat, &block.id, "repeat-until", "2025-06-15").await;
+    set_date_property(&pool, &mat, block.id.as_str(), "repeat-until", "2025-06-15").await;
     mat.flush_background().await.unwrap();
 
     // Mark DONE — handle_recurrence should NOT create a sibling
@@ -788,14 +788,14 @@ async fn handle_recurrence_repeat_until_stops_when_past_deadline() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         0,
@@ -827,7 +827,7 @@ async fn handle_recurrence_repeat_count_stops_when_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -838,20 +838,20 @@ async fn handle_recurrence_repeat_count_stops_when_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-count = 2 and repeat-seq = 2 (already exhausted)
-    set_num_property(&pool, &mat, &block.id, "repeat-count", 2.0).await;
+    set_num_property(&pool, &mat, block.id.as_str(), "repeat-count", 2.0).await;
     mat.flush_background().await.unwrap();
-    set_num_property(&pool, &mat, &block.id, "repeat-seq", 2.0).await;
+    set_num_property(&pool, &mat, block.id.as_str(), "repeat-seq", 2.0).await;
     mat.flush_background().await.unwrap();
 
     // Mark DONE — handle_recurrence should NOT create a sibling
@@ -859,14 +859,14 @@ async fn handle_recurrence_repeat_count_stops_when_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         0,
@@ -898,7 +898,7 @@ async fn handle_recurrence_copies_properties_to_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -909,24 +909,24 @@ async fn handle_recurrence_copies_properties_to_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "weekly").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "weekly").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-until on original
-    set_date_property(&pool, &mat, &block.id, "repeat-until", "2025-12-31").await;
+    set_date_property(&pool, &mat, block.id.as_str(), "repeat-until", "2025-12-31").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-count and repeat-seq on original
-    set_num_property(&pool, &mat, &block.id, "repeat-count", 5.0).await;
+    set_num_property(&pool, &mat, block.id.as_str(), "repeat-count", 5.0).await;
     mat.flush_background().await.unwrap();
-    set_num_property(&pool, &mat, &block.id, "repeat-seq", 1.0).await;
+    set_num_property(&pool, &mat, block.id.as_str(), "repeat-seq", 1.0).await;
     mat.flush_background().await.unwrap();
 
     // Mark DONE
@@ -934,19 +934,19 @@ async fn handle_recurrence_copies_properties_to_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(siblings.len(), 1, "should create exactly one sibling");
     let sibling = &siblings[0];
 
     // Verify properties on the sibling
-    let props = get_properties_inner(&pool, sibling.id.clone())
+    let props = get_properties_inner(&pool, sibling.id.to_string())
         .await
         .unwrap();
 
@@ -1027,7 +1027,7 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1038,14 +1038,14 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Mark DONE — creates first sibling
@@ -1053,19 +1053,19 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(siblings.len(), 1, "should create one sibling");
     let sibling = &siblings[0];
 
     // Verify repeat-origin points back to original block
-    let props = get_properties_inner(&pool, sibling.id.clone())
+    let props = get_properties_inner(&pool, sibling.id.to_string())
         .await
         .unwrap();
     let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
@@ -1105,7 +1105,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "recurring task".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(1),
     )
     .await
@@ -1119,7 +1119,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "neighbor A".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(2),
     )
     .await
@@ -1133,7 +1133,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "neighbor B".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(3),
     )
     .await
@@ -1145,7 +1145,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &pool,
         DEV,
         &mat,
-        recurring.id.clone().into(),
+        recurring.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1155,20 +1155,20 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &pool,
         DEV,
         &mat,
-        recurring.id.clone().into(),
+        recurring.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
-    set_repeat_property(&pool, &mat, &recurring.id, "daily").await;
+    set_repeat_property(&pool, &mat, recurring.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        recurring.id.clone().into(),
+        recurring.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -1179,8 +1179,8 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
     // from the two pre-existing neighbors).
     let rows: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks
            WHERE parent_id = ?
              AND id NOT IN (?, ?, ?)
@@ -1266,7 +1266,7 @@ async fn handle_recurrence_daily_crosses_year_boundary() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1277,28 +1277,28 @@ async fn handle_recurrence_daily_crosses_year_boundary() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-12-31".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         1,
@@ -1340,7 +1340,7 @@ async fn handle_recurrence_weekly_crosses_year_boundary() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1351,28 +1351,28 @@ async fn handle_recurrence_weekly_crosses_year_boundary() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-12-30".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "weekly").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "weekly").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         1,
@@ -1425,7 +1425,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1439,14 +1439,14 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some(ancient_str.clone()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, &mat, &block.id, "++1d").await;
+    set_repeat_property(&pool, &mat, block.id.as_str(), "++1d").await;
     mat.flush_background().await.unwrap();
 
     // Snapshot op_log size BEFORE the failing transition so we can
@@ -1464,7 +1464,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await;
@@ -1482,7 +1482,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
     // recurrence flow entirely. Mirrors
     // `handle_recurrence_propagates_set_property_error` in
     // `compute::tests_h17_m77`.
-    let siblings = find_recurrence_siblings(&pool, &block.id).await;
+    let siblings = find_recurrence_siblings(&pool, block.id.as_str()).await;
     assert_eq!(
         siblings.len(),
         0,

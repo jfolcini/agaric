@@ -142,8 +142,8 @@ async fn resolve_or_create_journal_page(
     // space. Two spaces with the same date keep distinct daily notes.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
+        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -218,7 +218,7 @@ async fn resolve_or_create_journal_page(
     let (_block_after_prop, space_op_record) = set_property_in_tx(
         &mut tx,
         device_id,
-        block.id.clone(),
+        block.id.clone().into_string(),
         "space",
         None,
         None,
@@ -277,7 +277,7 @@ pub async fn quick_capture_block_inner(
         materializer,
         "content".into(),
         content,
-        Some(page.id),
+        Some(page.id.into_string()),
         None,
     )
     .await
@@ -336,8 +336,8 @@ pub async fn get_journal_page_by_date_inner(
 
     let row = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
+        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -407,8 +407,8 @@ pub async fn list_journal_pages_in_range_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id
+        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -643,7 +643,7 @@ mod tests {
                 .expect("task panicked")
                 .expect("resolver returned error");
             assert_eq!(row.content.as_deref(), Some(TEST_DATE));
-            ids.push(row.id);
+            ids.push(row.id.to_string());
         }
         assert_eq!(
             ids.len(),

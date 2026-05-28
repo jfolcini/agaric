@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id, block_type, content, parent_id, position,\n                    deleted_at,\n                     todo_state, priority, due_date, scheduled_date,\n                    page_id\n             FROM blocks\n             WHERE page_id = ?1\n               AND id != ?1\n               AND deleted_at IS NULL\n               AND (?2 IS NULL OR (\n                    COALESCE(position, ?6) > ?3\n                    OR (COALESCE(position, ?6) = ?3 AND id > ?4)))\n             ORDER BY COALESCE(position, ?6) ASC, id ASC\n             LIMIT ?5",
+  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n           AND (?6 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?6))\n         ORDER BY b.id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id: crate::ulid::ActiveBlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "17c428f738590422cadb504b50a837d096651bac361dcc9335d7a0503819b505"
+  "hash": "3b1e02aa790cc3e6d3d372faaf52276cc9d5b2a3ca083261682d94e1314094af"
 }

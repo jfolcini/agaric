@@ -342,10 +342,11 @@ pub async fn export_page_markdown_inner(
         // the page row itself (`id = ?1`) excluded.
         let rows = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position,
+            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
+                    parent_id as "parent_id: crate::ulid::BlockId", position,
                     deleted_at,
                      todo_state, priority, due_date, scheduled_date,
-                    page_id
+                    page_id as "page_id: crate::ulid::BlockId"
              FROM blocks
              WHERE page_id = ?1
                AND id != ?1
@@ -375,7 +376,7 @@ pub async fn export_page_markdown_inner(
         let next_cursor = if has_more {
             let last = page_rows.last().expect("has_more implies non-empty");
             let cur = Cursor {
-                id: last.id.clone(),
+                id: last.id.clone().into_string(),
                 position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
                 deleted_at: None,
                 seq: None,
@@ -565,7 +566,7 @@ pub async fn import_markdown_inner(
     )
     .await?;
     tx.enqueue_background(page_op);
-    let page_id = page.id.clone();
+    let page_id = page.id.clone().into_string();
 
     // PEND-35 Tier 1.1 — stamp the `space` ref property on the imported
     // page. Mirrors `create_page_in_space_inner`: ops are emitted in
@@ -619,7 +620,7 @@ pub async fn import_markdown_inner(
         .await?;
         blocks_created += 1;
         tx.enqueue_background(block_op);
-        parent_stack.push((block.depth, new_block.id.clone()));
+        parent_stack.push((block.depth, new_block.id.clone().into_string()));
 
         // Set properties inside the same transaction. L-30: same
         // all-or-nothing contract as the block-create above.
@@ -627,7 +628,7 @@ pub async fn import_markdown_inner(
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
                 device_id,
-                new_block.id.clone(),
+                new_block.id.clone().into_string(),
                 key,
                 Some(value.clone()),
                 None,
@@ -971,10 +972,11 @@ pub async fn get_page_inner(
     // share a `page_id` but must never appear in the user-facing subtree.
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: crate::ulid::BlockId", position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
-                page_id
+                page_id as "page_id: crate::ulid::BlockId"
          FROM blocks
          WHERE page_id = ?1
            AND id != ?1
@@ -1005,7 +1007,7 @@ pub async fn get_page_inner(
     let next_cursor = if has_more {
         let last = children.last().expect("has_more implies non-empty");
         let cur = Cursor {
-            id: last.id.clone(),
+            id: last.id.clone().into_string(),
             position: Some(last.position.unwrap_or(NULL_POSITION_SENTINEL)),
             deleted_at: None,
             seq: None,
@@ -1406,9 +1408,10 @@ pub async fn load_page_subtree_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position,
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: crate::ulid::BlockId", position,
                 deleted_at, todo_state, priority, due_date,
-                scheduled_date, page_id
+                scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks
            WHERE page_id = ?1
              AND id != ?1

@@ -26,10 +26,10 @@ pub async fn list_unfinished_tasks(
     let states_json = serde_json::to_string(todo_states)?;
 
     let raw_rows = sqlx::query!(
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
-                b.page_id, COALESCE(b.due_date, b.scheduled_date) as "sort_date: String"
+                b.page_id as "page_id: crate::ulid::BlockId", COALESCE(b.due_date, b.scheduled_date) as "sort_date: String"
          FROM blocks b
          WHERE b.deleted_at IS NULL
            AND (b.due_date < ?1 OR b.scheduled_date < ?1)
@@ -77,6 +77,6 @@ pub async fn list_unfinished_tasks(
     let last_sort_date = sort_dates.last().cloned();
 
     build_page_response(rows, page.limit, move |last| {
-        Cursor::for_id_and_deleted_at(last.id.clone(), last_sort_date)
+        Cursor::for_id_and_deleted_at(last.id.clone().into_string(), last_sort_date)
     })
 }

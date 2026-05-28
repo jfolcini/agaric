@@ -44,7 +44,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("links to [[{}]]", page.id),
     )
     .await
@@ -68,7 +68,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("also links to [[{}]]", page.id),
     )
     .await
@@ -77,7 +77,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         None,
         None,
@@ -87,9 +87,9 @@ async fn backlinks_filtered_returns_linking_blocks() {
     .await
     .unwrap();
 
-    let ids: HashSet<String> = resp.items.iter().map(|b| b.id.clone().into()).collect();
-    assert!(ids.contains(&b1.id), "b1 must be in backlinks");
-    assert!(ids.contains(&b2.id), "b2 must be in backlinks");
+    let ids: HashSet<String> = resp.items.iter().map(|b| b.id.as_str().into()).collect();
+    assert!(ids.contains(b1.id.as_str()), "b1 must be in backlinks");
+    assert!(ids.contains(b2.id.as_str()), "b2 must be in backlinks");
     assert_eq!(resp.items.len(), 2, "exactly two backlinks expected");
     assert_eq!(resp.total_count, 2, "total_count must be 2");
     assert_eq!(resp.filtered_count, 2, "filtered_count must be 2");
@@ -115,7 +115,7 @@ async fn backlinks_filtered_empty_for_no_links() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         None,
         None,
@@ -167,7 +167,7 @@ async fn backlinks_filtered_excludes_deleted() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("link [[{}]]", page.id),
     )
     .await
@@ -177,7 +177,7 @@ async fn backlinks_filtered_excludes_deleted() {
     // Verify backlink exists
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         None,
         None,
@@ -189,14 +189,14 @@ async fn backlinks_filtered_excludes_deleted() {
     assert_eq!(resp.items.len(), 1, "one backlink before deletion");
 
     // Delete the linking block
-    delete_block_inner(&pool, DEV, &mat, b1.id.clone())
+    delete_block_inner(&pool, DEV, &mat, b1.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         None,
         None,
@@ -250,7 +250,7 @@ async fn backlinks_filtered_with_block_type_filter() {
         &pool,
         DEV,
         &mat,
-        page_linker.id.clone(),
+        page_linker.id.clone().into_string(),
         format!("page ref [[{}]]", target.id),
     )
     .await
@@ -275,7 +275,7 @@ async fn backlinks_filtered_with_block_type_filter() {
         &pool,
         DEV,
         &mat,
-        content_linker.id.clone(),
+        content_linker.id.clone().into_string(),
         format!("content ref [[{}]]", target.id),
     )
     .await
@@ -288,7 +288,7 @@ async fn backlinks_filtered_with_block_type_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -299,7 +299,7 @@ async fn backlinks_filtered_with_block_type_filter() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 1, "only content backlink returned");
-    assert_eq!(resp.items[0].id, content_linker.id);
+    assert_eq!(resp.items[0].id.as_str(), content_linker.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -337,7 +337,7 @@ async fn backlinks_filtered_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("foo bar [[{}]]", target.id),
     )
     .await
@@ -361,7 +361,7 @@ async fn backlinks_filtered_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("baz qux [[{}]]", target.id),
     )
     .await
@@ -373,7 +373,7 @@ async fn backlinks_filtered_with_contains_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -384,7 +384,7 @@ async fn backlinks_filtered_with_contains_filter() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 1, "only 'foo' content returned");
-    assert_eq!(resp.items[0].id, b1.id);
+    assert_eq!(resp.items[0].id.as_str(), b1.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -422,7 +422,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("first [[{}]]", target.id),
     )
     .await
@@ -433,7 +433,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -463,7 +463,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("second [[{}]]", target.id),
     )
     .await
@@ -474,7 +474,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "status".into(),
         Some("archived".into()),
         None,
@@ -494,7 +494,7 @@ async fn backlinks_filtered_with_property_text_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -505,7 +505,7 @@ async fn backlinks_filtered_with_property_text_filter() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 1, "only active status returned");
-    assert_eq!(resp.items[0].id, b1.id);
+    assert_eq!(resp.items[0].id.as_str(), b1.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -544,7 +544,7 @@ async fn backlinks_filtered_with_sort_created() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("first [[{}]]", target.id),
     )
     .await
@@ -568,7 +568,7 @@ async fn backlinks_filtered_with_sort_created() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("second [[{}]]", target.id),
     )
     .await
@@ -578,7 +578,7 @@ async fn backlinks_filtered_with_sort_created() {
     // Sort ascending (oldest first)
     let resp_asc = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
@@ -590,18 +590,20 @@ async fn backlinks_filtered_with_sort_created() {
 
     assert_eq!(resp_asc.items.len(), 2);
     assert_eq!(
-        resp_asc.items[0].id, b1.id,
+        resp_asc.items[0].id.as_str(),
+        b1.id.as_str(),
         "b1 created first → first in Asc"
     );
     assert_eq!(
-        resp_asc.items[1].id, b2.id,
+        resp_asc.items[1].id.as_str(),
+        b2.id.as_str(),
         "b2 created second → second in Asc"
     );
 
     // Sort descending (newest first)
     let resp_desc = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         None,
@@ -612,8 +614,16 @@ async fn backlinks_filtered_with_sort_created() {
     .unwrap();
 
     assert_eq!(resp_desc.items.len(), 2);
-    assert_eq!(resp_desc.items[0].id, b2.id, "b2 newest → first in Desc");
-    assert_eq!(resp_desc.items[1].id, b1.id, "b1 oldest → second in Desc");
+    assert_eq!(
+        resp_desc.items[0].id.as_str(),
+        b2.id.as_str(),
+        "b2 newest → first in Desc"
+    );
+    assert_eq!(
+        resp_desc.items[1].id.as_str(),
+        b1.id.as_str(),
+        "b1 oldest → second in Desc"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -651,7 +661,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("low [[{}]]", target.id),
     )
     .await
@@ -662,7 +672,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "importance".into(),
         None,
         Some(1.0),
@@ -692,7 +702,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("high [[{}]]", target.id),
     )
     .await
@@ -703,7 +713,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "importance".into(),
         None,
         Some(10.0),
@@ -719,7 +729,7 @@ async fn backlinks_filtered_with_sort_property() {
     // Sort by importance Desc (highest first)
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::PropertyNum {
             key: "importance".into(),
@@ -733,8 +743,16 @@ async fn backlinks_filtered_with_sort_property() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 2);
-    assert_eq!(resp.items[0].id, b2.id, "importance=10 first in Desc");
-    assert_eq!(resp.items[1].id, b1.id, "importance=1 second in Desc");
+    assert_eq!(
+        resp.items[0].id.as_str(),
+        b2.id.as_str(),
+        "importance=10 first in Desc"
+    );
+    assert_eq!(
+        resp.items[1].id.as_str(),
+        b1.id.as_str(),
+        "importance=1 second in Desc"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -775,7 +793,7 @@ async fn backlinks_filtered_pagination() {
             &pool,
             DEV,
             &mat,
-            b.id.clone(),
+            b.id.clone().into_string(),
             format!("link {} [[{}]]", i, target.id),
         )
         .await
@@ -788,7 +806,7 @@ async fn backlinks_filtered_pagination() {
     // First page: limit=3
     let resp1 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
@@ -810,7 +828,7 @@ async fn backlinks_filtered_pagination() {
     // Second page
     let resp2 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp1.next_cursor,
@@ -827,7 +845,7 @@ async fn backlinks_filtered_pagination() {
     // Third page (last)
     let resp3 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp2.next_cursor,
@@ -879,7 +897,7 @@ async fn backlinks_filtered_total_count_matches() {
             &pool,
             DEV,
             &mat,
-            b.id.clone(),
+            b.id.clone().into_string(),
             format!("link {} [[{}]]", i, target.id),
         )
         .await
@@ -890,7 +908,7 @@ async fn backlinks_filtered_total_count_matches() {
     // Query with limit=2 — total_count should still be 5
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -997,7 +1015,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("b1 [[{}]]", target.id),
     )
     .await
@@ -1008,7 +1026,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -1039,7 +1057,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone(),
+        b2.id.clone().into_string(),
         format!("b2 [[{}]]", target.id),
     )
     .await
@@ -1050,7 +1068,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "status".into(),
         Some("archived".into()),
         None,
@@ -1081,7 +1099,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b3.id.clone(),
+        b3.id.clone().into_string(),
         format!("b3 [[{}]]", target.id),
     )
     .await
@@ -1092,7 +1110,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b3.id.clone().into(),
+        b3.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -1121,7 +1139,7 @@ async fn backlinks_filtered_and_filter_intersection() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -1132,7 +1150,11 @@ async fn backlinks_filtered_and_filter_intersection() {
     .unwrap();
 
     assert_eq!(resp.items.len(), 1, "AND intersection must return 1 block");
-    assert_eq!(resp.items[0].id, b1.id, "only b1 matches both conditions");
+    assert_eq!(
+        resp.items[0].id.as_str(),
+        b1.id.as_str(),
+        "only b1 matches both conditions"
+    );
 }
 
 // ======================================================================
@@ -1171,14 +1193,20 @@ async fn backlinks_filtered_unicode_content() {
     settle(&mat).await;
 
     let unicode_content = format!("日本語テスト 🚀 [[{}]]", target.id);
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), unicode_content.clone())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        unicode_content.clone(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -1223,7 +1251,7 @@ async fn backlinks_filtered_self_reference_excluded() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("self-ref [[{}]]", b1.id),
     )
     .await
@@ -1232,7 +1260,7 @@ async fn backlinks_filtered_self_reference_excluded() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         None,
         None,
         None,
@@ -1293,7 +1321,7 @@ async fn backlinks_filtered_multiple_refs_same_block() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("first [[{}]] second [[{}]]", target.id, target.id),
     )
     .await
@@ -1302,7 +1330,7 @@ async fn backlinks_filtered_multiple_refs_same_block() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -1354,7 +1382,7 @@ async fn backlinks_filtered_created_in_range() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone(),
+        b1.id.clone().into_string(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -1368,7 +1396,7 @@ async fn backlinks_filtered_created_in_range() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -1387,7 +1415,7 @@ async fn backlinks_filtered_created_in_range() {
     }];
     let resp_past = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters_past),
         None,
         None,
@@ -1440,7 +1468,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "zebra".into(),
         Some("z".into()),
         None,
@@ -1457,7 +1485,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "alpha".into(),
         Some("a".into()),
         None,
@@ -1474,7 +1502,7 @@ async fn backlinks_list_property_keys_returns_distinct_sorted() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "alpha".into(),
         Some("a2".into()),
         None,
@@ -1528,7 +1556,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "note".into(),
         Some("hello".into()),
         None,
@@ -1546,7 +1574,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "count".into(),
         None,
         Some(42.0),
@@ -1564,7 +1592,7 @@ async fn backlinks_list_property_keys_includes_all_types() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "due".into(),
         None,
         None,
@@ -1626,8 +1654,8 @@ async fn batch_resolve_returns_matching_blocks() {
     // FEAT-3 Phase 7: batch_resolve_inner filters by space; assign both
     // blocks to the synthetic test space so the membership filter keeps
     // them in scope.
-    assign_to_test_space(&pool, &b1.id).await;
-    assign_to_test_space(&pool, &b2.id).await;
+    assign_to_test_space(&pool, b1.id.as_str()).await;
+    assign_to_test_space(&pool, b2.id.as_str()).await;
     // Drain create-time background dispatches BEFORE the post-stamp page_id
     // re-UPDATE below — without this, `RebuildPageIds` (one of the §5.3
     // FULL_CACHE_REBUILD_TASKS) races with the explicit `page_id = id`
@@ -1644,7 +1672,11 @@ async fn batch_resolve_returns_matching_blocks() {
 
     let resolved = batch_resolve_inner(
         &pool,
-        vec![b1.id.clone(), b2.id.clone(), "NONEXISTENT".into()],
+        vec![
+            b1.id.clone().into_string(),
+            b2.id.clone().into_string(),
+            "NONEXISTENT".into(),
+        ],
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -1680,9 +1712,9 @@ async fn batch_resolve_marks_deleted_block() {
         .execute(&pool)
         .await
         .unwrap();
-    assign_to_test_space(&pool, &block.id).await;
+    assign_to_test_space(&pool, block.id.as_str()).await;
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -1706,7 +1738,7 @@ async fn batch_resolve_marks_deleted_block() {
 
     let resolved = batch_resolve_inner(
         &pool,
-        vec![block.id.clone()],
+        vec![block.id.clone().into_string()],
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -1759,13 +1791,20 @@ async fn get_backlinks_returns_linking_blocks() {
         .await
         .unwrap();
 
-    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &SpaceScope::Global)
-        .await
-        .unwrap();
+    let resp = get_backlinks_inner(
+        &pool,
+        target.id.clone().into_string(),
+        None,
+        None,
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.items.len(), 1, "one backlink expected");
     assert_eq!(
-        resp.items[0].id, source.id,
+        resp.items[0].id.as_str(),
+        source.id.as_str(),
         "source block must be the backlink"
     );
 }
@@ -1815,11 +1854,17 @@ async fn get_block_history_returns_ops_for_block() {
     .await
     .unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "v2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
 
-    let resp = get_block_history_inner(&pool, block.id.clone(), None, None, None)
+    let resp = get_block_history_inner(&pool, block.id.clone().into_string(), None, None, None)
         .await
         .unwrap();
 
@@ -1884,7 +1929,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1895,7 +1940,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c1a.id.clone(),
+        c1a.id.clone().into_string(),
         format!("link to [[{}]]", target.id),
     )
     .await
@@ -1908,7 +1953,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -1919,7 +1964,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c1b.id.clone(),
+        c1b.id.clone().into_string(),
         format!("another link [[{}]]", target.id),
     )
     .await
@@ -1946,7 +1991,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone()),
+        Some(page2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1957,7 +2002,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c2.id.clone(),
+        c2.id.clone().into_string(),
         format!("see [[{}]]", target.id),
     )
     .await
@@ -1966,7 +2011,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -1983,8 +2028,8 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
     );
 
     let ids: HashSet<String> = resp.groups.iter().map(|g| g.page_id.clone()).collect();
-    assert!(ids.contains(&page1.id), "page1 must be in groups");
-    assert!(ids.contains(&page2.id), "page2 must be in groups");
+    assert!(ids.contains(page1.id.as_str()), "page1 must be in groups");
+    assert!(ids.contains(page2.id.as_str()), "page2 must be in groups");
 
     let g1 = resp.groups.iter().find(|g| g.page_id == page1.id).unwrap();
     assert_eq!(g1.page_title.as_deref(), Some("Source1"), "page1 title");
@@ -2015,7 +2060,7 @@ async fn grouped_backlinks_empty_for_no_links() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2094,7 +2139,7 @@ async fn grouped_backlinks_single_block_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2105,7 +2150,7 @@ async fn grouped_backlinks_single_block_page() {
         &pool,
         DEV,
         &mat,
-        child.id.clone(),
+        child.id.clone().into_string(),
         format!("ref [[{}]]", target.id),
     )
     .await
@@ -2114,7 +2159,7 @@ async fn grouped_backlinks_single_block_page() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2132,7 +2177,8 @@ async fn grouped_backlinks_single_block_page() {
         "exactly 1 block in the group"
     );
     assert_eq!(
-        resp.groups[0].blocks[0].id, child.id,
+        resp.groups[0].blocks[0].id.as_str(),
+        child.id.as_str(),
         "block id must match child"
     );
 }
@@ -2173,7 +2219,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
         &pool,
         DEV,
         &mat,
-        orphan.id.clone(),
+        orphan.id.clone().into_string(),
         format!("orphan link [[{}]]", target.id),
     )
     .await
@@ -2182,7 +2228,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2243,7 +2289,7 @@ async fn grouped_backlinks_excludes_deleted() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2254,7 +2300,7 @@ async fn grouped_backlinks_excludes_deleted() {
         &pool,
         DEV,
         &mat,
-        child.id.clone(),
+        child.id.clone().into_string(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -2264,7 +2310,7 @@ async fn grouped_backlinks_excludes_deleted() {
     // Verify it appears before deletion
     let before = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2276,14 +2322,14 @@ async fn grouped_backlinks_excludes_deleted() {
     assert_eq!(before.groups.len(), 1, "link present before delete");
 
     // Soft-delete the linking block
-    delete_block_inner(&pool, DEV, &mat, child.id.clone())
+    delete_block_inner(&pool, DEV, &mat, child.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
 
     let after = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2340,7 +2386,7 @@ async fn grouped_backlinks_pagination() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone()),
+            Some(page.id.clone().into_string()),
             Some(1),
         )
         .await
@@ -2351,7 +2397,7 @@ async fn grouped_backlinks_pagination() {
             &pool,
             DEV,
             &mat,
-            child.id.clone(),
+            child.id.clone().into_string(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2364,7 +2410,7 @@ async fn grouped_backlinks_pagination() {
     // Request limit=1
     let resp1 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2381,7 +2427,7 @@ async fn grouped_backlinks_pagination() {
     // Fetch page 2 with cursor
     let resp2 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         resp1.next_cursor.clone(),
@@ -2401,7 +2447,7 @@ async fn grouped_backlinks_pagination() {
     // Fetch page 3
     let resp3 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         resp2.next_cursor.clone(),
@@ -2464,7 +2510,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page1.id.clone()),
+            Some(page1.id.clone().into_string()),
             Some(pos),
         )
         .await
@@ -2475,7 +2521,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
             &pool,
             DEV,
             &mat,
-            child.id.clone(),
+            child.id.clone().into_string(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2503,7 +2549,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone()),
+        Some(page2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2514,7 +2560,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         &pool,
         DEV,
         &mat,
-        child2.id.clone(),
+        child2.id.clone().into_string(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -2524,7 +2570,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
     // Without filter
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         None,
         None,
         None,
@@ -2541,12 +2587,12 @@ async fn grouped_backlinks_total_and_filtered_count() {
 
     // With SourcePage filter — include only page1
     let filters = vec![BacklinkFilter::SourcePage {
-        included: vec![page1.id.clone()],
+        included: vec![page1.id.clone().into_string()],
         excluded: vec![],
     }];
     let resp_filtered = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -2609,7 +2655,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone()),
+            Some(page.id.clone().into_string()),
             Some(1),
         )
         .await
@@ -2620,7 +2666,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
             &pool,
             DEV,
             &mat,
-            child.id.clone(),
+            child.id.clone().into_string(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2632,13 +2678,13 @@ async fn grouped_backlinks_with_source_page_include_filter() {
 
     // Include only page 0
     let filters = vec![BacklinkFilter::SourcePage {
-        included: vec![pages[0].id.clone()],
+        included: vec![pages[0].id.clone().into_string()],
         excluded: vec![],
     }];
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -2700,7 +2746,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone()),
+            Some(page.id.clone().into_string()),
             Some(1),
         )
         .await
@@ -2711,7 +2757,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
             &pool,
             DEV,
             &mat,
-            child.id.clone(),
+            child.id.clone().into_string(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2724,12 +2770,12 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
     // Exclude page 1
     let filters = vec![BacklinkFilter::SourcePage {
         included: vec![],
-        excluded: vec![pages[1].id.clone()],
+        excluded: vec![pages[1].id.clone().into_string()],
     }];
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -2746,15 +2792,15 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
     );
     let group_ids: HashSet<String> = resp.groups.iter().map(|g| g.page_id.clone()).collect();
     assert!(
-        !group_ids.contains(&pages[1].id),
+        !group_ids.contains(pages[1].id.as_str()),
         "excluded page must not appear in groups"
     );
     assert!(
-        group_ids.contains(&pages[0].id),
+        group_ids.contains(pages[0].id.as_str()),
         "page0 must still be present"
     );
     assert!(
-        group_ids.contains(&pages[2].id),
+        group_ids.contains(pages[2].id.as_str()),
         "page2 must still be present"
     );
 }
@@ -2799,7 +2845,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone()),
+            Some(page.id.clone().into_string()),
             Some(1),
         )
         .await
@@ -2810,7 +2856,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
             &pool,
             DEV,
             &mat,
-            child.id.clone(),
+            child.id.clone().into_string(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2822,13 +2868,16 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
 
     // Include page0 and page1, but exclude page1 → only page0 should remain
     let filters = vec![BacklinkFilter::SourcePage {
-        included: vec![pages[0].id.clone(), pages[1].id.clone()],
-        excluded: vec![pages[1].id.clone()],
+        included: vec![
+            pages[0].id.clone().into_string(),
+            pages[1].id.clone().into_string(),
+        ],
+        excluded: vec![pages[1].id.clone().into_string()],
     }];
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -2887,7 +2936,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2898,7 +2947,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        alpha.id.clone(),
+        alpha.id.clone().into_string(),
         format!("alpha link [[{}]]", target.id),
     )
     .await
@@ -2912,7 +2961,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -2923,7 +2972,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        beta.id.clone(),
+        beta.id.clone().into_string(),
         format!("beta link [[{}]]", target.id),
     )
     .await
@@ -2950,7 +2999,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone()),
+        Some(page2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2961,7 +3010,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        beta2.id.clone(),
+        beta2.id.clone().into_string(),
         format!("beta link [[{}]]", target.id),
     )
     .await
@@ -2975,7 +3024,7 @@ async fn grouped_backlinks_with_contains_filter() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone(),
+        target.id.clone().into_string(),
         Some(filters),
         None,
         None,
@@ -3000,7 +3049,8 @@ async fn grouped_backlinks_with_contains_filter() {
         "only the alpha block should be in the group"
     );
     assert_eq!(
-        resp.groups[0].blocks[0].id, alpha.id,
+        resp.groups[0].blocks[0].id.as_str(),
+        alpha.id.as_str(),
         "block must be the alpha block"
     );
     assert_eq!(resp.total_count, 3, "total_count reflects all 3 backlinks");

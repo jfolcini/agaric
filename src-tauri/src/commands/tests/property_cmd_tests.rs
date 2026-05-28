@@ -32,7 +32,7 @@ async fn set_property_creates_property() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -47,7 +47,9 @@ async fn set_property_creates_property() {
     mat.flush_background().await.unwrap();
 
     // Verify via get_properties
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(props.len(), 1, "should have exactly one property");
     assert_eq!(
         props[0].key, "importance",
@@ -111,7 +113,7 @@ async fn set_property_validates_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "".into(),
         Some("val".into()),
         None,
@@ -163,7 +165,7 @@ async fn set_property_inner_with_none_caller_context_uses_legacy_message() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "assignee".into(),
         Some("alice".into()),
         Some(3.0),
@@ -214,7 +216,7 @@ async fn set_property_inner_with_some_caller_context_names_caller() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "assignee".into(),
         Some("alice".into()),
         Some(3.0),
@@ -271,7 +273,7 @@ async fn set_property_inner_with_some_caller_context_rejects_zero_values() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "assignee".into(),
         None,
         None,
@@ -312,7 +314,7 @@ async fn set_property_on_deleted_block_fails() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
 
@@ -322,7 +324,7 @@ async fn set_property_on_deleted_block_fails() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "key".into(),
         Some("val".into()),
         None,
@@ -363,7 +365,7 @@ async fn delete_property_removes_property() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -378,14 +380,16 @@ async fn delete_property_removes_property() {
     mat.flush_background().await.unwrap();
 
     // Delete the property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "status".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "status".into())
         .await
         .unwrap();
 
     mat.flush_background().await.unwrap();
 
     // Verify it's gone
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props.is_empty(),
         "properties should be empty after delete, got: {props:?}"
@@ -430,7 +434,7 @@ async fn delete_property_allows_builtin_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "created_at".into(),
         None,
         None,
@@ -448,14 +452,16 @@ async fn delete_property_allows_builtin_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "created_at".into(),
     )
     .await
     .unwrap();
 
     // Verify it's gone
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         !props.iter().any(|p| p.key == "created_at"),
         "created_at should be deleted, got: {props:?}"
@@ -466,7 +472,7 @@ async fn delete_property_allows_builtin_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "effort".into(),
         Some("2h".into()),
         None,
@@ -479,7 +485,7 @@ async fn delete_property_allows_builtin_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "effort".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "effort".into())
         .await
         .unwrap();
 
@@ -488,7 +494,7 @@ async fn delete_property_allows_builtin_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "my_custom".into(),
         Some("val".into()),
         None,
@@ -505,7 +511,7 @@ async fn delete_property_allows_builtin_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "my_custom".into(),
     )
     .await
@@ -535,7 +541,7 @@ async fn delete_property_clears_reserved_column_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-06-01".into()),
     )
     .await
@@ -543,17 +549,27 @@ async fn delete_property_clears_reserved_column_key() {
     mat.flush_background().await.unwrap();
 
     // Verify it's set
-    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let b = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(b.due_date.as_deref(), Some("2026-06-01"));
 
     // Delete the reserved property via delete_property_inner
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "due_date".into())
-        .await
-        .unwrap();
+    delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "due_date".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify the column is NULLed
-    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let b = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         b.due_date.is_none(),
         "due_date should be NULL after delete, got: {:?}",
@@ -626,7 +642,9 @@ async fn get_properties_returns_empty_for_new_block() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props.is_empty(),
         "new block should have no properties, got: {props:?}"
@@ -685,7 +703,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -702,7 +720,7 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -716,22 +734,34 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
     mat.flush_background().await.unwrap();
 
     // Batch-fetch for all 3
-    let result =
-        get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone(), b3.id.clone()])
-            .await
-            .unwrap();
+    let result = get_batch_properties_inner(
+        &pool,
+        vec![b1.id.to_string(), b2.id.to_string(), b3.id.to_string()],
+    )
+    .await
+    .unwrap();
 
     // b1 and b2 should have properties, b3 should be omitted
-    assert!(result.contains_key(&b1.id), "b1 must be in result");
-    assert!(result.contains_key(&b2.id), "b2 must be in result");
-    assert_eq!(result[&b1.id].len(), 1, "b1 should have one property");
+    assert!(result.contains_key(b1.id.as_str()), "b1 must be in result");
+    assert!(result.contains_key(b2.id.as_str()), "b2 must be in result");
     assert_eq!(
-        result[&b1.id][0].key, "importance",
+        result[b1.id.as_str()].len(),
+        1,
+        "b1 should have one property"
+    );
+    assert_eq!(
+        result[b1.id.as_str()][0].key,
+        "importance",
         "b1 property key should be 'importance'"
     );
-    assert_eq!(result[&b2.id].len(), 1, "b2 should have one property");
     assert_eq!(
-        result[&b2.id][0].key, "status",
+        result[b2.id.as_str()].len(),
+        1,
+        "b2 should have one property"
+    );
+    assert_eq!(
+        result[b2.id.as_str()][0].key,
+        "status",
         "b2 property key should be 'status'"
     );
 }
@@ -766,12 +796,12 @@ async fn batch_properties_omits_blocks_without_properties() {
     .await
     .unwrap();
 
-    let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
+    let result = get_batch_properties_inner(&pool, vec![block.id.to_string()])
         .await
         .unwrap();
 
     assert!(
-        !result.contains_key(&block.id),
+        !result.contains_key(block.id.as_str()),
         "block with no properties must be omitted from result, got: {result:?}"
     );
 }
@@ -799,7 +829,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -816,7 +846,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -833,7 +863,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "score".into(),
         None,
         Some(42.0),
@@ -846,12 +876,15 @@ async fn batch_properties_returns_multiple_props_per_block() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
+    let result = get_batch_properties_inner(&pool, vec![block.id.to_string()])
         .await
         .unwrap();
 
-    assert!(result.contains_key(&block.id), "block must be in result");
-    let props = &result[&block.id];
+    assert!(
+        result.contains_key(block.id.as_str()),
+        "block must be in result"
+    );
+    let props = &result[block.id.as_str()];
     assert_eq!(props.len(), 3, "must return all 3 properties");
 
     let keys: Vec<&str> = props.iter().map(|p| p.key.as_str()).collect();
@@ -1140,7 +1173,7 @@ async fn set_todo_state_sets_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1206,7 +1239,7 @@ async fn set_todo_state_clears_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1214,7 +1247,7 @@ async fn set_todo_state_clears_value() {
 
     mat.flush_background().await.unwrap();
 
-    let result = set_todo_state_inner(&pool, DEV, &mat, block.id.clone().into(), None)
+    let result = set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), None)
         .await
         .unwrap();
 
@@ -1255,7 +1288,7 @@ async fn set_todo_state_rejects_too_long_string() {
 
     let long_state = "A".repeat(51);
     let result =
-        set_todo_state_inner(&pool, DEV, &mat, block.id.clone().into(), Some(long_state)).await;
+        set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), Some(long_state)).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -1285,7 +1318,7 @@ async fn set_todo_state_rejects_empty_string() {
     mat.flush_background().await.unwrap();
 
     let result =
-        set_todo_state_inner(&pool, DEV, &mat, block.id.clone().into(), Some("".into())).await;
+        set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("".into())).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -1329,7 +1362,7 @@ async fn set_todo_state_accepts_custom_keyword_cancelled() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("CANCELLED".into()),
     )
     .await
@@ -1386,7 +1419,7 @@ async fn set_priority_sets_and_clears() {
     mat.flush_background().await.unwrap();
 
     // Set priority
-    let result = set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("2".into()))
+    let result = set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into()))
         .await
         .unwrap();
     assert_eq!(
@@ -1398,7 +1431,7 @@ async fn set_priority_sets_and_clears() {
     mat.flush_background().await.unwrap();
 
     // Clear priority
-    let result = set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), None)
+    let result = set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), None)
         .await
         .unwrap();
     assert_eq!(result.priority, None, "priority should be cleared to None");
@@ -1442,7 +1475,7 @@ async fn set_priority_invalid_returns_validation() {
     mat.flush_background().await.unwrap();
 
     let result =
-        set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("5".into())).await;
+        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("5".into())).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -1476,7 +1509,7 @@ async fn set_due_date_sets_and_clears() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-04-15".into()),
     )
     .await
@@ -1490,7 +1523,7 @@ async fn set_due_date_sets_and_clears() {
     mat.flush_background().await.unwrap();
 
     // Clear due date
-    let result = set_due_date_inner(&pool, DEV, &mat, block.id.clone().into(), None)
+    let result = set_due_date_inner(&pool, DEV, &mat, block.id.as_str().into(), None)
         .await
         .unwrap();
     assert_eq!(result.due_date, None, "due_date should be cleared to None");
@@ -1537,7 +1570,7 @@ async fn set_due_date_invalid_format_returns_validation() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("not-a-date".into()),
     )
     .await;
@@ -1574,7 +1607,7 @@ async fn set_property_routes_reserved_key_to_blocks_column() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "todo_state".into(),
         Some("DONE".into()),
         None,
@@ -1647,7 +1680,7 @@ async fn set_property_rejects_invalid_date_format() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "my_date".into(),
         None,
         None,
@@ -1689,7 +1722,7 @@ async fn set_property_rejects_out_of_range_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "my_date".into(),
         None,
         None,
@@ -1731,7 +1764,7 @@ async fn set_property_rejects_due_date_with_value_text() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "due_date".into(),
         Some("2025-01-01".into()),
         None,
@@ -1773,7 +1806,7 @@ async fn set_property_rejects_todo_state_with_value_date() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "todo_state".into(),
         None,
         None,
@@ -1815,7 +1848,7 @@ async fn set_property_accepts_valid_reserved_key_with_correct_field() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "due_date".into(),
         None,
         None,
@@ -1909,7 +1942,7 @@ async fn set_property_ref_type_enforces_value_ref() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "reviewer".into(),
         Some("wrong".into()),
         None,
@@ -1944,12 +1977,12 @@ async fn set_property_ref_type_enforces_value_ref() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "reviewer".into(),
         None,
         None,
         None,
-        Some(target.id.clone()),
+        Some(target.id.clone().into_string()),
         None,
         None,
     )
@@ -2028,7 +2061,7 @@ async fn set_todo_state_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
 
@@ -2038,7 +2071,7 @@ async fn set_todo_state_deleted_block_returns_not_found() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await;
@@ -2070,14 +2103,14 @@ async fn set_priority_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
 
     mat.flush_background().await.unwrap();
 
     let result =
-        set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("2".into())).await;
+        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into())).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -2106,7 +2139,7 @@ async fn set_due_date_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
 
@@ -2116,7 +2149,7 @@ async fn set_due_date_deleted_block_returns_not_found() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-05-15".into()),
     )
     .await;
@@ -2156,7 +2189,7 @@ async fn set_todo_state_writes_op_log_entry() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2203,7 +2236,7 @@ async fn set_priority_writes_op_log_entry() {
 
     mat.flush_background().await.unwrap();
 
-    set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("1".into()))
+    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("1".into()))
         .await
         .unwrap();
 
@@ -2247,7 +2280,7 @@ async fn set_due_date_writes_op_log_entry() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-05-15".into()),
     )
     .await
@@ -2298,7 +2331,7 @@ async fn set_scheduled_date_sets_and_clears() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-06-01".into()),
     )
     .await
@@ -2312,7 +2345,7 @@ async fn set_scheduled_date_sets_and_clears() {
     mat.flush_background().await.unwrap();
 
     // Clear scheduled date
-    let result = set_scheduled_date_inner(&pool, DEV, &mat, block.id.clone().into(), None)
+    let result = set_scheduled_date_inner(&pool, DEV, &mat, block.id.as_str().into(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -2362,7 +2395,7 @@ async fn set_scheduled_date_invalid_format_returns_validation() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("not-a-date".into()),
     )
     .await;
@@ -2421,7 +2454,7 @@ async fn rebuild_agenda_cache_includes_scheduled_date_entries() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-07-20".into()),
     )
     .await
@@ -2482,7 +2515,7 @@ async fn todo_state_auto_null_to_todo_sets_created_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2491,7 +2524,9 @@ async fn todo_state_auto_null_to_todo_sets_created_at() {
     mat.flush_background().await.unwrap();
 
     // Check created_at property was set
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let created_at = props.iter().find(|p| p.key == "created_at");
     assert!(
         created_at.is_some(),
@@ -2529,7 +2564,7 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2542,7 +2577,7 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -2551,7 +2586,9 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
     mat.flush_background().await.unwrap();
 
     // Check completed_at property was set
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let completed_at = props.iter().find(|p| p.key == "completed_at");
     assert!(
         completed_at.is_some(),
@@ -2589,7 +2626,7 @@ async fn todo_state_auto_done_to_todo_sets_created_at_clears_completed_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2599,7 +2636,7 @@ async fn todo_state_auto_done_to_todo_sets_created_at_clears_completed_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -2611,14 +2648,16 @@ async fn todo_state_auto_done_to_todo_sets_created_at_clears_completed_at() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
 
     // created_at should be set (refreshed)
     let created_at = props.iter().find(|p| p.key == "created_at");
@@ -2661,7 +2700,7 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2669,20 +2708,24 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
     mat.flush_background().await.unwrap();
 
     // Verify created_at exists
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props.iter().any(|p| p.key == "created_at"),
         "created_at should exist after null→TODO"
     );
 
     // TODO → null (un-tasking)
-    set_todo_state_inner(&pool, DEV, &mat, block.id.clone().into(), None)
+    set_todo_state_inner(&pool, DEV, &mat, block.id.as_str().into(), None)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // Both should be cleared
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let created_at = props.iter().find(|p| p.key == "created_at");
     let completed_at = props.iter().find(|p| p.key == "completed_at");
     assert!(
@@ -2750,7 +2793,7 @@ async fn recurrence_daily_creates_next_occurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2761,14 +2804,14 @@ async fn recurrence_daily_creates_next_occurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Transition to DONE
@@ -2776,7 +2819,7 @@ async fn recurrence_daily_creates_next_occurrence() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -2784,7 +2827,9 @@ async fn recurrence_daily_creates_next_occurrence() {
     mat.flush_background().await.unwrap();
 
     // Original block should be DONE
-    let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let original = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         original.todo_state.as_deref(),
         Some("DONE"),
@@ -2794,8 +2839,8 @@ async fn recurrence_daily_creates_next_occurrence() {
     // Find the new sibling block (any block with todo_state=TODO that isn't original)
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2823,7 +2868,7 @@ async fn recurrence_daily_creates_next_occurrence() {
     );
 
     // Check repeat property was copied
-    let props = get_properties_inner(&pool, new_block.id.clone())
+    let props = get_properties_inner(&pool, new_block.id.clone().into_string())
         .await
         .unwrap();
     let repeat_prop = props.iter().find(|p| p.key == "repeat");
@@ -2862,7 +2907,7 @@ async fn recurrence_weekly_shifts_by_7_days() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2873,21 +2918,21 @@ async fn recurrence_weekly_shifts_by_7_days() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "weekly").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "weekly").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -2897,8 +2942,8 @@ async fn recurrence_weekly_shifts_by_7_days() {
     // Find new block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -2938,7 +2983,7 @@ async fn recurrence_monthly_handles_month_end() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2950,21 +2995,21 @@ async fn recurrence_monthly_handles_month_end() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-01-31".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "monthly").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "monthly").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -2973,8 +3018,8 @@ async fn recurrence_monthly_handles_month_end() {
 
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3018,7 +3063,7 @@ async fn recurrence_custom_plus_3d() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3029,21 +3074,21 @@ async fn recurrence_custom_plus_3d() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-28".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "+3d").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "+3d").await;
     mat.flush_background().await.unwrap();
 
     set_todo_state_inner(
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3052,8 +3097,8 @@ async fn recurrence_custom_plus_3d() {
 
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3097,7 +3142,7 @@ async fn recurrence_no_repeat_property_does_nothing() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3108,7 +3153,7 @@ async fn recurrence_no_repeat_property_does_nothing() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -3120,7 +3165,7 @@ async fn recurrence_no_repeat_property_does_nothing() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3166,14 +3211,14 @@ async fn test_set_todo_state_recurrence_is_atomic() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Transition to DONE — should atomically create the recurring block
@@ -3181,7 +3226,7 @@ async fn test_set_todo_state_recurrence_is_atomic() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3191,8 +3236,8 @@ async fn test_set_todo_state_recurrence_is_atomic() {
     // Find the new sibling block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3215,7 +3260,7 @@ async fn test_set_todo_state_recurrence_is_atomic() {
         "recurrence block should copy content"
     );
 
-    let props = get_properties_inner(&pool, new_block.id.clone())
+    let props = get_properties_inner(&pool, new_block.id.clone().into_string())
         .await
         .unwrap();
     let repeat_prop = props.iter().find(|p| p.key == "repeat");
@@ -3259,7 +3304,7 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3271,14 +3316,14 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-14".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-until to 2025-06-14 — shifted date (2025-06-15) > until
@@ -3286,7 +3331,7 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "repeat-until".to_string(),
         None,
         None,
@@ -3304,7 +3349,7 @@ async fn recurrence_stops_when_repeat_until_is_reached() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3350,14 +3395,14 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-count=2
@@ -3365,7 +3410,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "repeat-count".to_string(),
         None,
         Some(2.0),
@@ -3383,7 +3428,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "repeat-seq".to_string(),
         None,
         Some(2.0),
@@ -3401,7 +3446,7 @@ async fn recurrence_stops_when_repeat_count_is_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3447,14 +3492,14 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Set repeat-count=3
@@ -3462,7 +3507,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "repeat-count".to_string(),
         None,
         Some(3.0),
@@ -3480,7 +3525,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "repeat-seq".to_string(),
         None,
         Some(1.0),
@@ -3498,7 +3543,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3508,8 +3553,8 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
     // Should create a new TODO block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3520,7 +3565,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
     assert_eq!(new_blocks.len(), 1, "should create one new block");
 
     // Check that repeat-seq was incremented to 2
-    let props = get_properties_inner(&pool, new_blocks[0].id.clone())
+    let props = get_properties_inner(&pool, new_blocks[0].id.clone().into_string())
         .await
         .unwrap();
     let seq_prop = props.iter().find(|p| p.key == "repeat-seq");
@@ -3565,7 +3610,7 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3576,14 +3621,14 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // Transition to DONE — creates sibling
@@ -3591,7 +3636,7 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3601,8 +3646,8 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
     // Find the new sibling
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3614,7 +3659,7 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
     let sibling = &new_blocks[0];
 
     // Check repeat-origin points to original block
-    let props = get_properties_inner(&pool, sibling.id.clone())
+    let props = get_properties_inner(&pool, sibling.id.clone().into_string())
         .await
         .unwrap();
     let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
@@ -3650,7 +3695,7 @@ async fn recurrence_preserves_repeat_origin_across_chain() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3661,14 +3706,14 @@ async fn recurrence_preserves_repeat_origin_across_chain() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_repeat_property(&pool, DEV, &mat, &block.id, "daily").await;
+    set_repeat_property(&pool, DEV, &mat, block.id.as_str(), "daily").await;
     mat.flush_background().await.unwrap();
 
     // First DONE → creates sibling1
@@ -3676,7 +3721,7 @@ async fn recurrence_preserves_repeat_origin_across_chain() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3761,7 +3806,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2025-06-01".into()),
     )
     .await
@@ -3773,7 +3818,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some(".+weekly".into()),
         None,
@@ -3790,7 +3835,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3802,7 +3847,7 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3812,8 +3857,8 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
     // Find the sibling (new block with TODO state, same parent)
     let blocks = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )
@@ -3868,7 +3913,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2025-01-06".into()),
     )
     .await
@@ -3880,7 +3925,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("++weekly".into()),
         None,
@@ -3897,7 +3942,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -3909,7 +3954,7 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -3919,8 +3964,8 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
     // Find the sibling
     let blocks = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at, todo_state, priority,
-                due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
+                due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )
@@ -3976,7 +4021,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -3988,7 +4033,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("invalid_rule".into()),
         None,
@@ -4005,7 +4050,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -4017,7 +4062,7 @@ async fn set_todo_state_done_with_malformed_repeat_creates_sibling_without_shift
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("DONE".into()),
     )
     .await;
@@ -4064,7 +4109,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -4082,7 +4127,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-until".into(),
         None,
         None,
@@ -4099,7 +4144,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -4111,7 +4156,7 @@ async fn set_todo_state_done_with_repeat_until_without_dates_still_creates_sibli
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -4338,7 +4383,7 @@ async fn m26_delete_property_def_rejects_when_block_properties_reference_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -4414,7 +4459,7 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -4480,7 +4525,7 @@ async fn bug20_set_todo_state_accepts_seeded_option() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -4518,7 +4563,7 @@ async fn bug20_set_todo_state_rejects_value_not_in_options() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("FROB".into()),
     )
     .await;
@@ -4565,7 +4610,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "mood".into(),
         Some("happy".into()),
         None,
@@ -4582,7 +4627,7 @@ async fn bug20_set_property_rejects_select_value_not_in_custom_options() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "mood".into(),
         Some("angry".into()),
         None,
@@ -4625,7 +4670,7 @@ async fn bug20_set_property_text_type_has_no_options_restriction() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "assignee".into(),
         Some("anyone-whatsoever".into()),
         None,
@@ -4637,7 +4682,9 @@ async fn bug20_set_property_text_type_has_no_options_restriction() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(props.len(), 1, "text property should be saved");
     assert_eq!(
         props[0].value_text.as_deref(),
@@ -4684,7 +4731,7 @@ async fn bug20_select_property_with_null_options_is_permissive() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "freeform_select".into(),
         Some("any-value".into()),
         None,
@@ -4696,7 +4743,9 @@ async fn bug20_select_property_with_null_options_is_permissive() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         props.len(),
         1,
@@ -4734,7 +4783,7 @@ async fn bug20_set_priority_rejects_value_not_in_seeded_options() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "priority".into(),
         Some("99".into()),
         None,
@@ -4788,7 +4837,7 @@ async fn m20_set_priority_accepts_user_extended_options() {
     mat.flush_background().await.unwrap();
 
     // Happy path: extended value "A" is now permitted.
-    let result = set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("A".into()))
+    let result = set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("A".into()))
         .await
         .unwrap();
     assert_eq!(
@@ -4798,13 +4847,14 @@ async fn m20_set_priority_accepts_user_extended_options() {
     );
 
     // Built-in seeded value still works alongside the extension.
-    set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("2".into()))
+    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into()))
         .await
         .unwrap();
 
     // Out-of-options value still rejected (BUG-20 options check inside
     // set_property_in_tx).
-    let bad = set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("Z".into())).await;
+    let bad =
+        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("Z".into())).await;
     assert!(
         matches!(bad, Err(AppError::Validation(ref msg)) if msg.contains("Z") && msg.contains("allowed options")),
         "value not in user-extended options must still be rejected, got: {bad:?}"
@@ -4842,13 +4892,13 @@ async fn m20_set_priority_fallback_when_definition_deleted() {
     mat.flush_background().await.unwrap();
 
     // Happy path: "1" is in the built-in fallback.
-    set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("1".into()))
+    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("1".into()))
         .await
         .unwrap();
 
     // Error path: "9" is rejected via fallback defaults.
     let result =
-        set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("9".into())).await;
+        set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("9".into())).await;
     assert!(
         matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("9") && msg.contains("allowed options")),
         "without definition row, priority must fall back to built-in defaults and reject unknown values, got: {result:?}"
@@ -4890,7 +4940,7 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -4901,7 +4951,7 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("NONSENSE".into()),
     )
     .await;
@@ -4962,7 +5012,7 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -4973,7 +5023,7 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -5014,7 +5064,7 @@ async fn set_todo_state_atomic_when_recurrence_fails() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("DONE".into()),
     )
     .await;
@@ -5202,7 +5252,7 @@ async fn set_is_space_to_true_succeeds_m90() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "is_space".into(),
         Some("true".into()),
         None,
@@ -5214,7 +5264,9 @@ async fn set_is_space_to_true_succeeds_m90() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let is_space = props
         .iter()
         .find(|p| p.key == "is_space")
@@ -5255,7 +5307,7 @@ async fn set_is_space_to_invalid_value_returns_error_m90() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "is_space".into(),
         Some("nope".into()),
         None,
@@ -5341,7 +5393,7 @@ async fn get_property_returns_some_for_present_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "image_width".into(),
         Some("75".into()),
         None,
@@ -5360,7 +5412,7 @@ async fn get_property_returns_some_for_present_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "accent_color".into(),
         Some("blue".into()),
         None,
@@ -5373,7 +5425,7 @@ async fn get_property_returns_some_for_present_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let row = get_property_inner(&pool, &block.id, "image_width")
+    let row = get_property_inner(&pool, block.id.as_str(), "image_width")
         .await
         .unwrap()
         .expect("present key must yield Some(row)");
@@ -5410,7 +5462,7 @@ async fn get_property_returns_none_for_missing_key() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "accent_color".into(),
         Some("rose".into()),
         None,
@@ -5423,7 +5475,7 @@ async fn get_property_returns_none_for_missing_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = get_property_inner(&pool, &block.id, "journal_template")
+    let result = get_property_inner(&pool, block.id.as_str(), "journal_template")
         .await
         .unwrap();
     assert!(
@@ -5458,7 +5510,7 @@ async fn get_property_normalizes_lowercase_block_id() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "journal_template".into(),
         Some("## Daily".into()),
         None,
@@ -5471,7 +5523,7 @@ async fn get_property_normalizes_lowercase_block_id() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let lower = block.id.to_ascii_lowercase();
+    let lower = block.id.as_str().to_ascii_lowercase();
     assert_ne!(
         lower, block.id,
         "fixture must produce a non-trivial uppercase ULID for the case-normalisation test"
@@ -5516,7 +5568,7 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
         )
         .await
         .unwrap();
-        ids.push(b.id);
+        ids.push(b.id.into_string());
     }
     settle(&mat).await;
 
@@ -5610,7 +5662,7 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
     .await
     .unwrap();
     settle(&mat).await;
-    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -5619,7 +5671,7 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
         &pool,
         DEV,
         &mat,
-        vec![live.id.clone(), deleted.id.clone(), "GHOST".into()],
+        vec![live.id.to_string(), deleted.id.to_string(), "GHOST".into()],
         Some("TODO".into()),
     )
     .await
@@ -5689,7 +5741,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
         &pool,
         DEV,
         &mat,
-        vec![b1.id.clone(), b2.id.clone()],
+        vec![b1.id.to_string(), b2.id.to_string()],
         Some("CANCELLED".into()),
     )
     .await;
@@ -5771,12 +5823,12 @@ async fn set_todo_state_batch_clears_state() {
     .await
     .unwrap();
     settle(&mat).await;
-    set_todo_state_inner(&pool, DEV, &mat, b.id.clone().into(), Some("TODO".into()))
+    set_todo_state_inner(&pool, DEV, &mat, b.id.as_str().into(), Some("TODO".into()))
         .await
         .unwrap();
     settle(&mat).await;
 
-    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.clone()], None)
+    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.to_string()], None)
         .await
         .unwrap();
     assert_eq!(updated, 1);
@@ -5813,19 +5865,19 @@ async fn set_property_ref_cross_space_rejected() {
     )
     .await
     .unwrap();
-    assign_to_space(&pool, &src.id, TEST_SPACE_ID).await;
-    assign_to_space(&pool, &target.id, TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, src.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, target.id.as_str(), TEST_SPACE_B_ID).await;
 
     let result = set_property_inner(
         &pool,
         DEV,
         &mat,
-        src.id.clone().into(),
+        src.id.as_str().into(),
         "linked_page".into(),
         None,
         None,
         None,
-        Some(target.id.clone()),
+        Some(target.id.clone().into_string()),
         None,
         None,
     )

@@ -858,14 +858,20 @@ impl RepeatingBlockRow {
             id: crate::ulid::ActiveBlockId::from_trusted_active(&self.id),
             block_type: self.block_type.clone(),
             content: self.content.clone(),
-            parent_id: self.parent_id.clone(),
+            parent_id: self
+                .parent_id
+                .as_deref()
+                .map(crate::ulid::BlockId::from_trusted),
             position: self.position,
             deleted_at: self.deleted_at.clone(),
             todo_state: self.todo_state.clone(),
             priority: self.priority.clone(),
             due_date: self.due_date.clone(),
             scheduled_date: self.scheduled_date.clone(),
-            page_id: self.page_id.clone(),
+            page_id: self
+                .page_id
+                .as_deref()
+                .map(crate::ulid::BlockId::from_trusted),
         }
     }
 }
