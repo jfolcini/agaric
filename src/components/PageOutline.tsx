@@ -9,6 +9,7 @@
 
 import { List } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
 import type { FlatBlock } from '../stores/page-blocks'
 import { usePageBlockStore } from '../stores/page-blocks'
 import { EmptyState } from './EmptyState'

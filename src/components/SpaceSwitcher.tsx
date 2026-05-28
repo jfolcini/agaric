@@ -15,6 +15,7 @@
 import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import { isMac } from '@/lib/platform'
 import { accentVar } from '@/lib/space-accent'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
+
 import { SpaceManageDialog } from './SpaceManageDialog'
 
 /**

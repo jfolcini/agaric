@@ -18,6 +18,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { PairingPeersList } from '../PairingPeersList'
 
 beforeEach(() => {
@@ -89,7 +90,7 @@ describe('PairingPeersList', () => {
   })
 
   it('hides reset badge when count is 0', () => {
-    // biome-ignore lint/style/noNonNullAssertion: test data known to exist
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- test data known to exist
     const singlePeer = [mockPeers[0]!]
     render(<PairingPeersList peers={singlePeer} onUnpair={vi.fn()} />)
 
@@ -99,7 +100,7 @@ describe('PairingPeersList', () => {
   it('shows singular "reset" for count of 1', () => {
     const peerWithOneReset = [
       {
-        // biome-ignore lint/style/noNonNullAssertion: test data known to exist
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- test data known to exist
         ...mockPeers[0]!,
         reset_count: 1,
       },

@@ -9,6 +9,7 @@
 import { Plus } from 'lucide-react'
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { cn } from '@/lib/utils'
@@ -89,7 +90,7 @@ export const SuggestionList = ({
   })
 
   // Scroll selected item into view on keyboard navigation
-  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedIndex IS the trigger — we scroll when selection changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- selectedIndex IS the trigger — we scroll when selection changes
   useEffect(() => {
     const list = listRef.current
     if (!list) return

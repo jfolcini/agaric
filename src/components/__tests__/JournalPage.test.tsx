@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'date-fns'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
@@ -119,9 +120,8 @@ vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
-      // biome-ignore lint/a11y/useFocusableInteractive: test mock
-      // biome-ignore lint/a11y/useSemanticElements: test mock for gridcell
-      // biome-ignore lint/a11y/useKeyWithClickEvents: test mock
+      // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test mock
+      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- test mock
       <div
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}
@@ -2623,7 +2623,7 @@ describe('JournalPage', () => {
       perSpaceTemplate: string | null
       legacyTemplatePage: boolean
     }) {
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: per-space template test mock fans out across 7 distinct Tauri commands (list_blocks / get_properties / get_block_property_def / list_blocks_lite / list_pages / create_block / create_page_in_space) to pin the FEAT-3p5b template-seeding flow; flattening into one switch keeps the cause-effect chain in one place. Score 32 vs default 25.
+      // oxlint-disable-next-line eslint/complexity -- per-space template test mock fans out across 7 distinct Tauri commands (list_blocks / get_properties / get_block_property_def / list_blocks_lite / list_pages / create_block / create_page_in_space) to pin the FEAT-3p5b template-seeding flow; flattening into one switch keeps the cause-effect chain in one place. Score 32 vs default 25.
       return async (cmd: string, args?: unknown): Promise<unknown> => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48

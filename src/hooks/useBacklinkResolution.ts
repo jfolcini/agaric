@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import type { BacklinkGroup, ResolvedBlock } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'
@@ -171,7 +172,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     }
   }, [groups, currentSpaceId])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockTitle = useCallback(
     (id: string): string => {
       return (
@@ -181,7 +182,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     [resolveVersion, currentSpaceId],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockStatus = useCallback(
     (id: string): 'active' | 'deleted' => {
       return resolveCache.current.get(keyFor(currentSpaceId, id))?.deleted ? 'deleted' : 'active'
@@ -189,7 +190,7 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     [resolveVersion, currentSpaceId],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion forces re-creation so render picks up cache updates
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveTagName = useCallback(
     (id: string): string => {
       return resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `#${id.slice(0, 8)}...`

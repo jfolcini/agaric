@@ -11,6 +11,7 @@ import { Copy, Pause } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
@@ -72,7 +73,7 @@ export function PairingQrDisplay({
         role="img"
         aria-label={t('pairing.qrCodeLabel')}
         data-testid="pairing-qr-code"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: SVG from our own Rust backend, not user input
+        // oxlint-disable-next-line react/no-danger -- SVG from our own Rust backend, not user input
         dangerouslySetInnerHTML={{ __html: qrSvg }}
       />
       <div className="flex flex-col gap-1">

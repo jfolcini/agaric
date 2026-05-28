@@ -12,6 +12,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+
 import { getPriorityLevels, subscribePriorityLevels } from '../lib/priority-levels'
 
 export function usePriorityLevels(): readonly string[] {

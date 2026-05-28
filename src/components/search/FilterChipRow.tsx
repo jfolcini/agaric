@@ -13,6 +13,7 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { FilterToken } from '@/lib/search-query'
 import { tokenKey, tokenSource } from '@/lib/search-query'
@@ -41,7 +42,6 @@ export function FilterChipRow({
   if (!hasFilters && !trailing) return null
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not filter chip groups
     <div
       className={cn(
         'flex flex-wrap items-center gap-2',

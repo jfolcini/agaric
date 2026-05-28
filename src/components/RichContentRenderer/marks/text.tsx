@@ -1,4 +1,5 @@
 import type React from 'react'
+
 import type { TextNode } from '../../../editor/types'
 import { i18n } from '../../../lib/i18n'
 import { openUrl } from '../../../lib/open-url'

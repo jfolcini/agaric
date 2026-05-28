@@ -24,7 +24,9 @@
 
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
+
 import { notify } from '@/lib/notify'
+
 import {
   computeIndentedBlocks,
   findPrevSiblingAt,
@@ -673,7 +675,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
 
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
+    // oxlint-disable-next-line eslint/complexity -- pre-existing
     moveDown: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)
@@ -824,7 +826,7 @@ export function PageBlockStoreProvider({
   const store = storeRef.current.store
 
   // Register in the global registry for cross-context access
-  // biome-ignore lint/correctness/useExhaustiveDependencies: store is stable for a given pageId via storeRef
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- store is stable for a given pageId via storeRef
   useEffect(() => {
     pageBlockRegistry.set(pageId, store)
     return () => {

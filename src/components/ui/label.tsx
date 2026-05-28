@@ -31,7 +31,7 @@ type LabelProps = React.ComponentProps<'label'> & VariantProps<typeof labelVaria
 
 const Label = ({ ref, className, size, muted, ...props }: LabelProps) => {
   return (
-    // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is forwarded via spread props
+    // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- htmlFor is forwarded via spread props
     <label
       ref={ref}
       data-slot="label"

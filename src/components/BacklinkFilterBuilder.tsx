@@ -12,8 +12,10 @@ import { Filter, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { notify } from '@/lib/notify'
+
 import type { BacklinkFilter, BacklinkSort, SortDir } from '../lib/tauri'
 import { AddFilterRow } from './backlink-filter/AddFilterRow'
 import { FilterPillRow, type FilterWithKey } from './FilterPillRow'

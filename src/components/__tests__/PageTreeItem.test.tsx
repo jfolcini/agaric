@@ -17,6 +17,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { PageTreeNode } from '../../lib/page-tree'
 import { PageTreeItem } from '../PageTreeItem'
 
@@ -200,7 +201,7 @@ describe('PageTreeItem', () => {
       expect(screen.getByText('sub-page')).toBeInTheDocument()
 
       // Click the chevron (first button in the row)
-      // biome-ignore lint/style/noNonNullAssertion: button known to exist after render
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- button known to exist after render
       const chevronBtn = container.querySelector('button')!
       await user.click(chevronBtn)
       expect(screen.queryByText('sub-page')).not.toBeInTheDocument()
@@ -291,7 +292,7 @@ describe('PageTreeItem', () => {
       const { container } = render(<PageTreeItem node={node} {...defaultProps} />)
 
       // The leaf navigation button is the first <button> child
-      // biome-ignore lint/style/noNonNullAssertion: button known to exist after render
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- button known to exist after render
       const leafBtn = container.querySelector('button')!
       for (const cls of ringClasses) {
         expect(leafBtn.className).toContain(cls)

@@ -14,6 +14,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { LinkPreviewState } from '@/hooks/useLinkPreview'
 import { logger } from '@/lib/logger'
 import type { LinkMetadata } from '@/lib/tauri'
@@ -34,6 +35,7 @@ vi.mock('@floating-ui/dom', () => ({
 }))
 
 import { computePosition } from '@floating-ui/dom'
+
 import { LinkPreviewTooltip } from '../LinkPreviewTooltip'
 
 // ── Helpers ──────────────────────────────────────────────────────────────

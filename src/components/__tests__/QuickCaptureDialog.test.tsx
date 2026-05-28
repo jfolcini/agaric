@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { t } from '../../lib/i18n'
 import { useSpaceStore } from '../../stores/space'

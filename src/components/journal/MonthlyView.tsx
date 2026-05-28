@@ -19,6 +19,7 @@ import {
 import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useBatchCounts } from '../../hooks/useBatchCounts'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import type { DayEntry } from '../../lib/date-utils'
@@ -76,19 +77,16 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for calendar — no semantic HTML equivalent
     <div
       role="grid"
       aria-label={t('journal.monthlyCalendarLabel')}
       className="rounded-lg overflow-hidden bg-border"
     >
       {/* Day-of-week headers */}
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid row */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: header row is not interactive */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- header row is not interactive */}
       <div role="row" className="grid grid-cols-7 gap-0.5">
         {dayHeaders.map((header) => (
-          // biome-ignore lint/a11y/useSemanticElements: ARIA columnheader for grid pattern
-          // biome-ignore lint/a11y/useFocusableInteractive: header cells are not interactive
+          // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- header cells are not interactive
           <div
             key={header}
             role="columnheader"
@@ -103,8 +101,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
       {weeks.map((week) => {
         const weekKey = week[0]?.dateStr ?? ''
         return (
-          // biome-ignore lint/a11y/useSemanticElements: ARIA grid row
-          // biome-ignore lint/a11y/useFocusableInteractive: cells within handle focus
+          // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- cells within handle focus
           <div key={weekKey} role="row" className="grid grid-cols-7 gap-0.5">
             {week.map((entry) => {
               const isToday = entry.dateStr === todayStr

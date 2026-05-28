@@ -15,12 +15,14 @@
 import { AlertCircle, Maximize2, Minus, Network, Plus } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
+
 import { logger } from '../lib/logger'
 import { EmptyState } from './EmptyState'
 import { FeatureErrorBoundary } from './FeatureErrorBoundary'

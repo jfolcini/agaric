@@ -38,6 +38,7 @@
 import { select } from 'd3-selection'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
+
 import type { GraphEdge, GraphNode } from '@/components/GraphView.helpers'
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
@@ -306,7 +307,7 @@ export function useGraphSimulation({
   // failure flip, or a zoom/runner callback identity change). Reads
   // the latest data + renderElements via refs so filter toggles do
   // not re-fire this effect.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nodes/edges/navigateToPage/renderElements are intentionally consumed via refs. Listing them here would re-fire setup on every filter toggle, defeating PERF-Tier2 item 8.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- nodes/edges/navigateToPage/renderElements are intentionally consumed via refs. Listing them here would re-fire setup on every filter toggle, defeating PERF-Tier2 item 8.
   useEffect(() => {
     if (nodesRef.current.length === 0 || !svgRef.current) return
     const svg = svgRef.current
@@ -384,7 +385,7 @@ export function useGraphSimulation({
   // ran with empty `nodes` (returning early before building anything),
   // this effect catches the first non-empty render and triggers the
   // setup effect by bumping `setupKey`. See `setupKey` below.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed — when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed — when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
   useEffect(() => {
     const state = stateRef.current
     if (!svgRef.current) return

@@ -19,8 +19,10 @@ import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import { CODE_LANGUAGES } from '@/lib/toolbar-config'
+
 import { CodeLanguageSelector } from '../CodeLanguageSelector'
 
 // ── TipTap editor chain mock ──────────────────────────────────────────────

@@ -3,6 +3,7 @@
  */
 
 import { addMonths, eachDayOfInterval, endOfWeek, format, startOfWeek } from 'date-fns'
+
 import { getWeekStartDay } from '../hooks/useWeekStart'
 
 /** Dynamic week options — reads weekStartsOn from user preference. */

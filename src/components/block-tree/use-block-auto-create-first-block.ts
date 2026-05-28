@@ -14,7 +14,9 @@
 
 import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import { logger } from '../../lib/logger'
 import { createBlock } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'

@@ -16,6 +16,7 @@ import { FileText, Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,7 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as i18nT } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { DENSITY_ROW_HEIGHT, usePageBrowserDensity } from '../hooks/usePageBrowserDensity'
@@ -224,7 +226,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // cache, so the version bump is the trigger that re-derives the resolver
   // (and re-renders the chips) when tags finish loading — biome flags it as
   // an "extra" dep because the callback body never names it directly.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion drives re-resolution of the mutable cache
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion drives re-resolution of the mutable cache
   const tagResolver = useCallback(
     (id: string): string => {
       const title = resolveTitle(id)
@@ -336,7 +338,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // Reset the retained total when the query basis changes (space / sort /
   // chip set) so a stale count never lingers against a fresh result set
   // before the new first page resolves.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the query-basis tuple drives the reset; `wireFiltersKey` is the chip-set trigger
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- the query-basis tuple drives the reset; `wireFiltersKey` is the chip-set trigger
   useEffect(() => {
     setDisplayTotalCount(undefined)
   }, [currentSpaceId, sortOption, wireFiltersKey])
@@ -645,7 +647,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // given scroll offset — keeping `focusedIndex` stable across the
   // toggle would land the focus ring on a row that's no longer where
   // the user is looking.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: filterText, sortOption, density, and the compound-filter set intentionally trigger reset
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- filterText, sortOption, density, and the compound-filter set intentionally trigger reset
   useEffect(() => {
     setFocusedIndex(0)
   }, [filterText, sortOption, density, wireFiltersKey, setFocusedIndex])
@@ -656,7 +658,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // emit the polite prefix immediately, and arm a flag so the result
   // count gets appended once the refetch settles (effect below). Keyed on
   // `wireFiltersKey` so it only fires on a real chip add/remove.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the compound-filter set drives this; `filters`/`t` are read but `wireFiltersKey` is the change trigger
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- the compound-filter set drives this; `filters`/`t` are read but `wireFiltersKey` is the change trigger
   useEffect(() => {
     const prev = prevFiltersRef.current
     prevFiltersRef.current = filters
@@ -769,7 +771,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // this, switching to space B and back to space A would skip
   // restoration for A because `restoredRef.current` was set during
   // A's first mount in this session.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm only on key change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-arm only on key change
   useEffect(() => {
     restoredRef.current = false
   }, [scrollStorageKey])
@@ -835,7 +837,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // points at the same row index. Allow restoration again on next
   // mount by leaving `restoredRef` intact within this mount but
   // dropping the stored value.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
   useEffect(() => {
     if (scrollStorageKey == null) return
     // Skip the very first run (mount) — that's when we want to
@@ -1222,11 +1224,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 never carries an empty trailing row once everything is
                 loaded (`LoadMoreButton` itself also returns null then). */}
             {hasMore && (
-              // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for the load-more footer in this list grid
-              // biome-ignore lint/a11y/useFocusableInteractive: row focus is delegated to the inner load-more button
+              // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- row focus is delegated to the inner load-more button
               <div role="row" className="page-browser-load-more-row">
-                {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-                {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner load-more button */}
+                {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to the inner load-more button */}
                 <div role="gridcell">
                   <LoadMoreButton
                     hasMore={hasMore}

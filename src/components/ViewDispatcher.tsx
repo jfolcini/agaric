@@ -22,6 +22,7 @@
 
 import { lazy, type ReactElement, Suspense, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useItemCount } from '../hooks/useItemCount'
 import { countTrash } from '../lib/tauri'
 import { useNavigationStore, type View } from '../stores/navigation'
@@ -78,7 +79,7 @@ export function useHeaderLabel(): string {
 export function useTrashCount(): number {
   const currentView = useNavigationStore((s) => s.currentView)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-poll when view or space changes (user may have restored items / switched spaces)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
   const queryFn = useCallback(
     () =>
       // `countTrash` pushes the count into SQL so the trash badge stays

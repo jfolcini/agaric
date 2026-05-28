@@ -3,9 +3,11 @@ import type React from 'react'
 import { type ButtonHTMLAttributes, useEffect, useMemo, useRef, useState } from 'react'
 import type { CalendarDay, Modifiers } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
+
 import { Calendar } from '@/components/ui/calendar'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+
 import { useBlockPropertyEvents } from '../../hooks/useBlockPropertyEvents'
 import { useWeekStart } from '../../hooks/useWeekStart'
 import { formatDate, getWeekOptions } from '../../lib/date-utils'
@@ -124,7 +126,7 @@ export function JournalCalendarDropdown({
 
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: monthKey encodes the month
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- monthKey encodes the month
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -187,7 +189,7 @@ export function JournalCalendarDropdown({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- backdrop dismiss */}
       <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={calRef}

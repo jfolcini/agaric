@@ -62,7 +62,7 @@ export function setupMock(): void {
   mockIPC((cmd, args) => {
     // Error injection — E2E tests can force any command to fail
     if (hasInjectedError(cmd)) {
-      // biome-ignore lint/style/noNonNullAssertion: hasInjectedError() guarantees getInjectedError() returns a string
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- hasInjectedError() guarantees getInjectedError() returns a string
       throw new Error(getInjectedError(cmd)!)
     }
     return dispatch(cmd, args)

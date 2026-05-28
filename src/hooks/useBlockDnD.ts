@@ -20,7 +20,9 @@ import {
 } from '@dnd-kit/core'
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
+
 import { logger } from '@/lib/logger'
+
 import { INDENT_WIDTH } from '../components/SortableBlock'
 import {
   computePosition,

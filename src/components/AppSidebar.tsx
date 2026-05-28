@@ -20,6 +20,7 @@
 import { ChevronsLeft, Keyboard, Moon, Plus, RefreshCw, Sun, WifiOff } from 'lucide-react'
 import { memo, type ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { THEME_NAME_KEY, type ThemePreference } from '../hooks/useTheme'
 import { formatRelativeTime } from '../lib/format-relative-time'
 import { getShortcutKeys } from '../lib/keyboard-config'

@@ -12,12 +12,13 @@ import { renderHook } from '@testing-library/react'
 import { drag } from 'd3-drag'
 import { forceCenter, forceSimulation, forceX, forceY } from 'd3-force'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
 import type { SimulationCtx } from '../../lib/graph-sim-helpers'
 import { useGraphMainThreadSim } from '../useGraphMainThreadSim'
 
 // Capture the simulation mock so individual tests can assert on it.
-// biome-ignore lint/suspicious/noExplicitAny: shared mock shape
+// oxlint-disable-next-line typescript/no-explicit-any -- shared mock shape
 let lastSim: any = null
 
 vi.mock('d3-force', () => {
@@ -75,7 +76,7 @@ function makeCtx(prefersReducedMotion = false): SimulationCtx {
   const nodes = makeNodes()
   const edges = makeEdges()
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
-  // biome-ignore lint/suspicious/noExplicitAny: NodeSel chain — test stub
+  // oxlint-disable-next-line typescript/no-explicit-any -- NodeSel chain — test stub
   const node = { call: vi.fn().mockReturnThis() } as any
   return {
     simNodes: nodes,

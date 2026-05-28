@@ -12,9 +12,11 @@ import { ChevronDown, ChevronUp, Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import { useHistoryKeyboardNav } from '../hooks/useHistoryKeyboardNav'
 import { entryKey, useHistorySelection } from '../hooks/useHistorySelection'
@@ -139,7 +141,7 @@ export function HistoryView(): React.ReactElement {
   // by the paginated query). FEAT-3 Phase 8 — also resets when the
   // space scope flips so a stale selection from the previous scope
   // doesn't leak into the new one.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset UI state when filter changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset UI state when filter changes
   useEffect(() => {
     clearSelection()
     setFocusedIndex(0)

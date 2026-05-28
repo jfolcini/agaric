@@ -42,6 +42,7 @@ import type React from 'react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+
 import { type PaletteAction, PaletteActionMenu } from '@/components/palette/PaletteActionMenu'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import {
@@ -346,7 +347,7 @@ export function CommandPalette(): React.ReactElement | null {
  * onClose → setView('search')` flow disposes the sheet cleanly
  * before the find-in-files view appears).
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the Phase 5 action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
+// oxlint-disable-next-line eslint/complexity -- complexity 26 vs max 25. PaletteBody is the orchestrator across 6 row types (search / commands / tags / help / link / recent), the debounced partitioned-IPC pipeline, and the Phase 5 action-menu state machine. Top-level helpers (routePrefixToMode, buildActionMenuActions, parseRowValue, tryOpenActionMenuOnTab, tryNumericPrefixJump, revealInPagesView) are already extracted; splitting further would mean threading 10+ closures through a custom hook signature for one point over budget. Same trade-off as DaySection.tsx and ConfirmDialog.tsx in this repo.
 export function PaletteBody({
   onClose,
   actionMenuOpenRef,
@@ -476,7 +477,7 @@ export function PaletteBody({
   // `lastUserQueryRef.current` skips the user-typing path (which
   // routes through `handleInputChange` and manages its own
   // debounced schedule).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `lastUserQueryRef`, `debounced` are stable refs/callbacks; including them would re-fire the effect spuriously.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `lastUserQueryRef`, `debounced` are stable refs/callbacks; including them would re-fire the effect spuriously.
   useEffect(() => {
     if (query === lastUserQueryRef.current) return
     lastUserQueryRef.current = query

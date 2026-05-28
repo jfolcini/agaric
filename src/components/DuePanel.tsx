@@ -15,9 +15,11 @@ import { Repeat } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { getTodayString } from '@/lib/date-utils'
 import { cn } from '@/lib/utils'
+
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useKeyboardNavigableList } from '../hooks/useKeyboardNavigableList'
@@ -31,11 +33,11 @@ import { ListViewState } from './ListViewState'
 import { LoadMoreButton } from './LoadMoreButton'
 import { OverdueSection } from './OverdueSection'
 import { renderRichContent } from './RichContentRenderer'
-import { UpcomingSection } from './UpcomingSection'
 import { Badge } from './ui/badge'
 import { ListItem } from './ui/list-item'
 import { ScrollArea } from './ui/scroll-area'
 import { SectionGroupHeader } from './ui/section-group-header'
+import { UpcomingSection } from './UpcomingSection'
 
 export interface DuePanelProps {
   date: string // YYYY-MM-DD
@@ -337,11 +339,11 @@ export function DuePanel({ date, onNavigateToPage }: DuePanelProps): React.React
             const groupedCount = grouped.reduce((sum, g) => sum + g.items.length, 0)
             let flatIndex = groupedCount
             return (
-              // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
+              // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container
               <div
                 className="due-panel-content mt-1 space-y-2"
                 ref={listRef}
-                // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+                // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav container
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (navHandleKeyDown(e)) e.preventDefault()

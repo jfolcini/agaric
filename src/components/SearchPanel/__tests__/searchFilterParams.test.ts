@@ -10,7 +10,9 @@
  *  - `tagIds` come from the resolver argument, not the projection.
  */
 import { describe, expect, it } from 'vitest'
+
 import type { AstFilterProjection } from '@/lib/search-query'
+
 import { astFilterParams } from '../searchFilterParams'
 
 function emptyProjection(): AstFilterProjection {

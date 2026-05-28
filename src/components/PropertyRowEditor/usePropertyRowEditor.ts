@@ -13,9 +13,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { useDateInput } from '../../hooks/useDateInput'
 import { setPriorityLevels } from '../../lib/priority-levels'
 import type { PageHeading, PropertyDefinition, PropertyRow } from '../../lib/tauri'

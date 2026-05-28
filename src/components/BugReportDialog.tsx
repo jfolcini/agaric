@@ -31,6 +31,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { BugReportForm } from '@/components/BugReportDialog/BugReportForm'
 import { DiagnosticsCollector } from '@/components/BugReportDialog/DiagnosticsCollector'
 import { SubmitSection } from '@/components/BugReportDialog/SubmitSection'

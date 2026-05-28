@@ -20,7 +20,9 @@ import { select } from 'd3-selection'
 import { zoom } from 'd3-zoom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
@@ -120,17 +122,17 @@ vi.mock('d3-drag', () => ({
 
 // ── MockWorker for WebWorker tests (PERF-9b) ──────────────────────────
 
-// biome-ignore lint/suspicious/noExplicitAny: test mock
+// oxlint-disable-next-line typescript/no-explicit-any -- test mock
 type MessageHandler = (event: { data: any }) => void
 
 class MockWorker {
   static instances: MockWorker[] = []
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessageCalls: any[] = []
   terminated = false
   private listeners: Map<string, MessageHandler[]> = new Map()
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
   }
@@ -149,7 +151,7 @@ class MockWorker {
     )
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessage(data: any) {
     this.postMessageCalls.push(data)
 
@@ -173,12 +175,12 @@ class MockWorker {
     this.terminated = true
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   simulateError(type: 'error' | 'messageerror', event: any) {
     this.emit(type, event)
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   private emit(type: string, event: any) {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) {
@@ -864,9 +866,9 @@ describe('GraphView', () => {
       })
 
       // Access the d3 mock chain to extract the keydown handler on node groups
-      // biome-ignore lint/suspicious/noExplicitAny: d3 mock chain access in test
+      // oxlint-disable-next-line typescript/no-explicit-any -- d3 mock chain access in test
       const svgSel = vi.mocked(select).mock.results[0]?.value as any
-      // biome-ignore lint/suspicious/noExplicitAny: d3 mock chain access in test
+      // oxlint-disable-next-line typescript/no-explicit-any -- d3 mock chain access in test
       const g = svgSel.append.mock.results[0]?.value as any
       const keydownCall = g.on.mock.calls.find((c: unknown[]) => c[0] === 'keydown')
       expect(keydownCall).toBeDefined()
@@ -904,7 +906,7 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '+' })
 
-      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1.3)
     })
@@ -933,7 +935,7 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '-' })
 
-      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       expect(zoomInstance.scaleBy).toHaveBeenCalledWith(expect.anything(), 1 / 1.3)
     })
@@ -962,7 +964,7 @@ describe('GraphView', () => {
       const svg = screen.getByTestId('graph-svg')
       fireEvent.keyDown(svg, { key: '0' })
 
-      // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+      // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
       const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
       // Production calls zoomBehavior.transform(svgSelection.transition()..., zoomIdentity).
       // zoomIdentity is mocked as { k: 1, x: 0, y: 0 } at module top.
@@ -1003,7 +1005,7 @@ describe('GraphView', () => {
 
         // Old `+` should NOT fire zoom-in after rebinding
         fireEvent.keyDown(svg, { key: '+' })
-        // biome-ignore lint/suspicious/noExplicitAny: d3 zoom mock access in test
+        // oxlint-disable-next-line typescript/no-explicit-any -- d3 zoom mock access in test
         const zoomInstance = vi.mocked(zoom).mock.results[0]?.value as any
         expect(zoomInstance.scaleBy).not.toHaveBeenCalled()
 
@@ -1173,7 +1175,7 @@ describe('GraphView', () => {
       expect(MockWorker.instances).toHaveLength(1)
       const worker = MockWorker.instances[0] as InstanceType<typeof MockWorker>
       const startMsg = worker.postMessageCalls.find(
-        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        // oxlint-disable-next-line typescript/no-explicit-any -- test mock
         (m: any) => m.type === 'start',
       )
       expect(startMsg).toBeDefined()
@@ -1506,7 +1508,7 @@ describe('GraphView', () => {
         typeof MockWorker
       >
       const startMsg = latestWorker?.postMessageCalls.find(
-        // biome-ignore lint/suspicious/noExplicitAny: test mock
+        // oxlint-disable-next-line typescript/no-explicit-any -- test mock
         (m: any) => m.type === 'start',
       )
       expect(startMsg).toBeDefined()

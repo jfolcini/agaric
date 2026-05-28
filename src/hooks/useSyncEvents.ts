@@ -27,6 +27,7 @@ import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
+
 import { useTauriEventListener } from './useTauriEventListener'
 
 /** Payload shapes from the Rust backend sync_events.rs */

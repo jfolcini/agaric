@@ -10,8 +10,10 @@
 import { Search, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../../lib/tauri'
 import { EmptyState } from '../EmptyState'
@@ -82,7 +84,6 @@ export function TrashListView({
             }
           />
         ) : (
-          // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for trash list — no semantic HTML equivalent for non-tabular interactive grid
           <div
             className="trash-view-list space-y-2"
             role="grid"

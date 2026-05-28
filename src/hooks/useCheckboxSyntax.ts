@@ -11,7 +11,9 @@
 import type { TFunction } from 'i18next'
 import { useCallback } from 'react'
 import type { StoreApi } from 'zustand'
+
 import { notify } from '@/lib/notify'
+
 import { logger } from '../lib/logger'
 import { getProperty, setTodoState as setTodoStateCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'

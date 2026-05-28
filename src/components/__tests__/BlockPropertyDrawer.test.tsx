@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
+
 import { reportIpcError } from '../../lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow as PropertyRowData } from '../../lib/tauri'
 import { useBlockStore } from '../../stores/blocks'

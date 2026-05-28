@@ -32,7 +32,9 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import type { SearchBlockRow } from '@/lib/bindings'
+
 import { CollapsibleGroupList } from '../CollapsibleGroupList'
 import { ResultCountSummary } from './ResultCountSummary'
 import { SearchResultBlockRow } from './SearchResultBlockRow'

@@ -46,6 +46,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
+
 import type { PickerItem } from '../editor/SuggestionList'
 import { matchesSearchFolded } from './fold-for-search'
 import { getPropertyKeys } from './property-keys-cache'

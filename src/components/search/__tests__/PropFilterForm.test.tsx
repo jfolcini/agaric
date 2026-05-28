@@ -17,7 +17,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { PropFilterForm } from '../filter-forms/PropFilterForm'
 
 function setup(): { onAddFilter: ReturnType<typeof vi.fn>; container: HTMLElement } {
@@ -118,7 +120,7 @@ describe('PropFilterForm — round-trip validation (PEND-70 CR8 MAJOR-1)', () =>
 
   it('has no axe violations', async () => {
     const { container } = setup()
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

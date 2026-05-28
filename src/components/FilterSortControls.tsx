@@ -9,6 +9,7 @@
 import { ArrowUpDown } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -17,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+
 import type { BacklinkSort } from '../lib/tauri'
 
 // ---------------------------------------------------------------------------

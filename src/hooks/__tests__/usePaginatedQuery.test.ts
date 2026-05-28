@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { type PaginatedResponse, usePaginatedQuery } from '../usePaginatedQuery'
 
 const mockedToastError = vi.mocked(toast.error)

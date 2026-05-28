@@ -9,6 +9,7 @@
 import { Plus } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,6 +27,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
+
 import type { PropertyDefinition } from '../lib/tauri'
 
 export interface AddPropertyPopoverProps {
@@ -129,7 +131,7 @@ export function AddPropertyPopover({
                   Radix Tooltip requires a focusable trigger; a disabled <button>
                   doesn't fire pointer events, so we wrap it in a focusable span. */}
               <TooltipTrigger asChild>
-                {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Radix tooltip-on-disabled-button requires a focusable wrapper. */}
+                {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
                 <span tabIndex={0}>{triggerButton}</span>
               </TooltipTrigger>
               <TooltipContent>{disabledTooltip}</TooltipContent>

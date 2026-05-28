@@ -14,6 +14,7 @@ import { HelpCircle, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,6 +33,7 @@ import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
+
 import { useBlockPropertyIpc } from '../hooks/useBlockPropertyIpc'
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useDateInput } from '../hooks/useDateInput'
@@ -361,7 +363,7 @@ export interface PropertyRowProps {
   removeAriaLabel?: string
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: refactor deferred to follow-up
+// oxlint-disable-next-line eslint/complexity -- refactor deferred to follow-up
 export function PropertyRow({
   propKey,
   icon: Icon,

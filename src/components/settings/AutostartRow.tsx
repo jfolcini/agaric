@@ -18,6 +18,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { logger } from '@/lib/logger'

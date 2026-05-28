@@ -1,0 +1,74 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y", "import"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "rules": {
+    "eslint/no-unused-vars": [
+      "warn",
+      { "args": "all", "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+    "typescript/no-non-null-assertion": "error",
+    "eslint/prefer-const": "error",
+    "unicorn/explicit-length-check": "error",
+    "import/no-default-export": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/require-await": "error",
+    "eslint/no-console": ["warn", { "allow": ["warn", "error"] }],
+    "eslint/complexity": ["warn", { "max": 25 }],
+
+    "jsx-a11y/prefer-tag-over-role": "warn",
+    "react-hooks/exhaustive-deps": "warn",
+    "jsx-a11y/control-has-associated-label": "warn",
+    "jsx-a11y/no-autofocus": "warn",
+    "jsx-a11y/interactive-supports-focus": "warn",
+    "eslint/no-unsafe-optional-chaining": "warn",
+    "jsx-a11y/no-noninteractive-element-interactions": "warn",
+    "unicorn/no-new-array": "warn",
+    "typescript/no-this-alias": "warn",
+    "jsx-a11y/role-supports-aria-props": "warn",
+    "unicorn/no-useless-fallback-in-spread": "warn",
+    "unicorn/prefer-string-starts-ends-with": "warn",
+    "jsx-a11y/no-static-element-interactions": "warn",
+    "jsx-a11y/click-events-have-key-events": "warn",
+    "unicorn/no-thenable": "warn",
+    "react/no-children-prop": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["src/main.tsx", "*.config.ts"],
+      "rules": {
+        "import/no-default-export": "off"
+      }
+    },
+    {
+      "files": ["**/__tests__/**", "**/*.test.ts", "**/*.test.tsx", "**/*.property.test.ts"],
+      "rules": {
+        "typescript/require-await": "off",
+        "eslint/no-console": "off"
+      }
+    },
+    {
+      "files": ["scripts/**/*.js", "scripts/**/*.mjs", "scripts/**/*.cjs", "scripts/**/*.ts"],
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "**/dist",
+    "**/node_modules",
+    "**/src-tauri/target",
+    "**/src-tauri/gen",
+    "**/.sqlx",
+    "src/lib/bindings.ts",
+    "**/coverage",
+    "public/pdf.worker.min.mjs"
+  ]
+}

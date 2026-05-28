@@ -1,0 +1,27 @@
+{
+  "useTabs": false,
+  "tabWidth": 2,
+  "printWidth": 100,
+  "singleQuote": true,
+  "jsxSingleQuote": false,
+  "quoteProps": "as-needed",
+  "trailingComma": "all",
+  "semi": false,
+  "arrowParens": "always",
+  "bracketSameLine": false,
+  "bracketSpacing": true,
+  "sortImports": true,
+  "ignorePatterns": [
+    "**/dist",
+    "**/node_modules",
+    "**/src-tauri/target",
+    "**/src-tauri/gen",
+    "**/.sqlx",
+    "src/lib/bindings.ts",
+    "**/coverage",
+    "**/*.css",
+    "**/*.md",
+    "docs/**",
+    "public/pdf.worker.min.mjs"
+  ]
+}

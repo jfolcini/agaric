@@ -5,7 +5,9 @@
 
 import { format } from 'date-fns'
 import type React from 'react'
+
 import { cn } from '@/lib/utils'
+
 import { getSourceColor } from '../../lib/date-property-colors'
 import type { DayEntry } from '../../lib/date-utils'
 
@@ -44,7 +46,6 @@ export function MonthlyDayCell({
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA gridcell within calendar grid pattern
     <div
       role="gridcell"
       aria-label={fullDate}

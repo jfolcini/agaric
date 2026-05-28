@@ -4,6 +4,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import type { NodeType, Node as PmNode } from '@tiptap/pm/model'
 import { describe, expect, it, vi } from 'vitest'
+
 import { AtTagPicker } from '../extensions/at-tag-picker'
 import { BlockLink } from '../extensions/block-link'
 import { BlockLinkPicker } from '../extensions/block-link-picker'

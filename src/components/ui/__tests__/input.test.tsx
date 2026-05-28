@@ -20,6 +20,7 @@ import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { Input } from '../input'
 
 describe('Input', () => {

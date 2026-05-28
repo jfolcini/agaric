@@ -17,6 +17,7 @@
 
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { useBlockNavigation } from '../useBlockNavigation'
 

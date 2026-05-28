@@ -15,6 +15,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { SearchToggleRow, type SearchToggleState } from '../SearchToggleRow'
 
 const OFF: SearchToggleState = { caseSensitive: false, wholeWord: false, isRegex: false }
@@ -99,7 +100,7 @@ describe('SearchToggleRow', () => {
 
   it('has no axe violations', async () => {
     const { container } = render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
-    // biome-ignore lint/suspicious/noExplicitAny: axe types loose in vitest-axe.
+    // oxlint-disable-next-line typescript/no-explicit-any -- axe types loose in vitest-axe.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

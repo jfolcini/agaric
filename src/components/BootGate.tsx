@@ -2,9 +2,11 @@ import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+
 import { useBootStore } from '../stores/boot'
 
 export function BootGate({ children }: { children: React.ReactNode }) {

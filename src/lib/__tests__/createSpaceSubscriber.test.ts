@@ -21,6 +21,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useSpaceStore } from '../../stores/space'
 import { createSpaceSubscriber } from '../createSpaceSubscriber'
 

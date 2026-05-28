@@ -34,6 +34,7 @@
 // the larger of the two chunks.
 import { relaunch } from '@tauri-apps/plugin-process'
 import { useEffect } from 'react'
+
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import { notify } from '../lib/notify'

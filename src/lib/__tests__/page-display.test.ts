@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { getPageDisplayName, type PageDisplayMode } from '../page-display'
 
 const MODES: PageDisplayMode[] = ['full', 'leaf', 'leaf-with-breadcrumb']

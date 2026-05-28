@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { getPayloadPreview, getPayloadRawContent, getPropertyPayload } from '../history-utils'
 import type { HistoryEntry } from '../tauri'
 

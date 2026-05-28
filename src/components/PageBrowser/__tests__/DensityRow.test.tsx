@@ -10,7 +10,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+
 import { collectFlagTokens, DensityRow, formatRelativeShort } from '../DensityRow'
 
 type RequiredProps = React.ComponentProps<typeof DensityRow>
@@ -221,33 +223,32 @@ describe('DensityRow', () => {
     expect(tooltip).toContain('41')
   })
 
-  it.each<DensityMode>([
-    'compact',
-    'regular',
-    'expanded',
-  ])('has no a11y violations at density=%s', async (density) => {
-    // Wrap in `role="grid"` so the row's `role="row"` satisfies axe's
-    // `aria-required-parent` rule (the real PageBrowser viewport
-    // applies this role; the row is never rendered standalone).
-    const { container } = render(
-      // biome-ignore lint/a11y/useSemanticElements: ARIA grid scaffold for the test
-      <div role="grid" aria-label="pages">
-        <DensityRow
-          {...baseProps({
-            density,
-            inboundLinkCount: 3,
-            childBlockCount: 7,
-            hasTags: true,
-            hasDue: true,
-          })}
-        />
-      </div>,
-    )
-    await waitFor(async () => {
-      const results = await axe(container)
-      expect(results).toHaveNoViolations()
-    })
-  }, 20_000)
+  it.each<DensityMode>(['compact', 'regular', 'expanded'])(
+    'has no a11y violations at density=%s',
+    async (density) => {
+      // Wrap in `role="grid"` so the row's `role="row"` satisfies axe's
+      // `aria-required-parent` rule (the real PageBrowser viewport
+      // applies this role; the row is never rendered standalone).
+      const { container } = render(
+        <div role="grid" aria-label="pages">
+          <DensityRow
+            {...baseProps({
+              density,
+              inboundLinkCount: 3,
+              childBlockCount: 7,
+              hasTags: true,
+              hasDue: true,
+            })}
+          />
+        </div>,
+      )
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    },
+    20_000,
+  )
 })
 
 describe('formatRelativeShort', () => {

@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { parse } from '../classify'
 import { astToFilterProjection } from '../to-search-filter'
 

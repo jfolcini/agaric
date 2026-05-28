@@ -7,6 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../../lib/logger'
 import { useUndoStore } from '../../../stores/undo'
 import { useSlashCommandProperty } from '../useSlashCommandProperty'
@@ -331,9 +332,9 @@ describe('useSlashCommandProperty — attach', () => {
       const el = input.get()
       expect(el).not.toBeNull()
       const file = new File([new Uint8Array([1, 2, 3, 4])], 'photo.png', { type: 'image/png' })
-      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(el).not.toBeNull() above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(el).not.toBeNull() above
       Object.defineProperty(el!, 'files', { value: [file] })
-      // biome-ignore lint/style/noNonNullAssertion: guarded above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
       await el!.onchange?.(new Event('change'))
 
       expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
@@ -358,9 +359,9 @@ describe('useSlashCommandProperty — attach', () => {
       const file = new File([new Uint8Array([0, 1])], 'evil.exe', {
         type: 'application/x-msdownload',
       })
-      // biome-ignore lint/style/noNonNullAssertion: input is created by the handler
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- input is created by the handler
       Object.defineProperty(el!, 'files', { value: [file] })
-      // biome-ignore lint/style/noNonNullAssertion: guarded above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded above
       await el!.onchange?.(new Event('change'))
 
       expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())

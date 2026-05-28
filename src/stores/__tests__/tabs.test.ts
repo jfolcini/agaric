@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { useTabsStore } from '../tabs'
 
 const migrate = useTabsStore.persist.getOptions().migrate

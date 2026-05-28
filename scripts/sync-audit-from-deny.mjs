@@ -70,7 +70,6 @@ function extractIgnoreIds(denyTomlText) {
   const ids = []
   const objectIdRegex = /id\s*=\s*"([^"]+)"/g
   let m
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex.exec loop
   while ((m = objectIdRegex.exec(arrayBody)) !== null) {
     ids.push(m[1])
   }

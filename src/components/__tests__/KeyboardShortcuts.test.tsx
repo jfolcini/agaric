@@ -12,10 +12,12 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import { setCustomShortcut } from '@/lib/keyboard-config/storage'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { __resetPlatformCacheForTests } from '@/lib/platform'
+
 import { KeyboardShortcuts } from '../KeyboardShortcuts'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')

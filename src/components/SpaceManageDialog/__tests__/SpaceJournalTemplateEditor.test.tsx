@@ -17,12 +17,15 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { t } from '@/lib/i18n'
+
 import { SpaceJournalTemplateEditor } from '../SpaceJournalTemplateEditor'
 
 vi.mock('@/lib/logger', () => ({

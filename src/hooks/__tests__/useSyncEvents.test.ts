@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { mapBackendState, useSyncEvents } from '../useSyncEvents'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
@@ -103,6 +104,7 @@ vi.mock('@/lib/announcer', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { announce } from '@/lib/announcer'
 
 const mockedToastSuccess = vi.mocked(toast.success)
@@ -141,7 +143,7 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 let hadTauriInternals: boolean
 
 beforeEach(() => {
-  // biome-ignore lint/suspicious/noExplicitAny: React test env global
+  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
 
@@ -165,7 +167,7 @@ beforeEach(() => {
 afterEach(() => {
   // Clean up __TAURI_INTERNALS__ if we added it
   if (!hadTauriInternals) {
-    // biome-ignore lint/suspicious/noExplicitAny: test cleanup of window property
+    // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
     delete (window as any).__TAURI_INTERNALS__
   }
 })
@@ -260,7 +262,7 @@ describe('useSyncEvents', () => {
     })
 
     it('no-ops when __TAURI_INTERNALS__ is absent (browser mode)', async () => {
-      // biome-ignore lint/suspicious/noExplicitAny: test cleanup of window property
+      // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
       delete (window as any).__TAURI_INTERNALS__
 
       const { unmount } = renderHook(() => useSyncEvents())

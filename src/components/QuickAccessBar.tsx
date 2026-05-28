@@ -38,9 +38,11 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { QuickNavChip } from '@/components/ui/quick-nav-chip'
 import { RecentPageChip } from '@/components/ui/recent-page-chip'
 import { ScrollArea } from '@/components/ui/scroll-area'
+
 import { useIsMobile } from '../hooks/useIsMobile'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { getPageDisplayName } from '../lib/page-display'

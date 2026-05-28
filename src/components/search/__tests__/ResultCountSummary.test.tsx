@@ -11,7 +11,9 @@
 
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+
 import { t } from '@/lib/i18n'
+
 import { ResultCountSummary } from '../ResultCountSummary'
 
 describe('ResultCountSummary', () => {

@@ -26,7 +26,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { useNavigationStore } from '../../stores/navigation'
 import { useTabsStore } from '../../stores/tabs'
@@ -140,7 +142,7 @@ const emptyGrouped = {
 }
 
 function mockInvokeWith(groupedResponse: unknown, extras?: Record<string, unknown>) {
-  // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+  // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
   mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
     if (cmd === 'list_backlinks_grouped') return groupedResponse
     if (cmd === 'batch_resolve') return []
@@ -549,7 +551,7 @@ describe('LinkedReferences', () => {
       truncated: false,
     }
     let callCount = 0
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') {
         callCount++
@@ -619,7 +621,7 @@ describe('LinkedReferences', () => {
 
   // 17. error handling: shows toast on fetch error
   it('error handling: shows toast on fetch error', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') throw new Error('network failure')
       if (cmd === 'batch_resolve') return []
@@ -1227,7 +1229,7 @@ describe('LinkedReferences', () => {
 
   // 35. initial backlinks load failure: shows toast and renders EmptyState (UX-152)
   it('error: initial backlinks load failure shows toast and renders EmptyState', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backend unavailable'))
       if (cmd === 'batch_resolve') return []
@@ -1270,7 +1272,7 @@ describe('LinkedReferences', () => {
       truncated: false,
     }
     let callCount = 0
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') {
         callCount++
@@ -1312,7 +1314,7 @@ describe('LinkedReferences', () => {
   // and surfaces an empty `string[]`, matching the other two consumers
   // (`PropertyValuePicker`, `UnlinkedReferences`) that never toasted.)
   it('error: property keys load failure renders without crashing (no toast in shared-cache path)', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_property_keys')
         return Promise.reject(new Error('property keys unavailable'))
@@ -1336,7 +1338,7 @@ describe('LinkedReferences', () => {
 
   // 38. tags load failure: shows toast
   it('error: tags load failure shows toast', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_tags_by_prefix') return Promise.reject(new Error('tags service down'))
       if (cmd === 'list_backlinks_grouped') return emptyGrouped
@@ -1358,7 +1360,7 @@ describe('LinkedReferences', () => {
   // 39. simultaneous failures: backlinks + tags toast; property-keys
   // failure is now handled silently by the shared cache (MAINT-189).
   it('error: simultaneous failures show backlinks + tags toasts (property keys handled by shared cache)', async () => {
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') return Promise.reject(new Error('backlinks failed'))
       if (cmd === 'list_property_keys') return Promise.reject(new Error('properties failed'))
@@ -1493,7 +1495,7 @@ describe('LinkedReferences', () => {
       truncated: false,
     }
     let callCount = 0
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_backlinks_grouped') {
         callCount++
@@ -1535,7 +1537,7 @@ describe('LinkedReferences', () => {
   it('cancels the listTagsByPrefix promise on unmount (PEND-29 B-6)', async () => {
     let rejectTags!: (err: unknown) => void
     let listTagsCalled = false
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     mockedInvoke.mockImplementation((cmd: string, _args?: any) => {
       if (cmd === 'list_tags_by_prefix') {
         listTagsCalled = true

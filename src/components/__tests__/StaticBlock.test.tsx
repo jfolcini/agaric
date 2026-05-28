@@ -16,6 +16,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { AttachmentRow } from '../../lib/tauri'
 import { StaticBlock } from '../StaticBlock'
 import { TooltipProvider } from '../ui/tooltip'
@@ -1195,7 +1196,7 @@ describe('StaticBlock', () => {
 
   describe('blockquote rendering', () => {
     /** Helper: mock parse to return a doc containing a blockquote node. */
-    // biome-ignore lint/suspicious/noExplicitAny: test helper — mock data doesn't need strict typing
+    // oxlint-disable-next-line typescript/no-explicit-any -- test helper — mock data doesn't need strict typing
     function mockBlockquoteDoc(content: any[]) {
       mockedParse.mockReturnValueOnce({
         type: 'doc',

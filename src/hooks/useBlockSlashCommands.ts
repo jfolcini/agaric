@@ -28,6 +28,7 @@
  */
 
 import { useCallback, useMemo, useRef } from 'react'
+
 import type { PickerItem } from '../editor/SuggestionList'
 import type { SlashCommandContext, SlashHandlerTables } from './useBlockSlashCommands/types'
 import type {
@@ -137,7 +138,7 @@ export function useBlockSlashCommands({
 
   // Bundle every per-call dispatcher input into a single ref. This is what
   // lets `handleSlashCommand` keep a stable identity (only `focusedBlockId`
-  // gates it) without needing a `biome-ignore useExhaustiveDependencies` —
+  // gates it) without needing an `oxlint-disable react-hooks/exhaustive-deps` —
   // refs are not subject to the rule. The MAINT-10 stability test in
   // `__tests__/useBlockSlashCommands.test.ts` pins the contract.
   const inputsRef = useRef({

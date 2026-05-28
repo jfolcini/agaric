@@ -1,11 +1,13 @@
 import { Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+
 import type { TagEntry } from '../hooks/useBlockTags'
 import { EmptyState } from './EmptyState'
 

@@ -21,7 +21,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { PriorityFilterForm } from '../filter-forms/PriorityFilterForm'
 
 function setup(): {
@@ -100,7 +102,7 @@ describe('PriorityFilterForm — interaction', () => {
 describe('PriorityFilterForm — a11y', () => {
   it('has no axe violations', async () => {
     const { container } = setup()
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

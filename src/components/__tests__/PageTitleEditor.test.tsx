@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { createRef, type RefObject } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { PageTitleEditor } from '../PageTitleEditor'
 
 vi.mock('lucide-react', () => ({

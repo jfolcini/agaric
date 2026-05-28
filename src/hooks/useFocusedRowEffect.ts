@@ -4,7 +4,7 @@
  *
  * Centralises three otherwise-duplicated effects:
  *   1. Reset `focusedIndex` to 0 when the underlying data (`resetDeps`)
- *      changes — wraps the `biome-ignore lint/correctness/useExhaustiveDependencies:
+ *      changes — wraps the `oxlint-disable-next-line react-hooks/exhaustive-deps --
  *      intentional reset` exemption in one place.
  *   2. Scroll the focused row into view (`block: 'nearest'`) when the
  *      focused row id changes.
@@ -55,13 +55,13 @@ export function useFocusedRowEffect({
   resetDeps,
 }: UseFocusedRowEffectOptions): void {
   // 1. Reset focused index when the list contents / grouping change.
-  // The deps array is caller-supplied — biome's `useExhaustiveDependencies`
+  // The deps array is caller-supplied — oxlint's `react-hooks/exhaustive-deps`
   // can't statically verify a non-literal deps argument. Centralising
-  // the suppression here removes the per-view `biome-ignore` lines that
+  // the suppression here removes the per-view `oxlint-disable` lines that
   // previously appeared in each migrated component.
   useEffect(() => {
     setFocusedIndex(0)
-    // biome-ignore lint/correctness/useExhaustiveDependencies: caller-supplied non-literal deps; intentional reset
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- caller-supplied non-literal deps; intentional reset
   }, resetDeps)
 
   // 2/3. Scroll into view and apply focus classes when the focused row id changes.

@@ -16,8 +16,10 @@
 import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import { setPriority as setPriorityCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'

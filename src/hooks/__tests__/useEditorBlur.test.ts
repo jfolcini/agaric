@@ -15,6 +15,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '../useEditorBlur'
 
 /**
@@ -693,78 +694,80 @@ describe('useEditorBlur', () => {
       return portal
     }
 
-    it.each(
-      LEGACY_PORTAL_PATTERNS,
-    )('Step 4a: relatedTarget inside `%s` keeps editor mounted', (selector) => {
-      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
-      const mockEdit = vi.fn()
+    it.each(LEGACY_PORTAL_PATTERNS)(
+      'Step 4a: relatedTarget inside `%s` keeps editor mounted',
+      (selector) => {
+        const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+        const mockEdit = vi.fn()
 
-      const roving = makeRovingEditor({
-        activeBlockId: 'B1',
-        unmount: mockUnmount,
-      })
+        const roving = makeRovingEditor({
+          activeBlockId: 'B1',
+          unmount: mockUnmount,
+        })
 
-      const { result } = renderHook(() =>
-        useEditorBlur({
-          rovingEditor: roving,
-          blockId: 'B1',
-          edit: mockEdit,
-          splitBlock: vi.fn(),
-          setFocused: vi.fn(),
-          discardDraft: vi.fn(),
-        }),
-      )
+        const { result } = renderHook(() =>
+          useEditorBlur({
+            rovingEditor: roving,
+            blockId: 'B1',
+            edit: mockEdit,
+            splitBlock: vi.fn(),
+            setFocused: vi.fn(),
+            discardDraft: vi.fn(),
+          }),
+        )
 
-      const portal = buildPortalElement(selector)
-      const inner = document.createElement('button')
-      portal.appendChild(inner)
-      document.body.appendChild(portal)
+        const portal = buildPortalElement(selector)
+        const inner = document.createElement('button')
+        portal.appendChild(inner)
+        document.body.appendChild(portal)
 
-      act(() => {
-        result.current.handleBlur(makeFocusEvent(inner))
-      })
+        act(() => {
+          result.current.handleBlur(makeFocusEvent(inner))
+        })
 
-      expect(mockUnmount).not.toHaveBeenCalled()
-      expect(mockEdit).not.toHaveBeenCalled()
-    })
+        expect(mockUnmount).not.toHaveBeenCalled()
+        expect(mockEdit).not.toHaveBeenCalled()
+      },
+    )
 
-    it.each(
-      LEGACY_PORTAL_PATTERNS,
-    )('Step 4b: visible `%s` outside the wrapper keeps editor mounted', (selector) => {
-      const mockUnmount = vi.fn<() => string | null>(() => 'changed')
-      const mockEdit = vi.fn()
+    it.each(LEGACY_PORTAL_PATTERNS)(
+      'Step 4b: visible `%s` outside the wrapper keeps editor mounted',
+      (selector) => {
+        const mockUnmount = vi.fn<() => string | null>(() => 'changed')
+        const mockEdit = vi.fn()
 
-      const roving = makeRovingEditor({
-        activeBlockId: 'B1',
-        unmount: mockUnmount,
-      })
+        const roving = makeRovingEditor({
+          activeBlockId: 'B1',
+          unmount: mockUnmount,
+        })
 
-      const { result } = renderHook(() =>
-        useEditorBlur({
-          rovingEditor: roving,
-          blockId: 'B1',
-          edit: mockEdit,
-          splitBlock: vi.fn(),
-          setFocused: vi.fn(),
-          discardDraft: vi.fn(),
-        }),
-      )
+        const { result } = renderHook(() =>
+          useEditorBlur({
+            rovingEditor: roving,
+            blockId: 'B1',
+            edit: mockEdit,
+            splitBlock: vi.fn(),
+            setFocused: vi.fn(),
+            discardDraft: vi.fn(),
+          }),
+        )
 
-      const wrapper = document.createElement('section')
-      wrapper.setAttribute('data-testid', 'editor-wrapper')
-      document.body.appendChild(wrapper)
+        const wrapper = document.createElement('section')
+        wrapper.setAttribute('data-testid', 'editor-wrapper')
+        document.body.appendChild(wrapper)
 
-      const portal = buildPortalElement(selector)
-      ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
-      document.body.appendChild(portal)
+        const portal = buildPortalElement(selector)
+        ;(portal as unknown as { checkVisibility: () => boolean }).checkVisibility = () => true
+        document.body.appendChild(portal)
 
-      act(() => {
-        result.current.handleBlur(makeFocusEvent(null, wrapper))
-      })
+        act(() => {
+          result.current.handleBlur(makeFocusEvent(null, wrapper))
+        })
 
-      expect(mockUnmount).not.toHaveBeenCalled()
-      expect(mockEdit).not.toHaveBeenCalled()
-    })
+        expect(mockUnmount).not.toHaveBeenCalled()
+        expect(mockEdit).not.toHaveBeenCalled()
+      },
+    )
 
     it('falls back to offsetParent when checkVisibility is not available', () => {
       const mockUnmount = vi.fn<() => string | null>(() => 'changed')

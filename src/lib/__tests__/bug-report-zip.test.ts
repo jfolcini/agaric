@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
+
 import { bugReportZipFilename, buildReportZip } from '../bug-report-zip'
 import type { BugReport, LogFileEntry } from '../tauri'
 

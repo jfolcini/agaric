@@ -18,7 +18,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import type { DayEntry } from '../../../lib/date-utils'
 import { useJournalStore } from '../../../stores/journal'
 
@@ -47,8 +49,7 @@ vi.mock('../MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
     return (
-      // biome-ignore lint/a11y/useFocusableInteractive: test mock
-      // biome-ignore lint/a11y/useSemanticElements: test mock for gridcell
+      // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test mock
       <div
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}

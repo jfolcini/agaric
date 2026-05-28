@@ -19,7 +19,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { useNavigationStore } from '../../stores/navigation'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'

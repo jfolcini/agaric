@@ -15,6 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { keyFor, useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'
 import { usePageDelete } from '../usePageDelete'
@@ -80,7 +81,7 @@ describe('usePageDelete', () => {
     expect(setPages).toHaveBeenCalledWith(expect.any(Function))
 
     // Verify the updater function filters out the deleted page
-    // biome-ignore lint/style/noNonNullAssertion: test data — we just asserted setPages was called
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- test data — we just asserted setPages was called
     const updater = setPages.mock.calls[0]![0]
     const filtered = updater([
       { id: 'P1', content: 'Page 1' },

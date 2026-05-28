@@ -37,7 +37,7 @@ prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 
 Every change must:
 
-1. Keep `prek run --all-files` green. The hooks cover biome + tsc, vitest, cargo fmt / clippy / nextest / deny / machete, sqruff, license-checker, and the rest of the surface — `prek.toml` is the source of truth.
+1. Keep `prek run --all-files` green. The hooks cover oxlint + oxfmt + tsc, vitest, cargo fmt / clippy / nextest / deny / machete, sqruff, license-checker, and the rest of the surface — `prek.toml` is the source of truth.
 2. Add tests for new or changed behaviour. Minimum bar per AGENTS.md: happy-path + error-path for exported functions; render + interaction + `axe(container)` for components.
 3. Not introduce architectural change without discussion first. The "Architectural Stability" section of AGENTS.md lists the specific guardrails (no new op types, tables, stores, or sync message types without explicit approval).
 

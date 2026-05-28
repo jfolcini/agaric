@@ -9,6 +9,7 @@
  */
 
 import { useCallback } from 'react'
+
 import {
   runMainThreadSimulation,
   type SimulationCtx,

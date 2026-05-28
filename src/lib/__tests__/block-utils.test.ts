@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '../block-utils'
 
 describe('processCheckboxSyntax', () => {

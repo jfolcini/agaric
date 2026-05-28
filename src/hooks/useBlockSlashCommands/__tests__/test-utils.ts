@@ -10,6 +10,7 @@
 import type { TFunction } from 'i18next'
 import { vi } from 'vitest'
 import type { StoreApi } from 'zustand'
+
 import { makeBlock } from '../../../__tests__/fixtures'
 import { createPageBlockStore, type PageBlockState } from '../../../stores/page-blocks'
 import type { SlashCommandContext } from '../types'

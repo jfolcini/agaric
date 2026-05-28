@@ -1,4 +1,5 @@
 import type React from 'react'
+
 import type { OrderedListNode, ParagraphNode } from '../../../editor/types'
 import type { RenderContext } from '../context'
 import { renderInlineContent } from './inline'

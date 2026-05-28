@@ -7,6 +7,7 @@ import { Check, Pencil, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,6 +22,7 @@ import {
   setCustomShortcut,
 } from '@/lib/keyboard-config'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
+
 import { ConfirmDialog } from './ConfirmDialog'
 
 /**
@@ -60,7 +62,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
   const [editValue, setEditValue] = useState('')
   const [confirmResetAll, setConfirmResetAll] = useState(false)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version counter triggers re-read from localStorage
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- version counter triggers re-read from localStorage
   const shortcuts = useMemo(() => getCurrentShortcuts(), [version])
 
   const grouped = useMemo(() => {
@@ -73,7 +75,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
     return map
   }, [shortcuts])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: version counter triggers re-read from localStorage
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- version counter triggers re-read from localStorage
   const conflicts = useMemo(() => findConflicts(), [version])
 
   // UX-391 — validate the in-progress edit value (only meaningful while editing).

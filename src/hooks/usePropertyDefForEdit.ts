@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { getPropertyDef, listBlocks } from '../lib/tauri'

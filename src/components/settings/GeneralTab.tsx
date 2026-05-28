@@ -8,6 +8,7 @@
  */
 
 import type React from 'react'
+
 import { DeadlineWarningSection } from '../DeadlineWarningSection'
 import { AutostartRow } from './AutostartRow'
 import { QuickCaptureRow } from './QuickCaptureRow'

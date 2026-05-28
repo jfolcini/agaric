@@ -20,6 +20,7 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
+
 import { useNavigationStore } from '../../stores/navigation'
 import {
   createPageBlockStore,
@@ -88,6 +89,7 @@ vi.mock('../../lib/announcer', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { announce } from '../../lib/announcer'
 
 const mockedToastError = vi.mocked(toast.error)
@@ -136,7 +138,7 @@ beforeEach(() => {
 
 /** Helper to set up invoke mock with tags */
 function setupTagMock(appliedIds: string[] = ['TAG_1'], aliases: string[] = []) {
-  // biome-ignore lint/suspicious/noExplicitAny: test mock needs flexible arg access
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock needs flexible arg access
   mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
     if (cmd === 'list_blocks') {
       return {
@@ -396,7 +398,7 @@ describe('PageHeader tag management', () => {
   // German / accented tag names via `matchesSearchFolded`.
   it('tag picker search matches accented tag when query is ASCII', async () => {
     const user = userEvent.setup()
-    // biome-ignore lint/suspicious/noExplicitAny: test mock needs flexible arg access
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock needs flexible arg access
     mockedInvoke.mockImplementation(async (cmd: string, _args?: any) => {
       if (cmd === 'list_blocks') {
         return {

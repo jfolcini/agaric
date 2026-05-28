@@ -8,6 +8,7 @@
 import { renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { describe, expect, it, vi } from 'vitest'
+
 import { useSlashCommandTemplate } from '../useSlashCommandTemplate'
 import { makeSyntheticCtx } from './test-utils'
 

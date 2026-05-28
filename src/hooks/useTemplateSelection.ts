@@ -9,7 +9,9 @@
 
 import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
 import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'

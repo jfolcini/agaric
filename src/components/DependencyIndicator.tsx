@@ -21,10 +21,12 @@ import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchProperties } from '@/hooks/useBatchProperties'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+
 import type { PropertyRow } from '../lib/tauri'
 import { batchResolve, getProperties } from '../lib/tauri'
 

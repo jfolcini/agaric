@@ -11,11 +11,13 @@ import { Filter, Plus, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+
 import {
   type AgendaFilterDimension,
   DIMENSION_GROUPS,
@@ -166,10 +168,10 @@ function AddFilterPopover({
           // before reading individual labels. Group definitions live in
           // DIMENSION_GROUPS (filter-dimension-metadata.ts).
           <TooltipProvider>
-            {/* biome-ignore lint/a11y/useSemanticElements: role="group" carries
-                the picker's accessible name (preserving the pre-UX-323 single-<ul>
-                semantics); a nested <fieldset> inside the AgendaFilterBuilder's
-                outer fieldset would be the wrong form-grouping primitive here. */}
+            {/* role="group" carries the picker's accessible name (preserving the
+                pre-UX-323 single-<ul> semantics); a nested <fieldset> inside the
+                AgendaFilterBuilder's outer fieldset would be the wrong
+                form-grouping primitive here. */}
             <div
               role="group"
               className="flex flex-col gap-2"

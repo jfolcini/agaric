@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { _internals, buildGitHubIssueUrl, formatReportBody } from '../bug-report'
 import type { BugReport } from '../tauri'
 

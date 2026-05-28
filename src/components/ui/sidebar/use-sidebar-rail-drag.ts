@@ -1,4 +1,5 @@
 import * as React from 'react'
+
 import { SIDEBAR_WIDTH_DEFAULT } from '@/components/ui/sidebar/use-sidebar-state'
 
 /**

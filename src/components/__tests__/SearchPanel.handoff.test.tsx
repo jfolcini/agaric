@@ -18,7 +18,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { useNavigationStore } from '../../stores/navigation'
 import { useSearchHistoryStore } from '../../stores/search-history'
 import { useSpaceStore } from '../../stores/space'

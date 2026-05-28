@@ -14,6 +14,7 @@
  */
 
 import { expect, test } from '@playwright/test'
+
 import {
   expectNoConsoleErrors,
   openPage,

@@ -19,10 +19,12 @@ import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { useHistoryDiffToggle } from '../hooks/useHistoryDiffToggle'
 import type { HistoryEntry } from '../lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '../lib/tauri'
@@ -104,7 +106,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
     [blockId, opTypeFilter, t],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset and reload when blockId or opTypeFilter changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- reset and reload when blockId or opTypeFilter changes
   useEffect(() => {
     setEntries([])
     setNextCursor(null)
@@ -206,7 +208,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   }, [filteredEntries])
 
   const handlePanelKeyDown = useCallback(
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: refactor deferred to follow-up
+    // oxlint-disable-next-line eslint/complexity -- refactor deferred to follow-up
     (e: React.KeyboardEvent<HTMLUListElement>) => {
       if (restorableEntries.length === 0) return
       const currentIdx = restorableEntries.findIndex((entry) => entry.seq === expandedSeq)

@@ -22,8 +22,10 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
@@ -55,10 +57,6 @@ import { deleteDraft, setProperty } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
-import { BlockHistorySheet } from './BlockHistorySheet'
-import { BlockListRenderer } from './BlockListRenderer'
-import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
-import { BlockZoomBar } from './BlockZoomBar'
 import { BlockBatchActionMenu } from './block-tree/BlockBatchActionMenu'
 import { BlockDatePicker } from './block-tree/BlockDatePicker'
 import { BlockDndOverlay } from './block-tree/BlockDndOverlay'
@@ -66,6 +64,10 @@ import { TemplatePicker } from './block-tree/TemplatePicker'
 import { useBlockAutoCreateFirstBlock } from './block-tree/use-block-auto-create-first-block'
 import { useBlockFlush } from './block-tree/use-block-flush'
 import { useBlockTreeContextBags } from './block-tree/use-block-tree-context-bags'
+import { BlockHistorySheet } from './BlockHistorySheet'
+import { BlockListRenderer } from './BlockListRenderer'
+import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
+import { BlockZoomBar } from './BlockZoomBar'
 import { Skeleton } from './ui/skeleton'
 
 export { processCheckboxSyntax } from '../lib/block-utils'
@@ -301,7 +303,7 @@ export function BlockTree({
     t,
   })
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: parentId triggers reload when page changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- parentId triggers reload when page changes
   useEffect(() => {
     load()
     zoomToRoot()

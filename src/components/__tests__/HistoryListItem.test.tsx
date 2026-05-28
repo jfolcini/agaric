@@ -40,6 +40,7 @@ import {
 } from 'lucide-react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { BlockHistoryItemProps, HistoryListItemProps } from '../HistoryListItem'
 import { BlockHistoryItem, HistoryListItem, opIcon } from '../HistoryListItem'
 
@@ -89,7 +90,6 @@ function defaultProps(overrides: Partial<HistoryListItemProps> = {}): HistoryLis
 
 function renderInListbox(props: HistoryListItemProps) {
   return render(
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern test fixture matches the production HistoryListView
     <div role="grid" aria-label="History entries">
       <HistoryListItem {...props} />
     </div>,

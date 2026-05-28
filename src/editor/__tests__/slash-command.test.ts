@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type { PickerItem } from '../SuggestionList'
 
 // --- Mocks ---
@@ -44,7 +45,7 @@ function getLifecycle(editor: Record<string, unknown> = { view: { isDestroyed: f
     editor,
     options: { items: () => [], onCommand: vi.fn() },
   }
-  // biome-ignore lint/suspicious/noExplicitAny: test helper — call with mock context
+  // oxlint-disable-next-line typescript/no-explicit-any -- test helper — call with mock context
   ;(SlashCommand as any).addProseMirrorPlugins.call(ctx)
   const render = capturedSuggestionConfig['render'] as () => {
     onStart: (props: Record<string, unknown>) => void

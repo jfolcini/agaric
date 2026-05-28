@@ -7,6 +7,7 @@
  */
 
 import type React from 'react'
+
 import { BlockPropertyDrawer } from '@/components/BlockPropertyDrawer'
 
 export interface BlockPropertyDrawerSheetProps {

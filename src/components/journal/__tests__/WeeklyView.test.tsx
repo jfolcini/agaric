@@ -18,6 +18,7 @@ import { format } from 'date-fns'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { DayEntry } from '../../../lib/date-utils'
 import { useJournalStore } from '../../../stores/journal'
 

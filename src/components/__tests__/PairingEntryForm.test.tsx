@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { PairingEntryForm } from '../PairingEntryForm'
 
 // Mock QrScanner to avoid loading html5-qrcode in tests.

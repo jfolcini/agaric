@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { applyAutocompleteReplacement, detectAutocompleteAnchor } from '../autocomplete'
 
 describe('detectAutocompleteAnchor', () => {

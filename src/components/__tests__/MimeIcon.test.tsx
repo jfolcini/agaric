@@ -6,6 +6,7 @@
 import { render, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { MimeIcon } from '../MimeIcon'
 
 describe('MimeIcon', () => {

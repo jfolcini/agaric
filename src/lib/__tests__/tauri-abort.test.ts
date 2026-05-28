@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { isCancellation } from '../app-error'
 import { cancelledError, withAbort } from '../tauri'
 

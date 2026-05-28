@@ -10,8 +10,14 @@ hooks = [
     { id = "check-toml" },
     { id = "check-json", exclude = "(tsconfig.*\\.json$|\\.sqlx/)" },
     { id = "check-merge-conflict" },
-    { id = "check-added-large-files", args = ["--maxkb=500"], exclude = "^docs/session-log/" },
-    { id = "no-commit-to-branch", args = ["--branch=main"], stages = ["pre-push"] },
+    { id = "check-added-large-files", args = [
+        "--maxkb=500",
+    ], exclude = "^docs/session-log/" },
+    { id = "no-commit-to-branch", args = [
+        "--branch=main",
+    ], stages = [
+        "pre-push",
+    ] },
     { id = "detect-private-key", exclude = "^src-tauri/src/(sync_cert\\.rs|sync_net/tests\\.rs|sync_daemon/tests\\.rs)$|^SESSION-LOG\\.md$|^docs/session-log/" },
     # Catch the "I added a script but forgot chmod +x" / "I marked a non-executable as +x" class of mistake.
     # scripts/ mixes .sh, .mjs, and .py files that all rely on shebangs + +x bits. `*.rs` is excluded
@@ -20,24 +26,22 @@ hooks = [
     { id = "check-shebang-scripts-are-executable", exclude = "\\.rs$" },
     { id = "check-executables-have-shebangs" },
     # Normalise CRLF leakage from non-Linux contributors.
-    { id = "mixed-line-ending", args = ["--fix=lf"] },
+    { id = "mixed-line-ending", args = [
+        "--fix=lf",
+    ] },
 ]
 
 # Secret scanning (gitleaks)
 [[repos]]
 repo = "https://github.com/gitleaks/gitleaks"
 rev = "v8.30.1"
-hooks = [
-    { id = "gitleaks" },
-]
+hooks = [{ id = "gitleaks" }]
 
 # Conventional Commits enforcement on commit-msg stage (PEND-41 R8).
 [[repos]]
 repo = "https://github.com/compilerla/conventional-pre-commit"
 rev = "v4.4.0"
-hooks = [
-    { id = "conventional-pre-commit", stages = ["commit-msg"], args = [] },
-]
+hooks = [{ id = "conventional-pre-commit", stages = ["commit-msg"], args = [] }]
 
 # DCO sign-off auto-append. Mirrors `git commit -s` so the DCO check on
 # CI (.github/workflows/dco.yml) never rejects a PR for a forgotten
@@ -63,17 +67,23 @@ always_run = true
 [[repos]]
 repo = "https://github.com/rhysd/actionlint"
 rev = "v1.7.12"
-hooks = [
-    { id = "actionlint" },
-]
+hooks = [{ id = "actionlint" }]
 
-# Biome: lint + format for JS/TS
+# OXC: lint (oxlint) + format check (oxfmt) for JS/TS
 [[repos]]
 repo = "local"
 [[repos.hooks]]
-id = "biome-check"
-name = "biome check"
-entry = "npx biome check"
+id = "oxlint"
+name = "oxlint"
+entry = "npx oxlint"
+language = "system"
+types_or = ["javascript", "jsx", "ts", "tsx"]
+exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"
+pass_filenames = true
+[[repos.hooks]]
+id = "oxfmt"
+name = "oxfmt --check"
+entry = "npx oxfmt --check"
 language = "system"
 types_or = ["javascript", "jsx", "ts", "tsx", "json"]
 exclude = "(src/lib/bindings\\.ts$|\\.sqlx/)"

@@ -11,6 +11,7 @@
 
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../lib/logger'
 import type { SpaceRow } from '../../lib/tauri'
 import { listSpaces } from '../../lib/tauri'

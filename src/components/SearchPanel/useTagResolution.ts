@@ -10,6 +10,7 @@
  * another space, so it is dropped on a space switch.
  */
 import { useEffect, useMemo, useState } from 'react'
+
 import { logger } from '../../lib/logger'
 import { listTagsByPrefix, paginationLimit } from '../../lib/tauri'
 
@@ -60,7 +61,7 @@ export function useTagResolution(
   }, [tagNames, tagNameMap])
 
   // FE-5 — drop the space-scoped cache on space switch.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional fire-on-change — the body doesn't read currentSpaceId, it invalidates the cache when the space switches.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional fire-on-change — the body doesn't read currentSpaceId, it invalidates the cache when the space switches.
   useEffect(() => {
     setTagNameMap(new Map())
   }, [currentSpaceId])

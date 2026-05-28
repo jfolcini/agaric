@@ -11,6 +11,7 @@
  */
 
 import { useEffect } from 'react'
+
 import { logger } from '../lib/logger'
 import { batchResolve } from '../lib/tauri'
 import { keyFor, useResolveStore } from '../stores/resolve'

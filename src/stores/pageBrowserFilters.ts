@@ -18,6 +18,7 @@
  */
 
 import { create } from 'zustand'
+
 import type { PageFilterWithKey } from '../components/PageBrowser/PageBrowserFilterRow'
 import type { FilterPrimitive } from '../lib/tauri'
 import { LEGACY_SPACE_KEY } from './space'

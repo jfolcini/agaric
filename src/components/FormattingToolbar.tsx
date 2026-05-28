@@ -29,6 +29,7 @@ import { MoreHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
 import {
   createHistoryButtons,
@@ -36,6 +37,7 @@ import {
   createRefsAndBlocks,
   createStructureButtons,
 } from '@/lib/toolbar-config'
+
 import { buildConfigByKey, buildToolbarItems } from './FormattingToolbar/items'
 import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
 import { renderCodeBlockButton, renderHeadingButton } from './FormattingToolbar/RefsAndBlocksGroup'

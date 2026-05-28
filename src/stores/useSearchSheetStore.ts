@@ -17,6 +17,7 @@
  */
 
 import { create } from 'zustand'
+
 import type { View } from './navigation'
 
 /** Active segment of the unified search sheet. */

@@ -16,11 +16,13 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { type FilterToken, tokenSource } from '@/lib/search-query'
 import type { TagCacheRow } from '@/lib/tauri'
 import { listTagsByPrefix } from '@/lib/tauri'
+
 import { FilterHelperPopover, type FilterHelperPopoverProps } from '../FilterHelperPopover'
 
 vi.mock('@/lib/tauri', async (importOriginal) => {
@@ -374,7 +376,7 @@ describe('FilterHelperPopover — state filter (UX-A5)', () => {
     await openCategory('search.filterCategory.state')
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -414,7 +416,7 @@ describe('FilterHelperPopover — priority filter (UX-A5)', () => {
     await openCategory('search.filterCategory.priority')
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -477,7 +479,7 @@ describe('FilterHelperPopover — due / scheduled filter (UX-A5)', () => {
     await openCategory('search.filterCategory.due')
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -529,7 +531,7 @@ describe('FilterHelperPopover — property filter (UX-A5)', () => {
     await openCategory('search.filterCategory.prop')
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -549,7 +551,7 @@ describe('FilterHelperPopover — a11y', () => {
     await screen.findByRole('menu')
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },
@@ -565,7 +567,7 @@ describe('FilterHelperPopover — a11y', () => {
     await screen.findByRole('option', { name: '#alpha' })
     await waitFor(
       async () => {
-        // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+        // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
         expect(await axe(document.body as any)).toHaveNoViolations()
       },
       { timeout: 5000 },

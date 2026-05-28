@@ -31,12 +31,14 @@
 import { Lock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+
 import { useRichContentCallbacks, useTagClickHandler } from '../../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../../lib/format'
 import { getPayloadRawContent } from '../../lib/history-utils'
@@ -122,7 +124,7 @@ export function BlockHistoryItem({
   // / are loading / failed for this expansion". The cleanup also
   // resets `comparedLoading` so a collapse mid-fetch doesn't leave
   // the spinner stuck on subsequent re-expand.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above.
   React.useEffect(() => {
     if (!isExpanded || !isRestorable) return
     if (comparedDiff != null || comparedLoading || comparedFailed) return
@@ -204,7 +206,6 @@ export function BlockHistoryItem({
           timestamp, Badge with potential popover). Non-restorable rows
           render no role at all (just a static div). */}
       {isRestorable ? (
-        // biome-ignore lint/a11y/useSemanticElements: row already contains nested interactive elements (Tooltip-wrapped timestamp, Badge); a real <button> would nest interactives. The keyboard handler + role="button" + aria-expanded is the standard shadcn pattern for this case.
         <div
           role="button"
           tabIndex={0}

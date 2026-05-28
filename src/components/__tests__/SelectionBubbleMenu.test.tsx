@@ -24,6 +24,7 @@ import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '../../lib/i18n'
 import { SelectionBubbleMenu } from '../SelectionBubbleMenu'
 

@@ -9,6 +9,7 @@
 
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { setWindowTitle } from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
 import { useSpaceStore } from '../../stores/space'

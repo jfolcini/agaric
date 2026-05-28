@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import {
   dispatchQuery,

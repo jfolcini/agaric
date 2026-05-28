@@ -32,6 +32,7 @@ vi.mock('@floating-ui/dom', () => ({
 }))
 
 import { autoUpdate, computePosition } from '@floating-ui/dom'
+
 import { logger } from '../../lib/logger'
 import { BlockPropertyEditor, type BlockPropertyEditorProps } from '../BlockPropertyEditor'
 

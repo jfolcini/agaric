@@ -15,9 +15,11 @@
  */
 
 import type React from 'react'
+
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+
 import { Button } from '../ui/button'
 import { type RenderMode, Tip } from './shared'
 

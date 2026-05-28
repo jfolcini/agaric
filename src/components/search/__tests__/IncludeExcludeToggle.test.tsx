@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { IncludeExcludeToggle } from '../filter-forms/IncludeExcludeToggle'
 
 const LABEL = 'Match mode'
@@ -88,13 +89,13 @@ describe('IncludeExcludeToggle — interaction', () => {
 describe('IncludeExcludeToggle — a11y', () => {
   it('has no axe violations with include selected', async () => {
     const { container } = setup(false)
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 
   it('has no axe violations with exclude selected', async () => {
     const { container } = setup(true)
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

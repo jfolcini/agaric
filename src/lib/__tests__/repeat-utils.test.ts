@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { i18n } from '../i18n'
 import { formatRepeatLabel } from '../repeat-utils'
 

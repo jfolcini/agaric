@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { EXPANSION_CAP, expandBraces, validateGlob } from '../glob-validate'
 
 describe('validateGlob', () => {

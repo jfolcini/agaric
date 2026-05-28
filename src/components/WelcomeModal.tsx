@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import { AtSign, FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
@@ -176,7 +177,7 @@ export function WelcomeModal() {
   // scroll regions.
   const featureList = (
     /*
-      biome-ignore lint/a11y/noRedundantRoles: explicit role="list" is
+      oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit role="list" is
       required because Safari + VoiceOver strip the implicit list role
       from a <ul> with `list-style: none` (Tailwind `list-none`). UX-278.
     */

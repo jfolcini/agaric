@@ -13,8 +13,10 @@
 import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import { useCallback, useRef } from 'react'
+
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
+
 import type { PickerItem } from '../editor/SuggestionList'
 import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
 import { t as translate } from '../lib/i18n'

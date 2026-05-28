@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
 import type { AgendaFilterDimension } from '../filter-dimension-metadata'
 import {
   ALL_DIMENSIONS,

@@ -29,8 +29,10 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
+
 import { AgentAccessSettingsTab } from '../AgentAccessSettingsTab'
 
 // ---------------------------------------------------------------------------

@@ -25,8 +25,7 @@ const alertListRowVariants = cva(
 )
 
 interface AlertListRowProps
-  extends VariantProps<typeof alertListRowVariants>,
-    Omit<React.ComponentProps<'li'>, 'className'> {
+  extends VariantProps<typeof alertListRowVariants>, Omit<React.ComponentProps<'li'>, 'className'> {
   className?: string
   asChild?: boolean
 }

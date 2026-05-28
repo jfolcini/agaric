@@ -1,9 +1,9 @@
 # EditorConfig — repo-wide editor defaults for Agaric.
-# Aligns with biome.json (2-space, LF) for JS/TS/JSON and rustfmt for Rust.
+# Aligns with .oxfmtrc.json (2-space, LF) for JS/TS/JSON and rustfmt for Rust.
 # Docs: https://editorconfig.org
 root = true
 
-# Defaults for all files: matches Biome's formatter (indentStyle=space, indentWidth=2)
+# Defaults for all files: matches oxfmt's formatter (useTabs=false, tabWidth=2)
 # and ensures Unix line endings + trimmed trailing whitespace across editors.
 [*]
 charset = utf-8

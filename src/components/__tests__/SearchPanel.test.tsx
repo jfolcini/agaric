@@ -21,7 +21,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { addRecentPage } from '../../lib/recent-pages'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSearchHistoryStore } from '../../stores/search-history'
@@ -2240,7 +2242,7 @@ describe('SearchPanel', () => {
       await screen.findByTestId('search-history-list')
       await user.keyboard('{ArrowUp}')
 
-      // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+      // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
       const results = await axe(container as any)
       expect(results).toHaveNoViolations()
     })

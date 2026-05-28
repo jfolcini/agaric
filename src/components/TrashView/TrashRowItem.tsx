@@ -11,10 +11,12 @@
 import { RotateCcw } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../../lib/format'
 import type { BlockRow } from '../../lib/tauri'
@@ -49,7 +51,6 @@ export function TrashRowItem({
 }: TrashRowItemProps): React.ReactElement {
   const { t } = useTranslation()
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for trash list — no semantic HTML equivalent for nested-action rows
     <div
       key={block.id}
       id={`trash-item-${block.id}`}
@@ -71,8 +72,7 @@ export function TrashRowItem({
       }}
       tabIndex={isFocused ? 0 : -1}
     >
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="trash-item-content flex min-w-0 items-center gap-3 flex-wrap">
         <input
           type="checkbox"
@@ -122,8 +122,7 @@ export function TrashRowItem({
           )}
         </div>
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner action buttons */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner action buttons */}
       <div
         role="gridcell"
         className="trash-item-actions flex items-center gap-2"

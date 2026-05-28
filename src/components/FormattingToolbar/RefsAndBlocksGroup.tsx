@@ -12,8 +12,10 @@
 import type { Editor } from '@tiptap/react'
 import { FileCode2, Heading } from 'lucide-react'
 import type React from 'react'
+
 import { LANG_SHORT, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+
 import { CodeLanguageSelector } from '../CodeLanguageSelector'
 import { HeadingLevelSelector } from '../HeadingLevelSelector'
 import { Button } from '../ui/button'

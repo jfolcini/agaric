@@ -25,8 +25,10 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { SearchBlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
+
 import { groupResultsByPage, SearchResultGroups } from '../SearchResultGroups'
 
 // ── Configurable virtualizer mock ───────────────────────────────────────

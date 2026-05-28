@@ -20,6 +20,7 @@ import {
 } from 'd3-force'
 import { type Selection, select } from 'd3-selection'
 import { type ZoomBehavior, zoom, zoomIdentity } from 'd3-zoom'
+
 import type { GraphEdge, GraphNode } from '@/components/GraphView.helpers'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'

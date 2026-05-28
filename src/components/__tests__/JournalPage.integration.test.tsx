@@ -28,6 +28,7 @@ import { format } from 'date-fns'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { emptyPage, makeBlock } from '../../__tests__/fixtures'
 
 // ── BlockTree-internal mocks ────────────────────────────────────────

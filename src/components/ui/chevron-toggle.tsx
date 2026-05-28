@@ -10,6 +10,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { ChevronRight } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+
 import { Spinner } from './spinner'
 
 const chevronToggleVariants = cva('shrink-0 transition-transform', {

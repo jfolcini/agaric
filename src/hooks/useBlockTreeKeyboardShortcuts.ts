@@ -14,6 +14,7 @@
 
 import type { RefObject } from 'react'
 import { useEffect } from 'react'
+
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { useBlockStore } from '../stores/blocks'
 import type { DatePickerMode } from './useBlockDatePicker'

@@ -12,12 +12,14 @@ import { FileText, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { PageTreeItem } from '@/components/PageTreeItem'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { cn } from '@/lib/utils'
+
 import type { DensityMode } from '../../hooks/usePageBrowserDensity'
 import type { PageBrowserRow } from '../../hooks/usePageBrowserGrouping'
 import type { PageWithMetadataRow } from '../../lib/tauri'
@@ -110,8 +112,7 @@ function HeaderRow({
   // an extra DOM node.
   const showDivider = !isStarredHeader && hasStarred
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for section header — no semantic HTML equivalent for non-tabular grouped lists
-    // biome-ignore lint/a11y/useFocusableInteractive: section header row is not interactive
+    // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- section header row is not interactive
     <div
       key={virtualRow.key}
       data-index={virtualRow.index}
@@ -122,8 +123,7 @@ function HeaderRow({
       className={cn('page-browser-section', showDivider && 'border-t border-border mt-1')}
       style={rowStyle(virtualRow.start)}
     >
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell carries the section label — not interactive */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell carries the section label — not interactive */}
       <div
         role="gridcell"
         className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
@@ -170,8 +170,7 @@ function TreePageRow({
   // index — `aria-selected` is intentionally omitted because the
   // wrapper isn't a single selectable option.
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
-    // biome-ignore lint/a11y/useFocusableInteractive: row focus is delegated to inner button controls
+    // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- row focus is delegated to inner button controls
     <div
       key={virtualRow.key}
       // UX-331 — stable id so the grid container's `aria-activedescendant`
@@ -187,8 +186,7 @@ function TreePageRow({
       )}
       style={rowStyle(virtualRow.start)}
     >
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner button controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner button controls */}
       <div role="gridcell">
         <PageTreeItem
           node={node}
@@ -331,7 +329,6 @@ function PageRow({
     trimmedFilter !== '' &&
     !matchesSearchFolded(page.content ?? '', trimmedFilter)
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
     <div
       key={virtualRow.key}
       // UX-331 — stable id so the grid container's `aria-activedescendant`
@@ -356,8 +353,7 @@ function PageRow({
     >
       {/* #81 / PEND-57 — batch-selection checkbox (additive to the
           single-row star/delete flow). */}
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner checkbox */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to the inner checkbox */}
       <div role="gridcell" className="shrink-0">
         <Checkbox
           checked={multiSelected}
@@ -373,8 +369,7 @@ function PageRow({
           )}
         />
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
         <Button
           variant="ghost"
@@ -403,8 +398,7 @@ function PageRow({
           </span>
         </button>
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner action buttons */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner action buttons */}
       <div role="gridcell" className="shrink-0">
         <Button
           variant="ghost"

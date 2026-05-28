@@ -8,9 +8,11 @@ import { Calendar as CalendarIcon, ExternalLink, Plus } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { cn } from '@/lib/utils'
+
 import { getSourceColor, getSourceLabel } from '../../lib/date-property-colors'
 import type { DayEntry } from '../../lib/date-utils'
 import { formatDate } from '../../lib/date-utils'
@@ -95,7 +97,7 @@ function useEnteredViewport(
   return [entered, ref]
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.
+// oxlint-disable-next-line eslint/complexity -- cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.
 function DaySectionInner({
   entry,
   headingLevel = 'h3',

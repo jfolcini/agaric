@@ -15,6 +15,7 @@ import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { App } from '../../App'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { announce } from '../../lib/announcer'

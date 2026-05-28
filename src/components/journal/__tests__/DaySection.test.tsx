@@ -855,7 +855,7 @@ describe('DaySection', () => {
     it('eagerly mounts under prefers-reduced-motion even when lazyMount=true', () => {
       const originalMatchMedia = window.matchMedia
       try {
-        // biome-ignore lint/suspicious/noExplicitAny: targeted matchMedia stub
+        // oxlint-disable-next-line typescript/no-explicit-any -- targeted matchMedia stub
         ;(window as any).matchMedia = (query: string) => ({
           matches: query === '(prefers-reduced-motion: reduce)',
           media: query,
@@ -874,7 +874,7 @@ describe('DaySection', () => {
         expect(screen.getByTestId('block-tree')).toBeInTheDocument()
         expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
       } finally {
-        // biome-ignore lint/suspicious/noExplicitAny: restore matchMedia
+        // oxlint-disable-next-line typescript/no-explicit-any -- restore matchMedia
         ;(window as any).matchMedia = originalMatchMedia
       }
     })

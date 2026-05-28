@@ -6,7 +6,7 @@ name: CodeQL
 #     this repo merges no PRs (solo, direct push to main), the PR-history
 #     detection path can never fire — a workflow is the only signal.
 #   * Adds a second independent static-analysis tool alongside zizmor / clippy
-#     / biome / eslint. CodeQL ships GitHub's curated queries (CWE coverage,
+#     / oxlint. CodeQL ships GitHub's curated queries (CWE coverage,
 #     supply-chain, taint analysis) that the others don't replicate.
 #
 # Why these triggers:

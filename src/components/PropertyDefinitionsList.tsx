@@ -9,6 +9,7 @@ import { HelpCircle, Lock, Plus, Search, Settings2, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +32,7 @@ import { notify } from '@/lib/notify'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
+
 import { setPriorityLevels } from '../lib/priority-levels'
 import type { PropertyDefinition } from '../lib/tauri'
 import {

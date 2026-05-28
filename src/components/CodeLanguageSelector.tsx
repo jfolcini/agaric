@@ -18,10 +18,12 @@ import { matchSorter } from 'match-sorter'
 import type React from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { CODE_LANGUAGES } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 

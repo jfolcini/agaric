@@ -23,6 +23,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '../../lib/i18n'
 import { FormattingToolbar } from '../FormattingToolbar'
 
@@ -54,7 +55,7 @@ vi.mock('@tiptap/react', () => ({
 // `src/editor/__tests__/use-roving-editor.test.ts`.
 vi.mock('@/editor/toggle-code-block-safely', () => ({
   toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
-    // biome-ignore lint/suspicious/noExplicitAny: traversing the test's mock chain
+    // oxlint-disable-next-line typescript/no-explicit-any -- traversing the test's mock chain
     const c = editor.chain() as any
     if (attributes) {
       c.focus().toggleCodeBlock().updateAttributes('codeBlock', attributes).run()
@@ -466,7 +467,7 @@ describe('FormattingToolbar', () => {
 
     it('calls resolveBlockLinkFromSelection when text is selected', () => {
       const editor = makeEditor()
-      // biome-ignore lint/suspicious/noExplicitAny: test mock mutation
+      // oxlint-disable-next-line typescript/no-explicit-any -- test mock mutation
       ;(editor as any).state.selection = { from: 5, to: 15 }
 
       render(<FormattingToolbar editor={editor} />)

@@ -12,9 +12,10 @@ import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
+
 import { logger } from '../../lib/logger'
-import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
+import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'
 
 export const slashCommandPluginKey = new PluginKey('slashCommand')

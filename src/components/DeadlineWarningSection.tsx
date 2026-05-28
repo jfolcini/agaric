@@ -7,6 +7,7 @@
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Input } from '@/components/ui/input'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { notify } from '@/lib/notify'

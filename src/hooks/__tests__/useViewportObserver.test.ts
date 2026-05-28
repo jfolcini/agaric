@@ -9,6 +9,7 @@ import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useViewportObserver } from '../useViewportObserver'
 
 // -- IntersectionObserver mock ------------------------------------------------
@@ -87,7 +88,7 @@ function renderHook<T>(hookFn: () => T): {
 
 beforeEach(() => {
   // Suppress "The current testing environment is not configured to support act(...)"
-  // biome-ignore lint/suspicious/noExplicitAny: React test env global
+  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   MockIntersectionObserver.instances = []
   vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)

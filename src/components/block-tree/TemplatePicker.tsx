@@ -8,6 +8,7 @@
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 export interface TemplatePickerProps {
@@ -104,8 +105,8 @@ export function TemplatePicker({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- backdrop dismiss */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- backdrop dismiss */}
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={dialogRef}

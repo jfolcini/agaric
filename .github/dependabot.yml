@@ -57,8 +57,8 @@ updates:
   #   • vitest      — runner + matchers + DOM env must agree.
   #   • playwright  — `@playwright/test` and the `playwright` runtime
   #                   ship as a pair.
-  #   • lint-and-build — biome, typescript, vite, tslib — bumping
-  #                   these together avoids tsc/biome rule churn
+  #   • lint-and-build — oxlint, oxfmt, typescript, vite, tslib — bumping
+  #                   these together avoids tsc/oxc rule churn
   #                   landing across multiple PRs in the same week.
   #   • minor-and-patch — catch-all for everything else; majors stay
   #                   individual PRs.
@@ -76,42 +76,42 @@ updates:
     groups:
       tauri-apps:
         patterns:
-          - "@tauri-apps/*"
+          - '@tauri-apps/*'
       react:
         patterns:
-          - "react"
-          - "react-dom"
-          - "@types/react"
-          - "@types/react-dom"
-          - "@vitejs/plugin-react"
-          - "vite-plugin-*"
+          - 'react'
+          - 'react-dom'
+          - '@types/react'
+          - '@types/react-dom'
+          - '@vitejs/plugin-react'
+          - 'vite-plugin-*'
       tiptap:
         patterns:
-          - "@tiptap/*"
+          - '@tiptap/*'
       radix-ui:
         patterns:
-          - "@radix-ui/*"
+          - '@radix-ui/*'
       vitest:
         patterns:
-          - "vitest"
-          - "@vitest/*"
-          - "vitest-axe"
-          - "happy-dom"
-          - "jsdom"
+          - 'vitest'
+          - '@vitest/*'
+          - 'vitest-axe'
+          - 'happy-dom'
+          - 'jsdom'
       playwright:
         patterns:
-          - "@playwright/*"
-          - "playwright"
+          - '@playwright/*'
+          - 'playwright'
       lint-and-build:
         patterns:
-          - "biome"
-          - "@biomejs/*"
-          - "typescript"
-          - "vite"
-          - "tslib"
+          - 'oxlint'
+          - 'oxfmt'
+          - 'typescript'
+          - 'vite'
+          - 'tslib'
       minor-and-patch:
         patterns:
-          - "*"
+          - '*'
         update-types:
           - minor
           - patch
@@ -160,55 +160,55 @@ updates:
     groups:
       tauri:
         patterns:
-          - "tauri"
-          - "tauri-build"
-          - "tauri-plugin-*"
-          - "tauri-utils"
+          - 'tauri'
+          - 'tauri-build'
+          - 'tauri-plugin-*'
+          - 'tauri-utils'
       sqlx:
         patterns:
-          - "sqlx"
-          - "sqlx-*"
+          - 'sqlx'
+          - 'sqlx-*'
       tokio:
         patterns:
-          - "tokio"
-          - "tokio-*"
+          - 'tokio'
+          - 'tokio-*'
       loro:
         patterns:
-          - "loro"
-          - "loro-*"
+          - 'loro'
+          - 'loro-*'
       tracing:
         patterns:
-          - "tracing"
-          - "tracing-*"
+          - 'tracing'
+          - 'tracing-*'
       rustls:
         patterns:
-          - "rustls"
-          - "rustls-*"
-          - "tokio-rustls"
-          - "webpki-roots"
+          - 'rustls'
+          - 'rustls-*'
+          - 'tokio-rustls'
+          - 'webpki-roots'
       serde:
         patterns:
-          - "serde"
-          - "serde_json"
-          - "serde_with"
+          - 'serde'
+          - 'serde_json'
+          - 'serde_with'
       chrono:
         patterns:
-          - "chrono"
-          - "chrono-tz"
+          - 'chrono'
+          - 'chrono-tz'
       minor-and-patch:
         patterns:
-          - "*"
+          - '*'
         update-types:
           - minor
           - patch
     ignore:
-      - dependency-name: "specta"
+      - dependency-name: 'specta'
         update-types:
-          - "version-update:semver-patch"
-          - "version-update:semver-minor"
-          - "version-update:semver-major"
-      - dependency-name: "tauri-specta"
+          - 'version-update:semver-patch'
+          - 'version-update:semver-minor'
+          - 'version-update:semver-major'
+      - dependency-name: 'tauri-specta'
         update-types:
-          - "version-update:semver-patch"
-          - "version-update:semver-minor"
-          - "version-update:semver-major"
+          - 'version-update:semver-patch'
+          - 'version-update:semver-minor'
+          - 'version-update:semver-major'

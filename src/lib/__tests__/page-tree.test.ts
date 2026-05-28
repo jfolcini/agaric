@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { buildPageTree } from '../page-tree'
 
 describe('buildPageTree', () => {

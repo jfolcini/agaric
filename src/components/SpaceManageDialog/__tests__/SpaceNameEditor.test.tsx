@@ -17,7 +17,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { t } from '@/lib/i18n'
+
 import { SpaceNameEditor } from '../SpaceNameEditor'
 
 vi.mock('@/lib/logger', () => ({

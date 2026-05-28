@@ -20,7 +20,9 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
+
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BacklinkGroup, BlockRow } from '../lib/tauri'
@@ -90,7 +92,7 @@ export function BacklinkGroupRenderer({
           <li
             key={block.id}
             className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
+            // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
             tabIndex={0}
             onClick={() => handleBlockClick(block)}
             onKeyDown={(e) => handleBlockKeyDown(e, block)}

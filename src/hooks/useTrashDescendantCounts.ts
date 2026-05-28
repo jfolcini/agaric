@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
 import { trashDescendantCounts } from '../lib/tauri'

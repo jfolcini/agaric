@@ -22,6 +22,7 @@
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Label } from '@/components/ui/label'
 import type { GcalStatus } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'

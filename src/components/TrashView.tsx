@@ -17,6 +17,7 @@ import { RotateCcw, Search, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { BatchActionToolbar } from '@/components/BatchActionToolbar'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
@@ -24,6 +25,7 @@ import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
+
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { useListMultiSelect } from '../hooks/useListMultiSelect'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -113,7 +115,7 @@ export function TrashView(): React.ReactElement {
   })
 
   // Reset focused index when filter changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on filter change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on filter change
   useEffect(() => {
     setFocusedIndex(0)
   }, [debouncedFilter, setFocusedIndex])

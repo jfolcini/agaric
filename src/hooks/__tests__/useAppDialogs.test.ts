@@ -11,6 +11,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../../lib/bug-report-events'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useAppDialogs } from '../useAppDialogs'

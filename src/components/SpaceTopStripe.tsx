@@ -26,6 +26,7 @@
  */
 
 import type React from 'react'
+
 import { useSpaceStore } from '../stores/space'
 
 export function SpaceTopStripe(): React.JSX.Element | null {

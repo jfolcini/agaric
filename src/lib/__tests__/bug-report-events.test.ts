@@ -10,6 +10,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import {
   BUG_REPORT_EVENT,
   type BugReportEventDetail,

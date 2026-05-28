@@ -21,6 +21,7 @@
  */
 
 import { useTranslation } from 'react-i18next'
+
 import { accentVar } from '@/lib/space-accent'
 import type { SpaceRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'

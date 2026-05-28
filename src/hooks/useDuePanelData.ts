@@ -10,8 +10,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { formatDate, getTodayString } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
+
 import { logger } from '../lib/logger'
 import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
 import {
@@ -34,7 +36,6 @@ const ULID_REF_RE = /(?:\[\[|#\[|\(\()([0-9A-Z]{26})(?:\]\]|\]|\)\))/g
 export function extractUlidRefs(text: string): string[] {
   const ids: string[] = []
   let m: RegExpExecArray | null
-  // biome-ignore lint/suspicious/noAssignInExpressions: standard regex exec loop
   while ((m = ULID_REF_RE.exec(text)) !== null) {
     const id = m[1] as string
     ids.push(id)
@@ -203,7 +204,7 @@ export function useDuePanelData({
   const isToday = date === todayStr
 
   // Fetch overdue blocks when showing today
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday) {
       setOverdueBlocks([])
@@ -264,7 +265,7 @@ export function useDuePanelData({
   }, [isToday, date, invalidationKey, currentSpaceId])
 
   // Fetch upcoming blocks (deadline approaching within warningDays)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     if (!isToday || warningDays <= 0) {
       setUpcomingBlocks([])
@@ -392,7 +393,7 @@ export function useDuePanelData({
   )
 
   // Fetch on mount and when date or sourceFilter changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — refetch on property change (B-50/F-39)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — refetch on property change (B-50/F-39)
   useEffect(() => {
     setLoading(true)
     setBlocks([])

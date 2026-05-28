@@ -16,7 +16,9 @@
 import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
+
 import type { BreadcrumbItem } from '../hooks/useBlockZoom'
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 

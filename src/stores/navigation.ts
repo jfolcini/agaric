@@ -38,6 +38,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+
 import { activeSpaceKey } from '../lib/active-space'
 import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
 import { LEGACY_SPACE_KEY } from './space'

@@ -8,7 +8,9 @@
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
+
 import type { NavigateToPageFn } from '../lib/block-events'
 import { isDateFormattedPage } from '../lib/date-utils'
 import { useBlockStore } from '../stores/blocks'

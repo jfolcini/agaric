@@ -1,5 +1,6 @@
 import type React from 'react'
 import { lazy, Suspense } from 'react'
+
 import { i18n } from '../../../lib/i18n'
 import { Spinner } from '../../ui/spinner'
 

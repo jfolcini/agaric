@@ -10,9 +10,11 @@ import { Paperclip, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+
 import { useBlockAttachments } from '../hooks/useBlockAttachments'
 import { formatSize } from '../lib/attachment-utils'
 import { formatRelativeTime } from '../lib/format-relative-time'

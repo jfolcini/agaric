@@ -9,8 +9,10 @@
  */
 
 import { useMemo } from 'react'
+
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
 import { getRecentPages } from '@/lib/recent-pages'
+
 import type { BlockRow } from '../lib/tauri'
 import type { SortOption } from './usePageBrowserSort'
 

@@ -13,12 +13,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { EmptyState } from '@/components/EmptyState'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { BatchPropertiesProvider } from '@/hooks/useBatchProperties'
 import { cn } from '@/lib/utils'
+
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -156,7 +158,7 @@ export function AgendaResults({
   })
 
   // Reset focused index when blocks / sort / group change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional reset
   useEffect(() => {
     setFocusedIndex(0)
   }, [blocks, sortBy, groupBy, setFocusedIndex])
@@ -357,11 +359,11 @@ export function AgendaResults({
 
   return (
     <BatchPropertiesProvider blockIds={allBlockIds} invalidationKey={batchInvalidationKey}>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container */}
       <div
         className="agenda-results space-y-2"
         ref={listRef}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav container
         tabIndex={0}
         onKeyDown={(e) => {
           if (navHandleKeyDown(e)) e.preventDefault()

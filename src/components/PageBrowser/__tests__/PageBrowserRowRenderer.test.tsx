@@ -20,9 +20,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import type { PageTreeNode } from '@/lib/page-tree'
 import type { BlockRow } from '@/lib/tauri'
+
 import { PageBrowserRowRenderer, type PageBrowserRowRendererProps } from '../PageBrowserRowRenderer'
 
 /** Minimal `VirtualItem` — only `key`/`index`/`start` are read by the renderer. */
@@ -94,7 +96,6 @@ function baseProps(
 /** Render a single row inside a `role="grid"` scaffold (mirrors the viewport). */
 function renderRow(props: PageBrowserRowRendererProps) {
   return render(
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid scaffold for the test
     <div role="grid" aria-label="pages">
       <PageBrowserRowRenderer {...props} />
     </div>,

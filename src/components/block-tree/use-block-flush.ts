@@ -30,7 +30,9 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import { parse } from '../../editor/markdown-serializer'
 import type { RovingEditorHandle } from '../../editor/use-roving-editor'
 import { processCheckboxSyntax } from '../../lib/block-utils'

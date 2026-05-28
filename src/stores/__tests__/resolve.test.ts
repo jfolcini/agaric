@@ -15,6 +15,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../lib/logger'
 import { GLOBAL_SPACE_ID, keyFor, useResolveStore } from '../resolve'
 import { useSpaceStore } from '../space'

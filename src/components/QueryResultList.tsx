@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-utils'
 import type { BlockRow } from '../lib/tauri'

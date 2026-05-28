@@ -7,6 +7,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../lib/logger'
 import { parse, serialize } from '../markdown-serializer'
 import { toggleCodeBlockSafely } from '../toggle-code-block-safely'
@@ -339,7 +340,7 @@ describe('unmount error boundary', () => {
 
 // -- Real TipTap Editor helpers -----------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: TipTap extensions have complex union types
+// oxlint-disable-next-line typescript/no-explicit-any -- TipTap extensions have complex union types
 function createEditor(extensions: any[]): Editor {
   return new Editor({
     element: document.createElement('div'),

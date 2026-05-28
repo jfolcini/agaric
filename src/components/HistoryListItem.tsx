@@ -20,9 +20,11 @@
 import { Lock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { DiffDisplay } from './DiffDisplay'
 import { HistoryItemCore } from './HistoryListItem/HistoryItemCore'
@@ -92,7 +94,6 @@ function HistoryListItemInner({
   const { t } = useTranslation()
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row for history list — no semantic HTML equivalent for nested-action rows
     <div
       ref={rowRef}
       style={style}
@@ -117,8 +118,7 @@ function HistoryListItemInner({
       tabIndex={isFocused ? 0 : -1}
       aria-disabled={isNonReversible || undefined}
     >
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="flex items-center gap-3 w-full">
         {/* Checkbox.
             UX-275 sub-fix 5: keep both row-click and checkbox-click as active
@@ -208,18 +208,18 @@ function HistoryListItemInner({
           </TooltipProvider>
         )}
       </div>
-      {isExpanded && diffSpans != null && (
-        // biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern
-        // biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls
-        <div
-          role="gridcell"
-          className="diff-container mt-2 w-full"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-        >
-          <DiffDisplay spans={diffSpans} />
-        </div>
-      )}
+      {isExpanded &&
+        diffSpans != null && (
+          // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls
+          <div
+            role="gridcell"
+            className="diff-container mt-2 w-full"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <DiffDisplay spans={diffSpans} />
+          </div>
+        )}
     </div>
   )
 }

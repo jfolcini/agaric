@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import type { ResolvedBlock } from '../../lib/tauri'
 import {

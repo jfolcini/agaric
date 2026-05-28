@@ -29,6 +29,7 @@
 import { Clock, PauseCircle, PlayCircle, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { cn } from '@/lib/utils'
 
 export interface SearchHistoryDropdownProps {

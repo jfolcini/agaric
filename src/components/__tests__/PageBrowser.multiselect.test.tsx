@@ -23,7 +23,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { makePage } from '../../__tests__/fixtures'
 import { usePageBrowserFiltersStore } from '../../stores/pageBrowserFilters'
 import { useSpaceStore } from '../../stores/space'

@@ -17,7 +17,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { FilterSortControls } from '../FilterSortControls'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts

@@ -10,6 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { __resetAnnouncerForTests, announce } from '../announcer'
 
 /** Helper that fetches the announcer element, failing if absent. */

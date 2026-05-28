@@ -15,6 +15,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { logger } from '../../lib/logger'
 import { __resetViewHeaderWarningsForTest, ViewHeader } from '../ViewHeader'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from '../ViewHeaderOutlet'

@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { createElement, createRef, useEffect } from 'react'
 import { describe, expect, it } from 'vitest'
+
 import {
   PrimaryFocusProvider,
   usePrimaryFocusRegistry,

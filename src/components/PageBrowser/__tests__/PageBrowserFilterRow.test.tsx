@@ -10,8 +10,10 @@ import userEvent from '@testing-library/user-event'
 import type React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import type { FilterPrimitive } from '@/lib/tauri'
+
 import {
   MAX_PAGE_FILTERS,
   PageBrowserFilterRow,

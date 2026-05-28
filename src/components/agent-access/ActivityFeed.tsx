@@ -20,6 +20,7 @@ import { Undo2 } from 'lucide-react'
 import type React from 'react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -32,6 +33,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { revertOps } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
+
 import { ConfirmDialog } from '../ConfirmDialog'
 import { EmptyState } from '../EmptyState'
 import { SessionRevertControls } from './SessionRevertControls'
@@ -272,7 +274,7 @@ export function ActivityFeed({ entries }: ActivityFeedProps): React.ReactElement
                   const showSessionHeader = isFirstSeenOfSession && sessionOps.length >= 2
                   const isRevertingSession = revertingSessions.has(entry.sessionId)
                   return (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: append-only ring, idx stable per-entry
+                    // oxlint-disable-next-line react/no-array-index-key -- append-only ring, idx stable per-entry
                     <Fragment key={`${entry.timestamp}-${idx}-${entry.toolName}`}>
                       {showSessionHeader && (
                         <SessionRevertControls

@@ -9,10 +9,11 @@
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 
+import { CollapsiblePanelHeader } from '@/components/CollapsiblePanelHeader'
 import { Badge } from '@/components/ui/badge'
 import { getTodayString } from '@/lib/date-utils'
+
 import { useBlockNavigation } from '../../hooks/useBlockNavigation'
 import type { NavigateToPageFn } from '../../lib/block-events'
 import { logger } from '../../lib/logger'

@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '../property-utils'
 
 describe('formatPropertyName', () => {

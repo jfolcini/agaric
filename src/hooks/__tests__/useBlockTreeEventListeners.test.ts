@@ -7,6 +7,7 @@
 
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { dispatchBlockEvent } from '../../lib/block-events'
 import type { UseBlockTreeEventListenersOptions } from '../useBlockTreeEventListeners'
 import { useBlockTreeEventListeners } from '../useBlockTreeEventListeners'

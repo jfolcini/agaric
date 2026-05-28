@@ -27,8 +27,10 @@
 import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import type { PageHeading } from '@/lib/bindings'
 import { listAllPagesInSpace } from '@/lib/tauri'
+
 import { logger } from '../lib/logger'
 import { buildPageTree, type PageTreeNode } from '../lib/page-tree'
 import { useSpaceStore } from '../stores/space'

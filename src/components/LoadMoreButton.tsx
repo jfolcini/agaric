@@ -11,9 +11,11 @@
  */
 
 import type React from 'react'
+
 import { Spinner } from '@/components/ui/spinner'
 import { t } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
+
 import { Button } from './ui/button'
 
 export interface LoadMoreButtonProps {

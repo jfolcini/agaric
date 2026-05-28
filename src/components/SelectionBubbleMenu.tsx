@@ -21,9 +21,11 @@ import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+
 import { LinkEditPopover } from './LinkEditPopover'
 import { Button } from './ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from './ui/popover'

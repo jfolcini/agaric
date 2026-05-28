@@ -6,7 +6,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { FilterToken } from '@/lib/search-query'
+
 import { FilterChipRow } from '../FilterChipRow'
 
 describe('FilterChipRow', () => {
@@ -132,7 +134,7 @@ describe('FilterChipRow', () => {
     const { container } = render(
       <FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />,
     )
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

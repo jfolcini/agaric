@@ -14,8 +14,10 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
+
 import { PropertyDefinitionsList } from '../PropertyDefinitionsList'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts

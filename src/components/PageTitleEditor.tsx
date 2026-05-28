@@ -2,6 +2,7 @@ import { Pencil } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { cn } from '../lib/utils'
 import { renderRichContent } from './RichContentRenderer'
@@ -43,7 +44,6 @@ export function PageTitleEditor({
   // Plain-text title or currently editing: render the contentEditable div
   if (!needsRich || editing) {
     return (
-      // biome-ignore lint/a11y/useSemanticElements: contentEditable div is intentional for inline title editing
       <div
         ref={titleRef as React.RefObject<HTMLDivElement>}
         role="textbox"
@@ -67,7 +67,6 @@ export function PageTitleEditor({
   // Rich display mode: render parsed title with pill chips
   return (
     <div className="relative group flex flex-1 items-center">
-      {/* biome-ignore lint/a11y/useSemanticElements: display div mirrors the contentEditable textbox role for consistency */}
       <div
         role="textbox"
         tabIndex={0}

@@ -18,8 +18,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import type { ShortcutBinding } from '@/lib/keyboard-config'
+
 import { KeyboardSettingsTab } from '../KeyboardSettingsTab'
 
 const mockGetCurrentShortcuts = vi.fn()
@@ -410,7 +412,7 @@ describe('KeyboardSettingsTab', () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
-    // biome-ignore lint/suspicious/noExplicitAny: test-only helper
+    // oxlint-disable-next-line typescript/no-explicit-any -- test-only helper
     ;(navigator as any).userAgentData = undefined
 
     try {
@@ -434,7 +436,7 @@ describe('KeyboardSettingsTab', () => {
     vi.resetModules()
     const original = Object.getOwnPropertyDescriptor(navigator, 'platform')
     Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
-    // biome-ignore lint/suspicious/noExplicitAny: test-only helper
+    // oxlint-disable-next-line typescript/no-explicit-any -- test-only helper
     ;(navigator as any).userAgentData = undefined
 
     try {

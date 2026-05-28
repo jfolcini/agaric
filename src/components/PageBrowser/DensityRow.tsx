@@ -26,6 +26,7 @@ import { FileText, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -254,7 +255,6 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
     density === 'compact' ? [] : density === 'regular' ? flagTokens.slice(0, 1) : flagTokens
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
     <div
       // UX-331 — stable id so the grid container's `aria-activedescendant`
       // can point at this row when keyboard nav lands on it.
@@ -282,8 +282,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       {/* #81 / PEND-57 — batch-selection checkbox. Always present (it is
           the entry point into selection mode); visible on hover / focus /
           when checked, mirroring the star + delete affordances. */}
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner checkbox */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to the inner checkbox */}
       <div role="gridcell" className="shrink-0">
         <Checkbox
           checked={multiSelected}
@@ -299,8 +298,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
           )}
         />
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
         <Button
           variant="ghost"
@@ -373,8 +371,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
           )}
         </button>
       </div>
-      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner action buttons */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner action buttons */}
       <div role="gridcell" className="shrink-0">
         <Button
           variant="ghost"

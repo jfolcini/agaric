@@ -153,7 +153,7 @@ export function expandTemplateVariables(content: string, context: { pageTitle?: 
  * desired UX; the user expects "the template inserted" or a clean
  * failure.
  */
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: pre-existing
+// oxlint-disable-next-line eslint/complexity -- pre-existing
 export async function insertTemplateBlocks(
   templatePageId: string,
   parentId: string,

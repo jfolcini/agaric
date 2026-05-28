@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { logger } from '../lib/logger'
 import type { BlockRow, ResolvedBlock } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'

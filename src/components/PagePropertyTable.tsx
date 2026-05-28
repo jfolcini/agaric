@@ -9,11 +9,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
+
 import { usePropertySave } from '../hooks/usePropertySave'
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { createPropertyDef, getProperties, listPropertyDefs, setProperty } from '../lib/tauri'

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { i18n } from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
 import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'

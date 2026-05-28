@@ -1,4 +1,5 @@
 import type React from 'react'
+
 import type { InlineNode } from '../../../editor/types'
 import type { RenderContext } from '../context'
 import { renderBlockLink } from './blockLink'

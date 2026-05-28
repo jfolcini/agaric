@@ -28,6 +28,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { QueryBuilderModal } from '../QueryBuilderModal'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts

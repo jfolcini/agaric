@@ -31,6 +31,7 @@ import {
   Tag as TagIcon,
   Trash2,
 } from 'lucide-react'
+
 import { useNavigationStore } from '@/stores/navigation'
 
 export type PaletteCommandCategory = 'navigate' | 'action'

@@ -3,7 +3,9 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { logger } from '@/lib/logger'
+
 import { computeSourceModifiers, JournalCalendarDropdown } from '../journal/JournalCalendarDropdown'
 
 vi.mock('@/lib/logger', () => ({

@@ -30,10 +30,12 @@
  */
 
 import { useEffect } from 'react'
+
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
+
 import { useTauriEventListener } from './useTauriEventListener'
 
 /** Backend `deeplink:navigate-to-block` / `deeplink:navigate-to-page` payload. */

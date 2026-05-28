@@ -148,14 +148,14 @@ TMP="$(mktemp)"
 jq --arg v "$NEW_VERSION" '.version = $v' src-tauri/tauri.conf.json > "$TMP"
 mv "$TMP" src-tauri/tauri.conf.json
 
-# `jq` pretty-prints with one-element-per-line arrays; biome's formatter
+# `jq` pretty-prints with one-element-per-line arrays; oxfmt's formatter
 # wants short arrays inlined. Without this, the post-bump diff carries
 # `tauri.conf.json` / `package.json` formatting changes the CI lint shard
-# rejects. Run biome's formatter on both manifests so the bump commit
-# matches the canonical repo style. biome is a devDependency — assume it
+# rejects. Run oxfmt on both manifests so the bump commit
+# matches the canonical repo style. oxfmt is a devDependency — assume it
 # is installed (the script is documented to run after `npm install`).
-if [ -x node_modules/.bin/biome ]; then
-  node_modules/.bin/biome format --write package.json src-tauri/tauri.conf.json >/dev/null 2>&1
+if [ -x node_modules/.bin/oxfmt ]; then
+  node_modules/.bin/oxfmt --write package.json src-tauri/tauri.conf.json >/dev/null 2>&1
 fi
 
 # src-tauri/Cargo.toml — only the FIRST `version = "..."` line is the

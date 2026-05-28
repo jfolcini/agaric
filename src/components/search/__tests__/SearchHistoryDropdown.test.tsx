@@ -15,6 +15,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { SearchHistoryDropdown, type SearchHistoryDropdownProps } from '../SearchHistoryDropdown'
 
 // PEND-73 Phase 3.U2 — props gained `listboxId` + `activeIndex` for the
@@ -132,21 +133,21 @@ describe('SearchHistoryDropdown', () => {
 
   it('has no axe violations when disabled with no entries', async () => {
     const { container } = renderDropdown({ entries: [], historyEnabled: false })
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations with entries', async () => {
     const { container } = renderDropdown({ entries: ['alpha', 'beta'] })
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })
 
   it('has no axe violations in empty state', async () => {
     const { container } = renderDropdown({ entries: [] })
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     const results = await axe(container as any)
     expect(results).toHaveNoViolations()
   })

@@ -41,6 +41,7 @@ vi.mock('@/lib/announcer', () => ({
 }))
 
 import { announce } from '@/lib/announcer'
+
 import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '../RescheduleDropZone'
 
 const mockedAnnounce = vi.mocked(announce)
@@ -341,7 +342,7 @@ describe('RescheduleDropZone', () => {
   // UX-274: keyboard-equivalent path is documented in the source JSDoc.
   // Drag-only is OK because users can reschedule via DateChip → DateChipEditor.
   // This guards against an accidental removal of the JSDoc that explains why
-  // the noStaticElementInteractions biome-ignore is justified.
+  // the no-static-element-interactions oxlint-disable is justified.
   it('source documents keyboard-equivalent reschedule path (UX-274)', async () => {
     expect(typeof RescheduleDropZone).toBe('function')
     const fs = await import('node:fs')

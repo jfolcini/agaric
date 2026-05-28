@@ -11,6 +11,7 @@ import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
+
 import { applySafePosition } from '../lib/floating-position'
 import { getShortcutKeys } from '../lib/keyboard-config'
 import { logger } from '../lib/logger'

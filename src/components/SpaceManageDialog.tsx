@@ -55,6 +55,7 @@
 import { Check, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -65,6 +66,7 @@ import { notify } from '@/lib/notify'
 import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
+
 import { ACCENT_SWATCHES, type AccentToken } from './SpaceManageDialog/SpaceAccentPicker'
 import { SpaceOnboardingHint } from './SpaceManageDialog/SpaceOnboardingHint'
 import { SpaceRowEditor } from './SpaceManageDialog/SpaceRowEditor'
@@ -160,7 +162,6 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
       />
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
-        {/* biome-ignore lint/a11y/useSemanticElements: same swatch-picker pattern as the per-row picker — see the rationale comment in SpaceAccentPicker.tsx */}
         <div
           className="flex flex-wrap gap-1.5"
           role="group"

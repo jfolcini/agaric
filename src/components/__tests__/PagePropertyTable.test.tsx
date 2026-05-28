@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { getTodayString } from '../../lib/date-utils'
 import { reportIpcError } from '../../lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
@@ -63,7 +64,9 @@ vi.mock('lucide-react', () => ({
 // (see src/__tests__/mocks/ui-select.tsx).
 
 import { toast } from 'sonner'
+
 import { t } from '@/lib/i18n'
+
 import { PagePropertyTable } from '../PagePropertyTable'
 
 const mockedToastError = vi.mocked(toast.error)

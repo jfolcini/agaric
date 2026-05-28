@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { CURATED_LANGUAGES, curatedLowlight } from '../lowlight-curated'
 
 /**

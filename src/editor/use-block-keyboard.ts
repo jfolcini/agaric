@@ -8,6 +8,7 @@
 
 import type { Editor } from '@tiptap/core'
 import { useCallback, useEffect } from 'react'
+
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 
 /**

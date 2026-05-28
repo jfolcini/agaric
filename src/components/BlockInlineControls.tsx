@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } from 'lucide-react'
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { dispatchBlockEvent } from '../lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '../lib/date-utils'
 import { priorityColor } from '../lib/priority-color'

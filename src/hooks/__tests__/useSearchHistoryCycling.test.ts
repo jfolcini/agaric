@@ -15,6 +15,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
 import { useSearchHistoryCycling } from '../useSearchHistoryCycling'
 
 interface FakeEvent {
@@ -47,7 +48,7 @@ describe('useSearchHistoryCycling', () => {
     const { view, setQuery } = setup(['c', 'b', 'a'])
     const ev = makeEvent('ArrowUp')
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: FakeEvent stands in for React.KeyboardEvent.
+      // oxlint-disable-next-line typescript/no-explicit-any -- FakeEvent stands in for React.KeyboardEvent.
       view.result.current.handleKeyDown(ev as any)
     })
     expect(setQuery).toHaveBeenCalledWith('c')
@@ -57,17 +58,17 @@ describe('useSearchHistoryCycling', () => {
   it('ArrowUp walks backward through older entries', () => {
     const { view, setQuery, rerender } = setup(['c', 'b', 'a'])
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     expect(setQuery).toHaveBeenNthCalledWith(1, 'c')
@@ -79,7 +80,7 @@ describe('useSearchHistoryCycling', () => {
     const { view, setQuery, rerender } = setup(['c', 'b'])
     for (let i = 0; i < 4; i++) {
       act(() => {
-        // biome-ignore lint/suspicious/noExplicitAny: same.
+        // oxlint-disable-next-line typescript/no-explicit-any -- same.
         view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
       })
       rerender()
@@ -93,18 +94,18 @@ describe('useSearchHistoryCycling', () => {
     const { view, setQuery, rerender } = setup(['c', 'b', 'a'])
     // Walk to 'b' via two ups.
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     // ArrowDown → 'c'.
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowDown') as any)
     })
     expect(setQuery).toHaveBeenLastCalledWith('c')
@@ -113,12 +114,12 @@ describe('useSearchHistoryCycling', () => {
   it('ArrowDown past the newest entry clears the input', () => {
     const { view, setQuery, rerender } = setup(['c'])
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowDown') as any)
     })
     expect(setQuery).toHaveBeenLastCalledWith('')
@@ -128,7 +129,7 @@ describe('useSearchHistoryCycling', () => {
     const { view } = setup(['c'], 'hello')
     let consumed = true
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       consumed = view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     expect(consumed).toBe(false)
@@ -138,7 +139,7 @@ describe('useSearchHistoryCycling', () => {
     const { view } = setup(['c'])
     let consumed = true
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       consumed = view.result.current.handleKeyDown(makeEvent('a') as any)
     })
     expect(consumed).toBe(false)
@@ -149,7 +150,7 @@ describe('useSearchHistoryCycling', () => {
     const ev = makeEvent('ArrowUp')
     let consumed = false
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       consumed = view.result.current.handleKeyDown(ev as any)
     })
     expect(consumed).toBe(true)
@@ -159,14 +160,14 @@ describe('useSearchHistoryCycling', () => {
   it('exposes a reset() callback that snaps back to typing mode', () => {
     const { view, setQuery, rerender } = setup(['c', 'b'])
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     rerender()
     act(() => view.result.current.reset())
     rerender()
     act(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: same.
+      // oxlint-disable-next-line typescript/no-explicit-any -- same.
       view.result.current.handleKeyDown(makeEvent('ArrowUp') as any)
     })
     // After reset, the next ArrowUp must reseed from the most-recent

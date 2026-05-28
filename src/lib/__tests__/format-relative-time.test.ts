@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { formatRelativeTime } from '../format-relative-time'
 
 // Simple mock t() that returns the key with interpolated values

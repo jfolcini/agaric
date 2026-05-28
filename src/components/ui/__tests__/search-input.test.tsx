@@ -7,7 +7,9 @@ import userEvent from '@testing-library/user-event'
 import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { SearchInput } from '../search-input'
 
 function Controlled({

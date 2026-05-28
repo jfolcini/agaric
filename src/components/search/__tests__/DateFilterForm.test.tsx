@@ -24,7 +24,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { DateFilterForm, type DateFilterFormProps } from '../filter-forms/DateFilterForm'
 
 function setup(kind: DateFilterFormProps['kind'] = 'due'): {
@@ -132,7 +134,7 @@ describe('DateFilterForm — Back', () => {
 describe('DateFilterForm — a11y', () => {
   it('has no axe violations in bucket shape', async () => {
     const { container } = setup('due')
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 
@@ -140,7 +142,7 @@ describe('DateFilterForm — a11y', () => {
     const user = userEvent.setup()
     const { container } = setup('scheduled')
     await user.selectOptions(shapeSelect(), 'op')
-    // biome-ignore lint/suspicious/noExplicitAny: vitest-axe loose typing.
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
     expect(await axe(container as any)).toHaveNoViolations()
   })
 })

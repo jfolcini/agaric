@@ -12,9 +12,11 @@ import { CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
 import { useKeyboardNavigableList } from '../hooks/useKeyboardNavigableList'
@@ -96,7 +98,7 @@ export function DonePanel({
     [date, blocks, totalCount, t, excludePageId, currentSpaceId],
   )
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey triggers refetch on property changes (F-39)
   useEffect(() => {
     setBlocks([])
     setNextCursor(null)
@@ -302,11 +304,11 @@ export function DonePanel({
               </CollapsiblePanelHeader>
 
               {!collapsed && (
-                // biome-ignore lint/a11y/noStaticElementInteractions: keyboard nav container
+                // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- keyboard nav container
                 <div
                   className="done-panel-content mt-1"
                   ref={listRef}
-                  // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav container
+                  // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav container
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (navHandleKeyDown(e)) e.preventDefault()

@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+
 import { logger } from '../lib/logger'
 
 export interface LocalStoragePreferenceOptions<T> {
@@ -66,7 +67,7 @@ export function useLocalStoragePreference<T>(
   // `serialize` and `source` are intentionally excluded — they're stable
   // once provided, and including them re-runs the effect every render
   // when callers inline-construct the options object.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: serialize/source intentionally omitted
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- serialize/source intentionally omitted
   useEffect(() => {
     try {
       localStorage.setItem(key, serialize(value))

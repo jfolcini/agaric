@@ -13,7 +13,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { _resetPropertyKeysCacheForTest } from '../../hooks/usePropertyKeysCache'
 import { clearPathHistory, getPathHistory, recordPathHistory } from '../../lib/path-history'
 import { useSearchHistoryStore } from '../../stores/search-history'

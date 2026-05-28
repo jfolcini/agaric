@@ -13,7 +13,9 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
 import type { SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
+
 import { SearchResultBlockRow } from '../SearchResultBlockRow'
 
 function makeRow(overrides: Partial<SearchBlockRowT> = {}): SearchBlockRowT {

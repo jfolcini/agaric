@@ -17,10 +17,12 @@
 
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
+
 import type { PropertyDefinition, PropertyRow } from '../lib/tauri'
 import { BooleanEditor } from './PropertyRowEditor/BooleanEditor'
 import { DateEditor } from './PropertyRowEditor/DateEditor'

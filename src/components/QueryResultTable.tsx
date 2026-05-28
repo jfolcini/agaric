@@ -1,7 +1,9 @@
 import { ArrowDown, ArrowUp } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ScrollArea } from '@/components/ui/scroll-area'
+
 import { handleBlockNavigation, resolveBlockDisplay } from '../lib/query-result-utils'
 import type { BlockRow } from '../lib/tauri'
 import { PageLink } from './PageLink'

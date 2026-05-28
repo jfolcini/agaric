@@ -25,6 +25,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { makeBlock } from '../../__tests__/fixtures'
 
 // Mock SortableBlock — record props so we can assert on them
