@@ -94,11 +94,19 @@ async fn find_prior_property(
     // the canonical form stored in the indexed column. Mirrors the M-63 fix in
     // block_ops.rs and recovery/draft_recovery.rs:84.
     let bid_upper = block_id.to_ascii_uppercase();
+    // #181: the prior value of a property is whatever the MOST RECENT op
+    // touching (block, key) left it as — which may be a `delete_property`,
+    // not just a `set_property`. Querying only `set_property` rows ignores
+    // an intervening delete, so for `Set(K="A"); Delete(K); Set(K="a")` the
+    // prior state of the final Set is ABSENT (the property had been deleted),
+    // and its reverse must be `DeleteProperty(K)` — not a resurrected
+    // `SetProperty(K="A")`. So consider BOTH op types and inspect the single
+    // most-recent one: if it is a `delete_property`, the prior state is None.
     let row = sqlx::query!(
-        "SELECT payload FROM op_log \
+        "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND json_extract(payload, '$.key') = ?2 \
-           AND op_type = 'set_property' \
+           AND op_type IN ('set_property', 'delete_property') \
            AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) \
          ORDER BY created_at DESC, seq DESC \
          LIMIT 1",
@@ -110,7 +118,8 @@ async fn find_prior_property(
     .fetch_optional(pool)
     .await?;
     match row {
-        Some(r) => {
+        // Most recent prior op was a set — its value is the prior state.
+        Some(r) if r.op_type == "set_property" => {
             let p: SetPropertyPayload = serde_json::from_str(&r.payload)?;
             Ok(Some(PriorPropertyRow {
                 value_text: p.value_text,
@@ -120,7 +129,9 @@ async fn find_prior_property(
                 value_bool: p.value_bool,
             }))
         }
-        None => Ok(None),
+        // Most recent prior op was a delete (or there is no prior op at all):
+        // the property was ABSENT immediately before the op being reversed.
+        _ => Ok(None),
     }
 }
 
