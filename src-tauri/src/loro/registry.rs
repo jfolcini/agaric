@@ -29,6 +29,7 @@
 //! to per-space mutexes if benchmarks show contention.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::error::AppError;
@@ -40,8 +41,20 @@ use crate::space::SpaceId;
 /// Lookup-or-insert is `for_space`; production callers pass the
 /// device's UUID-v4 `device_id` so the engine's Loro `peer_id` is
 /// stable across the process lifetime.
+///
+/// Issue #157 sub-item I — `dirty_count` is a conservative
+/// modification proxy used by the `loro_snapshot_if_dirty`
+/// maintenance job to gate periodic snapshot persistence. Every call
+/// to [`for_space`](Self::for_space) bumps the counter (so any code
+/// path that *might* mutate an engine is counted, including
+/// read-only `for_space` calls — over-counts are harmless because the
+/// extra snapshot is idempotent). [`save_all_engines`] resets the
+/// counter to 0 after a successful walk so subsequent ticks observe
+/// "clean" until the next mutation.
 pub struct LoroEngineRegistry {
     inner: Mutex<HashMap<SpaceId, LoroEngine>>,
+    /// Issue #157 sub-item I — see struct-level docstring.
+    dirty_count: AtomicUsize,
 }
 
 impl LoroEngineRegistry {
@@ -50,7 +63,26 @@ impl LoroEngineRegistry {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(HashMap::new()),
+            dirty_count: AtomicUsize::new(0),
         }
+    }
+
+    /// Issue #157 sub-item I — current dirty-engines proxy count.
+    /// Returns the number of [`for_space`](Self::for_space) calls
+    /// since the last [`clear_dirty`](Self::clear_dirty). The
+    /// `loro_snapshot_if_dirty` maintenance job uses
+    /// `dirty_count() > 0` as its predicate so it skips the
+    /// snapshot pass on a quiescent session.
+    pub fn dirty_count(&self) -> usize {
+        self.dirty_count.load(Ordering::Acquire)
+    }
+
+    /// Issue #157 sub-item I — reset the dirty proxy counter to 0.
+    /// Called from [`crate::loro::snapshot::save_all_engines`] after
+    /// a successful snapshot pass so the next tick observes "clean"
+    /// until the next [`for_space`](Self::for_space) call.
+    pub fn clear_dirty(&self) {
+        self.dirty_count.store(0, Ordering::Release);
     }
 
     /// Acquire the registry's mutex and ensure an engine for `space_id`
@@ -82,6 +114,13 @@ impl LoroEngineRegistry {
             let engine = LoroEngine::with_peer_id(device_id)?;
             guard.insert(space_id.clone(), engine);
         }
+        // Issue #157 sub-item I — `for_space` is the chokepoint
+        // every mutation path goes through, so a per-call increment
+        // is the simplest "engines have changed since last save"
+        // proxy. Over-counts (a read-only `for_space` call also
+        // bumps the counter); the extra snapshot the daemon may then
+        // fire is idempotent so the false positive is harmless.
+        self.dirty_count.fetch_add(1, Ordering::Relaxed);
         Ok(EngineGuard {
             guard,
             key: space_id.clone(),
@@ -198,6 +237,46 @@ mod tests {
         let r = LoroEngineRegistry::new();
         assert!(r.is_empty());
         assert_eq!(r.len(), 0);
+    }
+
+    /// Issue #157 sub-item I — `for_space` bumps the dirty proxy
+    /// counter; `clear_dirty` resets it to 0. Pins the counter
+    /// transitions the `loro_snapshot_if_dirty` predicate relies on.
+    #[test]
+    fn dirty_count_bumps_on_for_space_and_clears_on_clear_dirty_157_i() {
+        let r = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        assert_eq!(
+            r.dirty_count(),
+            0,
+            "fresh registry must report dirty_count == 0"
+        );
+
+        let _ = r
+            .for_space(&space, "device-AAAA")
+            .expect("for_space must succeed");
+        assert_eq!(
+            r.dirty_count(),
+            1,
+            "for_space must bump dirty_count from 0 to 1"
+        );
+
+        let _ = r
+            .for_space(&space, "device-AAAA")
+            .expect("for_space must succeed");
+        assert_eq!(
+            r.dirty_count(),
+            2,
+            "subsequent for_space must continue incrementing dirty_count"
+        );
+
+        r.clear_dirty();
+        assert_eq!(
+            r.dirty_count(),
+            0,
+            "clear_dirty must reset dirty_count to 0"
+        );
     }
 
     #[test]

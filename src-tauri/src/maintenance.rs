@@ -239,6 +239,26 @@ pub async fn tombstone_purge(
     Ok(())
 }
 
+/// Issue #157 sub-item I — persist all Loro engine snapshots when
+/// the registry's `dirty_count` proxy indicates at least one engine
+/// has been touched since the last save. Predicate gating
+/// (`dirty_count > 0 && !is_foreground`) lives at the spawn site;
+/// the pass itself resets the dirty counter to 0 on success.
+/// `shared::get() == None` (registry not yet initialised) skips
+/// the tick.
+pub async fn loro_snapshot_if_dirty(write_pool: &SqlitePool) -> Result<(), AppError> {
+    let Some(state) = crate::loro::shared::get() else {
+        tracing::debug!(
+            "loro_snapshot_if_dirty: shared::get() returned None (registry not yet \
+             initialised); skipping tick"
+        );
+        return Ok(());
+    };
+    let ok = crate::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
+    tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
+    Ok(())
+}
+
 /// Spawn the maintenance daemon. Mirrors the shape of
 /// [`crate::draft::spawn_orphan_drafts_sweeper`] and
 /// [`crate::materializer::retry_queue::spawn_sweeper`]: fire-and-forget,
@@ -567,5 +587,18 @@ mod tests {
             recent_present, 1,
             "recent tombstone must stay (still inside retention window)"
         );
+    }
+
+    /// Issue #157 sub-item I — `loro_snapshot_if_dirty` is safe to
+    /// call when the loro shared state has not been initialised.
+    #[tokio::test]
+    async fn loro_snapshot_if_dirty_smoke_test_no_shared_state_157_i() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        loro_snapshot_if_dirty(&pool)
+            .await
+            .expect("loro_snapshot_if_dirty must succeed when shared::get() returns None");
     }
 }

@@ -1042,6 +1042,7 @@ pub fn run() {
             let lifecycle_for_wal = lifecycle.clone();
             let lifecycle_for_compact = lifecycle.clone();
             let lifecycle_for_tombstone = lifecycle.clone();
+            let lifecycle_for_loro_pred = lifecycle.clone();
             let wal_write_pool = pools.write.clone();
             let compact_write_pool = pools.write.clone();
             let compact_device_id = device_id.clone();
@@ -1052,6 +1053,7 @@ pub fn run() {
             let tombstone_write_pool = pools.write.clone();
             let tombstone_device_id = device_id.clone();
             let tombstone_materializer = materializer.clone();
+            let loro_snapshot_write_pool = pools.write.clone();
             let jobs = vec![
                 maintenance::MaintenanceJob {
                     name: "wal_checkpoint_truncate",
@@ -1086,8 +1088,7 @@ pub fn run() {
                         })
                     }),
                 },
-                // Issue #157 sub-item G — periodic PRAGMA optimize
-                // (4 h, always-on predicate).
+                // Issue #157 sub-item G — periodic PRAGMA optimize.
                 maintenance::MaintenanceJob {
                     name: "pragma_optimize_tick",
                     interval: std::time::Duration::from_secs(4 * 3600),
@@ -1148,6 +1149,28 @@ pub fn run() {
                         Box::pin(async move {
                             maintenance::tombstone_purge(&pool, &device_id, &mat).await
                         })
+                    }),
+                },
+                // Issue #157 sub-item I — fire save_all_engines every
+                // 60 s while backgrounded AND when the registry's
+                // dirty-engines proxy counter is non-zero.
+                maintenance::MaintenanceJob {
+                    name: "loro_snapshot_if_dirty",
+                    interval: std::time::Duration::from_secs(60),
+                    last_run: None,
+                    predicate: Box::new(move || {
+                        if lifecycle_for_loro_pred
+                            .is_foreground
+                            .load(std::sync::atomic::Ordering::Acquire)
+                        {
+                            return false;
+                        }
+                        crate::loro::shared::get()
+                            .is_some_and(|s| s.registry.dirty_count() > 0)
+                    }),
+                    run: Box::new(move || {
+                        let pool = loro_snapshot_write_pool.clone();
+                        Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool).await })
                     }),
                 },
             ];

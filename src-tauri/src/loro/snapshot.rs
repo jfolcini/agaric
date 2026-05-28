@@ -275,6 +275,15 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
             }
         }
     }
+    // Issue #157 sub-item I — reset the dirty-engines proxy
+    // counter so subsequent `loro_snapshot_if_dirty` ticks observe
+    // "clean" until the next `for_space` call. Reset on success-or-
+    // skip is correct: a per-space failure path above doesn't leave
+    // the engine in a state that needs re-snapshotting (the prior
+    // snapshot is still valid; only THAT engine's incremental delta
+    // is missing, which the next mutation will mark dirty again
+    // through `for_space`).
+    registry.clear_dirty();
     ok
 }
 
