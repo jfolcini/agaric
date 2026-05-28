@@ -1497,6 +1497,65 @@ describe('SearchPanel', () => {
     expect([...args.ids].sort()).toEqual(['PAGE_A', 'PAGE_B', 'PAGE_C'])
   })
 
+  // Issue #153 — soft-deleted / missing parents are never cached in
+  // `pageTitles`, so before the `attemptedBreadcrumbIdsRef` guard every
+  // `loadMore` re-fired `batchResolve` for them. After the fix each
+  // unresolvable id costs exactly one `batchResolve` IPC for the life of
+  // the hook instance, even as more pages accumulate matching results.
+  it('does not re-fire batchResolve for unresolvable parent page_ids across loadMore (#153)', async () => {
+    const user = userEvent.setup()
+
+    const page1 = {
+      items: [makeSearchResult({ id: 'B1', page_id: 'GHOST', content: 'first' })],
+      next_cursor: 'cursor_p2',
+      has_more: true,
+      total_count: null,
+    }
+    const page2 = {
+      items: [makeSearchResult({ id: 'B2', page_id: 'GHOST', content: 'second' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+
+    let searchCall = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') {
+        searchCall += 1
+        return searchCall === 1 ? page1 : page2
+      }
+      // `batch_resolve` returns an empty array — GHOST is unresolvable.
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
+    })
+
+    render(<SearchPanel />)
+
+    const input = screen.getByPlaceholderText(t('search.searchPlaceholder'))
+    typeAndSubmit(input, 'gho')
+
+    // Page 1 → first (and only) batchResolve fires for GHOST.
+    await waitFor(() => {
+      expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'batch_resolve')).toBe(true)
+    })
+    const initialBatchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')
+    expect(initialBatchCalls).toHaveLength(1)
+    expect((initialBatchCalls[0]?.[1] as { ids: string[] }).ids).toEqual(['GHOST'])
+
+    // Load page 2 — same unresolvable GHOST page_id.
+    const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+    await user.click(loadMoreBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText(textContent('second'))).toBeInTheDocument()
+    })
+
+    // batchResolve must NOT have fired again — the attempted-set guards
+    // it. Without #153 this would be 2 calls.
+    const allBatchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')
+    expect(allBatchCalls).toHaveLength(1)
+  })
+
   // =========================================================================
   // Keyboard navigation tests
   // =========================================================================
