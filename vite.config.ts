@@ -129,7 +129,16 @@ export default defineConfig({
     // runtime target with `tsconfig.app.json target: ES2023`, so what Vite
     // emits matches what the type-checker already assumes. Post-MAINT-84.
     target: 'es2023',
-    minify: !process.env['TAURI_DEBUG'] ? 'esbuild' : false,
+    // PEND-82 Track B: Vite 8 already runs on Rolldown (oxc-transform +
+    // oxc-resolver are on the build path); the minifier is the last
+    // remaining non-OXC step in the pipeline. Vite 8 types
+    // `BuildOptions.minify` as `boolean | 'oxc' | 'terser' | 'esbuild'`;
+    // selecting `'oxc'` aligns the entire production build path with the
+    // OXC toolchain. The MAINT-84 esbuild worker-pipeline destructuring
+    // bug class is structurally off the codepath under `oxc-minify`; the
+    // `es2023` target rationale above is minifier-independent and still
+    // applies.
+    minify: !process.env['TAURI_DEBUG'] ? 'oxc' : false,
     sourcemap: !!process.env['TAURI_DEBUG'],
     rollupOptions: {
       output: {
