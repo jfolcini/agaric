@@ -26,4 +26,6 @@
 
 **Process notes:** Ran concurrently with the #150 proptest batch (separate worktree) per the new "two issues in flight" rule, so neither idled on the other's compile. Optional follow-up: a focused `BlockId` TEXT-column decode round-trip unit test (mirroring the `ActiveBlockId` precedent) for symmetry — not required (compiler-enforced + integration-covered).
 
-**Commit plan:** single commit, pushed; PR is a partial of #107 (status comment, issue stays open).
+**Follow-up — CI fix (same PR):** the PR's `validate / lint` job failed at `sqlx offline cache check`. Root cause was **not** the BlockId change: sqlx-cli 0.9.x's `cargo sqlx prepare --check` connects to `DATABASE_URL` to re-derive query metadata (it ignores `SQLX_OFFLINE` for `--check`), but `_validate.yml` pointed it at an empty `sqlite::memory:` placeholder → "no such table" for every query → ~hundreds of cascading `str` E0277 errors. The placeholder only worked under sqlx-cli 0.8.x's offline delegation. Fixed by creating + migrating a throwaway file DB before the check (`.github/workflows/_validate.yml`). Verified locally: `prepare --check` passes against a migrated DB, fails against the empty one. (`#179` is the first rust-touching PR since the 0.9 upgrade + placeholder commit, so it's the first to surface this; the committed `.sqlx` cache itself was correct and byte-identical under both CLI versions.)
+
+**Commit plan:** two commits on the branch (BlockId Batch 0+1; CI sqlx-check fix), pushed; PR is a partial of #107 (status comment, issue stays open).
