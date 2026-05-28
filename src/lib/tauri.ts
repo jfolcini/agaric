@@ -287,6 +287,17 @@ export async function deleteBlocksByIds(blockIds: string[]): Promise<number> {
   return unwrap(await commands.deleteBlocksByIds(blockIds))
 }
 
+/**
+ * #81 / PEND-57 — move N blocks to a target space in a single IPC.
+ *
+ * Returns the number of blocks actually moved (the backend skips ids
+ * that are missing or already in `spaceId`). Used by the Pages-view
+ * batch toolbar's "Move to space" action.
+ */
+export async function moveBlocksToSpace(blockIds: string[], spaceId: string): Promise<number> {
+  return unwrap(await commands.moveBlocksToSpace(blockIds, spaceId))
+}
+
 /** Restore a soft-deleted block using its `deleted_at` timestamp as ref. */
 export async function restoreBlock(
   blockId: string,
@@ -639,6 +650,17 @@ export async function moveBlock(
 /** Associate a tag with a block. */
 export async function addTag(blockId: string, tagId: string): Promise<TagResponse> {
   return unwrap(await commands.addTag(blockId, tagId))
+}
+
+/**
+ * #81 / PEND-57 — add ONE tag to N blocks in a single IPC.
+ *
+ * Bulk counterpart to {@link addTag}; the backend skips ids that are
+ * missing or already carry the tag, and returns the number of blocks
+ * newly tagged. Used by the Pages-view batch toolbar's "Add tag" action.
+ */
+export async function addTagsByIds(blockIds: string[], tagId: string): Promise<number> {
+  return unwrap(await commands.addTagsByIds(blockIds, tagId))
 }
 
 /** Remove a tag association from a block. */

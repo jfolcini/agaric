@@ -934,6 +934,160 @@ pub async fn delete_blocks_by_ids(
         .map_err(sanitize_internal_error)
 }
 
+/// #81 / PEND-57 — bulk move N blocks to a target space (the Pages
+/// multi-select "move selected to space" action).
+///
+/// A "space" is a page block flagged `is_space = 'true'`; a block's
+/// membership is the reserved `space` ref-property pointing at the space
+/// block (see `commands/spaces.rs`). Moving a block between spaces is
+/// exactly `SetProperty(key = "space", value_ref = <space_id>)` — the same
+/// op the single-row frontend path emits via `set_property`. This command
+/// applies that op to every block in `block_ids` inside ONE
+/// `BEGIN IMMEDIATE` transaction, collapsing what would otherwise be one
+/// `set_property` IPC per selected row.
+///
+/// One `SetProperty(space)` op is appended per block actually moved, so the
+/// `LAST_APPEND` task-local drains as ONE activity-feed entry covering the
+/// whole batch. The whole batch shares one op-log seq range.
+///
+/// **Space validation runs ONCE** (mirrors `create_page_in_space_inner`):
+/// `space_id` must resolve to a live, non-conflict block carrying
+/// `is_space = 'true'`. A bad target aborts the whole tx with
+/// `AppError::Validation` — a caller error, not data drift.
+///
+/// **Per-block leniency** (mirrors `set_todo_state_batch_inner`): each id
+/// that no longer resolves to a live block is silently SKIPPED rather than
+/// aborting the batch — multi-select races against concurrent deletes /
+/// sync replay. The per-block write reuses [`set_property_in_tx`] so the
+/// reserved-`space`-key materialisation + op-log shape is identical to the
+/// single-row path (the `space` key is exempt from the cross-space ref
+/// guard — it is precisely *how* blocks move between spaces).
+///
+/// Returns the number of blocks actually moved (NOT the input list length).
+///
+/// # Errors
+///
+/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::commands::properties::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
+#[instrument(skip(pool, device_id, materializer, block_ids), err)]
+pub async fn move_blocks_to_space_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_ids: Vec<String>,
+    space_id: String,
+) -> Result<i64, AppError> {
+    use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
+
+    if block_ids.is_empty() {
+        return Err(AppError::Validation(
+            "block_ids list cannot be empty".into(),
+        ));
+    }
+    if block_ids.len() > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::Validation(format!(
+            "block_ids length {} exceeds maximum {MAX_BATCH_BLOCK_IDS}",
+            block_ids.len()
+        )));
+    }
+
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — uppercase-normalise every
+    // id (block ids + space id) before any SQL touch.
+    let block_ids: Vec<String> = block_ids
+        .into_iter()
+        .map(|id| id.to_ascii_uppercase())
+        .collect();
+    let space_id = space_id.to_ascii_uppercase();
+
+    // One IMMEDIATE tx covers space validation + every per-block move.
+    let mut tx = CommandTx::begin_immediate(pool, "move_blocks_to_space").await?;
+
+    // Validate `space_id` ONCE inside the tx (TOCTOU-safe against a
+    // concurrent space delete). Mirrors `create_page_in_space_inner`: the
+    // target must be a live, non-conflict block carrying `is_space = 'true'`.
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 as "ok: i32" FROM blocks b
+           WHERE b.id = ?
+             AND b.deleted_at IS NULL
+             AND EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+        space_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::Validation(format!(
+            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
+        )));
+    }
+
+    let mut moved: i64 = 0;
+    for block_id in block_ids {
+        // Probe existence inside the tx so a concurrent delete cleanly skips
+        // rather than aborting the whole batch.
+        let exists = sqlx::query_scalar!(
+            r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+            block_id
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+        if exists.is_none() {
+            continue;
+        }
+
+        // Reuse the canonical per-row helper so reserved/ref-key validation,
+        // op_log append (recorded in LAST_APPEND), and the `block_properties`
+        // materialised write share the single source of truth with the
+        // single-row `set_property` path. The `space` key is non-reserved and
+        // is exempt from the cross-space ref guard (see `set_property_in_tx`).
+        let (_row, op_record) = set_property_in_tx(
+            &mut tx,
+            device_id,
+            block_id,
+            "space",
+            None,
+            None,
+            None,
+            Some(space_id.clone()),
+            None,
+        )
+        .await?;
+        tx.enqueue_background(op_record);
+        moved += 1;
+    }
+
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(moved)
+}
+
+/// Tauri command: move N blocks to a target space (#81 / PEND-57).
+/// Delegates to [`move_blocks_to_space_inner`]. Returns the number of
+/// blocks actually moved.
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn move_blocks_to_space(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    block_ids: Vec<String>,
+    space_id: String,
+) -> Result<i64, AppError> {
+    move_blocks_to_space_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        block_ids,
+        space_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
 /// Restore a soft-deleted block and its descendants.
 ///
 /// Validates the block exists and is deleted with the expected `deleted_at`

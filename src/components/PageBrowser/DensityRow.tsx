@@ -28,6 +28,7 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { HighlightMatch } from '@/components/HighlightMatch'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import { cn } from '@/lib/utils'
 
@@ -86,6 +87,16 @@ export interface DensityRowProps {
   hasScheduled: boolean
   /** Some descendant has a non-null `due_date`. */
   hasDue: boolean
+
+  // ── Multi-select (#81 / PEND-57) ───────────────────────────────────
+  /** Whether this row is in the batch selection. Drives the leading
+   * checkbox's checked state and the `data-selected` attribute. */
+  multiSelected: boolean
+  /** Toggle this row's batch selection (additive to the single-row
+   * star/delete flow). Receives the click event so the parent's
+   * `useListMultiSelect.handleRowClick` can honour Shift (range) and
+   * Cmd/Ctrl (toggle) modifiers. */
+  onToggleMultiSelect: (pageId: string, e: React.MouseEvent) => void
 
   // ── Handlers ───────────────────────────────────────────────────────
   /** Called when the page row is activated (click). */
@@ -202,6 +213,8 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
     hasTodo,
     hasScheduled,
     hasDue,
+    multiSelected,
+    onToggleMultiSelect,
     onSelect,
     onToggleStar,
     onDeleteRequest,
@@ -253,6 +266,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       data-page-item
       data-density={density}
       data-starred={starred}
+      data-selected={multiSelected}
       tabIndex={-1}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-accent/50',
@@ -265,6 +279,26 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       )}
       style={rowStyle(virtualRowStart)}
     >
+      {/* #81 / PEND-57 — batch-selection checkbox. Always present (it is
+          the entry point into selection mode); visible on hover / focus /
+          when checked, mirroring the star + delete affordances. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to the inner checkbox */}
+      <div role="gridcell" className="shrink-0">
+        <Checkbox
+          checked={multiSelected}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleMultiSelect(pageId, e)
+          }}
+          aria-label={t('pageBrowser.select.toggle')}
+          data-testid={`page-select-${pageId}`}
+          className={cn(
+            'shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity',
+            multiSelected && 'opacity-100',
+          )}
+        />
+      </div>
       {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
       {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner controls */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">

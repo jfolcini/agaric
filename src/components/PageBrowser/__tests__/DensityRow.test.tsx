@@ -36,6 +36,8 @@ function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
     hasTodo: false,
     hasScheduled: false,
     hasDue: false,
+    multiSelected: false,
+    onToggleMultiSelect: vi.fn(),
     onSelect: vi.fn(),
     onToggleStar: vi.fn(),
     onDeleteRequest: vi.fn(),

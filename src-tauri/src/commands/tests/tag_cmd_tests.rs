@@ -635,3 +635,225 @@ async fn add_tag_rejects_genuine_cross_space_tag() {
         "a tag from a different space must still be rejected, got {result:?}"
     );
 }
+
+// ======================================================================
+// #81 / PEND-57 — add_tags_by_ids (bulk add-tag)
+// ======================================================================
+
+/// Happy path: ONE tag applied to N blocks writes N `add_tag` ops in a
+/// single contiguous seq range and N `block_tags` rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_tags_all_blocks_in_one_tx() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "ABI_TAG", "tag", "urgent", None, None).await;
+    let mut ids = Vec::new();
+    for i in 0..4 {
+        let id = format!("ABI_BLK_{i}");
+        insert_block(&pool, &id, "content", "blk", None, Some(i + 1)).await;
+        ids.push(id);
+    }
+
+    let pre_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let tagged = add_tags_by_ids_inner(&pool, DEV, &mat, ids.clone(), "ABI_TAG".into())
+        .await
+        .unwrap();
+    assert_eq!(tagged, 4, "all four blocks should be reported as tagged");
+
+    let post_max: i64 = sqlx::query_scalar!(
+        "SELECT COALESCE(MAX(seq), 0) FROM op_log WHERE device_id = ?",
+        DEV
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        post_max - pre_max,
+        4,
+        "the 4 add_tag ops must occupy a single contiguous seq range"
+    );
+
+    for id in &ids {
+        let row = sqlx::query!(
+            r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+            id,
+            "ABI_TAG"
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        assert!(row.is_some(), "block_tags row for {id} must exist");
+    }
+}
+
+/// Lenient batch: missing / soft-deleted / self / already-tagged ids are
+/// silently skipped; only the genuinely-new live associations count.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_skips_missing_deleted_self_and_duplicate() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "ABI2_TAG", "tag", "urgent", None, None).await;
+    insert_block(&pool, "ABI2_LIVE", "content", "live", None, Some(1)).await;
+    insert_block(&pool, "ABI2_DUP", "content", "already", None, Some(2)).await;
+    insert_block(&pool, "ABI2_DEL", "content", "gone", None, Some(3)).await;
+
+    // Pre-tag the duplicate so the batch must skip it.
+    add_tag_inner(&pool, DEV, &mat, "ABI2_DUP".into(), "ABI2_TAG".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    // Soft-delete one block so the batch must skip it.
+    delete_block_inner(&pool, DEV, &mat, "ABI2_DEL".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let tagged = add_tags_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![
+            "ABI2_LIVE".into(),
+            "ABI2_DUP".into(),   // already tagged -> skip
+            "ABI2_DEL".into(),   // soft-deleted -> skip
+            "ABI2_TAG".into(),   // self-tag -> skip
+            "ABI2_GHOST".into(), // missing -> skip
+        ],
+        "ABI2_TAG".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tagged, 1, "only the one fresh live association counts");
+
+    let row = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+        "ABI2_LIVE",
+        "ABI2_TAG"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(row.is_some(), "the live block must be tagged");
+}
+
+/// ULID normalisation: a lowercase block id still resolves and tags.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_normalises_lowercase_ids() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "ABI3_TAG", "tag", "urgent", None, None).await;
+    insert_block(&pool, "ABI3_BLK01", "content", "blk", None, Some(1)).await;
+
+    let tagged = add_tags_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["abi3_blk01".into()],
+        "abi3_tag".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(tagged, 1);
+
+    let row = sqlx::query!(
+        r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
+        "ABI3_BLK01",
+        "ABI3_TAG"
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        row.is_some(),
+        "lowercase ids must normalise to uppercase match"
+    );
+}
+
+/// Empty input list is rejected up-front (caller error, not data drift).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_rejects_empty_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block(&pool, "ABI4_TAG", "tag", "urgent", None, None).await;
+
+    let result = add_tags_by_ids_inner(&pool, DEV, &mat, vec![], "ABI4_TAG".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "empty block_ids must be rejected, got {result:?}"
+    );
+}
+
+/// Over-cap input list is rejected up-front.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_rejects_oversize_list() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    insert_block(&pool, "ABI5_TAG", "tag", "urgent", None, None).await;
+
+    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| format!("ABI5_{i:026}"))
+        .collect();
+    let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;
+    assert!(
+        matches!(result, Err(AppError::Validation(_))),
+        "oversize block_ids must be rejected, got {result:?}"
+    );
+}
+
+/// A nonexistent / non-`tag` `tag_id` aborts the whole batch (one shared
+/// validation, mirroring the single path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tags_by_ids_rejects_bad_tag() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "ABI6_BLK", "content", "blk", None, Some(1)).await;
+    // A plain content block masquerading as a tag target.
+    insert_block(&pool, "ABI6_NOTTAG", "content", "not a tag", None, Some(2)).await;
+
+    // Missing tag id -> NotFound.
+    let missing = add_tags_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["ABI6_BLK".into()],
+        "ABI6_MISSING".into(),
+    )
+    .await;
+    assert!(
+        matches!(missing, Err(AppError::NotFound(_))),
+        "missing tag must be NotFound, got {missing:?}"
+    );
+
+    // Wrong block_type -> InvalidOperation.
+    let wrong = add_tags_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["ABI6_BLK".into()],
+        "ABI6_NOTTAG".into(),
+    )
+    .await;
+    assert!(
+        matches!(wrong, Err(AppError::InvalidOperation(_))),
+        "non-tag block_type must be InvalidOperation, got {wrong:?}"
+    );
+
+    // No association was written by the aborted batch.
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ?")
+        .bind("ABI6_BLK")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "aborted batch must write no block_tags rows");
+}

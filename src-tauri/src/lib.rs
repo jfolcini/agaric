@@ -83,6 +83,10 @@ macro_rules! agaric_commands {
             // into one IMMEDIATE tx with a single recursive CTE
             // seeded from every root simultaneously.
             $crate::commands::blocks::crud::delete_blocks_by_ids,
+            // #81 / PEND-57 — Pages multi-select bulk move-to-space:
+            // collapses the per-row `set_property(space)` IPC loop into one
+            // IMMEDIATE tx with a single op-log seq range.
+            $crate::commands::blocks::crud::move_blocks_to_space,
             $crate::commands::blocks::crud::restore_block,
             $crate::commands::blocks::crud::purge_block,
             // PEND-35 Tier 2.2 — TrashView batch restore/purge: collapses
@@ -96,6 +100,10 @@ macro_rules! agaric_commands {
             $crate::commands::blocks::queries::get_block,
             $crate::commands::blocks::queries::batch_resolve,
             $crate::commands::tags::add_tag,
+            // #81 / PEND-57 — Pages multi-select bulk add-tag: collapses the
+            // per-row `add_tag` IPC loop into one IMMEDIATE tx with a single
+            // op-log seq range (one `AddTag` op per newly-tagged block).
+            $crate::commands::tags::add_tags_by_ids,
             $crate::commands::tags::remove_tag,
             $crate::commands::queries::get_backlinks,
             $crate::commands::get_block_history,
