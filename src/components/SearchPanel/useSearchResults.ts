@@ -165,13 +165,30 @@ export function useSearchResults({
     return t('search.invalidRegex', { message: msg.slice(idx + prefix.length).trim() })
   }, [error, t, toggles.isRegex])
 
+  // Issue #153 — every page_id ever fed into `batchResolve` for
+  // breadcrumb resolution, regardless of outcome. The breadcrumb
+  // `useEffect` below consults this ref before assembling the next
+  // batch, so a permanently-unresolvable id (soft-deleted parent,
+  // missing page) costs exactly one IPC for the life of the hook.
+  const attemptedBreadcrumbIdsRef = useRef<Set<string>>(new Set<string>())
+
   // Resolve page titles for breadcrumbs when results change.
+  //
+  // Issue #153 — unresolvable page_ids (soft-deleted, missing) never
+  // land in `pageTitles`, so without `attemptedBreadcrumbIdsRef` the
+  // `!pageTitles.has(id)` filter below would re-fire `batchResolve` for
+  // them on every `loadMore`.
   useEffect(() => {
-    // FE-11 — only resolve page ids we haven't already resolved.
+    // FE-11 — only resolve page ids we haven't already resolved or
+    // already attempted (#153).
     const parentIds = [
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
-    ].filter((id) => !pageTitles.has(id))
+    ].filter((id) => !pageTitles.has(id) && !attemptedBreadcrumbIdsRef.current.has(id))
     if (parentIds.length === 0) return
+    // Record the attempt up front so a rejected promise (or a resolved
+    // result that omits some ids) cannot cause a re-fire on the next
+    // `loadMore`.
+    for (const id of parentIds) attemptedBreadcrumbIdsRef.current.add(id)
     batchResolve(parentIds)
       .then((resolved) => {
         if (Array.isArray(resolved)) {
