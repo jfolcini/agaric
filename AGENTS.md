@@ -173,6 +173,12 @@ Every frontend change — new component, bugfix, feature — must build on exist
   4. Be listed in `EDITOR_PORTAL_SELECTORS` if it should prevent editor blur.
 
   See `src/editor/suggestion-renderer.ts` as the reference implementation.
+- **Picker / filter debouncing hook**: searchable pickers and filter inputs debounce their IPC fan-out via `useDebouncedCallback` (`src/hooks/useDebouncedCallback.ts`) at the conventional 300 ms. The hook exposes `schedule(value)` / `cancel()`, manages its timer ref internally, and cleans up on unmount. Always `cancel()` before the non-search path (clearing input, selecting a result) and before scheduling a new value — `TagValuePicker.tsx` is the canonical clear-then-cancel-then-schedule sequence. The "Picker / filter input without debouncing" anti-pattern below documents the regression path (PERF-28).
+- **Property-key filter sets — use the canonical exports, never inline**: two distinct sets must be imported rather than redeclared at call sites:
+  - `INTERNAL_PROPERTY_KEYS` (`src/lib/block-utils.ts`) — properties tracked by the materializer but hidden from the per-block UI. Filter sites import this set; do not hand-roll the list inline.
+  - `NON_DELETABLE_PROPERTIES` (`src/lib/property-save-utils.ts`) — broader set used for delete-guard UI; mirrors `is_builtin_property_key` in `src-tauri/src/op.rs`. Adding a builtin requires updating both the Rust source of truth and this TS mirror together.
+
+  The two sets are deliberately distinct (the deletion-guard set is broader). Add to either at its canonical location, never at the call site.
 - **Ref-as-prop (React 19)**: components that accept a ref declare `ref?: React.Ref<ElementType>` as a normal optional prop — either inherited via `React.ComponentProps<typeof X>` / `React.ComponentProps<'tag'>` (which include `ref?` automatically in React 19) or added explicitly to the props interface. Never wrap in `React.forwardRef` — it is deprecated. For imperative handles, declare `ref` as a prop and call `useImperativeHandle(ref, () => ...)` directly inside the function body (see `src/editor/SuggestionList.tsx`).
 
   **❌ Deprecated:**
