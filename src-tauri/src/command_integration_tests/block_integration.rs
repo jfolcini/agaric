@@ -674,6 +674,8 @@ async fn deleted_blocks_excluded_from_list_blocks() {
         .await
         .unwrap();
 
+    // Drain bg dispatches before reading materializer-affected state.
+    settle(&mat).await;
     assign_all_to_test_space(&pool).await;
     let live = list_blocks_inner(
         &pool,
@@ -727,6 +729,8 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
         .await
         .unwrap();
 
+    // Drain bg dispatches before reading materializer-affected state.
+    settle(&mat).await;
     assign_all_to_test_space(&pool).await;
     let trash = list_trash_inner(&pool, None, None, TEST_SPACE_ID.into())
         .await

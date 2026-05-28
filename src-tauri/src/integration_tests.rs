@@ -77,8 +77,14 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 
 /// Shorthand: create a content-type block (the most common case in tests).
 ///
-/// Content-type creates dispatch NO background materializer tasks,
-/// so consecutive calls need no sleep between them.
+/// Post-MAINT-112 every `create_block_inner` call enqueues a background
+/// op dispatch via `CommandTx::commit_and_dispatch`, even for `content`
+/// blocks. Tests that read materializer-affected state (caches, joined
+/// projections, anything paginated through `list_blocks_inner` /
+/// `list_trash_inner`) MUST call [`settle_bg_tasks`] between the seed
+/// loop and the read — see the doc on that helper for the canonical
+/// pattern. The block row itself lands synchronously in `blocks`, so
+/// tests that only inspect the returned `BlockRow` don't need to settle.
 async fn create_content(
     pool: &SqlitePool,
     mat: &Materializer,
@@ -99,11 +105,17 @@ async fn create_content(
     .unwrap()
 }
 
-/// Allow materializer background tasks to settle before the next write.
+/// Allow materializer background tasks to settle before the next write
+/// or before any read of materializer-affected state.
 ///
-/// Required after operations that dispatch bg cache-rebuild tasks:
-/// edit, delete, restore, purge, or create with type "page"/"tag".
-/// NOT needed after creating "content" blocks (no bg tasks dispatched).
+/// Post-MAINT-112 every block op (create / edit / delete / restore /
+/// purge — regardless of block_type) enqueues a background dispatch via
+/// `CommandTx::commit_and_dispatch`. Tests that read paginated /
+/// projected state (`list_blocks_inner`, `list_trash_inner`,
+/// `list_pages_inner`, anything that joins on a cache or property table
+/// written by the materializer) MUST call this between the seed loop
+/// and the read, or risk a low-frequency race where the read observes
+/// partial state.
 ///
 /// Uses the deterministic barrier-flush mechanism so tests are not
 /// race-condition-prone.
@@ -914,12 +926,18 @@ async fn cursor_pagination_walks_all_blocks_without_duplicates() {
             .id,
         );
     }
+    // Drain background dispatches before paginating: post-MAINT-112 even
+    // content-type creates enqueue a bg op record, and `list_blocks_inner`
+    // joins on materializer-written state. Without this, the loop below
+    // can observe partial state and miss / duplicate blocks (~12% flake
+    // rate when run under thread contention).
+    settle_bg_tasks(&mat).await;
+    assign_all_to_test_space(&pool).await;
 
     let mut all_ids = Vec::new();
     let mut cursor: Option<String> = None;
     let mut page_count = 0;
     loop {
-        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
@@ -966,8 +984,11 @@ async fn pagination_with_exact_page_boundary_terminates_correctly() {
     for i in 0..PAGE_SIZE {
         create_content(&pool, &mat, &format!("block {i}"), None, Some(i + 1)).await;
     }
-
+    // Drain background dispatches before paginating (see
+    // `cursor_pagination_walks_all_blocks_without_duplicates` for context).
+    settle_bg_tasks(&mat).await;
     assign_all_to_test_space(&pool).await;
+
     let page = list_blocks_inner(
         &pool,
         None,

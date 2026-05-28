@@ -100,8 +100,43 @@ pub enum GcalErrorKind {
 /// The frontend receives `{ kind: string, message: string }`.
 #[derive(Debug, Error)]
 pub enum AppError {
+    /// Catch-all SQL error.  Constructed only by the manual
+    /// `From<sqlx::Error>` impl below, *after* the more specific
+    /// `RowNotFound` / `PoolTimedOut` / `Database(unique_violation)`
+    /// cases have been peeled off and routed to dedicated variants.
+    /// Callers must never `AppError::Database(e)` directly when one
+    /// of the discriminated variants would apply — let `?` / `.into()`
+    /// do the routing so the IPC `kind` stays stable.
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[source] sqlx::Error),
+
+    /// Issue #106 — `sqlx::Error::RowNotFound` lifted out of
+    /// `Database` so the frontend can discriminate "the row you
+    /// asked about does not exist" from a generic SQL failure.
+    /// Serializes as `kind: "not_found"`.  Carries a `String`
+    /// payload to stay compatible with the pre-existing
+    /// `NotFound(String)` call sites that synthesize a contextual
+    /// "block <id>" message; `From<sqlx::Error>` populates it with
+    /// a generic "row not found" since the driver has no row
+    /// context at that layer.
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    /// Issue #106 — `sqlx::Error::PoolTimedOut`.  Distinct from
+    /// `Database` because the frontend can offer a "try again"
+    /// affordance: the writer is genuinely busy, not broken.
+    /// Serializes as `kind: "pool_busy"`.
+    #[error("Database pool timed out (writer busy)")]
+    PoolTimedOut,
+
+    /// Issue #106 — UNIQUE-constraint / primary-key violation.
+    /// `From<sqlx::Error>` inspects `db_err.is_unique_violation()`
+    /// and routes to this variant when true; the payload is the
+    /// driver's display string (which already includes the
+    /// constraint name, e.g. "UNIQUE constraint failed:
+    /// attachments.fs_path").  Serializes as `kind: "conflict"`.
+    #[error("Conflict: {0}")]
+    Conflict(String),
 
     #[error("Migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
@@ -114,9 +149,6 @@ pub enum AppError {
 
     #[error("ULID error: {0}")]
     Ulid(String),
-
-    #[error("Not found: {0}")]
-    NotFound(String),
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
@@ -150,6 +182,28 @@ pub enum AppError {
     Gcal(#[from] GcalErrorKind),
 }
 
+/// Manual `From<sqlx::Error>` (issue #106).
+///
+/// Replaces the previous `#[from] sqlx::Error` blanket conversion so
+/// the IPC layer can discriminate three call-site-recoverable cases
+/// (`RowNotFound`, `PoolTimedOut`, unique-constraint conflict) from
+/// the generic "something went wrong in SQL" bucket.  Routing happens
+/// here — *not* at the call site — so existing `?` propagation gains
+/// the discrimination for free and no downstream code has to learn
+/// to inspect `sqlx::Error` directly.
+impl From<sqlx::Error> for AppError {
+    fn from(e: sqlx::Error) -> Self {
+        match e {
+            sqlx::Error::RowNotFound => AppError::NotFound("row not found".into()),
+            sqlx::Error::PoolTimedOut => AppError::PoolTimedOut,
+            sqlx::Error::Database(ref db_err) if db_err.is_unique_violation() => {
+                AppError::Conflict(db_err.to_string())
+            }
+            other => AppError::Database(other),
+        }
+    }
+}
+
 /// Tauri 2 requires command error types to implement `Serialize`.
 /// We serialize as `{ kind, message }` so the frontend can match on `kind`.
 impl Serialize for AppError {
@@ -161,11 +215,13 @@ impl Serialize for AppError {
 
         let kind = match self {
             AppError::Database(_) => "database",
+            AppError::NotFound(_) => "not_found",
+            AppError::PoolTimedOut => "pool_busy",
+            AppError::Conflict(_) => "conflict",
             AppError::Migration(_) => "migration",
             AppError::Io(_) => "io",
             AppError::Json(_) => "json",
             AppError::Ulid(_) => "ulid",
-            AppError::NotFound(_) => "not_found",
             AppError::InvalidOperation(_) => "invalid_operation",
             AppError::Channel(_) => "channel",
             AppError::Snapshot(_) => "snapshot",
@@ -422,6 +478,147 @@ mod tests {
             matches!(app_err, AppError::Json(_)),
             "serde_json::Error should convert to AppError::Json"
         );
+    }
+
+    // --- Issue #106: discriminated From<sqlx::Error> mapping ---
+    //
+    // These tests pin the routing contract that `impl From<sqlx::Error>
+    // for AppError` is required to honour.  If the mapping ever
+    // regresses (e.g. someone restores `#[from]` on `Database`), the
+    // frontend's `kind`-based switch in `src/lib/errors.ts` silently
+    // collapses three previously distinct UX states ("nothing found",
+    // "writer busy, try again", "unique violation") back into the
+    // generic "an internal error occurred" toast.
+
+    #[test]
+    fn from_sqlx_row_not_found_routes_to_not_found_variant() {
+        let app_err: AppError = sqlx::Error::RowNotFound.into();
+        assert!(
+            matches!(app_err, AppError::NotFound(_)),
+            "sqlx::Error::RowNotFound must route to AppError::NotFound, got: {app_err:?}"
+        );
+    }
+
+    #[test]
+    fn from_sqlx_pool_timed_out_routes_to_pool_timed_out_variant() {
+        let app_err: AppError = sqlx::Error::PoolTimedOut.into();
+        assert!(
+            matches!(app_err, AppError::PoolTimedOut),
+            "sqlx::Error::PoolTimedOut must route to AppError::PoolTimedOut, got: {app_err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn from_sqlx_unique_violation_routes_to_conflict_variant() {
+        // Drive a real UNIQUE-constraint failure through a throwaway
+        // SQLite memory DB so the `is_unique_violation()` discriminator
+        // is exercised against the actual driver — not a synthetic
+        // `DatabaseError` mock that might lie about its error code.
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("memory pool");
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .expect("create table");
+        sqlx::query("INSERT INTO t (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .expect("first insert");
+        let err = sqlx::query("INSERT INTO t (id) VALUES (1)")
+            .execute(&pool)
+            .await
+            .expect_err("duplicate PK insert must fail");
+        let app_err = AppError::from(err);
+        match app_err {
+            AppError::Conflict(msg) => assert!(
+                msg.to_lowercase().contains("unique") || msg.to_lowercase().contains("primary"),
+                "Conflict payload should mention the constraint, got: {msg}"
+            ),
+            other => panic!("expected AppError::Conflict, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn from_sqlx_non_unique_db_error_falls_through_to_database_variant() {
+        // Edge case spelled out in issue #106: a `Database(...)` SQLite
+        // error whose `is_unique_violation()` is *false* (here: a
+        // CHECK-constraint failure) must NOT be misrouted to
+        // `AppError::Conflict`.  If a future refactor weakens the
+        // discriminator (e.g. matches on the message string instead of
+        // the code), this test fires.
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("memory pool");
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER CHECK (n > 0))")
+            .execute(&pool)
+            .await
+            .expect("create table");
+        let err = sqlx::query("INSERT INTO t (id, n) VALUES (1, -5)")
+            .execute(&pool)
+            .await
+            .expect_err("CHECK violation must fail");
+        let app_err = AppError::from(err);
+        assert!(
+            matches!(app_err, AppError::Database(_)),
+            "non-unique DB error must fall through to AppError::Database, got: {app_err:?}"
+        );
+    }
+
+    #[test]
+    fn from_sqlx_pool_closed_falls_through_to_database_variant() {
+        // Belt-and-braces: an arbitrary non-routed sqlx variant must
+        // still land on `Database`.  `PoolClosed` is used elsewhere in
+        // the codebase (rmcp_spike) as a stable stand-in for "generic
+        // SQL failure" — keep that contract pinned.
+        let app_err: AppError = sqlx::Error::PoolClosed.into();
+        assert!(
+            matches!(app_err, AppError::Database(_)),
+            "sqlx::Error::PoolClosed must fall through to AppError::Database, got: {app_err:?}"
+        );
+    }
+
+    // --- Issue #106: serialize the new kinds ---
+
+    #[test]
+    fn serialize_pool_timed_out_variant_has_pool_busy_kind() {
+        let err = AppError::PoolTimedOut;
+        let json = serde_json::to_value(&err).expect("PoolTimedOut should serialize");
+        assert_eq!(
+            json["kind"], "pool_busy",
+            "PoolTimedOut serializes as kind: 'pool_busy' (not 'pool_timed_out') to match the frontend contract"
+        );
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("pool"),
+            "PoolTimedOut message should reference the pool"
+        );
+    }
+
+    #[test]
+    fn serialize_conflict_variant_has_conflict_kind() {
+        let err = AppError::Conflict("UNIQUE constraint failed: attachments.fs_path".into());
+        let json = serde_json::to_value(&err).expect("Conflict should serialize");
+        assert_eq!(json["kind"], "conflict", "Conflict kind");
+        assert!(
+            json["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains("UNIQUE constraint failed"),
+            "Conflict message should preserve the driver's constraint description"
+        );
+    }
+
+    #[test]
+    fn serialize_not_found_from_sqlx_has_not_found_kind() {
+        // Round-trip: lift a sqlx error through From, then serialize.
+        // Confirms the IPC `kind` discrimination survives the full path.
+        let app_err: AppError = sqlx::Error::RowNotFound.into();
+        let json = serde_json::to_value(&app_err).expect("NotFound should serialize");
+        assert_eq!(json["kind"], "not_found");
     }
 
     // --- Debug ---
