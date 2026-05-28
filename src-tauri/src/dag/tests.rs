@@ -258,6 +258,48 @@ async fn insert_remote_op_rejects_partial_unresolved_parent_seqs() {
         .contains("dag.parent_seqs.unresolved"));
 }
 
+/// Issue #112 sub-item 3: the batched existence check (one query via
+/// `(device_id, seq) IN (json_each(?))`) must still accept multi-parent
+/// records when every entry resolves. Phase-1 has N=1 today, but this
+/// pins the shape for phase-4 multi-parent merges.
+#[tokio::test]
+async fn insert_remote_op_accepts_multiple_resolved_parent_seqs() {
+    let (pool, _dir) = test_pool().await;
+
+    // Land two parents into op_log on two different remote devices.
+    for (dev, seq, payload) in [
+        (
+            "remote-dev-a",
+            1,
+            r#"{"block_id":"B1","block_type":"content","parent_id":null,"position":0,"content":"a"}"#,
+        ),
+        (
+            "remote-dev-b",
+            3,
+            r#"{"block_id":"B2","block_type":"content","parent_id":null,"position":0,"content":"b"}"#,
+        ),
+    ] {
+        let r = make_remote_record(dev, seq, None, "create_block", payload);
+        insert_remote_op(&pool, &r).await.unwrap();
+    }
+
+    // Reference both parents in the new op's parent_seqs.
+    let parent_seqs = Some(r#"[["remote-dev-a",1],["remote-dev-b",3]]"#.to_owned());
+    let merger = make_remote_record(
+        "remote-dev-c",
+        1,
+        parent_seqs.clone(),
+        "edit_block",
+        r#"{"block_id":"B1","to_text":"merged","prev_edit":["remote-dev-a",1]}"#,
+    );
+    insert_remote_op(&pool, &merger).await.unwrap();
+
+    let fetched = get_op_by_seq(&ReadPool(pool.clone()), "remote-dev-c", 1)
+        .await
+        .unwrap();
+    assert_eq!(fetched.parent_seqs, parent_seqs);
+}
+
 // =====================================================================
 // 2. append_merge_op
 // =====================================================================
