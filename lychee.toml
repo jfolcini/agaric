@@ -55,4 +55,10 @@ exclude = [
     # GHA. Narrowed to the one URL that's been flaky; other oxc.rs URLs
     # cited in PEND-82 (docs/, blog/) check fine and are not excluded.
     "^https?://oxc\\.rs/blog/2026-02-24-oxfmt-beta",
+    # sqlx issue #3388 → 404. Cited once in archived
+    # docs/session-log/2026-sessions-401-800.md (frozen historical record)
+    # for context on a prior sqlx upgrade; the upstream issue was deleted
+    # or transferred and no longer resolves. Archived session logs are
+    # never edited, so the reference is excluded rather than rewritten.
+    "^https?://github\\.com/launchbadge/sqlx/issues/3388$",
 ]
