@@ -52,6 +52,13 @@ Each subagent prompt must include:
 
 **While subagents build:** The orchestrator should not idle. Apply trivial 1-line fixes directly, update documentation, or pre-read source files for the next batch.
 
+**Never idle-wait on a slow subagent — run a SECOND issue concurrently.** When the active issue's subagents are busy (a Tauri/Rust compile alone runs many minutes) and you'd otherwise just wait, do NOT schedule a long wakeup and sit. Pick a second, independent issue and start its batch in parallel. Cap at **two issues in flight at once** — enough to fill the idle window while keeping real oversight. Guidance:
+
+- Choose a second issue whose files don't overlap the first, and ideally a different toolchain (e.g. a frontend issue while a Rust batch compiles) so builds/tests don't contend on the cargo target lock.
+- Run the second issue in an **isolated `git worktree`** on its own branch so its edits never mix with the first issue's working tree (each Rust worktree gets its own `target/`, so compiles run independently). For frontend work in a worktree, symlink `node_modules` from the main checkout first (`ln -s <main>/node_modules node_modules`) — it's gitignored and absent in fresh worktrees.
+- Ship each issue as its own PR (own branch, own session-log entry). Reconcile both against CI per §8.
+- Don't force a bad second issue: if every other open item is blocked on a maintainer decision or unresolved Open Qs, it's fine to run just one — but then pick a short wakeup, not a 20-minute idle.
+
 **Worktrees:** Use `git worktree add` only when parallel subagents touch **overlapping directories** and need independent git state. If subagents touch non-overlapping files, they can safely work in the main tree without worktrees. Skip worktrees for sequential work, single-file edits, or review-only subagents.
 
 **Sizing:** Prefer 5-6 focused parallel subagents grouped by domain over fewer sequential ones — you can safely run up to 6 subagents simultaneously. Split work so each subagent touches non-overlapping files. Each worktree pays ~15s cold-compile overhead, but that's recouped if the parallel wall-clock time is shorter. Batch trivial 1-line fixes together and apply them as orchestrator (in parallel with subagent work). Don't serialize work that can be parallelized — launch all build subagents at once.
