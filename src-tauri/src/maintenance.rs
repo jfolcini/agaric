@@ -134,6 +134,60 @@ pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppE
     Ok(())
 }
 
+/// Issue #157 sub-item C — periodic op-log compaction, 24 h cadence,
+/// idle predicate.
+///
+/// Delegates to [`crate::commands::compaction::compact_op_log_cmd_inner`]
+/// with the 90-day retention window — matches the figure named in the
+/// #157 plan table. The inner function is what the user's manual
+/// "Compact op log" UI button calls (`commands/compaction.rs:259`); the
+/// only differences here are (a) the daemon supplies a fixed
+/// `retention_days = 90` so no UI is involved, and (b) the
+/// daemon's idle predicate prevents the compaction (which writes
+/// op-log DELETEs + a snapshot row) from contending with active
+/// editing.
+///
+/// Result counts (`ops_deleted`, `snapshot_id`) are logged at
+/// `tracing::info!` when non-zero so the operator can correlate
+/// long-term op-log growth with the periodic sweep activity. A
+/// no-op tick (nothing eligible under the retention window) logs at
+/// `debug` to avoid steady-state noise.
+pub async fn op_log_compact(write_pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
+    let result =
+        crate::commands::compaction::compact_op_log_cmd_inner(write_pool, device_id, 90).await?;
+    if result.ops_deleted > 0 {
+        tracing::info!(
+            ops_deleted = result.ops_deleted,
+            snapshot_id = ?result.snapshot_id,
+            "op_log_compact (daemon, 90d retention) deleted op-log rows"
+        );
+    } else {
+        tracing::debug!("op_log_compact (daemon, 90d retention): nothing eligible");
+    }
+    Ok(())
+}
+
+/// Issue #157 sub-item G — periodic `PRAGMA optimize` tick, 4 h
+/// cadence, always-on predicate.
+///
+/// SQLite's planner stats can go stale across a long session,
+/// causing the query planner to pick obsolete indexes. `PRAGMA
+/// optimize` re-runs the cheap variant of ANALYZE on tables whose
+/// stats are suspected stale — see SQLite docs at
+/// <https://www.sqlite.org/pragma.html#pragma_optimize>. The
+/// `init_pool` boot path already runs it once at startup; this job
+/// keeps long-running sessions current.
+///
+/// Errors are surfaced from sqlx; the daemon's per-tick error
+/// handling logs them at warn. There is no per-job knob — the
+/// PRAGMA's own internals decide which tables (if any) need a
+/// refresh, so the cost is bounded automatically.
+pub async fn pragma_optimize(write_pool: &SqlitePool) -> Result<(), AppError> {
+    sqlx::query("PRAGMA optimize").execute(write_pool).await?;
+    tracing::debug!("pragma_optimize tick ran");
+    Ok(())
+}
+
 /// Spawn the maintenance daemon. Mirrors the shape of
 /// [`crate::draft::spawn_orphan_drafts_sweeper`] and
 /// [`crate::materializer::retry_queue::spawn_sweeper`]: fire-and-forget,
@@ -316,5 +370,39 @@ mod tests {
         wal_checkpoint_truncate(&pool)
             .await
             .expect("wal_checkpoint(TRUNCATE) must succeed on a clean pool");
+    }
+
+    /// Issue #157 sub-item G — `pragma_optimize` smoke test. Same
+    /// shape as the WAL checkpoint smoke test: pin the PRAGMA
+    /// invocation against the real sqlx driver so a future driver
+    /// upgrade that changes the response shape surfaces here.
+    #[tokio::test]
+    async fn pragma_optimize_smoke_test_157_g() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        pragma_optimize(&pool)
+            .await
+            .expect("PRAGMA optimize must succeed on a clean pool");
+    }
+
+    /// Issue #157 sub-item C — `op_log_compact` smoke test. With no
+    /// op-log rows older than the 90-day retention window (the case
+    /// on a fresh pool), the inner function returns
+    /// `CompactionResult { snapshot_id: None, ops_deleted: 0 }`
+    /// without performing any writes. This pins that the daemon
+    /// wrapper threads through to that no-op path without spurious
+    /// errors — the hot path (actual deletion of aged ops) is
+    /// covered by the dedicated tests in `commands::compaction`.
+    #[tokio::test]
+    async fn op_log_compact_smoke_test_157_c() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        op_log_compact(&pool, "test-device")
+            .await
+            .expect("op_log_compact must succeed on a clean pool with no aged op-log rows");
     }
 }

@@ -1038,22 +1038,67 @@ pub fn run() {
             // PRAGMA itself also returns `busy != 0` when a concurrent
             // writer holds the WAL, so the gating is double-belted.)
             let maintenance_shutdown = Arc::new(AtomicBool::new(false));
-            let lifecycle_for_pred = lifecycle.clone();
+            let lifecycle_for_wal = lifecycle.clone();
+            let lifecycle_for_compact = lifecycle.clone();
             let wal_write_pool = pools.write.clone();
-            let jobs = vec![maintenance::MaintenanceJob {
-                name: "wal_checkpoint_truncate",
-                interval: std::time::Duration::from_secs(3600),
-                last_run: None,
-                predicate: Box::new(move || {
-                    !lifecycle_for_pred
-                        .is_foreground
-                        .load(std::sync::atomic::Ordering::Acquire)
-                }),
-                run: Box::new(move || {
-                    let pool = wal_write_pool.clone();
-                    Box::pin(async move { maintenance::wal_checkpoint_truncate(&pool).await })
-                }),
-            }];
+            let compact_write_pool = pools.write.clone();
+            let compact_device_id = device_id.clone();
+            let optimize_write_pool = pools.write.clone();
+            let jobs = vec![
+                maintenance::MaintenanceJob {
+                    name: "wal_checkpoint_truncate",
+                    interval: std::time::Duration::from_secs(3600),
+                    last_run: None,
+                    predicate: Box::new(move || {
+                        !lifecycle_for_wal
+                            .is_foreground
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    }),
+                    run: Box::new(move || {
+                        let pool = wal_write_pool.clone();
+                        Box::pin(async move { maintenance::wal_checkpoint_truncate(&pool).await })
+                    }),
+                },
+                // Issue #157 sub-item C — periodic op-log compaction
+                // (24 h, idle predicate, 90-day retention). Idle-gated
+                // for the same reason as the WAL checkpoint: the
+                // compaction snapshot write briefly serialises with
+                // user edits, invisible when backgrounded.
+                maintenance::MaintenanceJob {
+                    name: "op_log_compact",
+                    interval: std::time::Duration::from_secs(24 * 3600),
+                    last_run: None,
+                    predicate: Box::new(move || {
+                        !lifecycle_for_compact
+                            .is_foreground
+                            .load(std::sync::atomic::Ordering::Acquire)
+                    }),
+                    run: Box::new(move || {
+                        let pool = compact_write_pool.clone();
+                        let device_id = compact_device_id.clone();
+                        Box::pin(async move {
+                            maintenance::op_log_compact(&pool, &device_id).await
+                        })
+                    }),
+                },
+                // Issue #157 sub-item G — periodic PRAGMA optimize
+                // (4 h, always-on predicate). The PRAGMA's own
+                // internals decide which tables (if any) need a
+                // refresh, so the cost is bounded automatically and
+                // an "always-on" predicate is appropriate. The
+                // boot-time PRAGMA optimize in init_pool covers cold
+                // start; this keeps long-running sessions current.
+                maintenance::MaintenanceJob {
+                    name: "pragma_optimize_tick",
+                    interval: std::time::Duration::from_secs(4 * 3600),
+                    last_run: None,
+                    predicate: Box::new(|| true),
+                    run: Box::new(move || {
+                        let pool = optimize_write_pool.clone();
+                        Box::pin(async move { maintenance::pragma_optimize(&pool).await })
+                    }),
+                },
+            ];
             maintenance::spawn_daemon(jobs, maintenance_shutdown.clone());
             app.manage(MaintenanceDaemonShutdown(maintenance_shutdown));
 
