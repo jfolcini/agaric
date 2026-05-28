@@ -50,4 +50,4 @@ How the system is built. Companion to:
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).
 - **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift).
 - **Tests**: `src-tauri/tests/` (Rust integration), `src/**/__tests__/` (frontend), `e2e/` (Playwright).
-- **Backlog**: `pending/REVIEW-LATER.md` (open items) and `pending/*.md` (active plans).
+- **Backlog**: tracked on the GitHub issue tracker.

@@ -30,7 +30,7 @@ Failures are non-fatal — bumped into a debounce + retry with a per-space backo
 
 ### What's not shipped
 
-The connector still passes `space_id = None` to `list_projected_agenda_inner`, so every space's agenda lands in one calendar. The per-space connector slice (FEAT-3p9 M2) is the active in-progress item; status lives in `pending/REVIEW-LATER.md`.
+The connector still passes `space_id = None` to `list_projected_agenda_inner`, so every space's agenda lands in one calendar. The per-space connector slice is the active in-progress item.
 
 ## MCP (agent access)
 

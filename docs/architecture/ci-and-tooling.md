@@ -49,8 +49,8 @@ Every release asset (Linux `.deb` / `.AppImage`, Windows `.msi` / `.exe`, macOS 
 
 Frame the no-OS-signing posture honestly: **SLSA provenance does not substitute for OS-level code signing at the UX layer.** A SmartScreen warning on Windows still appears on first install; macOS Gatekeeper still quarantines a non-notarised `.app`. Provenance lets a sophisticated user verify origin; it does not change the first-launch experience. Two follow-on positions:
 
-- **macOS notarisation — strict no-go for now** (tracked as `CI-R11` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md)). Not adopting in the current cycle; unquarantine instructions in [`../BUILD.md`](../BUILD.md) remain the UX.
-- **Windows SignPath OSS — pending action** (tracked as `CI-R3` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md)). Free for public OSS, integrates as one GHA step. Application queue runs multiple weeks.
+- **macOS notarisation — strict no-go for now.** Not adopting in the current cycle; unquarantine instructions in [`../BUILD.md`](../BUILD.md) remain the UX.
+- **Windows SignPath OSS — pending action.** Free for public OSS, integrates as one GHA step. Application queue runs multiple weeks.
 
 The Tauri updater signing key — distinct from OS-level code signing — is the **root of trust for every auto-update**. See [`../../SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation" for cadence, procedure, revocation path, and the deferred Sigstore-keyless alternative.
 
@@ -82,7 +82,7 @@ Drift on this ruleset is policed by the `branch-protection-assert.yml` daily cro
 
 Each row is a deliberate decision, the reason it is accepted today, and the trigger that would force a re-evaluation.
 
-- **No macOS notarisation** — accepted because the Apple Developer Program fee and the operational overhead of an Apple-managed signing key are out of scope for the current cycle. Trigger: a downstream that requires notarisation (a managed corporate fleet, a third-party Mac app catalogue). Tracked as `CI-R11` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md).
+- **No macOS notarisation** — accepted because the Apple Developer Program fee and the operational overhead of an Apple-managed signing key are out of scope for the current cycle. Trigger: a downstream that requires notarisation (a managed corporate fleet, a third-party Mac app catalogue).
 - **Playwright `workers: 1` globally** — accepted on the desktop runner because Radix and TipTap focus state flakes under parallel workers; CI runs with `workers: 2` per-shard after the recent audit identified the truly-serial specs.
 - **x86_64 macOS via SDK cross-compile from Apple Silicon** — accepted because Apple's own Intel deprecation is in motion (post-macOS Tahoe transition); maintaining a separate Intel runner today would be paying for hardware that is already self-limiting. Trigger: an end-user-reported regression that cross-compile cannot reproduce.
 - **`zizmor` `cache-poisoning` baseline (not strict)** — accepted because the threat model is single-user, no adversarial peers with repo-push capability. Trigger: the threat model expands to include external maintainers with merge rights.
@@ -93,4 +93,4 @@ The list deliberately omits items that have landed this batch (the count tables 
 
 Things this doc does not commit to yet — and the canonical location for tracking them — are:
 
-- CI/tooling backlog and longer-horizon items (transport changes, sync evolution, editor surface work) live in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md). The four `CI-R*` rows there are the still-open follow-ups from the 2026-05-16 review wave (SignPath OSS, macOS notarisation, vitest threads benchmark, `SKIP_CI_VERIFY` reason-string).
+- CI/tooling backlog and longer-horizon items (transport changes, sync evolution, editor surface work) are tracked separately. Still-open follow-ups from the 2026-05-16 review wave include SignPath OSS, macOS notarisation, the vitest forks-vs-threads benchmark, and a `SKIP_CI_VERIFY` reason-string guard.

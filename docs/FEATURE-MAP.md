@@ -3,7 +3,7 @@
 
 What a user can do with Agaric. Each linked file is self-contained — open just the one you need.
 
-Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) · [`docs/UX.md`](UX.md) (conventions for building UI) · `AGENTS.md` (architectural invariants) · [`docs/session-log/`](session-log/README.md) (chronological history; one file per session) · `pending/REVIEW-LATER.md` (backlog).
+Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) · [`docs/UX.md`](UX.md) (conventions for building UI) · `AGENTS.md` (architectural invariants) · [`docs/session-log/`](session-log/README.md) (chronological history; one file per session).
 
 ## Feature catalog
 
@@ -34,7 +34,7 @@ A handful of facts touch every feature; rather than repeat them in each file:
 
 ## Roadmap
 
-Features that aren't yet shipped or that are intentionally deferred are tracked in [`pending/REVIEW-LATER.md`](../pending/REVIEW-LATER.md). The major outstanding items today:
+Features that aren't yet shipped or that are intentionally deferred are tracked separately. The major outstanding items today:
 
 - **OS notifications** for due tasks and scheduled events (Android-mobile parity).
 - **Per-space Google Calendar push** — foundation landed; the connector still pushes one calendar for all spaces.

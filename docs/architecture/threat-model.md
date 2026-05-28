@@ -127,7 +127,7 @@ The updater is the only outbound network call the application makes that is **no
 | Updater signing keys | **Spoofing** — an attacker who holds the leaked `TAURI_SIGNING_PRIVATE_KEY` signs a malicious update; the in-app signature check passes. | Low | High | Documented rotation procedure with annual cadence and immediate rotation on suspected compromise (see [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation)). Revocation is implicit and bidirectional: a rotated bundle will not validate against the old in-app pubkey, and the new in-app pubkey will not accept an old-key payload. The Sigstore-keyless alternative is deferred pending upstream Tauri support. | Accepted |
 | Updater signing keys | **Information disclosure** — the private key leaks via CI logs, an actions-cache poisoning, or a maintainer-machine compromise. | Low | High | The secret is stored in GitHub Actions repository secrets; CI workflows mask secret values in logs; `zizmor` lints workflows for known leak patterns; SHA-pinned actions prevent a rogue dependency from exfiltrating. Trust-anchor compromise of the maintainer machine is acknowledged as un-mitigable in-repo (see [`SECURITY.md`](../../SECURITY.md#trust-anchors)). | Accepted |
 | Release artefacts | **Denial of service** — GitHub Releases is unreachable; the updater cannot fetch the manifest. | Med | Low | The application continues to run on the currently-installed version; the updater is best-effort and surfaces a non-blocking toast on failure. | Accepted |
-| Release artefacts | **Elevation of privilege** — a malicious updater payload runs at install time with installer privileges. | Low | High | The in-app signature check (minisign against the embedded pubkey) is the gate. SLSA provenance is the verification path for sophisticated users; OS-level code signing is intentionally not in place today (see the no-OS-signing tradeoff in [`ci-and-tooling.md`](ci-and-tooling.md#slsa-provenance-sigstore-and-the-unsigned-binary-tradeoff)). Windows SignPath OSS is in flight (tracked as `CI-R3` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md)); macOS notarisation is a strict no-go for the current cycle (`CI-R11`). | Mitigated (in-app) / Accepted (OS-layer first-launch UX) |
+| Release artefacts | **Elevation of privilege** — a malicious updater payload runs at install time with installer privileges. | Low | High | The in-app signature check (minisign against the embedded pubkey) is the gate. SLSA provenance is the verification path for sophisticated users; OS-level code signing is intentionally not in place today (see the no-OS-signing tradeoff in [`ci-and-tooling.md`](ci-and-tooling.md#slsa-provenance-sigstore-and-the-unsigned-binary-tradeoff)). Windows SignPath OSS is in flight; macOS notarisation is a strict no-go for the current cycle. | Mitigated (in-app) / Accepted (OS-layer first-launch UX) |
 
 ### B5 — GCal OAuth
 
@@ -246,7 +246,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 - [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
 - `cargo-deny` runs on every PR (`validate / cargo-tests` job); `cargo audit` runs in the same job as warn-only.
 - `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale and an upstream tracking link.
-- `pending/REVIEW-LATER.md` `OSSF-3` documents the score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`); auto-recovers when upstream finishes the gtk4 migration.
+- The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
 
 ### Claim 6 — Authentication state is held in OS-native secure storage
 
@@ -256,7 +256,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 - B5 STRIDE row: token theft via local-storage scrape mitigated by keychain isolation.
 - `src-tauri/src/commands/gcal.rs` reads/writes the refresh token exclusively through the keychain abstraction; no SQLite columns hold it.
-- The per-space variant (FEAT-3p9, tracked in `REVIEW-LATER.md`) extends the same pattern — per-space keychain key, never SQLite.
+- The per-space variant extends the same pattern — per-space keychain key, never SQLite.
 
 ### How this is maintained
 
@@ -267,7 +267,7 @@ When any STRIDE row above is updated (new mitigation, accepted-risk → mitigate
 Living artefact — this section is allowed to be empty, and any entry here is an item the threat model has not yet committed to. As of the current revision:
 
 - **Sigstore-keyless updater signing** — adoption deferred pending upstream Tauri support maturity. When it lands, the B4 boundary's "leaked `TAURI_SIGNING_PRIVATE_KEY`" row downgrades from Accepted to Mitigated and the rotation procedure in [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation) is rewritten around ephemeral Fulcio certificates.
-- **Windows code signing (SignPath OSS)** — application in flight, tracked as `CI-R3` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md). When it lands, the B4 "first-launch UX" row tightens from Accepted to Mitigated on Windows.
-- **macOS notarisation** — explicit no-go for the current cycle, tracked as `CI-R11` in [`../../pending/REVIEW-LATER.md`](../../pending/REVIEW-LATER.md). The row remains Accepted until a downstream packager forces a revisit.
+- **Windows code signing (SignPath OSS)** — application in flight. When it lands, the B4 "first-launch UX" row tightens from Accepted to Mitigated on Windows.
+- **macOS notarisation** — explicit no-go for the current cycle. The row remains Accepted until a downstream packager forces a revisit.
 
 When any of the above ships, the corresponding STRIDE row above gets updated and the entry here is removed in the same commit.

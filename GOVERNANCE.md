@@ -15,9 +15,9 @@ There are no other roles today (no "committers", no "reviewers" group, no "relea
 
 ## How decisions are made
 
-**Technical decisions** (architecture, dependencies, API shape, when to release): the BDFL decides. Major calls are documented under [`docs/architecture/`](https://github.com/jfolcini/agaric/tree/main/docs/architecture) or in [`pending/REVIEW-LATER.md`](pending/REVIEW-LATER.md) so the rationale is recoverable later. Anyone may open an issue arguing for a different call; the BDFL responds in the issue thread. The thread is the public audit trail.
+**Technical decisions** (architecture, dependencies, API shape, when to release): the BDFL decides. Major calls are documented under [`docs/architecture/`](https://github.com/jfolcini/agaric/tree/main/docs/architecture) so the rationale is recoverable later. Anyone may open an issue arguing for a different call; the BDFL responds in the issue thread. The thread is the public audit trail.
 
-**Roadmap and priorities**: tracked under [`pending/`](pending/README.md). Each `PEND-NN-*.md` is a self-contained plan. Items move out of `pending/` when the work ships (the file is deleted) or are removed when a deliberate decision drops them. [`pending/REVIEW-LATER.md`](pending/REVIEW-LATER.md) is the lighter-weight backlog with cost estimates.
+**Roadmap and priorities**: tracked on the GitHub issue tracker. The BDFL sets priorities; anyone may open an issue to propose new work or argue for a different priority.
 
 **Code-of-conduct enforcement**: handled by the BDFL per [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). Appeals go to the same person via the contact channel listed there; there is no separate appeals body yet.
 
