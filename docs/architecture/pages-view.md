@@ -140,14 +140,7 @@ The materializer maintains both columns byte-identically to the canonical SELECT
 
 The parity contract is non-negotiable: `src-tauri/src/materializer/tests.rs::pages_cache_count_parity` exercises a mixed 10-page fixture through every materializer op and asserts `pages_cache.{inbound,child}_block_count == SELECT COUNT(...) FROM block_links / blocks` after each step.
 
-**Measured latencies** (warm steady-state, sqlite 3.50.6, 20k pages, 100k links):
-
-| Sort | Before (correlated subqueries) | After (materialised columns) |
-|---|---|---|
-| `most-linked` first-page | 335 ms | **34 ms** (10× win) |
-| `most-content` first-page | ~20 ms | sub-10 ms |
-
-`EXPLAIN QUERY PLAN` for `most-linked` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is sub-50 ms and an index would add maintenance cost on every link change without paying for itself).
+Materialised columns turn the `most-linked` first-page query from a per-page correlated subquery over `block_links` into a direct read on `pages_cache` — the regression bench is `src-tauri/benches/interactive_slo.rs` (run with `cd src-tauri && cargo bench --bench interactive_slo`). `EXPLAIN QUERY PLAN` confirms the plan uses `SEARCH pc USING INDEX sqlite_autoindex_pages_cache_1` — no `block_links` scan, no `CORRELATED SCALAR SUBQUERY`. The plan terminates with `USE TEMP B-TREE FOR ORDER BY` (no secondary index on `inbound_link_count DESC` — at ≤20k pages the quick-sort-into-top-K is fast enough and an index would add maintenance cost on every link change without paying for itself).
 
 `last_modified_at` is not materialised — it is served cheaply by `idx_op_log_block_id` and does not hit the same cliff at the measured scales.
 

@@ -923,21 +923,31 @@ mod tests {
     }
 
     // ======================================================================
-    // P-1: Index existence test
+    // PEND-103 (issue #103): after migration 0072 dropped the redundant
+    // idx_block_links_source, `WHERE source_id = ?` lookups must fall
+    // through to the PK autoindex (sqlite_autoindex_block_links_1). Lock
+    // that planner choice so a future schema change can't silently
+    // regress to a full table scan.
     // ======================================================================
 
     #[tokio::test]
-    async fn block_links_source_index_exists() {
+    async fn block_links_source_lookup_uses_pk_autoindex() {
         let (pool, _dir) = test_pool().await;
-        let row = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_block_links_source'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(
-            row, 1,
-            "idx_block_links_source index should exist after migrations"
+        let plan_rows: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as("EXPLAIN QUERY PLAN SELECT 1 FROM block_links WHERE source_id = ?")
+                .bind("X")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let plan_text = plan_rows
+            .iter()
+            .map(|(_, _, _, detail)| detail.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan_text.contains("sqlite_autoindex_block_links_1"),
+            "WHERE source_id = ? must use the PK autoindex after migration 0072 \
+             dropped idx_block_links_source; got plan:\n{plan_text}"
         );
     }
 

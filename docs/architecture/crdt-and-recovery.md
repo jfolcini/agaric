@@ -32,7 +32,6 @@ The legacy three-way merge / conflict-copy model is gone (sessions 697-700):
 - `loro-shadow` Cargo feature retired (Loro is now a hard dep).
 - Tauri commands `get_conflicts`, `count_conflicts`, `resolve_conflicts_batch`, `first_op_device_for_blocks` deleted.
 - Frontend `ConflictList*` components, the `'conflicts'` nav entry, the `Alt+C` shortcut, the `useConflictCount` polling hook, the sidebar badge, the "Sync completed with conflicts" toast — all deleted.
-- `reparent_orphan_conflict_copies` retained as a documented no-op (`Ok(0)`) — two call sites in `delete_block_inner` / `delete_blocks_by_ids_inner` keep it as defence in depth.
 
 ## Loro state persistence
 
@@ -49,20 +48,22 @@ Snapshots are the durable compaction artifact. They serialise the full SQL prima
 
 ### What's in a snapshot
 
-- All `blocks`, `block_properties`, `block_tags`, `block_links`, `attachments`, `property_definitions`, `page_aliases` rows that survive the frontier.
-- Loro engine state.
+- All `blocks`, `block_properties`, `block_tags`, `block_links`, `attachments`, `property_definitions`, `page_aliases` rows that survive the frontier (`SnapshotTables` in `src-tauri/src/snapshot/types.rs`).
 - Schema version (a small integer; bumped on schema-breaking migrations to refuse cross-version snapshot apply).
+
+Loro engine state is **not** bundled into the snapshot blob — it lives in the separate `loro_doc_state` table (see § Loro state persistence above) and is restored by the engine's own load path, not by `apply_snapshot`.
 
 **Not in a snapshot:** materialised caches (`tags_cache`, `pages_cache`, `agenda_cache`, `block_tag_inherited`, `projected_agenda_cache`, `fts_blocks`, `block_tag_refs`, `page_link_cache`). `apply_snapshot()` wipes them before restoring core data; the materializer rebuilds them after.
 
 ### Crash-safe write
 
-The compactor writes snapshots in two stages:
+The compactor writes snapshots inside a single `BEGIN IMMEDIATE` transaction (`src-tauri/src/snapshot/create.rs`):
 
 1. `INSERT INTO log_snapshots (..., status = 'pending') VALUES (...)`. Body bytes go to the row.
-2. On flush: `UPDATE log_snapshots SET status = 'complete' WHERE id = ?`.
+2. `UPDATE log_snapshots SET status = 'complete' WHERE id = ?`.
+3. `tx.commit()`.
 
-A crash between (1) and (2) leaves a `pending` row, which **boot recovery deletes** before anything else (step 1 below). Hence: no half-written snapshot is ever applied.
+Folding both statements into one transaction (M-69) means no other connection ever observes an orphan `pending` row. The only remaining crash window is at the SQLite layer between commit and durable write — boot recovery still deletes any `pending` rows it finds before anything else (step 1 below), so no half-written snapshot is ever applied.
 
 ## Crash recovery
 
