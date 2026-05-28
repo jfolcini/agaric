@@ -179,4 +179,49 @@ describe('useDraftAutosave', () => {
 
     expect(mockedSaveDraft).not.toHaveBeenCalled()
   })
+
+  // Issue #106 — autosave is the canonical `pool_busy` consumer: a
+  // user typing fast can collide with another in-flight write that
+  // holds every connection in the sqlx pool. `retryOnPoolBusy` should
+  // re-fire `saveDraft` after the configured backoff; a `database`
+  // kind keeps the old log-only behaviour and never retries.
+  describe('issue #106 — pool_busy back-pressure', () => {
+    it('retries saveDraft when the IPC rejects with kind="pool_busy"', async () => {
+      mockedSaveDraft
+        .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
+        .mockResolvedValueOnce(undefined)
+
+      renderHook(() => useDraftAutosave('BLOCK_1', 'content'))
+
+      // Trip the debounce — first attempt rejects with pool_busy.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      // Default retry delay is 50ms; flush the timer + the in-flight
+      // microtasks so the second attempt resolves.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
+      expect(mockedSaveDraft).toHaveBeenNthCalledWith(1, 'BLOCK_1', 'content')
+      expect(mockedSaveDraft).toHaveBeenNthCalledWith(2, 'BLOCK_1', 'content')
+    })
+
+    it('does NOT retry on kind="database" (existing log-only behaviour)', async () => {
+      mockedSaveDraft.mockRejectedValue({ kind: 'database', message: 'syntax error' })
+
+      renderHook(() => useDraftAutosave('BLOCK_1', 'content'))
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      // Drain microtasks so any (incorrect) retry would have fired.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500)
+      })
+
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+    })
+  })
 })

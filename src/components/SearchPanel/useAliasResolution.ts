@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { isNotFound } from '../../lib/app-error'
 import { logger } from '../../lib/logger'
 import type { BlockRow } from '../../lib/tauri'
 import { getBlock, resolvePageByAlias } from '../../lib/tauri'
@@ -87,6 +88,17 @@ export function useAliasResolution(
         }
       })
       .catch((err) => {
+        // Issue #106 — `not_found` from the alias resolver is the
+        // EXPECTED empty state (alias points at a deleted/non-existent
+        // page). Treat as "no match"; do not log at warn level (would
+        // be noise on every miss) and never surface a toast.
+        if (isNotFound(err)) {
+          if (!cancelled) {
+            setAliasMatch(null)
+            setAliasQuery('')
+          }
+          return
+        }
         // Don't log the raw query text (log hygiene — matches the breadcrumb logs).
         logger.warn('SearchPanel', 'alias resolution failed', undefined, err)
         if (!cancelled) {
