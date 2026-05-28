@@ -1044,6 +1044,9 @@ pub fn run() {
             let compact_write_pool = pools.write.clone();
             let compact_device_id = device_id.clone();
             let optimize_write_pool = pools.write.clone();
+            let materializer_for_cleanup = materializer.clone();
+            let materializer_for_fts = materializer.clone();
+            let materializer_for_fts_predicate = materializer.clone();
             let jobs = vec![
                 maintenance::MaintenanceJob {
                     name: "wal_checkpoint_truncate",
@@ -1060,10 +1063,7 @@ pub fn run() {
                     }),
                 },
                 // Issue #157 sub-item C — periodic op-log compaction
-                // (24 h, idle predicate, 90-day retention). Idle-gated
-                // for the same reason as the WAL checkpoint: the
-                // compaction snapshot write briefly serialises with
-                // user edits, invisible when backgrounded.
+                // (24 h, idle predicate, 90-day retention).
                 maintenance::MaintenanceJob {
                     name: "op_log_compact",
                     interval: std::time::Duration::from_secs(24 * 3600),
@@ -1082,12 +1082,7 @@ pub fn run() {
                     }),
                 },
                 // Issue #157 sub-item G — periodic PRAGMA optimize
-                // (4 h, always-on predicate). The PRAGMA's own
-                // internals decide which tables (if any) need a
-                // refresh, so the cost is bounded automatically and
-                // an "always-on" predicate is appropriate. The
-                // boot-time PRAGMA optimize in init_pool covers cold
-                // start; this keeps long-running sessions current.
+                // (4 h, always-on predicate).
                 maintenance::MaintenanceJob {
                     name: "pragma_optimize_tick",
                     interval: std::time::Duration::from_secs(4 * 3600),
@@ -1096,6 +1091,39 @@ pub fn run() {
                     run: Box::new(move || {
                         let pool = optimize_write_pool.clone();
                         Box::pin(async move { maintenance::pragma_optimize(&pool).await })
+                    }),
+                },
+                // Issue #157 sub-item F — enqueue
+                // `CleanupOrphanedAttachments` every 24 h (closes
+                // MAINT-229). Always-on predicate.
+                maintenance::MaintenanceJob {
+                    name: "cleanup_orphaned_attachments_tick",
+                    interval: std::time::Duration::from_secs(24 * 3600),
+                    last_run: None,
+                    predicate: Box::new(|| true),
+                    run: Box::new(move || {
+                        let mat = materializer_for_cleanup.clone();
+                        Box::pin(async move {
+                            maintenance::enqueue_cleanup_orphaned_attachments(&mat).await
+                        })
+                    }),
+                },
+                // Issue #157 sub-item J — enqueue `FtsOptimize` every
+                // 24 h, gated on `fts_edits_since_optimize > 0`.
+                maintenance::MaintenanceJob {
+                    name: "fts_idle_optimize",
+                    interval: std::time::Duration::from_secs(24 * 3600),
+                    last_run: None,
+                    predicate: Box::new(move || {
+                        materializer_for_fts_predicate
+                            .metrics()
+                            .fts_edits_since_optimize
+                            .load(std::sync::atomic::Ordering::Acquire)
+                            > 0
+                    }),
+                    run: Box::new(move || {
+                        let mat = materializer_for_fts.clone();
+                        Box::pin(async move { maintenance::enqueue_fts_idle_optimize(&mat).await })
                     }),
                 },
             ];
