@@ -1620,12 +1620,17 @@ async fn pagination_walk_all_pages_no_duplicates() {
         .await
         .unwrap();
     }
+    // Drain bg dispatches before paginating (same root cause as the
+    // five flaky pagination tests fixed in #106's PR — post-MAINT-112
+    // content creates enqueue bg ops and list_blocks_inner joins on
+    // materializer-affected state).
+    settle(&mat).await;
+    assign_all_to_test_space(&pool).await;
 
     let mut all_ids = Vec::new();
     let mut cursor: Option<String> = None;
     let mut pages = 0;
     loop {
-        assign_all_to_test_space(&pool).await;
         let page = list_blocks_inner(
             &pool,
             None,
