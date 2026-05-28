@@ -8,7 +8,7 @@ How the system is built. Companion to:
 - [`docs/FEATURE-MAP.md`](FEATURE-MAP.md) — what users can do
 - [`docs/BUILD.md`](BUILD.md) — build / test / release
 - `AGENTS.md` — architectural invariants (root)
-- `SESSION-LOG.md` — chronological history (root)
+- `docs/session-log/` — chronological history (one file per session: `session-NNN-<slug>.md`; sessions 1 – 800 in two archive files)
 
 ## Map
 

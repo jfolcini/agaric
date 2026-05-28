@@ -122,7 +122,9 @@ Do NOT run `prek run --all-files` manually. The hooks are the single source of t
 
 ## 7. LOG
 
-Update SESSION-LOG.md with a summary of what was done (follow the existing format — phase heading, file/change table, stats).
+Create a new file at `docs/session-log/session-NNN-<slug>.md` with a summary of what was done. `NNN` is the next session number (zero-padded to 3 digits); `<slug>` is a short kebab-case derivation of the title. **One file per session, never appended to.** Follow the template below. See `docs/session-log/README.md` for naming + discovery conventions.
+
+There is no longer a monolithic `SESSION-LOG.md` at repo root — it was retired at session 847 to eliminate the merge-conflict surface that every concurrent session-appending PR was hitting (see `docs/session-log/session-843-*.md` for the chained-merge story that prompted the cutover).
 
 **For `plan`-labelled GitHub issues:**
 - If the session fully resolves a plan, the commit message must include `Closes #NN` (GitHub auto-closes the issue when the commit lands on `main`).
@@ -137,7 +139,7 @@ Update SESSION-LOG.md with a summary of what was done (follow the existing forma
 
 ### Session log entry template
 
-Every session entry follows this shape:
+Every session file (`docs/session-log/session-NNN-<slug>.md`) follows this shape. The `## Session N — …` heading is the first line of the file; do not add a separate H1.
 
 ```text
 ## Session N — <short title> (YYYY-MM-DD)
@@ -171,11 +173,11 @@ Every session entry follows this shape:
 **Lessons learned (for future sessions):** <optional, only when applicable>
 
 **Commit plan:** single commit / split / not pushed / pushed.
-
----
 ```
 
-Apply this template to NEW sessions. Older sessions (590-597 included) stay as-is unless an explicit catchup pass is requested.
+Do NOT add a trailing `---` separator — the file ends at the commit plan line. Per-session files are self-contained; the previous trailing `---` was a between-sessions separator that's no longer meaningful.
+
+Apply this template to NEW sessions. Sessions 801 – 846 already migrated to per-session files; sessions 1 – 800 remain in the two archive files (`docs/session-log/2024-2025.md`, `docs/session-log/2026-sessions-401-800.md`) — those are frozen historical records, never edited.
 
 ---
 

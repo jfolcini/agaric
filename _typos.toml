@@ -22,7 +22,7 @@ extend-exclude = [
     # sqlx offline cache — checksums + serialized query AST, not prose.
     ".sqlx/",
     # Append-only dev journal; free-form notes, not user-facing copy.
-    "SESSION-LOG.md",
+    # (Sessions 1–800 in the two archive files; 801+ in session-NNN-<slug>.md.)
     "docs/session-log/",
 ]
 
