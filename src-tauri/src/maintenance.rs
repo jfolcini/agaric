@@ -146,12 +146,6 @@ pub async fn wal_checkpoint_truncate(write_pool: &SqlitePool) -> Result<(), AppE
 /// daemon's idle predicate prevents the compaction (which writes
 /// op-log DELETEs + a snapshot row) from contending with active
 /// editing.
-///
-/// Result counts (`ops_deleted`, `snapshot_id`) are logged at
-/// `tracing::info!` when non-zero so the operator can correlate
-/// long-term op-log growth with the periodic sweep activity. A
-/// no-op tick (nothing eligible under the retention window) logs at
-/// `debug` to avoid steady-state noise.
 pub async fn op_log_compact(write_pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
     let result =
         crate::commands::compaction::compact_op_log_cmd_inner(write_pool, device_id, 90).await?;
@@ -169,22 +163,47 @@ pub async fn op_log_compact(write_pool: &SqlitePool, device_id: &str) -> Result<
 
 /// Issue #157 sub-item G — periodic `PRAGMA optimize` tick, 4 h
 /// cadence, always-on predicate.
-///
-/// SQLite's planner stats can go stale across a long session,
-/// causing the query planner to pick obsolete indexes. `PRAGMA
-/// optimize` re-runs the cheap variant of ANALYZE on tables whose
-/// stats are suspected stale — see SQLite docs at
-/// <https://www.sqlite.org/pragma.html#pragma_optimize>. The
-/// `init_pool` boot path already runs it once at startup; this job
-/// keeps long-running sessions current.
-///
-/// Errors are surfaced from sqlx; the daemon's per-tick error
-/// handling logs them at warn. There is no per-job knob — the
-/// PRAGMA's own internals decide which tables (if any) need a
-/// refresh, so the cost is bounded automatically.
 pub async fn pragma_optimize(write_pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query("PRAGMA optimize").execute(write_pool).await?;
     tracing::debug!("pragma_optimize tick ran");
+    Ok(())
+}
+
+/// Issue #157 sub-item F — enqueue `CleanupOrphanedAttachments` on a
+/// 24 h cadence (closes MAINT-229). The materializer's
+/// `cleanup_orphaned_attachments` handler walks the `attachments/`
+/// subtree and reconciles it against the `attachments` table. Prior
+/// to this job the task was only enqueued from the post-compaction
+/// code path and the boot-time shim, so installs that never ran
+/// manual compact accumulated orphan files. Enqueue failures bubble
+/// out as `AppError::Channel`; the bg queue's saturation path
+/// persists shed tasks to `materializer_retry_queue` so nothing is
+/// dropped silently.
+pub async fn enqueue_cleanup_orphaned_attachments(
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::CleanupOrphanedAttachments)
+        .map_err(|e| {
+            AppError::Channel(format!("cleanup_orphaned_attachments enqueue failed: {e}"))
+        })?;
+    tracing::debug!("cleanup_orphaned_attachments tick enqueued");
+    Ok(())
+}
+
+/// Issue #157 sub-item J — enqueue `FtsOptimize` on a 24 h cadence,
+/// gated on `fts_edits_since_optimize > 0`. FTS5 indexes fragment on
+/// delete-/update-heavy workloads; `dispatch.rs` only optimizes on
+/// write paths so a read-only session after some deletes never runs
+/// it. Metric resets in the handler so subsequent ticks see false
+/// until more edits accumulate.
+pub async fn enqueue_fts_idle_optimize(
+    materializer: &crate::materializer::Materializer,
+) -> Result<(), AppError> {
+    materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::FtsOptimize)
+        .map_err(|e| AppError::Channel(format!("fts_idle_optimize enqueue failed: {e}")))?;
+    tracing::debug!("fts_idle_optimize tick enqueued");
     Ok(())
 }
 
@@ -372,10 +391,7 @@ mod tests {
             .expect("wal_checkpoint(TRUNCATE) must succeed on a clean pool");
     }
 
-    /// Issue #157 sub-item G — `pragma_optimize` smoke test. Same
-    /// shape as the WAL checkpoint smoke test: pin the PRAGMA
-    /// invocation against the real sqlx driver so a future driver
-    /// upgrade that changes the response shape surfaces here.
+    /// Issue #157 sub-item G — `pragma_optimize` smoke test.
     #[tokio::test]
     async fn pragma_optimize_smoke_test_157_g() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -387,14 +403,8 @@ mod tests {
             .expect("PRAGMA optimize must succeed on a clean pool");
     }
 
-    /// Issue #157 sub-item C — `op_log_compact` smoke test. With no
-    /// op-log rows older than the 90-day retention window (the case
-    /// on a fresh pool), the inner function returns
-    /// `CompactionResult { snapshot_id: None, ops_deleted: 0 }`
-    /// without performing any writes. This pins that the daemon
-    /// wrapper threads through to that no-op path without spurious
-    /// errors — the hot path (actual deletion of aged ops) is
-    /// covered by the dedicated tests in `commands::compaction`.
+    /// Issue #157 sub-item C — `op_log_compact` smoke test (no-op
+    /// path on a clean pool with no aged op-log rows).
     #[tokio::test]
     async fn op_log_compact_smoke_test_157_c() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -404,5 +414,34 @@ mod tests {
         op_log_compact(&pool, "test-device")
             .await
             .expect("op_log_compact must succeed on a clean pool with no aged op-log rows");
+    }
+
+    /// Issue #157 sub-item F — `enqueue_cleanup_orphaned_attachments`
+    /// puts a task on the materializer background queue.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enqueue_cleanup_orphaned_attachments_smoke_test_157_f() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        enqueue_cleanup_orphaned_attachments(&mat)
+            .await
+            .expect("enqueue must succeed on a fresh Materializer with empty bg queue");
+    }
+
+    /// Issue #157 sub-item J — `enqueue_fts_idle_optimize` puts a
+    /// task on the materializer background queue. Predicate gating
+    /// lives at the spawn site in lib.rs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enqueue_fts_idle_optimize_smoke_test_157_j() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::init_pool(&dir.path().join("test.db"))
+            .await
+            .unwrap();
+        let mat = crate::materializer::Materializer::new(pool);
+        enqueue_fts_idle_optimize(&mat)
+            .await
+            .expect("enqueue must succeed on a fresh Materializer with empty bg queue");
     }
 }
