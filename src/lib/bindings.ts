@@ -929,6 +929,19 @@ export type BeginOauthOutcome = {
 };
 
 /**
+ *  Newtype wrapper around ULID for type safety and consistent serialisation.
+ *  Stores the canonical uppercase Crockford base32 representation.
+ *
+ *  Primary type for block IDs. Type aliases below provide semantic names for
+ *  non-block entity IDs (attachments, snapshots) that are also ULIDs.
+ *
+ *  **Deserialization normalizes to uppercase Crockford base32** — any valid
+ *  ULID string (lowercase, mixed-case) is accepted and stored in canonical
+ *  uppercase form. This is critical for blake3 hash determinism.
+ */
+export type BlockId = string;
+
+/**
  *  Row returned by paginated block queries.
  *
  *  MAINT-113 took the parallel-types path (over the explored
@@ -1464,7 +1477,7 @@ export type OpRef = {
  *  markdown exporter ignores them.
  */
 export type PageHeading = {
-	id: string,
+	id: BlockId,
 	content: string | null,
 	todo_state: string | null,
 	priority: string | null,
@@ -1569,17 +1582,17 @@ export type PageSort =
  *  columns drive the new sort modes + density badges.
  */
 export type PageWithMetadataRow = {
-	id: string,
+	id: BlockId,
 	blockType: string,
 	content: string | null,
-	parentId: string | null,
+	parentId: BlockId | null,
 	position: number | null,
 	deletedAt: string | null,
 	todoState: string | null,
 	priority: string | null,
 	dueDate: string | null,
 	scheduledDate: string | null,
-	pageId: string | null,
+	pageId: BlockId | null,
 	/**
 	 *  max(`op_log.created_at`) over the page itself. None if the
 	 *  page has no op-log entries (which should never happen — every
