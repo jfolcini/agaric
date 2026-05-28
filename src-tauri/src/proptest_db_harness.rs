@@ -195,21 +195,15 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
             }),
         3 => (any::<usize>(), any::<usize>(), prop_value_strategy())
             .prop_map(|(live_index, key_index, value)| OpKind::SetProperty { live_index, key_index, value }),
-        // NOTE (BUG-PROPTEST-B1): `DeleteProperty` is intentionally NOT
-        // emitted by the random generator. The B1 inverse-law test
-        // discovered that `reverse::reverse_set_property` ignores an
-        // intervening `delete_property` when computing the prior value of
-        // a later `set_property` on the same key — it walks back to the
-        // last `set_property` row and resurrects a stale value instead of
-        // emitting `DeleteProperty`. That is a real production bug (see
-        // `reverse::proptest_b1::REGRESSION_set_property_after_delete_*`)
-        // to be fixed under a follow-up issue, not here. Emitting
-        // `DeleteProperty` from the generator would make this suite fail
-        // on the buggy code; the dedicated #[ignore]'d regression test
-        // pins the bug instead. Re-enable this arm once the bug is fixed.
-        //
-        // 1 => (any::<usize>(), any::<usize>())
-        //     .prop_map(|(live_index, key_index)| OpKind::DeleteProperty { live_index, key_index }),
+        // #181: `DeleteProperty` is emitted by the random generator now
+        // that `reverse::reverse_set_property` honours an intervening
+        // `delete_property` when computing the prior value of a later
+        // `set_property` (the prior state of a set-after-delete is ABSENT,
+        // so its reverse is `DeleteProperty`). The inverse-law test stays
+        // green with this arm enabled; see
+        // `reverse::proptest_b1::regression_reverse_set_property_after_delete_should_be_delete`.
+        1 => (any::<usize>(), any::<usize>())
+            .prop_map(|(live_index, key_index)| OpKind::DeleteProperty { live_index, key_index }),
         1 => (any::<usize>(), any::<usize>())
             .prop_map(|(live_index, tag_pool_index)| OpKind::AddTag { live_index, tag_pool_index }),
         1 => (any::<usize>(), any::<usize>())

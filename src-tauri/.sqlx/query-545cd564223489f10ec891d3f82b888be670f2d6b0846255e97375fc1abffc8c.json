@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND json_extract(payload, '$.key') = ?2 AND op_type IN ('set_property', 'delete_property') AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) ORDER BY created_at DESC, seq DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "545cd564223489f10ec891d3f82b888be670f2d6b0846255e97375fc1abffc8c"
+}

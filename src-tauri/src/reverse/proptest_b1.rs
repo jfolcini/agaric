@@ -434,8 +434,11 @@ async fn purge_block_is_rejected_not_mis_reversed() {
 // reproducer for the follow-up fix issue. Un-`#[ignore]` it (and
 // re-enable the `DeleteProperty` arm in `proptest_db_harness`) once the
 // `find_prior_property` query is taught to honour `delete_property`.
+//
+// FIXED (#181): `find_prior_property` now inspects the most-recent prior
+// op of EITHER type for (block, key); if it is a `delete_property` the
+// prior state is absent and the reverse of the final set is `DeleteProperty`.
 #[tokio::test]
-#[ignore = "BUG-PROPTEST-B1: reverse_set_property ignores intervening delete_property; tracked for follow-up"]
 async fn regression_reverse_set_property_after_delete_should_be_delete() {
     let (pool, _dir) = test_pool().await;
     let bid = crate::ulid::BlockId::new();
