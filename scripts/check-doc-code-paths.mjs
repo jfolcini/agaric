@@ -58,15 +58,12 @@ const DOC_ROOTS = [
   'README.md',
   'CODE_OF_CONDUCT.md',
   'COMPARISON.md',
-  'PROMPT.md',
   'docs',
 ]
 // Doc paths excluded from the audit:
 //  - `docs/session-log/*.md` are archives of past state; references in
 //    archived sessions are expected to drift (files get renamed,
 //    refactored, deleted) and the historical record stays accurate.
-//  - `pending/*.md` are forward-looking plans; they may reference
-//    files that don't exist yet (the plan's deliverable).
 const EXCLUDE_PATH_RE = /^docs\/session-log\//
 
 function listMarkdownFiles() {
@@ -96,7 +93,7 @@ const GITIGNORED_PREFIX_RE =
 // Repo-rooted prefixes we know are real source locations. Anything that
 // doesn't start with one of these is treated as prose (a filename mentioned
 // by brand, a doc section heading, etc.) and skipped — too noisy otherwise.
-const PATH_PREFIX_RE = /^(?:src|src-tauri|scripts|e2e|docs|pending|\.github|\.cargo)\//
+const PATH_PREFIX_RE = /^(?:src|src-tauri|scripts|e2e|docs|\.github|\.cargo)\//
 
 function isLocalPathCandidate(raw) {
   if (!raw) return false

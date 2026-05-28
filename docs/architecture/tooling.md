@@ -78,7 +78,7 @@ Enforced by the `tauri-command-sanitize` prek hook: every new `#[tauri::command]
 - `#![deny(unsafe_code)]` at the workspace level — no unsafe code in Agaric's Rust.
 - `gitleaks` pre-commit hook + GitHub secret scanning.
 - `cargo deny` + `npm audit` pre-push.
-- `zizmor` pre-commit on GitHub Actions workflows (template-injection / artipacked / excessive-permissions baseline; unpinned-uses and cache-poisoning are deferred policy calls — see `pending/REVIEW-LATER.md`).
+- `zizmor` pre-commit on GitHub Actions workflows (template-injection / artipacked / excessive-permissions baseline; unpinned-uses and cache-poisoning are deferred policy calls).
 - CodeQL on every PR; Dependabot keeps deps current.
 
 ## Observability
