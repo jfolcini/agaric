@@ -386,15 +386,31 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
     // surface as a `NotFound` deep inside a sync log.
     if let Some(parent_seqs_json) = record.parent_seqs.as_deref() {
         let parents: Vec<(String, i64)> = serde_json::from_str(parent_seqs_json)?;
-        for (parent_dev, parent_seq) in &parents {
-            let exists: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND seq = ?",
-                parent_dev,
-                parent_seq,
+        if !parents.is_empty() {
+            // SQL-review B-C4 (issue #112 sub-item 3): batch the
+            // per-parent existence check into one query. Today this is
+            // N=1 (phase 1 of the DAG) so the round-trip win is mostly
+            // future-proofing for phase-4 multi-parent merges, but the
+            // single statement is also strictly easier to reason about.
+            // The IN clause uses row-value comparison (SQLite >= 3.15)
+            // against `json_each` of the parent_seqs JSON; we dedupe
+            // `parents` in Rust before comparing the count because the
+            // IN's set semantics collapse duplicates on the SQL side.
+            let unique_parents: HashSet<&(String, i64)> = parents.iter().collect();
+            let found: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM op_log \
+                 WHERE (device_id, seq) IN ( \
+                     SELECT json_extract(value, '$[0]'), \
+                            CAST(json_extract(value, '$[1]') AS INTEGER) \
+                     FROM json_each(?) \
+                 )",
             )
+            .bind(parent_seqs_json)
             .fetch_one(pool)
             .await?;
-            if exists == 0 {
+            let expected: i64 =
+                i64::try_from(unique_parents.len()).expect("parent count fits in i64");
+            if found != expected {
                 return Err(AppError::InvalidOperation(
                     "dag.parent_seqs.unresolved".into(),
                 ));

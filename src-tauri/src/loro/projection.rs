@@ -1816,7 +1816,7 @@ mod tests {
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![
             ("note".to_string(), Some("hello".to_string())),
-            ("effort".to_string(), Some("3.14".to_string())),
+            ("effort".to_string(), Some("2.5".to_string())),
             ("done".to_string(), Some("true".to_string())),
             ("due".to_string(), Some("2026-01-01".to_string())),
         ];
@@ -1852,7 +1852,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("fetch effort");
-        assert_eq!(effort, (None, Some(3.14)));
+        assert_eq!(effort, (None, Some(2.5)));
 
         // boolean → value_bool only ("true" → 1).
         let done: (Option<i64>, Option<String>) = sqlx::query_as(

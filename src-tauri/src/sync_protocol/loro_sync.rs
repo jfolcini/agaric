@@ -1329,7 +1329,7 @@ mod tests {
                 .expect("create");
             e.apply_set_property(BLOCK_A, "note", Some("hello"))
                 .expect("set note");
-            e.apply_set_property(BLOCK_A, "effort", Some("3.14"))
+            e.apply_set_property(BLOCK_A, "effort", Some("2.5"))
                 .expect("set effort");
             e.apply_set_property(BLOCK_A, "done", Some("true"))
                 .expect("set done");
@@ -1369,7 +1369,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("fetch effort");
-        assert_eq!(effort, (Some(3.14), None));
+        assert_eq!(effort, (Some(2.5), None));
 
         let done: (Option<i64>, Option<String>) = sqlx::query_as(
             "SELECT value_bool, value_text FROM block_properties \
