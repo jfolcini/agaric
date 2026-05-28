@@ -1054,6 +1054,14 @@ pub fn run() {
             let tombstone_device_id = device_id.clone();
             let tombstone_materializer = materializer.clone();
             let loro_snapshot_write_pool = pools.write.clone();
+            let projected_agenda_materializer = materializer.clone();
+            // Issue #157 sub-item H — shared "last fired UTC day"
+            // sentinel for the projected_agenda_midnight job.
+            // `i32::MIN` = "never fired"; the first tick post-boot
+            // enqueues a rebuild, then subsequent ticks only enqueue
+            // when the UTC day number advances.
+            let projected_agenda_last_day =
+                Arc::new(std::sync::atomic::AtomicI32::new(i32::MIN));
             let jobs = vec![
                 maintenance::MaintenanceJob {
                     name: "wal_checkpoint_truncate",
@@ -1171,6 +1179,23 @@ pub fn run() {
                     run: Box::new(move || {
                         let pool = loro_snapshot_write_pool.clone();
                         Box::pin(async move { maintenance::loro_snapshot_if_dirty(&pool).await })
+                    }),
+                },
+                // Issue #157 sub-item H — projected-agenda midnight
+                // refresh (60 s outer tick + always-on predicate;
+                // body gates on a UTC-day-number atomic so the
+                // rebuild fires at most once per calendar day).
+                maintenance::MaintenanceJob {
+                    name: "projected_agenda_midnight",
+                    interval: std::time::Duration::from_secs(60),
+                    last_run: None,
+                    predicate: Box::new(|| true),
+                    run: Box::new(move || {
+                        let mat = projected_agenda_materializer.clone();
+                        let last_day = projected_agenda_last_day.clone();
+                        Box::pin(async move {
+                            maintenance::projected_agenda_midnight_tick(&mat, &last_day).await
+                        })
                     }),
                 },
             ];
