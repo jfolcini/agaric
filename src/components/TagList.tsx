@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { isConflict } from '@/lib/app-error'
 import { notify } from '@/lib/notify'
 import {
   clearTagColor,
@@ -108,7 +109,13 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
       useResolveStore.getState().set(resp.id, name, false)
     } catch (error) {
       logger.error('TagList', 'failed to create tag', { name }, error)
-      notify.error(t('tags.createFailed'))
+      // Issue #106 — surface unique-constraint violations distinctly so
+      // the user sees "already exists" instead of the generic toast.
+      if (isConflict(error)) {
+        notify.error(t('tags.duplicateName'))
+      } else {
+        notify.error(t('tags.createFailed'))
+      }
     }
     setIsCreating(false)
   }, [newTagName, t])
@@ -162,7 +169,14 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
           { tagId: renameTarget.id, newName: trimmed },
           error,
         )
-        notify.error(`${t('tags.renameFailed')}: ${String(error)}`)
+        // Issue #106 — backend now emits a discriminated `conflict`
+        // kind for unique-constraint violations. Surface the friendly
+        // "already exists" message instead of "renameFailed: AppError".
+        if (isConflict(error)) {
+          notify.error(t('tags.duplicateName'))
+        } else {
+          notify.error(`${t('tags.renameFailed')}: ${String(error)}`)
+        }
       }
     },
     [renameTarget, tags, t],

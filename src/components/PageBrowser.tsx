@@ -41,7 +41,7 @@ import { usePageDelete } from '../hooks/usePageDelete'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
 import { useRegisterPrimaryFocus } from '../hooks/usePrimaryFocus'
 import { useStarredPages } from '../hooks/useStarredPages'
-import { isAppError, type TypedAppError } from '../lib/app-error'
+import { isAppError, isConflict, type TypedAppError } from '../lib/app-error'
 import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
 import {
   createPageInSpace,
@@ -530,9 +530,16 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
       }
       onPageSelect?.(newId, name)
     } catch (error) {
-      notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
-        action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
-      })
+      // Issue #106 — distinguish duplicate-name conflicts from generic
+      // DB failures. A conflict is user-actionable ("pick a different
+      // name"), not a system error worth a Retry button.
+      if (isConflict(error)) {
+        notify.error(t('pageBrowser.duplicateName'))
+      } else {
+        notify.error(t('pageBrowser.createFailed', { error: String(error) }), {
+          action: { label: t('pageBrowser.retry'), onClick: () => handleCreatePage() },
+        })
+      }
     }
     setIsCreating(false)
   }, [newPageName, setPages, t, onPageSelect, wireFilters, reload])

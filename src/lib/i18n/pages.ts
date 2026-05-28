@@ -148,6 +148,7 @@ export const pages: Record<string, string> = {
   'pageBrowser.deleteButton': 'Delete page',
   'pageBrowser.loadFailed': 'Failed to load pages',
   'pageBrowser.createFailed': 'Failed to create page: {{error}}',
+  'pageBrowser.duplicateName': 'A page with that name already exists.',
   'pageBrowser.deleteFailed': 'Failed to delete page: {{error}}',
   'pageBrowser.spaceNotReady': 'Loading spaces\u2026 try again in a moment',
   'pageBrowser.retry': 'Retry',

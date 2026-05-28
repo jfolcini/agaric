@@ -528,6 +528,36 @@ describe('TagList', () => {
       })
     })
 
+    // Issue #106 — when the backend rejects `create_block` with the new
+    // discriminated `conflict` kind (sqlx UNIQUE-constraint violation),
+    // the toast should surface the friendly "already exists" message
+    // and NOT the generic "Failed to create tag" fallback.
+    it('shows the "already exists" toast on kind="conflict" creation rejection', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<TagList />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/No tags yet/)).toBeInTheDocument()
+      })
+
+      mockedInvoke.mockRejectedValueOnce({ kind: 'conflict', message: 'UNIQUE failed' })
+
+      const input = screen.getByPlaceholderText('New tag name...')
+      await user.type(input, 'duplicate-tag')
+      const addBtn = screen.getByRole('button', { name: /Add Tag/i })
+      await user.click(addBtn)
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('tags.duplicateName'))
+      })
+      // Make sure we did NOT also fire the generic toast.
+      expect(mockedToastError).not.toHaveBeenCalledWith(
+        expect.stringContaining('Failed to create tag'),
+      )
+    })
+
     it('shows toast on failed tag deletion', async () => {
       const user = userEvent.setup()
       mockedInvoke.mockResolvedValueOnce([makeTag('T1', 'fail-delete')])

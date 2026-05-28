@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 
+import { isPoolBusy, retryOnPoolBusy } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
 
@@ -15,6 +16,13 @@ import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
  *
  * A version counter prevents the race condition where a previously-dispatched
  * `saveDraft` completes after `discardDraft` has already deleted the draft.
+ *
+ * Issue #106 — every IPC call here is wrapped in {@link retryOnPoolBusy}.
+ * The sqlx connection pool can transiently return `pool_busy` under load
+ * (every write holds a connection for the duration of its
+ * transaction); a short backoff lets autosave ride out that blip
+ * silently rather than logging a misleading "saveDraft failed" warning
+ * on every key release.
  */
 export function useDraftAutosave(blockId: string | null, content: string) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -31,20 +39,33 @@ export function useDraftAutosave(blockId: string | null, content: string) {
 
     timerRef.current = setTimeout(() => {
       if (versionRef.current !== capturedVersion) return // stale — discardDraft was called
-      saveDraft(blockId, content).catch((err: unknown) => {
-        logger.warn('useDraftAutosave', 'saveDraft failed', { blockId }, err)
+      retryOnPoolBusy(() => saveDraft(blockId, content), {
+        onRetry: (attempt) => {
+          logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
+            blockId,
+            attempt,
+          })
+        },
+      }).catch((err: unknown) => {
+        // After exhausting the pool_busy retries the helper bubbles the
+        // last error untouched, so `database` / exhausted `pool_busy`
+        // both land here. Keep the existing log-only behaviour (autosave
+        // is best-effort; the user retries by typing one more char).
+        const label = isPoolBusy(err) ? 'saveDraft exhausted pool_busy retries' : 'saveDraft failed'
+        logger.warn('useDraftAutosave', label, { blockId }, err)
       })
     }, 2000)
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
       if (blockIdRef.current) {
-        flushDraft(blockIdRef.current).catch((err: unknown) => {
+        const id = blockIdRef.current
+        retryOnPoolBusy(() => flushDraft(id)).catch((err: unknown) => {
           logger.warn(
             'useDraftAutosave',
             'flushDraft failed',
             {
-              blockId: blockIdRef.current ?? '',
+              blockId: id ?? '',
             },
             err,
           )
@@ -58,12 +79,13 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     versionRef.current++ // invalidate any pending save
     if (timerRef.current) clearTimeout(timerRef.current)
     if (blockIdRef.current) {
-      deleteDraft(blockIdRef.current).catch((err: unknown) => {
+      const id = blockIdRef.current
+      retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
         logger.warn(
           'useDraftAutosave',
           'deleteDraft failed during discard',
           {
-            blockId: blockIdRef.current ?? '',
+            blockId: id ?? '',
           },
           err,
         )

@@ -182,6 +182,31 @@ describe('useAliasResolution', () => {
     expect(result.current.aliasQuery).toBe('')
   })
 
+  // Issue #106 — `not_found` from the resolver is the expected empty
+  // state (the alias points at a deleted / non-existent page). The
+  // hook MUST treat it as "no match", not as a system error: state
+  // resets to null AND the warn log stays quiet (no toast either,
+  // since this hook never emits one).
+  it('treats kind="not_found" as an empty state — no warn log, state cleared', async () => {
+    mockedResolveAlias.mockRejectedValue({ kind: 'not_found', message: 'no such alias' })
+
+    const { result } = renderHook(() =>
+      useAliasResolution('does-not-exist', EMPTY_RESULTS, 'SPACE_A'),
+    )
+
+    await waitFor(() => {
+      expect(mockedResolveAlias).toHaveBeenCalled()
+    })
+    // Give the catch handler a tick to run.
+    await Promise.resolve()
+    expect(result.current.aliasMatch).toBeNull()
+    expect(result.current.aliasQuery).toBe('')
+    // The warn log path is reserved for unexpected transport failures —
+    // a not_found is the regular "alias points nowhere" path and must
+    // not be logged at warn level.
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled()
+  })
+
   it('clears state when the query becomes empty after a match', async () => {
     mockedResolveAlias.mockResolvedValue(['BLOCK_A', 'apollo'])
     mockedGetBlock.mockResolvedValue(makeBlock({ id: 'BLOCK_A' }))
