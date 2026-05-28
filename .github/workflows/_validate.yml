@@ -217,19 +217,23 @@ jobs:
         # drift in `#[cfg(test)]` modules slips through CI silently
         # (caught 5 such drifts in session 679's PEND-18 work).
         #
-        # `DATABASE_URL` is required by sqlx-cli 0.8.x even in
-        # `--check` mode (the CLI verifies the env var before
-        # delegating to `cargo check` with `SQLX_OFFLINE=true`). A
-        # placeholder `sqlite::memory:` is enough — the actual query
-        # validation happens against the committed `.sqlx/` cache, not
-        # against this URL. Locally the same env comes from
-        # `src-tauri/.env` (`DATABASE_URL=sqlite:dev.db`); CI gets the
-        # placeholder explicitly so the check no longer hard-fails on
-        # a fresh sqlx-cli install with no env wired in.
+        # sqlx-cli 0.9.x's `prepare --check` CONNECTS to `DATABASE_URL`
+        # to re-derive every query's metadata and diff it against the
+        # committed `.sqlx/` cache — it does NOT honor `SQLX_OFFLINE` for
+        # `--check`. The old `sqlite::memory:` placeholder is therefore an
+        # *empty* schema and every query fails with "no such table" (the
+        # error then cascades into ~hundreds of misleading `str` E0277
+        # errors). So we create + migrate a throwaway file DB first; the
+        # committed cache is still what's diffed, but against a real
+        # schema. Locally the same comes from `src-tauri/.env`
+        # (`DATABASE_URL=sqlite:dev.db`, already migrated).
         working-directory: src-tauri
         env:
-          DATABASE_URL: 'sqlite::memory:'
-        run: cargo sqlx prepare --check -- --tests
+          DATABASE_URL: 'sqlite:ci-sqlx-prepare.db'
+        run: |
+          cargo sqlx database create
+          cargo sqlx migrate run
+          cargo sqlx prepare --check -- --tests
 
   # ---------------------------------------------------------------------------
   # vitest — frontend unit + integration suite, sharded 3-ways (PEND-39 C3).
