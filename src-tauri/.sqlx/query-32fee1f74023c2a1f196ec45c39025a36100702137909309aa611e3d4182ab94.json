@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT content FROM blocks WHERE id = 'blk-A'",
+  "query": "SELECT content FROM blocks WHERE id = 'BLK-A'",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "eda643f2e318e6ff39961f554edab9dffa02a805515fa10556178ad893f951be"
+  "hash": "32fee1f74023c2a1f196ec45c39025a36100702137909309aa611e3d4182ab94"
 }

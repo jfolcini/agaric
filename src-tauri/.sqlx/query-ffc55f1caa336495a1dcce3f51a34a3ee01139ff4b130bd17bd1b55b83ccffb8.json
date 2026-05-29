@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT value_date FROM block_properties WHERE block_id = 'blk-child'",
+  "query": "SELECT value_date FROM block_properties WHERE block_id = 'BLK-CHILD'",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       true
     ]
   },
-  "hash": "125157ba80ea93b09b5967f47ba57b003982cfd305a396ef1dee828da7c95328"
+  "hash": "ffc55f1caa336495a1dcce3f51a34a3ee01139ff4b130bd17bd1b55b83ccffb8"
 }
