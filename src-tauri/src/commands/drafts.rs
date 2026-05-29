@@ -27,26 +27,27 @@ use super::*;
 ///   orphan `edit_block` ops into the append-only log.
 /// - **Happy path** — appends one `edit_block` op and deletes the draft row
 ///   atomically.
-#[instrument(skip(pool, device_id), err)]
+#[instrument(skip(pool, device_id, materializer), err)]
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,
     block_id: String,
+    materializer: &Materializer,
 ) -> Result<(), AppError> {
-    let mut tx = crate::db::begin_immediate_logged(pool, "flush_draft").await?;
+    let mut tx = CommandTx::begin_immediate(pool, "flush_draft").await?;
 
     // 1. Look up the stored draft content inside the tx. No row → no-op.
     let stored_content = sqlx::query_scalar!(
         "SELECT content FROM block_drafts WHERE block_id = ?",
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
     let Some(content) = stored_content else {
         // Nothing to flush. Nothing was written, but commit cleanly so the
         // BEGIN IMMEDIATE write-lock is released promptly rather than
-        // dropped/rolled back.
-        tx.commit().await?;
+        // dropped/rolled back. No record enqueued → no dispatch.
+        tx.commit_without_dispatch().await?;
         return Ok(());
     };
 
@@ -66,15 +67,16 @@ pub async fn flush_draft_inner(
         "SELECT id FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     .is_some();
     if !target_alive {
         sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
             .bind(&block_id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        tx.commit().await?;
+        // Orphan drop appends no op → nothing to dispatch.
+        tx.commit_without_dispatch().await?;
         tracing::warn!(
             block_id = %block_id,
             "flush_draft: target block missing or soft-deleted; dropped orphan draft"
@@ -88,9 +90,13 @@ pub async fn flush_draft_inner(
     let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
     // 5. Append the edit_block op + delete the draft row, on the outer tx.
-    draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
+    //    `flush_draft_in_tx` returns the `OpRecord` so we can queue it for
+    //    post-commit dispatch — coupling the flush to a cache rebuild.
+    let record =
+        draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
+    tx.enqueue_background(record);
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
     Ok(())
 }
 
@@ -283,8 +289,9 @@ pub async fn flush_draft(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     block_id: String,
+    materializer: State<'_, Materializer>,
 ) -> Result<(), AppError> {
-    flush_draft_inner(&pool.0, device_id.as_str(), block_id)
+    flush_draft_inner(&pool.0, device_id.as_str(), block_id, &materializer)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -414,6 +421,7 @@ mod tests_h12 {
     #[tokio::test]
     async fn flush_draft_drops_draft_when_target_soft_deleted() {
         let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
         insert_soft_deleted_block(&pool, DEAD_BLOCK).await;
 
         draft::save_draft(&pool, DEAD_BLOCK, "stale content")
@@ -421,7 +429,7 @@ mod tests_h12 {
             .unwrap();
         assert!(draft_exists(&pool, DEAD_BLOCK).await);
 
-        flush_draft_inner(&pool, DEVICE, DEAD_BLOCK.to_owned())
+        flush_draft_inner(&pool, DEVICE, DEAD_BLOCK.to_owned(), &mat)
             .await
             .expect("flush against a soft-deleted block must succeed silently");
 
@@ -434,6 +442,7 @@ mod tests_h12 {
             !draft_exists(&pool, DEAD_BLOCK).await,
             "draft pointing at a soft-deleted block must be dropped",
         );
+        mat.shutdown();
     }
 
     // -- H-12b: oversized content rejected ---------------------------------
@@ -441,6 +450,7 @@ mod tests_h12 {
     #[tokio::test]
     async fn flush_draft_rejects_oversized_content() {
         let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
         insert_live_block(&pool, LIVE_BLOCK).await;
 
         // Bypass save_draft's normal path with a direct insert so we can
@@ -457,7 +467,7 @@ mod tests_h12 {
         .await
         .unwrap();
 
-        let err = flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned())
+        let err = flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned(), &mat)
             .await
             .expect_err("oversized draft must be rejected");
 
@@ -482,6 +492,7 @@ mod tests_h12 {
             0,
             "no edit_block op must be appended on oversized rejection",
         );
+        mat.shutdown();
     }
 
     // -- M-93: schema invariant — block_drafts FK to blocks(id) ------------
@@ -553,16 +564,17 @@ mod tests_h12 {
 
     // -- Happy path ---------------------------------------------------------
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn flush_draft_happy_path() {
         let (pool, _dir) = test_pool().await;
+        let mat = crate::materializer::Materializer::new(pool.clone());
         insert_live_block(&pool, LIVE_BLOCK).await;
 
         draft::save_draft(&pool, LIVE_BLOCK, "final content")
             .await
             .unwrap();
 
-        flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned())
+        flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned(), &mat)
             .await
             .expect("happy-path flush must succeed");
 
@@ -575,6 +587,7 @@ mod tests_h12 {
             !draft_exists(&pool, LIVE_BLOCK).await,
             "draft row must be deleted after a successful flush",
         );
+        mat.shutdown();
     }
 
     // -- Audit M3: hard cap on flush_all_drafts_inner ---------------------

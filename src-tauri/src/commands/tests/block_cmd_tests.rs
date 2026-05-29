@@ -3943,9 +3943,10 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
 // Draft autosave commands (F-17)
 // ======================================================================
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn save_and_flush_draft() {
     let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
 
     // H-12a precondition: target block must exist + not be soft-deleted for the
     // flush to actually emit an edit_block op. Without this row, flush_draft_inner
@@ -3975,7 +3976,7 @@ async fn save_and_flush_draft() {
     );
 
     // Flush the draft (writes edit_block op + deletes draft row)
-    flush_draft_inner(&pool, DEV, "01HZ000000000000000000DRF01".into())
+    flush_draft_inner(&pool, DEV, "01HZ000000000000000000DRF01".into(), &mat)
         .await
         .unwrap();
 
@@ -3997,6 +3998,8 @@ async fn save_and_flush_draft() {
         ops[0].op_type, "edit_block",
         "flushed op should be edit_block"
     );
+
+    mat.shutdown();
 }
 
 #[tokio::test]

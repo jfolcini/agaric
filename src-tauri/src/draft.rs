@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
+use crate::db::CommandTx;
 use crate::error::AppError;
 use crate::now_rfc3339;
 use crate::op::{EditBlockPayload, OpPayload};
@@ -250,6 +251,10 @@ pub async fn flush_draft_in_tx(
 /// with additional pre-flight checks (e.g. validating the target block
 /// still exists) should drive [`flush_draft_in_tx`] directly on an outer
 /// transaction.
+// Test-only helper: returns the `OpRecord` for assertions. No production
+// caller (the command path is `commands::drafts::flush_draft_inner`), so it
+// has nothing to dispatch — kept off the raw `begin_with` via `CommandTx` +
+// `commit_without_dispatch`.
 pub async fn flush_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -257,9 +262,9 @@ pub async fn flush_draft(
     content: &str,
     prev_edit: Option<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = CommandTx::begin_immediate(pool, "flush_draft").await?;
     let record = flush_draft_in_tx(&mut tx, device_id, block_id, content, prev_edit).await?;
-    tx.commit().await?;
+    tx.commit_without_dispatch().await?;
     Ok(record)
 }
 
