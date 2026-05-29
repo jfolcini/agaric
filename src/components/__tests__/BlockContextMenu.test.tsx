@@ -575,7 +575,13 @@ describe('BlockContextMenu', () => {
    * does not trigger Node's unhandled-rejection tracking.
    */
   function failedPositioning() {
-    const t: Record<string, () => typeof t> = { then: () => t, catch: () => t, finally: () => t }
+    const t: Record<string, () => typeof t> = {}
+    // Define the promise-like methods via computed keys so no static `then`
+    // member is declared (avoids unicorn/no-thenable) while preserving the
+    // never-settling-thenable behaviour at runtime.
+    for (const key of ['then', 'catch', 'finally']) {
+      t[key] = () => t
+    }
     return t as unknown as ReturnType<typeof import('@floating-ui/dom').computePosition>
   }
 

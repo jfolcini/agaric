@@ -1470,7 +1470,7 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('to-do')
 
     expect(results).toHaveLength(2)
-    expect((results?.[0] as { id: string }).id).toBe('todo')
+    expect((results?.[0] as { id: string } | undefined)?.id).toBe('todo')
   })
 
   it('searchSlashCommands returns empty array when nothing matches', async () => {
@@ -1505,7 +1505,7 @@ describe('BlockTree slash command wiring', () => {
     const results = await capturedSearchSlashCommands?.('DONE')
 
     expect(results?.length).toBeGreaterThanOrEqual(1)
-    expect((results?.[0] as { id: string }).id).toBe('done')
+    expect((results?.[0] as { id: string } | undefined)?.id).toBe('done')
   })
 
   it('searchSlashCommands returns /link command when query matches "link"', async () => {
@@ -1662,8 +1662,8 @@ describe('BlockTree slash command wiring', () => {
     // The default 'table' item should be replaced
     expect(results?.some((r) => r.id === 'table')).toBe(false)
     // The parameterized item should be first
-    expect((results?.[0] as { id: string }).id).toBe('table:4:6')
-    expect((results?.[0] as { label: string }).label).toContain('4\u00d76')
+    expect((results?.[0] as { id: string } | undefined)?.id).toBe('table:4:6')
+    expect((results?.[0] as { label: string } | undefined)?.label).toContain('4\u00d76')
   })
 
   it('searchSlashCommands returns default table for "table" query without dimensions', async () => {
@@ -1699,7 +1699,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('table 2x2')
 
-    expect((results?.[0] as { id: string }).id).toBe('table:2:2')
+    expect((results?.[0] as { id: string } | undefined)?.id).toBe('table:2:2')
   })
 
   it('onSlashCommand for /table with no dimensions inserts 3x3 table', async () => {

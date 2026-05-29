@@ -105,9 +105,11 @@ export function TemplatePicker({
 
   return (
     <>
-      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- backdrop dismiss */}
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- backdrop dismiss */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
+      {/* Presentational backdrop: click-to-dismiss only. Keyboard users
+          dismiss via Escape (handled by the document keydown listener above);
+          role="presentation" marks it as non-interactive scenery, matching
+          JournalCalendarDropdown's backdrop. */}
+      <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={dialogRef}
         role="dialog"

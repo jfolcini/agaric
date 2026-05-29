@@ -1107,11 +1107,12 @@ describe('viewport handling on coarse pointers (UX-273)', () => {
       expect(mockedSize).toHaveBeenCalled()
     })
 
-    const apply = (mockedSize.mock.calls[0]?.[0] as { apply: (a: unknown) => void }).apply
+    const apply = (mockedSize.mock.calls[0]?.[0] as { apply: (a: unknown) => void } | undefined)
+      ?.apply
     const fakeFloating = document.createElement('div')
 
     // Case 1: availableHeight (300) < cap (480 = 800 * 0.6) → use 300
-    apply({
+    apply?.({
       availableHeight: 300,
       availableWidth: 100,
       elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },
@@ -1120,7 +1121,7 @@ describe('viewport handling on coarse pointers (UX-273)', () => {
     expect(fakeFloating.style.overflowY).toBe('auto')
 
     // Case 2: availableHeight (1000) > cap (480) → use 480
-    apply({
+    apply?.({
       availableHeight: 1000,
       availableWidth: 100,
       elements: { floating: fakeFloating, reference: fakeFloating, domReference: null },

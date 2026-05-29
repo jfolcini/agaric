@@ -2071,13 +2071,15 @@ describe('JournalPage', () => {
       })
       expect(filteredCalls.length).toBe(1)
       const propertyFilters = (
-        filteredCalls[0]?.[1] as {
-          propertyFilters?: Array<{
-            key?: string
-            valueDateRange?: [string, string] | null
-          }>
-        }
-      ).propertyFilters
+        filteredCalls[0]?.[1] as
+          | {
+              propertyFilters?: Array<{
+                key?: string
+                valueDateRange?: [string, string] | null
+              }>
+            }
+          | undefined
+      )?.propertyFilters
       const completedFilter = propertyFilters?.find((f) => f.key === 'completed_at')
       expect(completedFilter?.valueDateRange).toEqual([todayStr, tomorrowStr])
     })
@@ -2591,9 +2593,10 @@ describe('JournalPage', () => {
         expect(batchCalls.length).toBeGreaterThan(0)
       })
       const batchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'create_blocks_batch')
-      const batchSpecs = (batchCall?.[1] as { specs: Array<Record<string, unknown>> }).specs
-      const morningReview = batchSpecs.find((s) => s['content'] === '## Morning Review')
-      const tasks = batchSpecs.find((s) => s['content'] === '## Tasks')
+      const batchSpecs = (batchCall?.[1] as { specs: Array<Record<string, unknown>> } | undefined)
+        ?.specs
+      const morningReview = batchSpecs?.find((s) => s['content'] === '## Morning Review')
+      const tasks = batchSpecs?.find((s) => s['content'] === '## Tasks')
       expect(morningReview).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
       expect(tasks).toMatchObject({ blockType: 'content', parentId: 'DP-TMPL' })
 
@@ -3149,9 +3152,9 @@ describe('JournalPage', () => {
 
       const call = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'count_agenda_batch_by_source')
       expect(call).toBeDefined()
-      const { dates } = call?.[1] as { dates: string[] }
+      const dates = (call?.[1] as { dates: string[] } | undefined)?.dates
       expect(dates).toHaveLength(42)
-      expect(dates[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(dates?.[0]).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     })
 
     it('renders due dots for days with due date items', async () => {

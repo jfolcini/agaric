@@ -72,14 +72,14 @@ export const BlockLink = Node.create<BlockLinkOptions>({
   },
 
   addNodeView() {
-    const extension = this
+    const { options } = this
     return ({ node }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
-        const title = extension.options.resolveTitle(blockId)
+        const title = options.resolveTitle(blockId)
 
         dom.textContent = title
         dom.className = 'block-link-chip cursor-pointer'
@@ -94,7 +94,7 @@ export const BlockLink = Node.create<BlockLinkOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        extension.options.onNavigate?.(currentId)
+        options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)
 

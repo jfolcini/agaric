@@ -457,6 +457,7 @@ describe('useBlockAttachments batch-provider seeding', () => {
       createElement(
         PageBlockContext.Provider,
         { value: pageStore },
+        // oxlint-disable-next-line react/no-children-prop -- createElement in a .ts file (no JSX); BatchAttachmentsProvider's props type requires `children`, so it must be passed in props
         createElement(BatchAttachmentsProvider, { blockIds: ['BLOCK_BATCH_1'], children }),
       )
 

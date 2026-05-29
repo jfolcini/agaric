@@ -312,7 +312,9 @@ describe('search_blocks', () => {
       items: Record<string, unknown>[]
     }
     expect(result.items.length).toBeGreaterThanOrEqual(1)
-    expect((result.items[0]?.['content'] as string).toLowerCase()).toContain('knowledge base')
+    expect((result.items[0]?.['content'] as string | undefined)?.toLowerCase()).toContain(
+      'knowledge base',
+    )
   })
 
   it('search is case-insensitive', () => {
@@ -1037,7 +1039,9 @@ describe('query_backlinks_filtered', () => {
       filters: [{ type: 'Contains', query: 'xylophone' }],
     }) as { items: Record<string, unknown>[] }
     expect(result.items).toHaveLength(1)
-    expect((result.items[0]?.['content'] as string).toLowerCase()).toContain('xylophone')
+    expect((result.items[0]?.['content'] as string | undefined)?.toLowerCase()).toContain(
+      'xylophone',
+    )
   })
 
   it('returns correct total_count', () => {

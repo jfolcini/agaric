@@ -78,14 +78,14 @@ export const TagRef = Node.create<TagRefOptions>({
   },
 
   addNodeView() {
-    const extension = this
+    const { options } = this
     return ({ node }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs['id'] as string
 
       function render(tagId: string) {
         currentId = tagId
-        const name = extension.options.resolveName(tagId)
+        const name = options.resolveName(tagId)
         const color = getTagColor(tagId)
 
         dom.textContent = name
@@ -109,16 +109,16 @@ export const TagRef = Node.create<TagRefOptions>({
       // Register click / keydown listeners ONCE in the outer closure so every
       // NodeView `update()` (which calls `render()`) does not leak a fresh
       // handler. The listeners read `currentId` (mutated by render) and
-      // `extension.options.onClick` (the current configured handler), so they
+      // `options.onClick` (the current configured handler), so they
       // always see the latest id and callback.
       const clickHandler = (event: MouseEvent) => {
-        const onClick = extension.options.onClick
+        const onClick = options.onClick
         if (!onClick) return
         event.stopPropagation()
         onClick(currentId)
       }
       const keydownHandler = (event: KeyboardEvent) => {
-        const onClick = extension.options.onClick
+        const onClick = options.onClick
         if (!onClick) return
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
@@ -130,7 +130,7 @@ export const TagRef = Node.create<TagRefOptions>({
 
       // Only expose keyboard affordances when an onClick is wired — without
       // it the chip stays a plain decoration.
-      if (extension.options.onClick) {
+      if (options.onClick) {
         dom.setAttribute('role', 'link')
         dom.setAttribute('tabindex', '0')
       }

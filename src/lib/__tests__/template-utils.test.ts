@@ -165,8 +165,9 @@ describe('insertTemplateBlocks', () => {
 
     // Depth 1 batch must reference NEW_A as the parent (forward
     // reference from depth-0 batch response).
-    const depthOneSpecs = (batchCalls[1]?.[1] as { specs: Array<{ parentId: string }> }).specs
-    expect(depthOneSpecs[0]?.parentId).toBe('NEW_A')
+    const depthOneSpecs = (batchCalls[1]?.[1] as { specs: Array<{ parentId: string }> } | undefined)
+      ?.specs
+    expect(depthOneSpecs?.[0]?.parentId).toBe('NEW_A')
 
     // Anti-backslide guard: NO per-parent `list_blocks` IPC fires —
     // the subtree arrives in a single `load_page_subtree` call.
@@ -577,9 +578,9 @@ describe('insertTemplateBlocksFromString', () => {
 
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
     expect(batchCalls).toHaveLength(1)
-    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> }).specs
-    expect(specs[0]?.content).toBe(`Date: ${today}`)
-    expect(specs[1]?.content).toBe('Page: My Daily')
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
+    expect(specs?.[0]?.content).toBe(`Date: ${today}`)
+    expect(specs?.[1]?.content).toBe('Page: My Daily')
   })
 
   it('skips blank lines and surrounding whitespace', async () => {
@@ -594,7 +595,7 @@ describe('insertTemplateBlocksFromString', () => {
     expect(ids).toEqual(['NEW1', 'NEW2'])
     const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'create_blocks_batch')
     expect(batchCalls).toHaveLength(1)
-    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> }).specs
+    const specs = (batchCalls[0]?.[1] as { specs: Array<{ content: string }> } | undefined)?.specs
     expect(specs).toHaveLength(2)
   })
 

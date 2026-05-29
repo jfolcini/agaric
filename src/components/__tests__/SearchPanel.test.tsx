@@ -1542,7 +1542,7 @@ describe('SearchPanel', () => {
     })
     const initialBatchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'batch_resolve')
     expect(initialBatchCalls).toHaveLength(1)
-    expect((initialBatchCalls[0]?.[1] as { ids: string[] }).ids).toEqual(['GHOST'])
+    expect((initialBatchCalls[0]?.[1] as { ids: string[] } | undefined)?.ids).toEqual(['GHOST'])
 
     // Load page 2 — same unresolvable GHOST page_id.
     const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
