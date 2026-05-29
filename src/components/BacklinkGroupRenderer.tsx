@@ -89,6 +89,7 @@ export function BacklinkGroupRenderer({
           onPageTitleClick: (pageId: string, title: string) => onNavigateToPage(pageId, title),
         })}
         renderBlock={(block, _group) => (
+          // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-navigable reference row; click/keydown drive roving focus and block activation, the row is the interactive unit
           <li
             key={block.id}
             className="linked-reference-item flex flex-wrap items-center gap-3 border-b py-1.5 px-2 last:border-b-0 cursor-pointer hover:bg-muted/50"

@@ -127,6 +127,15 @@ export function BlockPropertyEditor({
       setEditingProp(null)
     }
 
+    // Escape closes the value popup. Handled at the document level (canonical
+    // dialog dismissal) so it works regardless of which inner control — the
+    // search input or any of the ref/select option buttons — has focus,
+    // without hanging a keyboard listener on the non-interactive grouping
+    // element (jsx-a11y/no-noninteractive-element-interactions).
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEditingProp(null)
+    }
+
     // Defer registration by a frame so the click that opened the popup
     // doesn't immediately close it (mirrors suggestion-renderer.ts).
     let frameId: number | null = null
@@ -134,10 +143,12 @@ export function BlockPropertyEditor({
       frameId = null
       document.addEventListener('pointerdown', handlePointerDown, true)
     })
+    document.addEventListener('keydown', handleKeyDown)
 
     return () => {
       if (frameId !== null) cancelAnimationFrame(frameId)
       document.removeEventListener('pointerdown', handlePointerDown, true)
+      document.removeEventListener('keydown', handleKeyDown)
     }
   }, [editingProp, setEditingProp])
 
@@ -273,9 +284,6 @@ export function BlockPropertyEditor({
           className="flex flex-col gap-0.5 w-56 border-none p-0 m-0"
           data-testid="ref-picker"
           aria-label={t('block.refPickerLabel')}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setEditingProp(null)
-          }}
         >
           <input
             ref={(el) => {
@@ -288,9 +296,6 @@ export function BlockPropertyEditor({
             data-testid="ref-search-input"
             value={refSearch}
             onChange={(e) => setRefSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setEditingProp(null)
-            }}
           />
           <ScrollArea className="max-h-48 flex flex-col gap-0.5">
             {(() => {

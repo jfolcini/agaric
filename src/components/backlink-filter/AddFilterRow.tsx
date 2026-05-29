@@ -219,6 +219,7 @@ export function AddFilterRow({
   }, [category, propertyKeys, onApply, t])
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- form-level onKeyDown intercepts Escape to cancel; belongs on the form container, not a child control
     <form
       className="add-filter-row flex flex-wrap items-center gap-1.5 rounded-md border bg-muted/50 p-2 [@media(pointer:coarse)]:flex-col [@media(pointer:coarse)]:items-stretch"
       aria-label={t('backlink.addFilterLabel')}

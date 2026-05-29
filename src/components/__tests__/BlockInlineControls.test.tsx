@@ -80,6 +80,7 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- test fixture: onClick rides on the role="group" wrapper so `user.click(getByTestId('property-chip-…'))` exercises the value-edit path without a nested button
     <div
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
