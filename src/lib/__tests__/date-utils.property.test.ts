@@ -8,6 +8,7 @@
 
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
+
 import { formatCompactDate, formatDate, isDateFormattedPage } from '../date-utils'
 import { parseDate } from '../parse-date'
 

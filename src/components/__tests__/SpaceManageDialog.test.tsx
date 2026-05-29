@@ -25,11 +25,13 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import type { SpaceRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
+
 import { SpaceManageDialog } from '../SpaceManageDialog'
 
 vi.mock('@/lib/logger', () => ({

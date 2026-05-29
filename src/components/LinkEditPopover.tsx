@@ -13,9 +13,11 @@ import type { Editor } from '@tiptap/react'
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { logger } from '@/lib/logger'
 import { normalizeUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
+
 import { useLinkMetadata } from '../hooks/useLinkMetadata'
 import { Button } from './ui/button'
 import { Input } from './ui/input'

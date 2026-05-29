@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useJournalStore } from '../journal'
 import { selectCurrentViewForSpace, useNavigationStore } from '../navigation'
 import { useRecentPagesStore } from '../recent-pages'

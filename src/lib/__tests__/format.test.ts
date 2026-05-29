@@ -3,6 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { formatLastSynced, formatTimestamp, truncateId, ulidToDate } from '../format'
 
 // ── Fake-timer anchor ────────────────────────────────────────────────────

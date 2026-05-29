@@ -7,6 +7,7 @@ import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { PropertyPicker } from '../extensions/property-picker'
 import type { PickerItem } from '../SuggestionList'
 

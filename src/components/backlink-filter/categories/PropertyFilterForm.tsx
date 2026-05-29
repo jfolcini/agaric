@@ -8,6 +8,7 @@
 import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -16,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+
 import type { CompareOp } from '../../../lib/tauri'
 import type { FilterFormHandle } from './types'
 

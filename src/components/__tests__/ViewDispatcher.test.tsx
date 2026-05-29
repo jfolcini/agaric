@@ -12,6 +12,7 @@ import { act, render, renderHook, screen, waitFor } from '@testing-library/react
 import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '../../lib/i18n'
 import { useNavigationStore } from '../../stores/navigation'
 import { useTabsStore } from '../../stores/tabs'

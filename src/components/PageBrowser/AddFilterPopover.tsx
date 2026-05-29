@@ -21,6 +21,7 @@ import { Plus } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -442,7 +443,7 @@ function PathEditor({
         placeholder={t('pageBrowser.filter.pathPlaceholder')}
         aria-label={t('pageBrowser.filter.pathPlaceholder')}
       />
-      {/* biome-ignore lint/a11y/noLabelWithoutControl: the Radix Checkbox (a button) is the control and carries its own aria-label; biome can't see it through the component boundary */}
+      {/* oxlint-disable-next-line jsx-a11y/label-has-associated-control -- the Radix Checkbox (a button) is the control and carries its own aria-label; biome can't see it through the component boundary */}
       <label className="flex items-center gap-2 px-1 text-xs">
         <Checkbox
           checked={exclude}

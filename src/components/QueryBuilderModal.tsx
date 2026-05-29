@@ -8,6 +8,7 @@
 import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -27,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+
 import { logger } from '../lib/logger'
 import { parseQueryExpression } from '../lib/query-utils'
 import { listPropertyDefs } from '../lib/tauri'

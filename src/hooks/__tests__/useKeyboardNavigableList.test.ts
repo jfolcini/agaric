@@ -17,6 +17,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useKeyboardNavigableList } from '../useKeyboardNavigableList'
 
 function keyEvent(key: string): KeyboardEvent {

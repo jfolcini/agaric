@@ -4,6 +4,7 @@
 
 import type React from 'react'
 import { useMemo } from 'react'
+
 import { useScrollToFocus } from '../../hooks/useScrollToFocus'
 import type { DayEntry } from '../../lib/date-utils'
 import { getTodayString } from '../../lib/date-utils'

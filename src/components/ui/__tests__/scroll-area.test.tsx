@@ -16,6 +16,7 @@ import { render } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { ScrollArea, ScrollBar } from '../scroll-area'
 
 /** Helper: querySelector that throws on null. */

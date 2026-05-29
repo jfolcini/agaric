@@ -11,6 +11,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { entryKey, NON_REVERSIBLE_OPS } from '../hooks/useHistorySelection'
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
 import { HistoryListItem } from './HistoryListItem'

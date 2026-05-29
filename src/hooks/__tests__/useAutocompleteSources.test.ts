@@ -41,6 +41,7 @@ vi.mock('@/lib/logger', () => ({
 
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+
 import { useAutocompleteSources } from '../useAutocompleteSources'
 
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)

@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { ResultCard } from '../ResultCard'
 

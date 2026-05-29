@@ -9,6 +9,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useNavigationStore } from '../../stores/navigation'
 import { selectPageStack, useTabsStore } from '../../stores/tabs'
 import { PageLink } from '../PageLink'
@@ -83,7 +84,7 @@ describe('PageLink', () => {
     const parentClick = vi.fn()
     const user = userEvent.setup()
     render(
-      // biome-ignore lint/a11y/noStaticElementInteractions: test wrapper to verify stopPropagation
+      // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- test wrapper to verify stopPropagation
       <div onClick={parentClick} onKeyDown={() => {}}>
         <PageLink pageId="P1" title="My Page" />
       </div>,

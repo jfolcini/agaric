@@ -11,6 +11,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { LEGACY_SPACE_KEY, useSpaceStore } from '../../stores/space'
 import { addRecentCommand, getRecentCommands } from '../recent-commands'
 

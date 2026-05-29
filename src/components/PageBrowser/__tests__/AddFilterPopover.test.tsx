@@ -14,12 +14,14 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import {
   __resetPriorityLevelsForTests,
   DEFAULT_PRIORITY_LEVELS,
   setPriorityLevels,
 } from '@/lib/priority-levels'
 import type { FilterPrimitive } from '@/lib/tauri'
+
 import { AddFilterPopover } from '../AddFilterPopover'
 
 /** Opens the popover via its trigger and resolves once the dialog is mounted. */

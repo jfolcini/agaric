@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+
 import { formatDate } from '../lib/date-utils'
 import { getShortcutKeys } from '../lib/keyboard-config'
 import { getJournalPageByDate } from '../lib/tauri'

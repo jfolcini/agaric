@@ -19,10 +19,12 @@
 import type React from 'react'
 import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import type { MatchOffset, SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
+
 import { SnippetHighlight } from './SnippetHighlight'
 
 export interface SearchResultBlockRowProps {
@@ -117,13 +119,13 @@ function SearchResultBlockRowImpl({
   }
 
   return (
-    // biome-ignore lint/a11y/useKeyWithClickEvents: tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
+    // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- tabIndex={-1} keeps the row out of the focus path; keyboard activation flows through the parent combobox's input via aria-activedescendant per the WAI-ARIA 1.2 combobox pattern. PEND-73 Phase 3.U3 removed the dead row-level onKeyDown that was never reachable.
     <li
       id={id}
       ref={measureRef}
       data-index={dataIndex}
       style={style}
-      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
       role="option"
       aria-selected={isFocused}
       aria-disabled={loading ? true : undefined}

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'

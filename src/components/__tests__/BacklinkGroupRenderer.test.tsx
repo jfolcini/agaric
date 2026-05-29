@@ -17,6 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { Component, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import type { BacklinkGroup, BlockRow } from '../../lib/tauri'
 import { BacklinkGroupRenderer } from '../BacklinkGroupRenderer'

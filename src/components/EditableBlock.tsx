@@ -10,12 +10,14 @@ import { EditorContent } from '@tiptap/react'
 import type { TFunction } from 'i18next'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
+
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { shouldSplitOnBlur } from '../editor/use-roving-editor'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '../lib/file-utils'
@@ -265,7 +267,7 @@ function EditableBlockInner({
   }
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: wrapper div catches blur from TipTap contenteditable
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- wrapper div catches blur from TipTap contenteditable
     <section
       ref={wrapperRef}
       id={`editor-${blockId}`}

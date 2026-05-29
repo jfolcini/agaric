@@ -11,7 +11,9 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+
 import { announce } from '../lib/announcer'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { HistoryEntry } from '../lib/tauri'

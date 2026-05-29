@@ -20,6 +20,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { SpaceRow } from '../../lib/tauri'
 import { useSpaceStore } from '../../stores/space'
 import { SpaceTopStripe } from '../SpaceTopStripe'

@@ -12,6 +12,7 @@
 import type { Editor } from '@tiptap/core'
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
+
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'
 

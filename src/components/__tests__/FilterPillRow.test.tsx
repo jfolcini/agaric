@@ -20,8 +20,10 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { axe } from '@/__tests__/helpers/axe'
 import { t } from '@/lib/i18n'
+
 import { FilterPillRow, type FilterWithKey, filterSummary } from '../FilterPillRow'
 
 beforeEach(() => {
@@ -233,7 +235,7 @@ describe('FilterPillRow', () => {
     })
 
     it('returns "filter" for unknown filter type', () => {
-      // biome-ignore lint/suspicious/noExplicitAny: testing unknown filter type fallback
+      // oxlint-disable-next-line typescript/no-explicit-any -- testing unknown filter type fallback
       expect(filterSummary({ type: 'Unknown' } as any)).toBe('filter')
     })
   })

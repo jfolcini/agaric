@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'

@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { i18n } from '../i18n'
 
+import { i18n } from '../i18n'
 // Import every namespace individually so we can detect cross-namespace
 // key collisions that object spread silently overwrites.
 import { agenda } from '../i18n/agenda'

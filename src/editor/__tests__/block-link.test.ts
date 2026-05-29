@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { BlockLink } from '../extensions/block-link'
 
 describe('BlockLink', () => {

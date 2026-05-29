@@ -15,6 +15,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { __resetCalendarPageDatesForTests, useCalendarPageDates } from '../useCalendarPageDates'
 
 const mockedInvoke = vi.mocked(invoke)

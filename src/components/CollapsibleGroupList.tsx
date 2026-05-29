@@ -8,8 +8,10 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { getPageDisplayName } from '@/lib/page-display'
+
 import { PageLink } from './PageLink'
 
 export interface GroupItem {
@@ -194,7 +196,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 // live in a per-group child component.
                 renderGroupList(group, title)
               ) : (
-                // biome-ignore lint/a11y/useAriaPropsSupportedByRole: `aria-activedescendant` is gated on `listRole === 'listbox'` at runtime; biome can't see the conditional. PEND-50 sets `listRole="listbox"` on search-result lists; other consumers leave `listRole` unset and never receive the attribute.
+                // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- `aria-activedescendant` is gated on `listRole === 'listbox'` at runtime; biome can't see the conditional. PEND-50 sets `listRole="listbox"` on search-result lists; other consumers leave `listRole` unset and never receive the attribute.
                 <ul
                   className={listClassName ?? 'ml-4 mt-1 space-y-1'}
                   aria-label={listAriaLabel?.(title)}

@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { blendFtsFuzzy, jaroWinkler } from '../jaro-winkler'
 
 describe('jaroWinkler — boundaries', () => {

@@ -4,7 +4,9 @@
 
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
+
 import { logger } from '@/lib/logger'
+
 import { useAgendaPreferences } from '../../hooks/useAgendaPreferences'
 import { executeAgendaFilters, loadMoreAgendaFilters } from '../../lib/agenda-filters'
 import type { BlockRow } from '../../lib/tauri'
@@ -46,7 +48,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
   } = useAgendaPreferences()
 
   // ── Agenda filter execution ────────────────────────────────────────
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey forces re-fetch after inline date edits
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- refreshKey forces re-fetch after inline date edits
   useEffect(() => {
     let cancelled = false
     setAgendaLoading(true)

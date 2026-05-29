@@ -17,10 +17,13 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { t } from '@/lib/i18n'
+
 import {
   ONBOARDING_STORAGE_KEY,
   readOnboardingSeen,

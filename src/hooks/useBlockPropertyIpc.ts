@@ -25,6 +25,7 @@
  */
 
 import { useCallback } from 'react'
+
 import {
   getProperties as getPropertiesIpc,
   listPropertyDefs as listPropertyDefsIpc,

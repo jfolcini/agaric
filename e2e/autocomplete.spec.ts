@@ -10,6 +10,7 @@
  */
 
 import { expect, test } from '@playwright/test'
+
 import { waitForBoot } from './helpers'
 
 test.describe('Autocomplete (PEND-60)', () => {

@@ -29,6 +29,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
@@ -757,7 +758,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
         host.textContent = `${host.textContent ?? ''}${value ?? ''}`
         return true
       })
-    // biome-ignore lint/suspicious/noExplicitAny: jsdom's Document prototype omits execCommand — assigning via `as any` is the cleanest test-only stub.
+    // oxlint-disable-next-line typescript/no-explicit-any -- jsdom's Document prototype omits execCommand — assigning via `as any` is the cleanest test-only stub.
     ;(document as any).execCommand = execCommandStub
 
     // Set up a contenteditable host to act as the editor block.
@@ -797,7 +798,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     await userEvent.keyboard('{Enter}')
     expect(execCommandStub).toHaveBeenCalledWith('insertText', false, '[[Alpha]]')
     host.remove()
-    // biome-ignore lint/suspicious/noExplicitAny: restore the jsdom-default missing property.
+    // oxlint-disable-next-line typescript/no-explicit-any -- restore the jsdom-default missing property.
     ;(document as any).execCommand = undefined
   })
 })

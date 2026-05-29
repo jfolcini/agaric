@@ -8,6 +8,7 @@
  */
 
 import type React from 'react'
+
 import { cn } from '@/lib/utils'
 
 export interface IncludeExcludeToggleProps {
@@ -41,7 +42,6 @@ export function IncludeExcludeToggle({
       ).map(({ value, text }) => {
         const selected = negate === value
         return (
-          // biome-ignore lint/a11y/useSemanticElements: a segmented include/exclude toggle needs custom button styling that `<input type="radio">` can't carry; the WAI-ARIA radiogroup pattern (role="radio" + aria-checked) is the canonical accessible substitute and mirrors QueryBuilderModal's type selector.
           <button
             key={String(value)}
             type="button"

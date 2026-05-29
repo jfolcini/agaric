@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import { getBatchProperties } from '../lib/tauri'
 
@@ -74,7 +75,7 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
     return { idSignature: ids.join(' '), ids }
   }, [blocks])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `ids` is captured for use inside the effect; it is recomputed in the same memo as `idSignature` so it changes iff the signature changes — listing it would be redundant.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `ids` is captured for use inside the effect; it is recomputed in the same memo as `idSignature` so it changes iff the signature changes — listing it would be redundant.
   useEffect(() => {
     if (ids.length === 0) {
       // Drop any prior payload when the visible set empties (e.g. page

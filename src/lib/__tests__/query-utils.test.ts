@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../query-utils'
 
 describe('parseQueryExpression', () => {

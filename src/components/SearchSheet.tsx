@@ -17,6 +17,7 @@ import { FileSearch } from 'lucide-react'
 import { lazy, Suspense, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
+
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -27,6 +28,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+
 import { useSearchSheetBridge } from '../hooks/useSearchSheetBridge'
 import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { useInPageFindStore } from '../stores/useInPageFindStore'

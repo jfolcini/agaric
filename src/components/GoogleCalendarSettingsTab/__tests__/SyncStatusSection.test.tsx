@@ -9,7 +9,9 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { GcalStatus } from '@/lib/bindings'
+
 import { SyncStatusSection } from '../SyncStatusSection'
 
 function makeStatus(overrides: Partial<GcalStatus> = {}): GcalStatus {

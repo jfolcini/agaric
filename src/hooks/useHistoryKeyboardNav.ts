@@ -13,6 +13,7 @@
  */
 
 import { type Dispatch, type SetStateAction, useEffect } from 'react'
+
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { useListKeyboardNavigation } from './useListKeyboardNavigation'
 

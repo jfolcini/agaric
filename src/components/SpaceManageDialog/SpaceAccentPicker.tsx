@@ -19,6 +19,7 @@
 import { Check } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setProperty } from '@/lib/tauri'
@@ -77,7 +78,6 @@ export function SpaceAccentPicker({ spaceId }: SpaceAccentPickerProps): React.JS
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
-      {/* biome-ignore lint/a11y/useSemanticElements: a swatch picker is not a `<fieldset>`-style form group; `role="group"` + per-button `aria-pressed` is the conventional WAI-ARIA pattern for a single-select toolbar of toggle buttons */}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('space.accentColorLabel')}>
         {ACCENT_SWATCHES.map((swatch) => (
           <button

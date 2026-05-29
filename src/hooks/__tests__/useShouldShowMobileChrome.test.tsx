@@ -5,6 +5,7 @@
 import { fireEvent, render } from '@testing-library/react'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { _resetHardwareKeyboardLatchForTests } from '../useHasHardwareKeyboard'
 import { useShouldShowMobileChrome } from '../useShouldShowMobileChrome'
 

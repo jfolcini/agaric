@@ -17,8 +17,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { t } from '@/lib/i18n'
+
 import { SpaceDeleteBlockedHint, SpaceDeleteButton } from '../SpaceDeleteButton'
 
 vi.mock('@/lib/logger', () => ({

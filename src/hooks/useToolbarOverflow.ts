@@ -210,7 +210,7 @@ export function useToolbarOverflow<T extends ToolbarItem>(
   // (caller's useMemo deps drive identity). Biome flags `items` as
   // unnecessary here; that's the rare case where the React-hooks-style
   // "use as a re-run trigger" pattern is intentional.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: items is the re-run trigger; the function body reads from sentinelRef.current
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- items is the re-run trigger; the function body reads from sentinelRef.current
   useLayoutEffect(() => {
     const el = sentinelRef.current
     if (!el) return

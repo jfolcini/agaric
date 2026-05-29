@@ -21,6 +21,7 @@
 import type React from 'react'
 import { useEffect, useImperativeHandle, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import {
   type AutocompleteAriaIds,
   AutocompletePopover,
@@ -114,7 +115,7 @@ export function SearchAutocomplete({
   // `setQueryAndCaret` (history recall, chip add, completion apply),
   // otherwise sync the caret from the freshly-committed input value
   // (covers typing). Also re-arm dismissal so typing re-opens.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `query` is the trigger; we read the input post-commit.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `query` is the trigger; we read the input post-commit.
   useEffect(() => {
     setDismissed(false)
     const input = inputRef.current

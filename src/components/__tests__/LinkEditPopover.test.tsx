@@ -17,8 +17,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
+
 import { LinkEditPopover } from '../LinkEditPopover'
 
 // ── Mock UI components ───────────────────────────────────────────────────
@@ -45,7 +47,7 @@ vi.mock('../ui/label', () => ({
     children,
     ...props
   }: React.LabelHTMLAttributes<HTMLLabelElement> & { size?: string }) => (
-    // biome-ignore lint/a11y/noLabelWithoutControl: htmlFor is passed via ...props from the real component
+    // oxlint-disable-next-line jsx-a11y/label-has-associated-control -- htmlFor is passed via ...props from the real component
     <label {...props}>{children}</label>
   ),
 }))

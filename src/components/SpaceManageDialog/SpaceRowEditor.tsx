@@ -12,6 +12,7 @@
  */
 
 import type { SpaceRow } from '@/lib/tauri'
+
 import { SpaceAccentPicker } from './SpaceAccentPicker'
 import { SpaceDeleteBlockedHint, SpaceDeleteButton } from './SpaceDeleteButton'
 import { SpaceJournalTemplateEditor } from './SpaceJournalTemplateEditor'

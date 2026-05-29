@@ -9,6 +9,7 @@
 import mermaid from 'mermaid'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
 
@@ -105,7 +106,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
         aria-label={t('mermaid.label')}
         className="p-3"
         data-testid="mermaid-diagram"
-        // biome-ignore lint/security/noDangerouslySetInnerHtml: mermaid renders with securityLevel 'strict' (DOMPurify-sanitized SVG) — see mermaid.initialize above
+        // oxlint-disable-next-line react/no-danger -- mermaid renders with securityLevel 'strict' (DOMPurify-sanitized SVG) — see mermaid.initialize above
         dangerouslySetInnerHTML={{ __html: svg ?? '' }}
       />
     </ScrollArea>

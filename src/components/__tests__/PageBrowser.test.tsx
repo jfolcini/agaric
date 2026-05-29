@@ -23,7 +23,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { emptyPage, makePage } from '../../__tests__/fixtures'
 import { usePageBrowserFiltersStore } from '../../stores/pageBrowserFilters'
 import { useResolveStore } from '../../stores/resolve'
@@ -1393,7 +1395,7 @@ describe('PageBrowser', () => {
           })
         }
         if (cmd === 'resolve_page_by_alias') {
-          // biome-ignore lint/suspicious/noExplicitAny: dynamic IPC args
+          // oxlint-disable-next-line typescript/no-explicit-any -- dynamic IPC args
           const query = (args as any)?.alias as string | undefined
           aliasCalls.push(query ?? '')
           if (query === 'App') {

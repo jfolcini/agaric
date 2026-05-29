@@ -19,6 +19,7 @@
 
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
+
 import { agenda } from './agenda'
 import { block } from './block'
 import { common } from './common'

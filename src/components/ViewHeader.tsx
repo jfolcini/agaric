@@ -22,6 +22,7 @@
 import type React from 'react'
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
+
 import { logger } from '../lib/logger'
 import { useViewHeaderOutlet } from './ViewHeaderOutlet'
 

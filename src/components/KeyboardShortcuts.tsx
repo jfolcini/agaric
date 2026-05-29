@@ -8,6 +8,7 @@
 import { ChevronRight, Keyboard, Settings as SettingsIcon } from 'lucide-react'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +22,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { useNavigationStore } from '@/stores/navigation'
+
 import { getCurrentShortcuts } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { loadQuickCaptureShortcut } from '../lib/quick-capture-shortcut'
@@ -129,7 +131,7 @@ export function KeyboardShortcuts({
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild from localStorage when sheet opens
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- rebuild from localStorage when sheet opens
   const shortcutGroups = useMemo(() => buildShortcutGroups(), [open])
 
   // UX-388: filter visible shortcuts by description, key text, or category.

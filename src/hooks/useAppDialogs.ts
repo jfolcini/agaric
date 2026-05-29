@@ -31,6 +31,7 @@
  */
 
 import { useEffect, useState } from 'react'
+
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../lib/bug-report-events'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 

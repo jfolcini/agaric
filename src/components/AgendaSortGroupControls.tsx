@@ -3,10 +3,12 @@ import { ArrowUpDown, Layers } from 'lucide-react'
 import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 import { cn } from '@/lib/utils'
+
 import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
 
 const GROUP_OPTIONS: { value: AgendaGroupBy; labelKey: string }[] = [

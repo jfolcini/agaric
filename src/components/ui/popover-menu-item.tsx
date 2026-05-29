@@ -25,7 +25,8 @@ const popoverMenuItemVariants = cva(
 )
 
 interface PopoverMenuItemProps
-  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
+  extends
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'disabled'>,
     VariantProps<typeof popoverMenuItemVariants> {
   ref?: React.Ref<HTMLButtonElement>
   asChild?: boolean

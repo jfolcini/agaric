@@ -12,6 +12,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
+
 import {
   coerceBySpace,
   LEGACY_HISTORY_SPACE_KEY,

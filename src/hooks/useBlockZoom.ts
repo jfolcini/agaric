@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
+
 import type { FlatBlock } from '../lib/tree-utils'
 import { getDragDescendants } from '../lib/tree-utils'
 

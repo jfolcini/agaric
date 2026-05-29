@@ -12,6 +12,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -25,6 +26,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import type { PeerRefRow } from '../lib/tauri'
 import {
   cancelPairing,

@@ -9,6 +9,7 @@
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -19,6 +20,7 @@ import {
 } from '@/components/ui/select'
 import { STATE_VALUES } from '@/hooks/useAutocompleteSources'
 import type { FilterToken } from '@/lib/search-query'
+
 import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
 export interface StateFilterFormProps {

@@ -83,7 +83,7 @@ describe('useSyncWithTimeout', () => {
 
     await act(async () => {
       resolveFn()
-      // biome-ignore lint/style/noNonNullAssertion: assigned in act() above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- assigned in act() above
       await execPromise!
     })
 

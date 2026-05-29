@@ -28,7 +28,9 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { logger } from '@/lib/logger'
+
 import { GoogleCalendarSettingsTab } from '../GoogleCalendarSettingsTab'
 
 // ---------------------------------------------------------------------------

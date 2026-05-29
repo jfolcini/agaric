@@ -21,6 +21,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { DeviceManagement } from '../DeviceManagement'
 
 // Mock PairingDialog to prevent it from making its own invoke calls.
@@ -608,7 +609,7 @@ describe('DeviceManagement', () => {
 
   it('Sync All calls startSync for each peer sequentially', async () => {
     const syncCalls: string[] = []
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_device_id') return 'device-123'
       if (cmd === 'list_peer_refs')
@@ -686,7 +687,7 @@ describe('DeviceManagement', () => {
 
   it('Sync All continues when first peer fails (#421)', async () => {
     const syncCalls: string[] = []
-    // biome-ignore lint/suspicious/noExplicitAny: invoke args are dynamic per command
+    // oxlint-disable-next-line typescript/no-explicit-any -- invoke args are dynamic per command
     vi.mocked(invoke).mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_device_id') return 'device-123'
       if (cmd === 'list_peer_refs')

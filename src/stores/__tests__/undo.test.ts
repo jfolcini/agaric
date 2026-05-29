@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore } from '../undo'
 
 vi.mock('@/lib/tauri', () => ({
@@ -22,6 +23,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { logger } from '@/lib/logger'
 import { findUndoGroup, listPageHistory, redoPageOp, undoPageOp } from '@/lib/tauri'
 

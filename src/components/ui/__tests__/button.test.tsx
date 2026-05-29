@@ -11,6 +11,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { Button } from '../button'
 
 /** Helper: render a Button with a given size and return the DOM element. */

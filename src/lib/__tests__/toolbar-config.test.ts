@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+
 import type { ToolbarButtonConfig } from '../toolbar-config'
 import {
   CODE_LANGUAGES,

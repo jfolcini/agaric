@@ -197,7 +197,7 @@ export function useListKeyboardNavigation(
   // Reset to 0 on query (resetKey) change. Skips the initial mount via a ref
   // so we don't fight the `useState(0)` initialiser.
   const firstResetKeyRun = useRef(true)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset only when resetKey changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset only when resetKey changes
   useEffect(() => {
     if (!hasResetKey) return
     if (firstResetKeyRun.current) {
@@ -208,7 +208,7 @@ export function useListKeyboardNavigation(
   }, [resetKey])
 
   // itemCount change: clamp when keyed (resetKey present), else reset to 0.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — runs on itemCount change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — runs on itemCount change
   useEffect(() => {
     if (hasResetKey) {
       // Clamp into [0, itemCount - 1]; an empty list parks focus at 0.

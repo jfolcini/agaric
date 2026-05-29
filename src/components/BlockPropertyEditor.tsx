@@ -14,9 +14,11 @@ import type React from 'react'
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+
 import { logger } from '../lib/logger'
 import { reportIpcError } from '../lib/report-ipc-error'
 import type { BlockRow } from '../lib/tauri'

@@ -11,8 +11,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-
 import { useTranslation } from 'react-i18next'
+
 import type { AutocompleteItem } from '@/components/search/AutocompletePopover'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'

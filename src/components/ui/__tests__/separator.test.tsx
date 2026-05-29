@@ -11,6 +11,7 @@ import { render } from '@testing-library/react'
 import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { Separator } from '../separator'
 
 /** Helper: querySelector that throws on null. */

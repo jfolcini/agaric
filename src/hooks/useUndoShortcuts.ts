@@ -8,11 +8,13 @@
 
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
 import { useNavigationStore } from '@/stores/navigation'
 import { pageBlockRegistry } from '@/stores/page-blocks'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+
 import { announce } from '../lib/announcer'
 import { getBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'

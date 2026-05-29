@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { truncateContent } from '../text-utils'
 
 describe('truncateContent', () => {

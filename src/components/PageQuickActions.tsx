@@ -44,8 +44,10 @@ import { Star, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { cn } from '@/lib/utils'
+
 import { IconButton } from './ui/icon-button'
 
 export type PageQuickActionsVariant = 'header' | 'journal' | 'row'

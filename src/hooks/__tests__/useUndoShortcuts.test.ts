@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useUndoShortcuts } from '../useUndoShortcuts'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
@@ -96,11 +97,13 @@ vi.mock('../../lib/announcer', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
+
 import { announce } from '../../lib/announcer'
 
 const mockedToast = vi.mocked(toast)
@@ -140,7 +143,7 @@ function renderHook(hookFn: () => void): { unmount: () => void } {
 // -- Setup / teardown ---------------------------------------------------------
 
 beforeEach(() => {
-  // biome-ignore lint/suspicious/noExplicitAny: React test env global
+  // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
   useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })

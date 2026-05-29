@@ -10,12 +10,14 @@
 import { Smartphone } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { formatLastSynced } from '@/lib/format'
+
 import type { PeerRefRow } from '../lib/tauri'
 
 export interface PairingPeersListProps {

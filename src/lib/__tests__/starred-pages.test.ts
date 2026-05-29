@@ -10,6 +10,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
+
 import { getStarredPages, isStarred, toggleStarred } from '../starred-pages'
 
 beforeEach(() => {

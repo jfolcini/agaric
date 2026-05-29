@@ -113,7 +113,7 @@ function flattenChildren(children: React.ReactNode): React.ReactNode[] {
   // alongside scalar `<SelectSeparator />` siblings; the recursion lets the
   // partition function see each leaf independently.
   const out: React.ReactNode[] = []
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic React element traversal
+  // oxlint-disable-next-line typescript/no-explicit-any -- dynamic React element traversal
   const walk = (node: any) => {
     if (node == null || node === false || node === '') return
     if (Array.isArray(node)) {
@@ -133,7 +133,7 @@ function partitionSelectChildren(children: React.ReactNode): {
   const inside: React.ReactNode[] = []
   const portaled: React.ReactNode[] = []
   for (const child of flattenChildren(children)) {
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic React element introspection
+    // oxlint-disable-next-line typescript/no-explicit-any -- dynamic React element introspection
     const type = (child as any)?.type
     if (
       type === undefined ||

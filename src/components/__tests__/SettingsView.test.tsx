@@ -20,6 +20,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '../../lib/i18n'
 import { SettingsView } from '../SettingsView'
 

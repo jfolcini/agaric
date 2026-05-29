@@ -11,6 +11,7 @@
 
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
 import { useSidebarEdgeSwipe } from '../use-sidebar-edge-swipe'
 
 /**

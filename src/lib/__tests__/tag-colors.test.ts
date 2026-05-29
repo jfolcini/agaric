@@ -16,6 +16,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import {
   clearTagColor,
   getTagColor,

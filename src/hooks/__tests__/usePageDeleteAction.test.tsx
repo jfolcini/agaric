@@ -17,6 +17,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { usePageDeleteAction } from '../usePageDeleteAction'
 
 const mockedInvoke = vi.mocked(invoke)

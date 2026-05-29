@@ -11,6 +11,7 @@
  */
 
 import { useEffect } from 'react'
+
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import type { BlockRow } from '../lib/tauri'
 

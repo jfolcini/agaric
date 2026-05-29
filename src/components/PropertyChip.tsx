@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 import { cn } from '@/lib/utils'
 
@@ -80,7 +81,6 @@ export function PropertyChip({
   )
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: role="group" is the aria-label carrier for a two-button pill — <fieldset> is form-grouping semantics. See TEST-4b.
     <div
       role="group"
       aria-label={chipLabel}

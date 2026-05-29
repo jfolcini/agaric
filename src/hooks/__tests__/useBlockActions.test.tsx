@@ -10,6 +10,7 @@
 
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
 import { type BlockActions, BlockActionsProvider, useBlockActions } from '../useBlockActions'
 
 function Probe({ onResult }: { onResult: (actions: BlockActions) => void }) {

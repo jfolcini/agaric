@@ -15,8 +15,10 @@ import { AlertCircle, CalendarDays, CheckCircle2 } from 'lucide-react'
 import type React from 'react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
@@ -337,11 +339,11 @@ function BlockListItemInner({
   // and include it in the deps so links re-resolve once the space-switch
   // preload lands — otherwise we render the `[[ULID]]` fallback
   // indefinitely after a switch. The callbacks themselves are listed
-  // explicitly (rather than biome-ignored) so a future regression that
+  // explicitly (rather than oxlint-disabled) so a future regression that
   // makes them non-stable surfaces as a memo recompute instead of stale
   // rendered output.
   const resolveVersion = useResolveStore((s) => s.version)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
       content
@@ -406,7 +408,7 @@ function BlockListItemInner({
       data-testid={testId}
       data-block-list-item
       id={testId || blockId ? `block-item-${blockId}` : undefined}
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: li needs tabIndex for keyboard navigation
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- li needs tabIndex for keyboard navigation
       tabIndex={0}
       onClick={onClick}
       onKeyDown={onKeyDown}

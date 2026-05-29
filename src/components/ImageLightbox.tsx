@@ -9,6 +9,7 @@
 
 import { ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { cn } from '../lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
 

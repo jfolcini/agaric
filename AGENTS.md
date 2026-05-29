@@ -68,7 +68,7 @@ prek run --all-files         # Pre-commit hooks
 2. **Event sourcing with materialized views** — commands append to the op log AND write the primary state atomically in a single `BEGIN IMMEDIATE` transaction (synchronous primary-state materialization); the materializer rebuilds derived materialized views (FTS, tag inheritance, page-id lookup, agenda projection, link graphs) asynchronously in the background
 3. **Cursor-based pagination** on ALL list queries — no offset pagination. Carve-outs: (a) named small-cardinality lookups that return a fixed-size set (`list_property_keys` — bounded in practice by user vocabulary, not data volume) may return a flat `Vec<T>` with a `limit` parameter; (b) "fetch the Nth row" operations (e.g., `undo_page_op_inner` using `LIMIT 1 OFFSET ?`) where N is upper-bounded by a small constant (≤1000) are not list queries and may use `OFFSET` — document the rationale inline at the call site.
 4. **Single TipTap instance** — roving editor, static divs for non-focused blocks
-5. **Biome only** — no ESLint, no Prettier
+5. **OXC only (oxlint + oxfmt)** — no ESLint, no Prettier, no Biome
 6. **sqlx compile-time queries** — `query!` / `query_as!` / `query_scalar!`. `.sqlx/` cache committed. Run `cargo sqlx prepare` after SQL changes.
 7. **PRAGMA foreign_keys = ON** — enforced on every connection (both pools)
 8. **ULID uppercase normalization** — Crockford base32 for blake3 hash determinism
@@ -129,7 +129,7 @@ Agaric is a **single-user, multi-device, local-first** application with **no clo
 - **Serializer:** Custom Markdown serializer (`src/editor/markdown-serializer.ts`) — zero external deps, handles `#[ULID]` and `[[ULID]]` tokens
 - **Sync hooks:** `useSyncTrigger` (exponential backoff periodic sync), `useSyncEvents` (Tauri event listener), `useOnlineStatus` (navigator.onLine)
 - **Error logging:** Dual-write logger (`src/lib/logger.ts`) — console + Rust IPC bridge. Stack capture, cause chain extraction (3 levels), rate limiting (5/min). Global error/rejection handlers in `main.tsx`.
-- **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (Biome)
+- **Code style:** 2-space indent, single quotes, no semicolons, 100-char line width (oxfmt)
 
 ## Frontend Development Guidelines
 
@@ -207,7 +207,7 @@ Every frontend change — new component, bugfix, feature — must build on exist
 - **Numeric `limit:` literals in IPC calls** — every pagination-aware wrapper in `src/lib/tauri.ts` takes `limit?: SafeLimit | undefined`, not `number`.  Wrap with `safeLimit(n, max)` or one of the per-IPC helpers (`listBlocksLimit`, `paginationLimit`, `listProjectedAgendaLimit`), or use a named cap constant (`PAGINATION_LIMIT`, `AGENDA_QUERY_LIMIT`, `AGENDA_LIST_BLOCKS_LIMIT`).  See invariant #10.
 - **Picker / filter input without debouncing** — every searchable picker or filter input must debounce its IPC fan-out with `useDebouncedCallback` at **300 ms**. `TagFilterPanel`'s `useDebouncedCallback(handleSearch, 300)` is the canonical example; `SearchPanel`, the picker plugins, and the property picker all follow it. Direct `onChange → invoke(...)` chains hit the backend on every keystroke and were the root cause of PERF-28.
 - **Silent `.catch(() => {})` blocks** — always use `logger.warn` or `logger.error`. Silent error swallowing masks real bugs.
-- **Weakening strict settings** — do not add `@ts-ignore` or `biome-ignore` without a clear justification comment. Acceptable only when: (a) the rule is genuinely too strict for the context (e.g., `noExcessiveCognitiveComplexity` when splitting a component would create worse prop-drilling); (b) the comment explains the tradeoff; (c) the ignore is scoped to the minimal range (single line or function, not whole file). Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
+- **Weakening strict settings** — do not add `@ts-ignore` or `oxlint-disable` without a clear justification comment. Acceptable only when: (a) the rule is genuinely too strict for the context (e.g., `noExcessiveCognitiveComplexity` when splitting a component would create worse prop-drilling); (b) the comment explains the tradeoff; (c) the ignore is scoped to the minimal range (single line or function, not whole file). Do not relax `exactOptionalPropertyTypes`, `noImplicitReturns`, or `unsafe_code = "deny"`.
 - **`React.forwardRef` wrappers** — deprecated in React 19. Accept `ref` as a normal prop instead (see "Ref-as-prop" in Mandatory patterns above). Likewise **never use `React.ComponentRef<typeof X>`** (deprecated) or the ambient `JSX.*` namespace (React 19 dropped the global — use `React.JSX.IntrinsicElements` / `React.ReactElement`).
 
 ### Common frontend review catches
@@ -264,7 +264,7 @@ cd src-tauri && cargo test -- specta_tests --ignored
 
 ## Pre-commit & CI
 
-- **Pre-commit:** `prek.toml` — broad file-type-aware hook surface at pre-commit, plus pre-push hooks (`no-commit-to-branch` + the parallel `verify-ci-equivalent` umbrella below). Coverage includes builtin file checks; secret + workflow security (gitleaks, zizmor); actionlint; biome + tsc + vitest (frontend lint/test); cargo fmt/clippy/nextest/deny/machete (Rust); sqruff + sqlx prepare + migrations-immutable (DB); typos + shellcheck + taplo + markdownlint + lychee (cross-cutting); repo-specific guards (no-hsl-rgb-var-wrap, no-legacy-react-apis, no-ui-store-imports, tauri-mock-parity, tauri-command-sanitize, ipc-error-path-coverage, snapshot-redaction, axe-presence, test-file-naming, md-link-targets); npm audit + license-checker + depcheck + knip + audit.toml-in-sync. See `prek.toml` for the current hook list. Hook-tool config for typos / taplo / zizmor lives in `_typos.toml`, `.taplo.toml`, and `.github/zizmor.yml` respectively. The `migrations-immutable` hook enforces invariant #1 from the [invariants list](#key-architectural-invariants) at commit time.
+- **Pre-commit:** `prek.toml` — broad file-type-aware hook surface at pre-commit, plus pre-push hooks (`no-commit-to-branch` + the parallel `verify-ci-equivalent` umbrella below). Coverage includes builtin file checks; secret + workflow security (gitleaks, zizmor); actionlint; oxlint + oxfmt + tsc + vitest (frontend lint/format/test); cargo fmt/clippy/nextest/deny/machete (Rust); sqruff + sqlx prepare + migrations-immutable (DB); typos + shellcheck + taplo + markdownlint + lychee (cross-cutting); repo-specific guards (no-hsl-rgb-var-wrap, no-legacy-react-apis, no-ui-store-imports, tauri-mock-parity, tauri-command-sanitize, ipc-error-path-coverage, snapshot-redaction, axe-presence, test-file-naming, md-link-targets); npm audit + license-checker + depcheck + knip + audit.toml-in-sync. See `prek.toml` for the current hook list. Hook-tool config for typos / taplo / zizmor lives in `_typos.toml`, `.taplo.toml`, and `.github/zizmor.yml` respectively. The `migrations-immutable` hook enforces invariant #1 from the [invariants list](#key-architectural-invariants) at commit time.
 - **Pre-push:** `verify-ci-equivalent` (`scripts/verify-ci-equivalent.sh`) runs everything `.github/workflows/_validate.yml` runs, parallelized across cores (≈3-4 min wall on a warm cache). Catches CI failures before the push reaches GitHub. `SKIP_CI_VERIFY=1 git push` escape hatch for docs-only typo fixes. Release pre-flight bundle build is opt-in via `scripts/verify-release-build.sh` (not in pre-push — too slow for daily cadence).
 - **CI:** `.github/workflows/_validate.yml` — split into focused jobs after PEND-39: `lint`, `vitest` (sharded matrix), `playwright` (sharded matrix), `cargo-tests`, `validate-all` (aggregate). See `.github/workflows/_validate.yml` for the current job graph and shard counts. `ci.yml` consumes the workflow + adds the desktop build matrix (`ubuntu-24.04`, `windows-2025`, `macos-15`) and Android job. `release.yml` adds the bundle build + SLSA attest + release upload on tag pushes.
 
@@ -311,7 +311,7 @@ During development, run only the relevant check:
 
 - Editing Rust? → `cd src-tauri && cargo test specific_test_name`
 - Editing TS? → `npx vitest run`
-- Never run clippy/fmt/biome manually — prek hooks handle it at commit time
+- Never run clippy/fmt/oxlint/oxfmt manually — prek hooks handle it at commit time
 - Frontend checks are irrelevant when only Rust changed (and vice versa)
 
 ## Code Quality Enforcement
@@ -319,9 +319,9 @@ During development, run only the relevant check:
 Strict compiler and linter settings are enabled project-wide. **Do not weaken these.**
 
 - **TypeScript:** `exactOptionalPropertyTypes: true`, `noImplicitReturns: true` — use `| undefined` for optional properties, never pass `undefined` implicitly. On TypeScript 6 the deprecated `baseUrl` in `tsconfig.app.json` was removed; `paths: { "@/*": ["./src/*"] }` resolves relative to the tsconfig directory (the repo root) — keep it that way.
-- **Biome:** `noEvolvingTypes: error`, `useAwait: error`, `noUndeclaredDependencies: error`, `useExplicitLengthCheck: error` — test files have `useAwait` overridden where needed.
+- **OXC (oxlint):** `typescript/require-await: error`, `unicorn/explicit-length-check: error`, `typescript/only-throw-error: error`, `import/no-default-export: error` — test files have `require-await` overridden where needed. Config lives in `.oxlintrc.json`.
 - **Rust:** `unsafe_code = "deny"` in `[lints.rust]`. All clippy warnings must be resolved.
-- **Non-null assertions:** Banned (`noNonNullAssertion` in Biome). Use `as Type` casts or proper narrowing instead of `!`.
+- **Non-null assertions:** Banned (`typescript/no-non-null-assertion` in oxlint). Use `as Type` casts or proper narrowing instead of `!`.
 
 ## Performance Conventions
 

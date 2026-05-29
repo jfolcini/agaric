@@ -10,6 +10,7 @@ import { Plus, Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
@@ -19,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../hooks/usePaginatedQuery'
@@ -218,12 +220,12 @@ export function TagFilterPanel(): React.ReactElement {
   })
 
   // Reset focused index when items change
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on results change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on results change
   useEffect(() => {
     setResultsFocusedIndex(0)
   }, [results.length, setResultsFocusedIndex])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — reset on matching tags change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset on matching tags change
   useEffect(() => {
     setMatchingFocusedIndex(0)
   }, [filteredMatching.length, setMatchingFocusedIndex])
@@ -371,7 +373,6 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="mb-2 text-sm font-medium text-muted-foreground">
             {t('tagFilter.matchingTagsTitle')}
           </h4>
-          {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for tag suggestions — no semantic HTML equivalent for non-tabular interactive grid */}
           <div
             className="space-y-1"
             ref={matchingTagsRef}
@@ -387,7 +388,6 @@ export function TagFilterPanel(): React.ReactElement {
             {filteredMatching.map((tag, index) => {
               const isFocused = index === matchingFocusedIndex
               return (
-                // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
                 <div
                   key={tag.tag_id}
                   role="row"
@@ -399,13 +399,11 @@ export function TagFilterPanel(): React.ReactElement {
                     isFocused && 'ring-2 ring-inset ring-ring/50 bg-accent/30',
                   )}
                 >
-                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-                  {/* biome-ignore lint/a11y/useFocusableInteractive: text-only gridcell, focus stays on the row */}
+                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- text-only gridcell, focus stays on the row */}
                   <span role="gridcell">
                     <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
                   </span>
-                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-                  {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner Button */}
+                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner Button */}
                   <span role="gridcell">
                     <Button
                       variant="ghost"
@@ -443,7 +441,6 @@ export function TagFilterPanel(): React.ReactElement {
           <h4 className="text-sm font-medium text-muted-foreground">
             {t('tagFilter.resultsTitle')} ({results.length})
           </h4>
-          {/* biome-ignore lint/a11y/useSemanticElements: ARIA grid pattern for tag results — no semantic HTML equivalent for non-tabular interactive grid */}
           <div
             ref={resultsListRef}
             role="grid"
@@ -467,7 +464,6 @@ export function TagFilterPanel(): React.ReactElement {
             {results.map((block, index) => {
               const isFocused = index === resultsFocusedIndex
               return (
-                // biome-ignore lint/a11y/useSemanticElements: ARIA grid row — no semantic HTML equivalent for nested-action rows
                 <div
                   key={block.id}
                   id={`tag-result-${block.id}`}
@@ -477,8 +473,7 @@ export function TagFilterPanel(): React.ReactElement {
                   tabIndex={-1}
                   className={cn(isFocused && 'ring-2 ring-inset ring-ring/50 rounded-lg')}
                 >
-                  {/* biome-ignore lint/a11y/useSemanticElements: ARIA gridcell for grid pattern */}
-                  {/* biome-ignore lint/a11y/useFocusableInteractive: gridcell focus is delegated to inner ResultCard */}
+                  {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner ResultCard */}
                   <div role="gridcell">
                     <ResultCard
                       block={block}

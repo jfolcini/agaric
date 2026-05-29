@@ -10,6 +10,7 @@
 
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import type { PickerItem } from '../SuggestionList'
 
 type CapturedOptions = Record<string, unknown>

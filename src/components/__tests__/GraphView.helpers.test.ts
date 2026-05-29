@@ -7,6 +7,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { fetchGraphData } from '../GraphView.helpers'
 
 const mockedInvoke = vi.mocked(invoke)

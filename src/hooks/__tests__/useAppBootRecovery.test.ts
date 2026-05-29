@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../lib/logger'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
 import { useAppBootRecovery } from '../useAppBootRecovery'

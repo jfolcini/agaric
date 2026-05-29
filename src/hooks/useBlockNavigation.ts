@@ -18,6 +18,7 @@
 
 import type React from 'react'
 import { useCallback, useMemo } from 'react'
+
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 

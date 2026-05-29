@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useRef } from 'react'
+
 import { setWindowTitle } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'

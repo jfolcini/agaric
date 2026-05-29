@@ -83,7 +83,7 @@ type Measurable = { getBoundingClientRect: () => DOMRect }
  */
 function SelectedItemBridge({ onSync }: { onSync: () => void }): null {
   const selectedItemId = useCommandState((s) => s.selectedItemId as string | undefined)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `selectedItemId` is the trigger, not body-read — we re-sync ids when cmdk moves the highlight.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `selectedItemId` is the trigger, not body-read — we re-sync ids when cmdk moves the highlight.
   useEffect(() => {
     onSync()
   }, [selectedItemId])

@@ -14,12 +14,14 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { cn } from '@/lib/utils'
+
 import { getShortcutKeys } from '../lib/keyboard-config'
 
 /** A space shown in the "Move to space" sub-menu. */

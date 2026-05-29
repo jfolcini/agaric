@@ -10,11 +10,13 @@ import { Link } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { useBacklinkResolution } from '../hooks/useBacklinkResolution'
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '../hooks/useBlockPropertyEvents'
@@ -66,7 +68,7 @@ export function LinkedReferences({
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
     useBacklinkResolution(groups)
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: invalidationKey triggers refetch on property changes (F-39)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey triggers refetch on property changes (F-39)
   const fetchGroups = useCallback(
     async (cursor?: string) => {
       setLoading(true)
@@ -185,7 +187,7 @@ export function LinkedReferences({
   // Reset filter state when navigating to a different page
   // Uses functional updaters to avoid no-op state updates on initial mount
   // (which would re-create fetchGroups and trigger a duplicate fetch).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting filter state on navigation
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pageId is the intentional trigger for resetting filter state on navigation
   useEffect(() => {
     setFilters((prev) => (prev.length > 0 ? [] : prev))
     setSort((prev) => (prev !== null ? null : prev))
@@ -368,11 +370,10 @@ export function LinkedReferences({
                 />
               </div>
 
-              {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
               <div
                 ref={listRef}
                 role="group"
-                // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
+                // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container
                 tabIndex={0}
                 onKeyDown={handleContainerKeyDown}
                 aria-label={t('linkedRefs.listLabel')}

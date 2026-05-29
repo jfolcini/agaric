@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { makeBlock } from '../../../__tests__/fixtures'
 import type { ExecuteFiltersResult } from '../../../lib/agenda-filters'
 import type { ResolvedBlock } from '../../../lib/tauri'

@@ -9,6 +9,7 @@
  */
 
 import JSZip from 'jszip'
+
 import type { BugReport, LogFileEntry } from './tauri'
 
 /**

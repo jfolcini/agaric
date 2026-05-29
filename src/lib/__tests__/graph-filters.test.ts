@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import {
   applyGraphFilters,
   GRAPH_FILTER_TYPES,

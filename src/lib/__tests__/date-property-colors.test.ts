@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+
 import { getSourceColor, getSourceLabel } from '../date-property-colors'
 
 describe('getSourceColor', () => {

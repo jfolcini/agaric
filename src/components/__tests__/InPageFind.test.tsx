@@ -16,6 +16,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useInPageFindStore } from '../../stores/useInPageFindStore'
 import { InPageFind } from '../InPageFind'
 

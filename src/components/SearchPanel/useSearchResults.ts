@@ -20,9 +20,11 @@ import {
   useState,
 } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
 import { astToFilterProjection, type SearchQueryAST } from '@/lib/search-query'
+
 import { useListKeyboardNavigation } from '../../hooks/useListKeyboardNavigation'
 import { usePaginatedQuery } from '../../hooks/usePaginatedQuery'
 import { logger } from '../../lib/logger'
@@ -271,7 +273,7 @@ export function useSearchResults({
   const handleToggleGroup = useCallback((pageId: string) => {
     setExpandedGroups((prev) => ({ ...prev, [pageId]: !(prev[pageId] ?? true) }))
   }, [])
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `debouncedQuery` is the trigger, not a body-read dep — we intentionally reset on every new query.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `debouncedQuery` is the trigger, not a body-read dep — we intentionally reset on every new query.
   useEffect(() => {
     // Reset collapse state on each new query so the UX always starts
     // fully expanded.

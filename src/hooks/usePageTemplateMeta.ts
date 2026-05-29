@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { deleteProperty, getProperties, setProperty } from '@/lib/tauri'

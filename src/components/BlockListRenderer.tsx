@@ -16,6 +16,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type React from 'react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '../lib/tree-utils'

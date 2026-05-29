@@ -17,6 +17,7 @@
  */
 
 import { devices } from '@playwright/test'
+
 import { expect, test, waitForBoot } from './helpers'
 
 // Spreading `devices['iPhone 13']` wholesale inside `test.use()` includes

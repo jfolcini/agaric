@@ -19,6 +19,7 @@
  * memos that depend on it stay quiet.
  */
 import { useCallback, useEffect, useState } from 'react'
+
 import { getStarredPages, toggleStarred } from '../lib/starred-pages'
 
 /** Window event name broadcast on every successful toggle. */

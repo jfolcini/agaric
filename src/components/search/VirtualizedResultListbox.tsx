@@ -31,6 +31,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
+
 import type { SearchBlockRow } from '@/lib/bindings'
 
 export interface VirtualizedResultListboxProps {
@@ -139,7 +140,7 @@ export function VirtualizedResultListbox({
       ref={scrollRef}
       className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[calc(100dvh-320px)] overflow-y-auto"
       aria-label={ariaLabel}
-      // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model (PEND-50) requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host for that attribute (matches the CollapsibleGroupList default path this replaces).
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model (PEND-50) requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host for that attribute (matches the CollapsibleGroupList default path this replaces).
       role="listbox"
       aria-activedescendant={activeRowId}
       tabIndex={tabIndex}

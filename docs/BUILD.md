@@ -122,7 +122,7 @@ The `prek.toml` file is the single source of truth for hooks. CI invokes the sam
 
 ### Pre-commit vs pre-push split
 
-Pre-commit (every `git commit`): fast hooks only — biome, tsc, cargo fmt/clippy, vitest related-subset, cargo-test related-subset, lychee, sqruff, taplo, typos, zizmor, markdownlint, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
+Pre-commit (every `git commit`): fast hooks only — oxlint, oxfmt, tsc, cargo fmt/clippy, vitest related-subset, cargo-test related-subset, lychee, sqruff, taplo, typos, zizmor, markdownlint, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
 
 Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — that runs `scripts/verify-ci-equivalent.sh`. The script parallelizes every blocking check that `.github/workflows/_validate.yml` runs in CI:
 

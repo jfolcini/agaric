@@ -1,5 +1,6 @@
 import { AlertCircle, Bug, RefreshCw } from 'lucide-react'
 import React from 'react'
+
 import { Button } from '@/components/ui/button'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { i18n } from '@/lib/i18n'

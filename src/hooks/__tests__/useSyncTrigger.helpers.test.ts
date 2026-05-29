@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { computeNextSyncDelay, runWithTimeout } from '../useSyncTrigger'
 
 const BASE_INTERVAL_MS = 60_000

@@ -1,9 +1,10 @@
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { createSuggestionRenderer } from '../suggestion-renderer'
 
 const { mockReactRenderer } = vi.hoisted(() => {
-  // biome-ignore lint/suspicious/noExplicitAny: mock constructor requires dynamic this
+  // oxlint-disable-next-line typescript/no-explicit-any -- mock constructor requires dynamic this
   const mockReactRenderer = vi.fn().mockImplementation(function (this: any) {
     this.element = document.createElement('div')
     this.ref = null
@@ -60,13 +61,13 @@ describe('createSuggestionRenderer', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     expect(mockReactRenderer).toHaveBeenCalled()
@@ -96,13 +97,13 @@ describe('createSuggestionRenderer', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: 'multi',
       range: { from: 0, to: 7 },
       text: '[[multi',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const result = renderer.onKeyDown({
@@ -132,13 +133,13 @@ describe('createSuggestionRenderer', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -156,13 +157,13 @@ describe('createSuggestionRenderer', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -180,13 +181,13 @@ describe('createSuggestionRenderer', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -213,13 +214,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '/',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -251,13 +252,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -279,13 +280,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
       text: '@',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -317,13 +318,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     await vi.waitFor(() => {
@@ -348,13 +349,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
@@ -380,13 +381,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect1 as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -408,13 +409,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect2 as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: 'a',
       range: { from: 0, to: 3 },
       text: '[[a',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     await vi.waitFor(() => {
@@ -432,13 +433,13 @@ describe('positioning', () => {
         items: [],
         command: vi.fn(),
         clientRect: () => null,
-        // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+        // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
         editor: {} as any,
         query: '',
         range: { from: 0, to: 1 },
         text: '@',
         decorationNode: null,
-        // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+        // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
       } as any)
     }).not.toThrow()
 
@@ -471,13 +472,13 @@ describe('positioning', () => {
       command: vi.fn(),
       clientRect: () =>
         ({ left: 50, right: 70, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: mockEditor as any,
       query: 'verylongtagname',
       range: { from: 0, to: 16 },
       text: '@verylongtagname',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -515,13 +516,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: mockEditor as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '[[',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -552,13 +553,13 @@ describe('positioning', () => {
       items: [],
       command: vi.fn(),
       clientRect: () => mockRect as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 2 },
       text: '((',
       decorationNode: null,
-      // biome-ignore lint/suspicious/noExplicitAny: mock SuggestionProps
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock SuggestionProps
     } as any)
 
     const popup = document.querySelector('.suggestion-popup') as HTMLElement
@@ -579,13 +580,13 @@ describe('positioning', () => {
         items: [],
         command: vi.fn(),
         clientRect: null,
-        // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+        // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
         editor: {} as any,
         query: '',
         range: { from: 0, to: 1 },
         text: '@',
         decorationNode: null,
-        // biome-ignore lint/suspicious/noExplicitAny: partial mock of SuggestionProps
+        // oxlint-disable-next-line typescript/no-explicit-any -- partial mock of SuggestionProps
       } as any)
     }).not.toThrow()
 
@@ -600,14 +601,14 @@ describe('positioning', () => {
 })
 
 describe('outside-click dismissal', () => {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  // oxlint-disable-next-line typescript/no-explicit-any -- minimal mock props for tests
   function makeProps(): any {
     return {
       items: [],
       command: vi.fn(),
       clientRect: () =>
         ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
@@ -731,7 +732,7 @@ describe('outside-click dismissal', () => {
     renderer.onStart(makeProps())
 
     // Get the last ReactRenderer instance
-    // biome-ignore lint/suspicious/noExplicitAny: mock instance typing
+    // oxlint-disable-next-line typescript/no-explicit-any -- mock instance typing
     const lastInstance: any =
       mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
     expect(lastInstance.destroy).not.toHaveBeenCalled()
@@ -784,7 +785,7 @@ describe('outside-click dismissal', () => {
     const mockEditor = {
       state: { tr: { setMeta: vi.fn().mockReturnThis() } },
       view: { isDestroyed: true, dispatch },
-      // biome-ignore lint/suspicious/noExplicitAny: minimal editor mock
+      // oxlint-disable-next-line typescript/no-explicit-any -- minimal editor mock
     } as any
 
     const renderer = createSuggestionRenderer('Tags', pluginKey)
@@ -807,7 +808,7 @@ describe('outside-click dismissal', () => {
     expect(removeSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
 
     // Confirm renderer was destroyed too
-    // biome-ignore lint/suspicious/noExplicitAny: mock instance typing
+    // oxlint-disable-next-line typescript/no-explicit-any -- mock instance typing
     const lastInstance: any =
       mockReactRenderer.mock.instances[mockReactRenderer.mock.instances.length - 1]
     expect(lastInstance.destroy).toHaveBeenCalled()
@@ -815,14 +816,14 @@ describe('outside-click dismissal', () => {
 })
 
 describe('outside-click deferred registration (BUG-2)', () => {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  // oxlint-disable-next-line typescript/no-explicit-any -- minimal mock props for tests
   function makeProps(): any {
     return {
       items: [],
       command: vi.fn(),
       clientRect: () =>
         ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
@@ -946,14 +947,14 @@ describe('outside-click deferred registration (BUG-2)', () => {
 })
 
 describe('viewport handling on coarse pointers (UX-273)', () => {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  // oxlint-disable-next-line typescript/no-explicit-any -- minimal mock props for tests
   function makeProps(): any {
     return {
       items: [],
       command: vi.fn(),
       clientRect: () =>
         ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query: '',
       range: { from: 0, to: 1 },
@@ -1136,14 +1137,14 @@ describe('viewport handling on coarse pointers (UX-273)', () => {
 // ===========================================================================
 
 describe('onUpdate rAF coalescing (PEND-27 P7)', () => {
-  // biome-ignore lint/suspicious/noExplicitAny: minimal mock props for tests
+  // oxlint-disable-next-line typescript/no-explicit-any -- minimal mock props for tests
   function makeProps(query = ''): any {
     return {
       items: [],
       command: vi.fn(),
       clientRect: () =>
         ({ left: 100, right: 120, top: 80, bottom: 100, width: 20, height: 20 }) as DOMRect,
-      // biome-ignore lint/suspicious/noExplicitAny: mock editor object
+      // oxlint-disable-next-line typescript/no-explicit-any -- mock editor object
       editor: {} as any,
       query,
       range: { from: 0, to: 1 + query.length },

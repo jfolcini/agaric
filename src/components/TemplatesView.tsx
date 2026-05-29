@@ -9,6 +9,7 @@ import { LayoutTemplate, Plus, Search, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +25,7 @@ import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
+
 import {
   createPageInSpace,
   deleteProperty,

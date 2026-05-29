@@ -14,6 +14,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
+
 import { useJournalStore } from '../journal'
 import { useSpaceStore } from '../space'
 

@@ -217,7 +217,7 @@ These are caught by tests but the rules are about how the **production code** mu
 11. **Radix Dialog vs AlertDialog for user input.** Use `Dialog` for modals with text inputs; `AlertDialog` traps focus in a way that makes `autoFocus` on inputs unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only).
 12. **Guard `Array.isArray()` on IPC responses.** Some Tauri commands may return non-array values on unexpected backend types; guard before `.map()`.
 13. **Early-persist in `useEditorBlur` must check `shouldSplitOnBlur()`.** The early-persist path falls through to the normal blur logic; if content has newlines, both `edit()` and `splitBlock()` run → duplicate ops.
-14. **Hook dep arrays must include all read variables.** Use `biome-ignore` with justification only when intentionally omitting.
+14. **Hook dep arrays must include all read variables.** Use `oxlint-disable-next-line react-hooks/exhaustive-deps` with justification only when intentionally omitting.
 15. **Map/object merge order for cache updates.** Spread fresh data LAST: `new Map([...staleCache, ...freshData])`. Stale-last silently overwrites fresh with stale.
 16. **Stores initial state `loading: true` for fetch-on-mount.** Starting `loading: false` causes a brief empty/ready render before fetch begins, triggering child components to act on empty data.
 17. **Prefer individual Zustand selectors.** `useBlockStore(s => s.focusedBlockId)` not `const { focusedBlockId } = useBlockStore()`. Destructuring subscribes to the entire store; matters for per-block components rendered N times.

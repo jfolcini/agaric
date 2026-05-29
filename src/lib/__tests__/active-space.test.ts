@@ -8,6 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
 import { LEGACY_SPACE_KEY, useSpaceStore } from '../../stores/space'
 import { activeSpaceKey } from '../active-space'
 

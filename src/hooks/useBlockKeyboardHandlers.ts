@@ -1,8 +1,10 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { parse } from '../editor/markdown-serializer'
 import { pmEndOfFirstBlock } from '../editor/types'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'

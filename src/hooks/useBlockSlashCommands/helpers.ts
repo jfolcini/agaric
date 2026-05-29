@@ -6,6 +6,7 @@
  */
 
 import { notify } from '@/lib/notify'
+
 import { notifyUnknownNodeTypeToast } from '../../editor/markdown-serialize-toast'
 import { serialize } from '../../editor/markdown-serializer'
 import type { DocNode } from '../../editor/types'

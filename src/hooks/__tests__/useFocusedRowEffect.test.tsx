@@ -12,6 +12,7 @@ import { render } from '@testing-library/react'
 import type React from 'react'
 import { useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useFocusedRowEffect } from '../useFocusedRowEffect'
 
 const FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30']

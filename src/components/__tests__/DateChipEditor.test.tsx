@@ -46,6 +46,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { announce } from '@/lib/announcer'
 import { formatDate } from '@/lib/date-utils'
 import { setDueDate, setScheduledDate } from '@/lib/tauri'
+
 import { DateChipEditor } from '../DateChipEditor'
 
 const mockedSetDueDate = vi.mocked(setDueDate)

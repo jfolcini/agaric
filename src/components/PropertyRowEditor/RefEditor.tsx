@@ -10,11 +10,13 @@
 
 import { FileSearch, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+
 import type { PropertyRow } from '../../lib/tauri'
 import { useResolveStore } from '../../stores/resolve'
 import { EmptyState } from '../EmptyState'

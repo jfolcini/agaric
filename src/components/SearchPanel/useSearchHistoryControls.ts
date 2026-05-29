@@ -13,6 +13,7 @@
  * in, because they are shared with the non-history input handlers.
  */
 import { useCallback, useId } from 'react'
+
 import { useSearchHistoryCycling } from '../../hooks/useSearchHistoryCycling'
 import { selectHistoryForSpace, useSearchHistoryStore } from '../../stores/search-history'
 

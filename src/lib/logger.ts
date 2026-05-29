@@ -165,12 +165,12 @@ function bridgeToBackend(
 
 export const logger = {
   debug(module: string, message: string, data?: Record<string, unknown>) {
-    // biome-ignore lint/suspicious/noConsole: logger primitive — wraps console for app-wide structured logging
+    // oxlint-disable-next-line eslint/no-console -- logger primitive — wraps console for app-wide structured logging
     if (shouldLog('debug')) console.debug(formatMessage('debug', module, message, data))
   },
 
   info(module: string, message: string, data?: Record<string, unknown>) {
-    // biome-ignore lint/suspicious/noConsole: logger primitive — wraps console for app-wide structured logging
+    // oxlint-disable-next-line eslint/no-console -- logger primitive — wraps console for app-wide structured logging
     if (shouldLog('info')) console.info(formatMessage('info', module, message, data))
   },
 

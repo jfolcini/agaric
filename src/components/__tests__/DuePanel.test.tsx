@@ -20,7 +20,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { clearProjectedCache } from '../../hooks/useDuePanelData'
 
 vi.mock('../../lib/tauri', () => ({
@@ -99,6 +101,7 @@ vi.mock('@/components/ui/button', async (importOriginal) => {
 })
 
 import { toast } from 'sonner'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
 import { useNavigationStore } from '../../stores/navigation'

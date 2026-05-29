@@ -1,4 +1,5 @@
 import { Channel } from '@tauri-apps/api/core'
+
 import { commands } from './bindings'
 import { logger } from './logger'
 import type { SafeLimit } from './safe-limit'

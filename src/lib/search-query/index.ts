@@ -7,10 +7,7 @@
  */
 
 export type { AutocompleteAnchor } from './autocomplete'
-export {
-  applyAutocompleteReplacement,
-  detectAutocompleteAnchor,
-} from './autocomplete'
+export { applyAutocompleteReplacement, detectAutocompleteAnchor } from './autocomplete'
 export { classify, parse } from './classify'
 export { EXPANSION_CAP, expandBraces, validateGlob } from './glob-validate'
 export { ensureRegistered } from './register'
@@ -21,12 +18,7 @@ export {
   recognise,
   registerTokenPrefix,
 } from './registry'
-export {
-  addFilter,
-  removeFilterAt,
-  serialize,
-  tokenSource,
-} from './serialize'
+export { addFilter, removeFilterAt, serialize, tokenSource } from './serialize'
 export type { AstFilterProjection } from './to-search-filter'
 export { astToFilterProjection } from './to-search-filter'
 export type { RawToken } from './tokenize'

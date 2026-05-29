@@ -4,6 +4,7 @@
  */
 
 import { Input } from '@/components/ui/input'
+
 import type { TextLikeEditorState } from './usePropertyRowEditor'
 
 export interface TextEditorProps {

@@ -3,7 +3,7 @@
     "default": true,
     "MD013": false,
     "MD033": {
-      "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary", "p", "img", "a"]
+      "allowed_elements": ["br", "sub", "sup", "kbd", "details", "summary", "p", "img", "a"],
     },
     "MD041": false,
     "MD024": { "siblings_only": true },
@@ -12,7 +12,7 @@
     // depending on cell content, and forcing one or the other is
     // bikeshedding. Disable so contributors don't have to hand-pad pipes
     // every time the longest cell grows.
-    "MD060": false
+    "MD060": false,
   },
   "ignores": [
     "SESSION-LOG.md",
@@ -26,6 +26,6 @@
     "PROMPT.md",
     "REVIEW-LATER.md",
     "**/REVIEW-LATER.md",
-    "FEATURE-MAP.md"
-  ]
+    "FEATURE-MAP.md",
+  ],
 }

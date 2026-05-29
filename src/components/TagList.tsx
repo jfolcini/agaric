@@ -10,6 +10,7 @@ import { Paintbrush, Pencil, Plus, Tag, Trash2, X } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { RenameDialog } from '@/components/RenameDialog'
 import { Badge } from '@/components/ui/badge'
@@ -27,6 +28,7 @@ import {
   TAG_COLOR_PRESETS,
 } from '@/lib/tag-colors'
 import { cn } from '@/lib/utils'
+
 import { logger } from '../lib/logger'
 import type { TagCacheRow } from '../lib/tauri'
 import {

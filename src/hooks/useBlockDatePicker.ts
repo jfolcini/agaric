@@ -2,7 +2,9 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
+
 import { notify } from '@/lib/notify'
+
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import {
@@ -202,7 +204,7 @@ export function useBlockDatePicker({
   const tRef = useRef(t)
   tRef.current = t
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref (see FE-M-7 invariant above)
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref (see FE-M-7 invariant above)
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)

@@ -20,6 +20,7 @@
 import { act, render } from '@testing-library/react'
 import * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import {
   computeOverflow,
   OVERFLOW_TRIGGER_WIDTH_PX,
@@ -252,12 +253,12 @@ function Harness({ items, widths, onResult }: HarnessProps): React.ReactElement 
  * the afterEach above.
  */
 function installWidthSpy(): void {
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-    this: HTMLElement,
-  ) {
-    const w = Number(this.getAttribute('data-test-width') ?? '0')
-    return { width: w, height: 0, top: 0, left: 0, right: w, bottom: 0, x: 0, y: 0 } as DOMRect
-  })
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+    function (this: HTMLElement) {
+      const w = Number(this.getAttribute('data-test-width') ?? '0')
+      return { width: w, height: 0, top: 0, left: 0, right: w, bottom: 0, x: 0, y: 0 } as DOMRect
+    },
+  )
 }
 
 describe('useToolbarOverflow', () => {

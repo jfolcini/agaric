@@ -6,7 +6,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import type { GraphEdge, GraphNode } from '@/components/GraphView.helpers'
+
 import { renderGraphElements } from '../graph-sim-helpers'
 
 function makeSvg(): SVGSVGElement {

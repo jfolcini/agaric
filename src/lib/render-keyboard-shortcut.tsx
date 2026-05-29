@@ -7,6 +7,7 @@
  */
 
 import React from 'react'
+
 import { modKey } from './platform'
 
 /** Render a keys string as styled <kbd> elements. Handles `+` combos and `/` alternatives. */

@@ -22,6 +22,7 @@
  */
 
 import { listen } from '@tauri-apps/api/event'
+
 import { logger } from './logger'
 import { listPropertyKeys } from './tauri'
 

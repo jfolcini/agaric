@@ -13,6 +13,7 @@
  */
 
 import { cn } from '@/lib/utils'
+
 import { Skeleton } from './ui/skeleton'
 
 /**
@@ -72,7 +73,7 @@ export function LoadingSkeleton({
   return (
     <div className={cn('space-y-2', className)} {...wrapperA11y} {...rest}>
       {Array.from({ length: count }).map((_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: static list of identical skeletons
+        // oxlint-disable-next-line react/no-array-index-key -- static list of identical skeletons
         <Skeleton key={i} className={cn(heightClass, 'w-full rounded-lg')} />
       ))}
     </div>

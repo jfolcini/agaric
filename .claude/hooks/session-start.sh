@@ -15,7 +15,7 @@
 #      ranges).
 #
 # Postinstall scripts stay enabled because the platform binaries we ship
-# (@biomejs/biome, esbuild, @tauri-apps/cli, @playwright/test) are
+# (oxlint, oxfmt, esbuild, @tauri-apps/cli, @playwright/test) are
 # downloaded by their own postinstalls. Disabling scripts would leave
 # the sandbox without working build tools.
 

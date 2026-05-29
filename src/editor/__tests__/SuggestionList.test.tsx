@@ -19,6 +19,7 @@ import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { PickerItem, SuggestionListRef } from '../SuggestionList'
 import { SuggestionList } from '../SuggestionList'
 

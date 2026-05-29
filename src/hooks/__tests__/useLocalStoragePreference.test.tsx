@@ -17,6 +17,7 @@
 
 import { act, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '../../lib/logger'
 import { useLocalStoragePreference } from '../useLocalStoragePreference'
 

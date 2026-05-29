@@ -6,6 +6,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { makePage } from '../../__tests__/fixtures'
 import { isFrontendOnlySort, usePageBrowserSort } from '../usePageBrowserSort'
 

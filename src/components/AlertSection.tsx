@@ -9,7 +9,9 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { cn } from '@/lib/utils'
+
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { truncateContent } from '../lib/text-utils'

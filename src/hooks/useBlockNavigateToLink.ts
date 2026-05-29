@@ -14,7 +14,9 @@
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { NavigateToPageFn } from '../lib/block-events'
 import { logger } from '../lib/logger'

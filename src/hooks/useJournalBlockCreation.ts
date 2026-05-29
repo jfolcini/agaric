@@ -25,8 +25,10 @@
  */
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { createBlock, createPageInSpace } from '../lib/tauri'
 import {
   insertTemplateBlocks,
@@ -60,7 +62,7 @@ export function useJournalBlockCreation({
   const [createdPages, setCreatedPages] = useState<Map<string, string>>(new Map())
 
   const handleAddBlock = useCallback(
-    // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: orchestrates atomic create-page-then-block flow with optimistic state, error rollback, retry, and per-space template seeding; splitting it would scatter the rollback paths across helpers and obscure ordering.
+    // oxlint-disable-next-line eslint/complexity -- orchestrates atomic create-page-then-block flow with optimistic state, error rollback, retry, and per-space template seeding; splitting it would scatter the rollback paths across helpers and obscure ordering.
     async (dateStr: string) => {
       try {
         let pageId = createdPages.get(dateStr) ?? pageMap.get(dateStr) ?? null

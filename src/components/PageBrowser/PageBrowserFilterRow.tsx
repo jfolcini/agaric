@@ -17,9 +17,11 @@ import type { TFunction } from 'i18next'
 import { X } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { FilterPrimitive } from '@/lib/tauri'
+
 import { AddFilterPopover } from './AddFilterPopover'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */

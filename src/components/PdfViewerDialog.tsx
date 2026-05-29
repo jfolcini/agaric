@@ -14,6 +14,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import * as pdfjsLib from 'pdfjs-dist'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useDialogOrSheet } from '../hooks/useDialogOrSheet'
 import { logger } from '../lib/logger'
 import { Button } from './ui/button'

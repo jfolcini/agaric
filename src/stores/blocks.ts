@@ -12,6 +12,7 @@
  */
 
 import { create } from 'zustand'
+
 import type { FlatBlock } from '../lib/tree-utils'
 
 export type { FlatBlock }

@@ -1,5 +1,6 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import {
   DEEPLINK_EVENT_NAVIGATE_TO_BLOCK,
   DEEPLINK_EVENT_NAVIGATE_TO_PAGE,
@@ -79,7 +80,7 @@ beforeEach(() => {
 
 afterEach(() => {
   if (!hadTauriInternals) {
-    // biome-ignore lint/suspicious/noExplicitAny: test cleanup of window property
+    // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
     delete (window as any).__TAURI_INTERNALS__
   }
 })
@@ -217,7 +218,7 @@ describe('useDeepLinkRouter', () => {
     })
 
     it('no-ops when __TAURI_INTERNALS__ is absent (browser mode)', async () => {
-      // biome-ignore lint/suspicious/noExplicitAny: test cleanup of window property
+      // oxlint-disable-next-line typescript/no-explicit-any -- test cleanup of window property
       delete (window as any).__TAURI_INTERNALS__
 
       const { unmount } = renderHook(() => useDeepLinkRouter())

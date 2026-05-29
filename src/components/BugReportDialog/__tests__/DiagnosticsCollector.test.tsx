@@ -21,7 +21,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { DiagnosticsCollector, type DiagnosticsCollectorProps } from '../DiagnosticsCollector'
 
 function renderCollector(overrides?: Partial<DiagnosticsCollectorProps>) {

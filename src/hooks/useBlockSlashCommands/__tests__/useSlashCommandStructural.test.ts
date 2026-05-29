@@ -7,6 +7,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { useUndoStore } from '../../../stores/undo'
 import { useSlashCommandStructural } from '../useSlashCommandStructural'
 import { makeSyntheticCtx } from './test-utils'
@@ -36,26 +37,27 @@ beforeEach(() => {
 })
 
 describe('useSlashCommandStructural — headings', () => {
-  it.each([
-    1, 2, 3, 4, 5, 6,
-  ])('h%i prefixes existing content with the right hash count', async (n) => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx, mount, pageStore } = makeSyntheticCtx()
-    pageStore.setState({
-      blocks: pageStore
-        .getState()
-        .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'plain text' } : b)),
-    })
+  it.each([1, 2, 3, 4, 5, 6])(
+    'h%i prefixes existing content with the right hash count',
+    async (n) => {
+      const { result } = renderHook(() => useSlashCommandStructural())
+      const { ctx, mount, pageStore } = makeSyntheticCtx()
+      pageStore.setState({
+        blocks: pageStore
+          .getState()
+          .blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content: 'plain text' } : b)),
+      })
 
-    await result.current.exact[`h${n}`]?.(ctx, { id: `h${n}`, label: `Heading ${n}` })
+      await result.current.exact[`h${n}`]?.(ctx, { id: `h${n}`, label: `Heading ${n}` })
 
-    const expected = `${'#'.repeat(n)} plain text`
-    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
-      blockId: 'BLOCK_1',
-      toText: expected,
-    })
-    expect(mount).toHaveBeenCalledWith('BLOCK_1', expected)
-  })
+      const expected = `${'#'.repeat(n)} plain text`
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'BLOCK_1',
+        toText: expected,
+      })
+      expect(mount).toHaveBeenCalledWith('BLOCK_1', expected)
+    },
+  )
 
   it('h1 strips an existing leading ##/### before reapplying', async () => {
     const { result } = renderHook(() => useSlashCommandStructural())
@@ -143,20 +145,17 @@ describe('useSlashCommandStructural — list, divider', () => {
 })
 
 describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quote)', () => {
-  it.each([
-    'link',
-    'tag',
-    'code',
-    'quote',
-    'query',
-  ] as const)('no-ops gracefully when ctx.rovingEditor.editor is null for /%s', (id) => {
-    const { result } = renderHook(() => useSlashCommandStructural())
-    const { ctx } = makeSyntheticCtx() // editor is null
-    // We assert no throw rather than asserting editor commands; the editor
-    // path is a thin chain wrapper that's exercised end-to-end in
-    // BlockTree integration tests.
-    expect(() => result.current.exact[id]?.(ctx, { id, label: id })).not.toThrow()
-  })
+  it.each(['link', 'tag', 'code', 'quote', 'query'] as const)(
+    'no-ops gracefully when ctx.rovingEditor.editor is null for /%s',
+    (id) => {
+      const { result } = renderHook(() => useSlashCommandStructural())
+      const { ctx } = makeSyntheticCtx() // editor is null
+      // We assert no throw rather than asserting editor commands; the editor
+      // path is a thin chain wrapper that's exercised end-to-end in
+      // BlockTree integration tests.
+      expect(() => result.current.exact[id]?.(ctx, { id, label: id })).not.toThrow()
+    },
+  )
 })
 
 describe('useSlashCommandStructural — table', () => {

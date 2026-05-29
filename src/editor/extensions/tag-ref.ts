@@ -12,6 +12,7 @@
  */
 
 import { mergeAttributes, Node } from '@tiptap/core'
+
 import { getTagColor } from '@/lib/tag-colors'
 
 export interface TagRefOptions {

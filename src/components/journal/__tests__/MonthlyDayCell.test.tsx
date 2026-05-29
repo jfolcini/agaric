@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { DayEntry } from '../../../lib/date-utils'
 import { MonthlyDayCell } from '../MonthlyDayCell'
 
@@ -187,10 +188,8 @@ describe('MonthlyDayCell', () => {
     document.documentElement.classList.add('dark')
     try {
       const { container } = render(
-        // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context
         <div role="grid">
-          {/* biome-ignore lint/a11y/useSemanticElements: test wrapper */}
-          {/* biome-ignore lint/a11y/useFocusableInteractive: test wrapper; row children provide focus targets */}
+          {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test wrapper; row children provide focus targets */}
           <div role="row">
             <MonthlyDayCell
               {...defaultProps}
@@ -267,10 +266,8 @@ describe('MonthlyDayCell', () => {
 
   it('has no a11y violations', async () => {
     const { container } = render(
-      // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context
       <div role="grid">
-        {/* biome-ignore lint/a11y/useFocusableInteractive: test wrapper */}
-        {/* biome-ignore lint/a11y/useSemanticElements: test wrapper */}
+        {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test wrapper */}
         <div role="row">
           <MonthlyDayCell {...defaultProps} />
         </div>
@@ -287,10 +284,8 @@ describe('MonthlyDayCell', () => {
 
   it('has no a11y violations when gridcell is focused', async () => {
     const { container } = render(
-      // biome-ignore lint/a11y/useSemanticElements: test wrapper for ARIA grid context
       <div role="grid">
-        {/* biome-ignore lint/a11y/useFocusableInteractive: test wrapper */}
-        {/* biome-ignore lint/a11y/useSemanticElements: test wrapper */}
+        {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test wrapper */}
         <div role="row">
           <MonthlyDayCell {...defaultProps} />
         </div>

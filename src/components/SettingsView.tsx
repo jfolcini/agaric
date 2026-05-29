@@ -25,11 +25,13 @@ import { ChevronRight } from 'lucide-react'
 import type React from 'react'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dispatchBugReport } from '@/lib/bug-report-events'
 import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
+
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
 import { DeviceManagement } from './DeviceManagement'
 import { GoogleCalendarSettingsTab } from './GoogleCalendarSettingsTab'

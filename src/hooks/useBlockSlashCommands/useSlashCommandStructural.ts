@@ -10,7 +10,9 @@
  */
 
 import { useMemo } from 'react'
+
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+
 import { applyContentEdit, readCurrentContent } from './helpers'
 import type { SlashCommandContext, SlashHandlerTables } from './types'
 

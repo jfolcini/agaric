@@ -10,12 +10,14 @@ import { Link2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
+
 import { useBlockNavigation } from '../hooks/useBlockNavigation'
 import { useFocusedRowEffect } from '../hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
@@ -162,7 +164,7 @@ export function UnlinkedReferences({
   }, [fetchGroups])
 
   // Reset collapsed state when pageId changes
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pageId is the intentional trigger for resetting collapse state on navigation
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pageId is the intentional trigger for resetting collapse state on navigation
   useEffect(() => {
     setCollapsed(true)
   }, [pageId])
@@ -429,11 +431,10 @@ export function UnlinkedReferences({
                   </Badge>
                 </div>
                 {/* Group list */}
-                {/* biome-ignore lint/a11y/useSemanticElements: keyboard nav container wrapping BacklinkGroupRenderer */}
                 <div
                   ref={listRef}
                   role="group"
-                  // biome-ignore lint/a11y/noNoninteractiveTabindex: keyboard nav requires focusable container
+                  // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container
                   tabIndex={0}
                   onKeyDown={handleContainerKeyDown}
                   aria-label={t('unlinkedRefs.listLabel')}

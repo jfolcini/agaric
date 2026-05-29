@@ -29,7 +29,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
+
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
 import { writeText } from '../lib/clipboard'
 import { logger } from '../lib/logger'
@@ -420,7 +422,7 @@ export function BlockContextMenu({
   // Items are conditional (zoom-in only when `hasChildren`, history only when
   // `onShowHistory` is passed, etc.) — refire whenever the count changes so
   // focus lands on the current first item rather than a stale reference.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: visibleItems.length IS the trigger — we refocus when the conditional item set toggles, even though the effect body doesn't read it
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- visibleItems.length IS the trigger — we refocus when the conditional item set toggles, even though the effect body doesn't read it
   useEffect(() => {
     itemRefs.current[0]?.focus()
   }, [visibleItems.length])
@@ -455,8 +457,7 @@ export function BlockContextMenu({
       data-editor-portal=""
     >
       {groups.map((group, groupIdx) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: groups are static per render, never reorder
-        // biome-ignore lint/a11y/useSemanticElements: fieldset is for forms, not menu item groups
+        // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
         <div key={groupIdx} role="group">
           {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
           {group.map((item) => {

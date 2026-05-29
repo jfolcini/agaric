@@ -35,7 +35,7 @@ Both contracts are documented at the construction site and enforced by tests.
 
 The single source of truth for all pre-commit / pre-push gates is `prek.toml`. CI invokes `_validate.yml` (a reusable workflow shared by `ci.yml` and `release.yml`) which runs the same gate. Green local `prek run --all-files` ⇒ green CI validate.
 
-Pre-commit vs pre-push split is deliberate: fast hooks (biome, type-check, lint, markdown, link-check, …) on commit; compile-heavy hooks (`cargo nextest`, `cargo sqlx prepare --check`, `playwright`) on push. Keeps commit latency under a few seconds; push catches everything.
+Pre-commit vs pre-push split is deliberate: fast hooks (oxlint, oxfmt, type-check, markdown, link-check, …) on commit; compile-heavy hooks (`cargo nextest`, `cargo sqlx prepare --check`, `playwright`) on push. Keeps commit latency under a few seconds; push catches everything.
 
 Notable hooks that enforce architectural contracts:
 

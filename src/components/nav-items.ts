@@ -20,6 +20,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import type React from 'react'
+
 import type { View } from '../stores/navigation'
 
 export interface NavItem {

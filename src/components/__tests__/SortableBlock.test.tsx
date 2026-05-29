@@ -39,7 +39,6 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    // biome-ignore lint/a11y/useSemanticElements: mirrors PropertyChip's production role="group" — see TEST-4b.
     <div
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
@@ -211,6 +210,7 @@ vi.mock('../../hooks/useBlockSwipeActions', () => ({
 }))
 
 import userEvent from '@testing-library/user-event'
+
 import { SortableBlock } from '../SortableBlock'
 import { TestBlockActionsOverride } from './_test-utils/TestBlockActionsOverride'
 

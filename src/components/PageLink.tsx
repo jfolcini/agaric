@@ -9,6 +9,7 @@
  */
 
 import type React from 'react'
+
 import { cn } from '@/lib/utils'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -45,7 +46,6 @@ export function PageLink({
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: <a> cannot nest inside <button> (ResultCard, QueryResult)
     <span
       role="link"
       tabIndex={0}

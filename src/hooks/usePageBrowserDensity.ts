@@ -14,6 +14,7 @@
  */
 
 import { useCallback } from 'react'
+
 import { useLocalStoragePreference } from './useLocalStoragePreference'
 
 export type DensityMode = 'compact' | 'regular' | 'expanded'

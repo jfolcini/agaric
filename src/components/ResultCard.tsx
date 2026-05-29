@@ -11,10 +11,12 @@
 import type React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { CardButton } from '@/components/ui/card-button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
+
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import type { BlockRow } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
@@ -49,7 +51,7 @@ export function ResultCard({
   // ref; without subscribing to `version` the memo would render the
   // `[[ULID]]` fallback indefinitely after a space-switch preload completes.
   const resolveVersion = useResolveStore((s) => s.version)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
       block.content

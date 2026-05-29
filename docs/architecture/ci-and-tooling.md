@@ -13,7 +13,7 @@ The hook driver is [prek](https://github.com/j178/prek), the Rust reimplementati
 
 ## Pre-commit vs pre-push split — the latency budget
 
-Hooks split by wall-clock cost. Pre-commit (biome, type-check, markdownlint, link-check, local guards) finishes in seconds. Compile-heavy hooks (cargo nextest, sqlx prepare check, full Playwright, the CI-equivalent verifier) run on pre-push, because adding a minute to every commit destroys the small-commit habit. The pre-push stage is the local mirror of `_validate.yml` — see §11. Pre-commit hooks that enforce architectural contracts (bindings parity, mock parity, migrations-immutable, snapshot redaction, IPC error-path coverage) are documented in [`tooling.md`](tooling.md#dev-tooling); they sit in pre-commit because they are fast token-level checks.
+Hooks split by wall-clock cost. Pre-commit (oxlint, oxfmt, type-check, markdownlint, link-check, local guards) finishes in seconds. Compile-heavy hooks (cargo nextest, sqlx prepare check, full Playwright, the CI-equivalent verifier) run on pre-push, because adding a minute to every commit destroys the small-commit habit. The pre-push stage is the local mirror of `_validate.yml` — see §11. Pre-commit hooks that enforce architectural contracts (bindings parity, mock parity, migrations-immutable, snapshot redaction, IPC error-path coverage) are documented in [`tooling.md`](tooling.md#dev-tooling); they sit in pre-commit because they are fast token-level checks.
 
 ## CI shape — reusable `_validate.yml` + `validate-all` aggregate
 

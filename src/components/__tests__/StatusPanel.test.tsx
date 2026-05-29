@@ -18,6 +18,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { StatusPanel } from '../StatusPanel'
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering

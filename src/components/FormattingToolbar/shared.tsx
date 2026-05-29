@@ -9,10 +9,12 @@
  */
 
 import type React from 'react'
+
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 import { toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
+
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 

@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
+
 import type { FlatBlock } from '../lib/tree-utils'
 
 export interface UseBlockCollapseOptions {

@@ -8,6 +8,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
+
 import { defaultMeasureText, getCaretRect, type MeasureTextFn } from '../caret-anchor'
 
 const STYLES = [

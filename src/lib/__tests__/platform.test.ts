@@ -3,6 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
 import { __resetPlatformCacheForTests, isMac, modKey } from '../platform'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')

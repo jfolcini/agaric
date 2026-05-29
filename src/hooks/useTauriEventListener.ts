@@ -20,6 +20,7 @@
 import type { Event } from '@tauri-apps/api/event'
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useRef } from 'react'
+
 import { logger } from '../lib/logger'
 
 export interface UseTauriEventListenerOptions {

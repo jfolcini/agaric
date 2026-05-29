@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+
 import { BlockRef } from '../extensions/block-ref'
 
 describe('BlockRef', () => {

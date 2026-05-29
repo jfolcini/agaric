@@ -100,7 +100,6 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 
 vi.mock('../PageLink', () => ({
   PageLink: ({ pageId, title }: { pageId: string; title: string; className?: string }) => (
-    // biome-ignore lint/a11y/useSemanticElements: test mock for PageLink
     <span
       role="link"
       tabIndex={0}
@@ -123,6 +122,7 @@ vi.mock('../../lib/announcer', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { announce } from '../../lib/announcer'
 import { BlockListItem, type BlockListItemProps } from '../BlockListItem'
 

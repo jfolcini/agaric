@@ -8,6 +8,7 @@
  */
 
 import type { SimulationLinkDatum, SimulationNodeDatum } from 'd3-force'
+
 import type { PageHeading } from '@/lib/tauri'
 import { listAllPagesInSpace, listPageLinks, listTemplatePageIdsInSpace } from '@/lib/tauri'
 

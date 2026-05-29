@@ -15,7 +15,9 @@
 
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
+
 import { notify } from '@/lib/notify'
+
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { SpaceRow } from '../lib/tauri'

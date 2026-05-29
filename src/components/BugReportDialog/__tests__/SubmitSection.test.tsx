@@ -18,7 +18,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
+
 import { SubmitSection, type SubmitSectionProps } from '../SubmitSection'
 
 function renderSection(overrides?: Partial<SubmitSectionProps>) {

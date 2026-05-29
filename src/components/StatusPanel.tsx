@@ -18,6 +18,7 @@ import {
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
@@ -25,6 +26,7 @@ import { MetricCard } from '@/components/ui/metric-card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
+
 import { usePollingQuery } from '../hooks/usePollingQuery'
 import type { StatusInfo } from '../lib/tauri'
 import { getStatus } from '../lib/tauri'

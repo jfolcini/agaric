@@ -18,6 +18,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type { PropertyRow } from '../../lib/tauri'
 import { usePropertySave } from '../usePropertySave'
 
@@ -340,7 +341,7 @@ describe('usePropertySave handleDelete', () => {
       makeProp('status', { value_text: 'active' }),
       makeProp('priority', { value_num: 1 }),
     ]
-    // biome-ignore lint/style/noNonNullAssertion: verified not-null above
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- verified not-null above
     const filtered = capturedUpdater!(prev)
     expect(filtered).toHaveLength(1)
     expect(filtered[0]?.key).toBe('priority')

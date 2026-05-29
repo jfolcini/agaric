@@ -15,6 +15,7 @@
  */
 
 import React from 'react'
+
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import type { ViewportObserver } from '../hooks/useViewportObserver'
 import type { FlatBlock, Projection } from '../lib/tree-utils'
@@ -90,7 +91,7 @@ function SortableBlockWrapperInner({
   // Focused block is never virtualized — always render fully
   if (!isFocused && viewport.isOffscreen(block.id)) {
     return (
-      // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
+      // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- aria-level is valid on listitem per WAI-ARIA spec
       <li
         ref={observeRef}
         data-block-id={block.id}
@@ -105,7 +106,7 @@ function SortableBlockWrapperInner({
   }
 
   return (
-    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: aria-level is valid on listitem per WAI-ARIA spec
+    // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- aria-level is valid on listitem per WAI-ARIA spec
     <li
       ref={observeRef}
       data-block-id={block.id}

@@ -14,6 +14,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type { LinkMetadata } from '@/lib/tauri'
 
 // ── Mocks ────────────────────────────────────────────────────────────────

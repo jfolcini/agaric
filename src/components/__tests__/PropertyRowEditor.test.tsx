@@ -19,6 +19,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 
@@ -50,7 +51,9 @@ vi.mock('lucide-react', () => ({
 // (see src/__tests__/mocks/ui-select.tsx).
 
 import { toast } from 'sonner'
+
 import { t } from '@/lib/i18n'
+
 import { PropertyRowEditor } from '../PropertyRowEditor'
 
 const mockedToastError = vi.mocked(toast.error)

@@ -27,6 +27,7 @@
  */
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
+
 import {
   ensurePropertyKeysInvalidationListener,
   fetchPropertyKeysOnce,

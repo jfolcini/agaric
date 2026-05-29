@@ -15,7 +15,9 @@
  */
 
 import { useCallback } from 'react'
+
 import { getRecentPages } from '@/lib/recent-pages'
+
 import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
 import { useLocalStoragePreference } from './useLocalStoragePreference'
 

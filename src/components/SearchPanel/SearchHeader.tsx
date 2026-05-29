@@ -14,9 +14,11 @@
 import { HelpCircle } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { SearchInput } from '@/components/ui/search-input'
 import { Spinner } from '@/components/ui/spinner'
+
 import { ViewHeader } from '../ViewHeader'
 
 export interface SearchHeaderProps {
@@ -73,7 +75,6 @@ export function SearchHeader({
   const { t } = useTranslation()
   return (
     <ViewHeader>
-      {/* biome-ignore lint/a11y/useSemanticElements: jsdom doesn't support <search> element */}
       <form
         onSubmit={onSubmit}
         role="search"

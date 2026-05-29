@@ -1,5 +1,7 @@
 import type { TFunction } from 'i18next'
+
 import { notify } from '@/lib/notify'
+
 import { logger } from './logger'
 
 /**

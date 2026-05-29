@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '../../lib/i18n'
 
 vi.mock('lucide-react', () => ({
@@ -79,7 +80,6 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    // biome-ignore lint/a11y/useSemanticElements: mirrors PropertyChip's production role="group" — see TEST-4b.
     <div
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
@@ -105,6 +105,7 @@ vi.mock('../PropertyChip', () => ({
 }))
 
 import type { LucideIcon } from 'lucide-react'
+
 import {
   BlockInlineControls,
   type BlockInlineControlsProps,

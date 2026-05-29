@@ -7,9 +7,11 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import type { GraphFilter } from '@/lib/graph-filters'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+
 import { GraphFilterBar } from '../GraphFilterBar'
 
 // UX-270: silence the logger.warn calls emitted by readPersistedFilters /

@@ -16,6 +16,7 @@
 
 import Link from '@tiptap/extension-link'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
+
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { fetchLinkMetadata } from '@/lib/tauri'

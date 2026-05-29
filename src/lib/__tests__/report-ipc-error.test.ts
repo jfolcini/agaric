@@ -24,6 +24,7 @@ vi.mock('sonner', () => ({
 }))
 
 import { toast } from 'sonner'
+
 import { logger } from '../logger'
 import { reportIpcError } from '../report-ipc-error'
 

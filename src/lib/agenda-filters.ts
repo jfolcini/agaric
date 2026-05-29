@@ -15,6 +15,7 @@
  */
 
 import { PAGINATION_LIMIT } from '@/lib/constants'
+
 import type { AgendaFilter } from '../components/AgendaFilterBuilder'
 import type { PageResponse } from './bindings'
 import { formatDate, getDateRangeForFilter } from './date-utils'

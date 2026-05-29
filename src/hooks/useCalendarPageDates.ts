@@ -21,8 +21,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+
 import { listJournalPagesInRange } from '../lib/tauri'
 import { useSpaceStore } from '../stores/space'
 

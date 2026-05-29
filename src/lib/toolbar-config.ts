@@ -30,6 +30,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
+
 import { dispatchBlockEvent } from '@/lib/block-events'
 
 // ── Shared constants ────────────────────────────────────────────────────

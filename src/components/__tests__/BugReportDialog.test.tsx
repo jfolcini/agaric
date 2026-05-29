@@ -17,8 +17,10 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { writeText } from '@/lib/clipboard'
+
 import { t } from '../../lib/i18n'
 import { BugReportDialog } from '../BugReportDialog'
 

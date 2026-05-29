@@ -46,6 +46,7 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { AlertDialogAction, AlertDialogBody, AlertDialogCancel } from '@/components/ui/alert-dialog'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -128,7 +129,7 @@ export interface ConfirmDialogProps {
   actionTestId?: string | undefined
 }
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: complexity 27 vs max 25. The merge unifies two APIs (i18n keys + pre-resolved strings) + sync/async onConfirm + mobile Sheet + optional secondaryAction; splitting would scatter the dual-path logic.
+// oxlint-disable-next-line eslint/complexity -- complexity 27 vs max 25. The merge unifies two APIs (i18n keys + pre-resolved strings) + sync/async onConfirm + mobile Sheet + optional secondaryAction; splitting would scatter the dual-path logic.
 export function ConfirmDialog({
   open,
   onOpenChange,

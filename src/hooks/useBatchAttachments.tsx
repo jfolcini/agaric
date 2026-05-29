@@ -28,6 +28,7 @@
 
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import type { AttachmentRow } from '../lib/tauri'
 import { getBatchAttachments } from '../lib/tauri'
@@ -69,7 +70,7 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
   // when the parent passes a new array reference but identical contents.
   const stableKey = useMemo(() => [...blockIds].sort().join('|'), [blockIds])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stableKey is the membership digest of blockIds (intentional substitute for the array dep); invalidationToken is a manual refresh signal that doesn't appear inside the effect body
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- stableKey is the membership digest of blockIds (intentional substitute for the array dep); invalidationToken is a manual refresh signal that doesn't appear inside the effect body
   useEffect(() => {
     if (blockIds.length === 0) {
       setAttachmentsByBlock(new Map())

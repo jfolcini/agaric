@@ -12,6 +12,7 @@
  */
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
 
 const FILTER_SYNTAX_INTRO_TOAST_FLAG = 'agaric:searchFilterSyntaxToast:v1'

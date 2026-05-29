@@ -21,7 +21,9 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { logger } from '@/lib/logger'
+
 import { useIpcCommand } from '../useIpcCommand'
 
 vi.mock('@/lib/logger', () => ({
@@ -144,7 +146,7 @@ describe('useIpcCommand — error path', () => {
   it('passes non-Error rejections through to onError verbatim', async () => {
     const onError = vi.fn()
     const call = vi.fn(async () => {
-      // biome-ignore lint/style/useThrowOnlyError: non-Error rejection is the case under test
+      // oxlint-disable-next-line typescript/only-throw-error -- non-Error rejection is the case under test
       throw 'plain string'
     })
     const { result } = renderHook(() =>

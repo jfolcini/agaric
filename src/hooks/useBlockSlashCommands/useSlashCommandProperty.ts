@@ -5,11 +5,13 @@
  * All handlers mutate `block_properties` (or, for the four hot-path columns
  * `todo_state` / `priority`, the column directly via `setTodoStateCmd` /
  * `setPriorityCmd`) and notify the undo store. Pure ctx-driven — empty
- * `useMemo` dep array, no `biome-ignore useExhaustiveDependencies`.
+ * `useMemo` dep array, no `oxlint-disable react-hooks/exhaustive-deps`.
  */
 
 import { useMemo } from 'react'
+
 import { notify } from '@/lib/notify'
+
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '../../lib/file-utils'
 import { logger } from '../../lib/logger'
 import { formatRepeatLabel } from '../../lib/repeat-utils'

@@ -28,6 +28,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { writeText } from '../../lib/clipboard'
 import { t } from '../../lib/i18n'
 import { logger } from '../../lib/logger'
@@ -574,7 +575,6 @@ describe('BlockContextMenu', () => {
    * does not trigger Node's unhandled-rejection tracking.
    */
   function failedPositioning() {
-    // biome-ignore lint/suspicious/noThenProperty: intentional thenable mock to simulate non-settling promise
     const t: Record<string, () => typeof t> = { then: () => t, catch: () => t, finally: () => t }
     return t as unknown as ReturnType<typeof import('@floating-ui/dom').computePosition>
   }

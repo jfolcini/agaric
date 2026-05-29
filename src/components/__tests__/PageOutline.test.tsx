@@ -16,7 +16,9 @@ import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { createStore } from 'zustand'
+
 import { axe } from '@/__tests__/helpers/axe'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import type { FlatBlock } from '../../stores/page-blocks'
 import { PageBlockContext, type PageBlockState } from '../../stores/page-blocks'

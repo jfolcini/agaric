@@ -2,7 +2,9 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
+
 import { useRichContentCallbacks } from '../hooks/useRichContentCallbacks'
 import type { DiffSpan } from '../lib/tauri'
 import { cn } from '../lib/utils'
@@ -138,7 +140,6 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
 
   return (
     <div className="diff-display-wrapper">
-      {/* biome-ignore lint/a11y/useSemanticElements: aria-label on a <div> region is intentional — diff content is a labelled landmark */}
       <div role="region" aria-label={t('diff.regionLabel')}>
         <p className="diff-display text-sm leading-relaxed whitespace-pre-wrap break-words m-0">
           {visibleSpans.map((span, i) => {

@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+
 import { applySafePosition } from '../floating-position'
 
 describe('applySafePosition', () => {

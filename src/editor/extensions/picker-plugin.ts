@@ -15,9 +15,10 @@
 import type { Editor } from '@tiptap/core'
 import type { PluginKey } from '@tiptap/pm/state'
 import { Suggestion, type SuggestionOptions } from '@tiptap/suggestion'
+
 import { logger } from '../../lib/logger'
-import type { PickerItem } from '../SuggestionList'
 import { createSuggestionRenderer } from '../suggestion-renderer'
+import type { PickerItem } from '../SuggestionList'
 
 export interface PickerPluginConfig {
   /** Component name passed to `logger.warn` (e.g. 'BlockLinkPicker'). */

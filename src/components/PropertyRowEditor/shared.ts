@@ -7,6 +7,7 @@
  */
 
 import { logger } from '@/lib/logger'
+
 import type { PropertyDefinition, PropertyRow } from '../../lib/tauri'
 
 /**

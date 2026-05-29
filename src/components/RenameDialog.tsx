@@ -23,6 +23,7 @@
 import type React from 'react'
 import { useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -31,7 +32,7 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 export const MAX_RENAME_LENGTH = 64
 
 // Strip ASCII control chars (\u0000-\u001F, \u007F). Keeps printable text intact.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: validation strips control chars by design
+// oxlint-disable-next-line eslint/no-control-regex -- validation strips control chars by design
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/g
 
 export function sanitizeRenameInput(raw: string): string {

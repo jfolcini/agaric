@@ -29,6 +29,7 @@
 import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -37,6 +38,7 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { logger } from '@/lib/logger'
 import type { FilterToken } from '@/lib/search-query'
 import { listTagsByPrefix, paginationLimit, type TagCacheRow } from '@/lib/tauri'
+
 import { DateFilterForm } from './filter-forms/DateFilterForm'
 import { PriorityFilterForm } from './filter-forms/PriorityFilterForm'
 import { PropFilterForm } from './filter-forms/PropFilterForm'
@@ -283,7 +285,7 @@ export function FilterHelperPopover({
             />
             <ul
               id={TAG_LISTBOX_ID}
-              // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input.
+              // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input.
               role="listbox"
               className="mt-2 max-h-60 overflow-y-auto list-none m-0 p-0"
               aria-label={t('search.filterHelper.tagResultsLabel')}

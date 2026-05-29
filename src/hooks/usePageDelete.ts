@@ -7,7 +7,9 @@
 
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
+
 import type { BlockRow } from '../lib/tauri'
 import { deleteBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'

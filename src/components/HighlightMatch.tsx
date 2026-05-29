@@ -10,6 +10,7 @@
  */
 
 import type React from 'react'
+
 import { findFoldedMatch } from '@/lib/fold-for-search'
 
 export function HighlightMatch({

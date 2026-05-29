@@ -31,6 +31,7 @@ import { Search } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { LoadingSkeleton } from '@/components/LoadingSkeleton'
 import { LoadMoreButton } from '@/components/LoadMoreButton'
 import { CardButton } from '@/components/ui/card-button'
@@ -46,6 +47,11 @@ import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
 import { EmptyState } from './EmptyState'
 import { SearchHelpDialog } from './help/SearchHelpDialog'
 import { ResultCard } from './ResultCard'
+import { FilterChipRow } from './search/FilterChipRow'
+import { FilterHelperPopover } from './search/FilterHelperPopover'
+import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
+import { SearchResultGroups } from './search/SearchResultGroups'
+import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRow'
 import {
   SearchAutocomplete,
   type SearchAutocompleteHandle,
@@ -57,12 +63,6 @@ import { useAliasResolution } from './SearchPanel/useAliasResolution'
 import { useFilterSyntaxIntroToast } from './SearchPanel/useFilterSyntaxIntroToast'
 import { useSearchHistoryControls } from './SearchPanel/useSearchHistoryControls'
 import { useSearchResults } from './SearchPanel/useSearchResults'
-
-import { FilterChipRow } from './search/FilterChipRow'
-import { FilterHelperPopover } from './search/FilterHelperPopover'
-import { SearchHistoryDropdown } from './search/SearchHistoryDropdown'
-import { SearchResultGroups } from './search/SearchResultGroups'
-import { SearchToggleRow, type SearchToggleState } from './search/SearchToggleRow'
 
 /** PEND-55 — localStorage key for the toggle state (component-local but
  * persisted across reloads so power users don't re-click on every

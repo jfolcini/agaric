@@ -27,6 +27,7 @@
  */
 
 import { type Dispatch, type RefObject, type SetStateAction, useEffect, useRef } from 'react'
+
 import {
   type UseListKeyboardNavigationOptions,
   useListKeyboardNavigation,
@@ -105,7 +106,7 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
   const { focusedIndex, setFocusedIndex, handleKeyDown } = useListKeyboardNavigation(navOptions)
 
   // Reset focusedIndex to 0 whenever the caller-provided resetKey changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional reset on resetKey change
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional reset on resetKey change
   useEffect(() => {
     setFocusedIndex(0)
   }, [resetKey])

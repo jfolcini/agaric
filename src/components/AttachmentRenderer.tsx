@@ -1,6 +1,7 @@
 import type React from 'react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { formatSize } from '../lib/attachment-utils'
 import { logger } from '../lib/logger'
 import { notify } from '../lib/notify'
@@ -110,14 +111,13 @@ function AttachmentImage({
   }
 
   return (
-    // biome-ignore lint/a11y/useSemanticElements: <fieldset>/<legend> are form-control semantics, not appropriate for an image wrapper; role="group" is the correct ARIA primitive here
     <div
       className="relative inline-block"
       style={{ maxWidth: `${imageWidth}%` }}
       data-testid="image-resize-wrapper"
       role="group"
       aria-label={t('attachment.toggleResizeToolbar')}
-      // biome-ignore lint/a11y/noNoninteractiveTabindex: image container needs keyboard focus to expose the inner resize toolbar
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- image container needs keyboard focus to expose the inner resize toolbar
       tabIndex={0}
       onPointerEnter={() => onImageHoveredChange(true)}
       onPointerLeave={() => onImageHoveredChange(false)}
@@ -142,7 +142,7 @@ function AttachmentImage({
           onWidthChange={onImageWidthChange}
         />
       )}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: image open action is supplementary */}
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- image open action is supplementary */}
       <img
         src={url}
         alt={att.filename}

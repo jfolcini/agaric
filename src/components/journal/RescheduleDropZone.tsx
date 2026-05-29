@@ -24,7 +24,7 @@
  *      `setDueDate` / `setScheduledDate` — the same backend command this
  *      drop zone calls — and triggers a screen-reader announcement.
  *
- * The `biome-ignore` for `noStaticElementInteractions` below is therefore
+ * The `oxlint-disable` for `no-static-element-interactions` below is therefore
  * justified: the static `<div>` is a passive HTML5 drop surface, and the
  * accessible reschedule path is fully covered by `DateChipEditor`.
  */
@@ -32,10 +32,12 @@
 import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { announce } from '@/lib/announcer'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import { cn } from '@/lib/utils'
+
 import { useBlockReschedule } from '../../hooks/useBlockReschedule'
 
 interface RescheduleDropZoneProps {
@@ -93,7 +95,7 @@ export function RescheduleDropZone({
   )
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: passive HTML5 drop target — drag events are not keyboard-interactive
+    // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- passive HTML5 drop target — drag events are not keyboard-interactive
     <div
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

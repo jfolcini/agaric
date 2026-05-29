@@ -8,7 +8,9 @@
  */
 
 import { useCallback, useMemo, useState } from 'react'
+
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+
 import type { BlockRow } from '../lib/tauri'
 import { useDebouncedCallback } from './useDebouncedCallback'
 

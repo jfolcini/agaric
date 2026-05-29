@@ -1,6 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { notify } from '@/lib/notify'
+
 import { AppSidebar } from './components/AppSidebar'
 import { BootGate } from './components/BootGate'
 import { GcalReauthBanner } from './components/GcalReauthBanner'
@@ -204,7 +206,7 @@ function App() {
   // before we attempt `focus()`; if nothing registered, fall back to the
   // generic main-content container.
   const focusRegistry = usePrimaryFocusRegistry()
-  // biome-ignore lint/correctness/useExhaustiveDependencies: currentView IS the trigger — we focus when the view changes
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- currentView IS the trigger — we focus when the view changes
   useEffect(() => {
     // Small delay to let the new view render before moving focus
     const id = requestAnimationFrame(() => {

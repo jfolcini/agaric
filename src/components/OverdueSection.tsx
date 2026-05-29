@@ -11,6 +11,7 @@
 
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import type { NavigateToPageFn } from '../lib/block-events'
 import type { BlockRow } from '../lib/tauri'
 import { AlertSection } from './AlertSection'

@@ -1,7 +1,9 @@
 import type { TFunction } from 'i18next'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
+
 import { notify } from '@/lib/notify'
+
 import { deleteBlocksByIds, setTodoStateBatch } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'

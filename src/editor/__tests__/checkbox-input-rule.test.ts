@@ -5,6 +5,7 @@ import History from '@tiptap/extension-history'
 import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { CheckboxInputRule } from '../extensions/checkbox-input-rule'
 
 describe('CheckboxInputRule extension', () => {
@@ -82,7 +83,7 @@ describe('Checkbox regex patterns', () => {
 describe('CheckboxInputRule input rules', () => {
   it('extension has exactly 2 input rules', () => {
     const ext = CheckboxInputRule.configure({ onCheckbox: null })
-    // biome-ignore lint/suspicious/noExplicitAny: test-only — TipTap extension `this` context mock
+    // oxlint-disable-next-line typescript/no-explicit-any -- test-only — TipTap extension `this` context mock
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
     expect(rules).toHaveLength(2)
   })
@@ -90,7 +91,7 @@ describe('CheckboxInputRule input rules', () => {
   it('TODO handler calls onCheckbox with TODO', () => {
     const onCheckbox = vi.fn()
     const ext = CheckboxInputRule.configure({ onCheckbox })
-    // biome-ignore lint/suspicious/noExplicitAny: test-only — TipTap extension `this` context mock
+    // oxlint-disable-next-line typescript/no-explicit-any -- test-only — TipTap extension `this` context mock
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
     const todoRule = rules?.[0]
     const mockState = { tr: { delete: vi.fn() } }
@@ -107,7 +108,7 @@ describe('CheckboxInputRule input rules', () => {
   it('DONE handler calls onCheckbox with DONE', () => {
     const onCheckbox = vi.fn()
     const ext = CheckboxInputRule.configure({ onCheckbox })
-    // biome-ignore lint/suspicious/noExplicitAny: test-only — TipTap extension `this` context mock
+    // oxlint-disable-next-line typescript/no-explicit-any -- test-only — TipTap extension `this` context mock
     const rules = ext.config.addInputRules?.call({ options: ext.options } as any)
     const doneRule = rules?.[1]
     const mockState = { tr: { delete: vi.fn() } }

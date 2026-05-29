@@ -8,6 +8,7 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { SearchHelpDialog } from '../SearchHelpDialog'
 
 function getTogglesSection(baseElement: HTMLElement): HTMLElement {

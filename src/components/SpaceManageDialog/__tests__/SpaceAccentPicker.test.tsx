@@ -17,7 +17,9 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { t } from '@/lib/i18n'
+
 import { ACCENT_SWATCHES, SpaceAccentPicker } from '../SpaceAccentPicker'
 
 vi.mock('@/lib/logger', () => ({

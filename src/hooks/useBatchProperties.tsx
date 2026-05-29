@@ -19,6 +19,7 @@
 
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+
 import { logger } from '../lib/logger'
 import type { PropertyRow } from '../lib/tauri'
 import { getBatchProperties } from '../lib/tauri'
@@ -64,7 +65,7 @@ export function BatchPropertiesProvider({
   // when the parent passes a new array reference but identical contents.
   const stableKey = useMemo(() => [...blockIds].sort().join('|'), [blockIds])
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: stableKey is the membership digest of blockIds (intentional substitute for the array dep); invalidationToken / invalidationKey are manual refresh signals that don't appear inside the effect body
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- stableKey is the membership digest of blockIds (intentional substitute for the array dep); invalidationToken / invalidationKey are manual refresh signals that don't appear inside the effect body
   useEffect(() => {
     if (blockIds.length === 0) {
       setPropertiesByBlock(new Map())

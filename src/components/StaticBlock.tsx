@@ -11,6 +11,7 @@
 import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { useBatchAttachments } from '../hooks/useBatchAttachments'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
@@ -92,7 +93,7 @@ function StaticBlockInner({
   // are intentionally captured via refs — listing them would invalidate
   // the memo on every parent render and defeat the optimization.
   const resolveVersion = useResolveStore((s) => s.version)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
   const richContent = useMemo(
     () =>
       content
@@ -271,8 +272,8 @@ function StaticBlockInner({
           a11y suppressions below are the cost of a passive surface that
           converts pointer clicks into editor-mount via onFocus: keyboard
           users reach the same outcome by tabbing to an inner chip/button. */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: passive container — see MAINT-162 comment above. */}
-      {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard activation routes through inner focusable controls — see MAINT-162 comment above. */}
+      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- passive container — see MAINT-162 comment above. */}
+      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- keyboard activation routes through inner focusable controls — see MAINT-162 comment above. */}
       <div
         className={cn(
           'block-static w-full min-h-[1.75rem] cursor-text rounded-md px-3 py-1 text-left text-sm transition-colors hover:bg-accent/50 [@media(pointer:coarse)]:min-h-[2.75rem]',

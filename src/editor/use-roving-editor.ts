@@ -8,7 +8,6 @@
 
 import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
-
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
@@ -30,9 +29,11 @@ import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { type Editor, Extension, useEditor } from '@tiptap/react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+
 import { configKeyToTipTap, getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { curatedLowlight } from '@/lib/lowlight-curated'
+
 import { AtTagPicker, atTagPickerPluginKey } from './extensions/at-tag-picker'
 import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker, blockLinkPickerPluginKey } from './extensions/block-link-picker'
@@ -45,8 +46,8 @@ import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
 import { notifyUnknownNodeTypeToast } from './markdown-serialize-toast'
 import { parse, serialize } from './markdown-serializer'
-import type { PickerItem } from './SuggestionList'
 import { cleanupOrphanedPopups } from './suggestion-renderer'
+import type { PickerItem } from './SuggestionList'
 import { toggleCodeBlockSafely } from './toggle-code-block-safely'
 import type { DocNode } from './types'
 

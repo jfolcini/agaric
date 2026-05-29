@@ -11,6 +11,7 @@
 import { Plus, Rows3, Search } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
@@ -24,6 +25,7 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+
 import type { DensityMode } from '../../hooks/usePageBrowserDensity'
 import type { SortOption } from '../../hooks/usePageBrowserSort'
 

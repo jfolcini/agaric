@@ -2,6 +2,7 @@ import { act, renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { announce } from '../../lib/announcer'
 import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'

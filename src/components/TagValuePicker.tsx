@@ -10,10 +10,12 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+
 import { useDebouncedCallback } from '../hooks/useDebouncedCallback'
 import { listTagsByPrefix, paginationLimit } from '../lib/tauri'
 

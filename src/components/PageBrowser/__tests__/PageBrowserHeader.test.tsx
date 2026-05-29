@@ -18,6 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { t } from '@/lib/i18n'
 
 import { PageBrowserHeader, type PageBrowserHeaderProps } from '../PageBrowserHeader'

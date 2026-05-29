@@ -10,6 +10,7 @@ import { fireEvent, render } from '@testing-library/react'
 import * as React from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import {
   Sidebar,
   SidebarContent,

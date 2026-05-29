@@ -12,6 +12,7 @@
 
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { SIDEBAR_WIDTH_DEFAULT, useSidebarState } from '../use-sidebar-state'
 
 beforeEach(() => {
@@ -23,7 +24,7 @@ beforeEach(() => {
   })
   localStorage.removeItem('sidebar_width')
   // Clear cookies set by previous tests.
-  // biome-ignore lint/suspicious/noDocumentCookie: test cleanup
+  // oxlint-disable-next-line unicorn/no-document-cookie -- test cleanup
   document.cookie = 'sidebar_state=; path=/; max-age=0'
 })
 

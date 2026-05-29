@@ -14,6 +14,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { drag } from 'd3-drag'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
 import type { SimulationCtx } from '../../lib/graph-sim-helpers'
 import { logger } from '../../lib/logger'
@@ -35,17 +36,17 @@ vi.mock('d3-drag', () => ({
 }))
 
 // ── MockWorker ───────────────────────────────────────────────────────
-// biome-ignore lint/suspicious/noExplicitAny: test mock
+// oxlint-disable-next-line typescript/no-explicit-any -- test mock
 type Handler = (evt: { data?: any; type?: string; error?: any; message?: any }) => void
 
 class MockWorker {
   static instances: MockWorker[] = []
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessageCalls: any[] = []
   terminated = false
   private listeners = new Map<string, Handler[]>()
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   constructor(_url: any, _opts?: any) {
     MockWorker.instances.push(this)
   }
@@ -64,7 +65,7 @@ class MockWorker {
     )
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   postMessage(data: any): void {
     this.postMessageCalls.push(data)
   }
@@ -73,7 +74,7 @@ class MockWorker {
     this.terminated = true
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: test mock
+  // oxlint-disable-next-line typescript/no-explicit-any -- test mock
   dispatch(type: string, event: any): void {
     const list = this.listeners.get(type) ?? []
     for (const handler of list) handler(event)
@@ -105,7 +106,7 @@ function makeCtx(): SimulationCtx {
   const nodes = makeNodes()
   const edges = makeEdges()
   const nodeById = new Map(nodes.map((n) => [n.id, n]))
-  // biome-ignore lint/suspicious/noExplicitAny: NodeSel chain — test stub
+  // oxlint-disable-next-line typescript/no-explicit-any -- NodeSel chain — test stub
   const node = { call: vi.fn().mockReturnThis() } as any
   return {
     simNodes: nodes,

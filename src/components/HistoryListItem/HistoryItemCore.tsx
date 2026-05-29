@@ -27,11 +27,13 @@ import {
 } from 'lucide-react'
 import type * as React from 'react'
 import { useTranslation } from 'react-i18next'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+
 import { useRichContentCallbacks, useTagClickHandler } from '../../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../../lib/format'
 import { getPayloadRawContent, getPropertyPayload } from '../../lib/history-utils'

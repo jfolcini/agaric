@@ -8,6 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { BLOCK_EVENTS, dispatchBlockEvent, onBlockEvent } from '../block-events'
 
 describe('BLOCK_EVENTS', () => {

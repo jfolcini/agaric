@@ -17,8 +17,10 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
+
 import { PairingQrDisplay } from '../PairingQrDisplay'
 
 vi.mock('@/lib/clipboard', () => ({

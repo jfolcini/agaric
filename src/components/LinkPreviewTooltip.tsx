@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
+
 import { Spinner } from './ui/spinner'
 
 interface LinkPreviewTooltipProps {

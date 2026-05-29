@@ -10,6 +10,7 @@
 
 import { fireEvent, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+
 import { useSidebarKeyboard } from '../use-sidebar-keyboard'
 
 describe('useSidebarKeyboard', () => {

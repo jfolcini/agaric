@@ -23,7 +23,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-
   # Guard against version drift between the git tag and the in-repo
   # manifests. tauri-action names release bundles + the in-app version
   # from tauri.conf.json, while the GitHub Release uses `github.ref_name`
@@ -77,9 +76,9 @@ jobs:
     # linux 50 + 10 = 60, macos 50 + 10 = 60, windows 65 + 10 = 75.
     timeout-minutes: ${{ matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
     permissions:
-      contents: write  # tauri-action uploads release bundles
-      id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
-      attestations: write  # actions/attest-build-provenance — write to GH attestations API
+      contents: write # tauri-action uploads release bundles
+      id-token: write # actions/attest-build-provenance — Sigstore OIDC token
+      attestations: write # actions/attest-build-provenance — write to GH attestations API
     strategy:
       fail-fast: false
       matrix:
@@ -654,9 +653,9 @@ jobs:
     # run 25966040732, n=1) + ~10 min signing/attest/upload overhead → 60 min.
     timeout-minutes: 60
     permissions:
-      contents: write  # gh release upload attaches the APK to the existing release
-      id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
-      attestations: write  # actions/attest-build-provenance — write to GH attestations API
+      contents: write # gh release upload attaches the APK to the existing release
+      id-token: write # actions/attest-build-provenance — Sigstore OIDC token
+      attestations: write # actions/attest-build-provenance — write to GH attestations API
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -940,9 +939,9 @@ jobs:
     # cache restore. 5-min budget is generous.
     timeout-minutes: 5
     permissions:
-      contents: write  # gh release upload attaches the VEX JSON to the release
-      id-token: write  # actions/attest-build-provenance — Sigstore OIDC token
-      attestations: write  # actions/attest-build-provenance — write to GH attestations API
+      contents: write # gh release upload attaches the VEX JSON to the release
+      id-token: write # actions/attest-build-provenance — Sigstore OIDC token
+      attestations: write # actions/attest-build-provenance — write to GH attestations API
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -1074,7 +1073,7 @@ jobs:
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
-      contents: write  # gh release edit appends to the draft release notes
+      contents: write # gh release edit appends to the draft release notes
     # PEND-41 R1 — pure gh-API edits; trivial. 5-min budget.
     timeout-minutes: 5
     steps:

@@ -16,6 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
+
 import type { PickerItem } from '../../editor/SuggestionList'
 import { useBlockStore } from '../../stores/blocks'
 import {
@@ -100,7 +101,7 @@ vi.mock('../../editor/use-roving-editor', () => ({
 // `editor.chain().focus().toggleCodeBlock(...)` were called directly.
 vi.mock('../../editor/toggle-code-block-safely', () => ({
   toggleCodeBlockSafely: (editor: { chain: () => unknown }, attributes?: unknown) => {
-    // biome-ignore lint/suspicious/noExplicitAny: traversing the test's mock chain
+    // oxlint-disable-next-line typescript/no-explicit-any -- traversing the test's mock chain
     const c = editor.chain() as any
     c.focus().toggleCodeBlock(attributes).focus('end').run()
   },
@@ -1980,7 +1981,7 @@ describe('BlockTree resolve cache preload', () => {
           deleted: false,
         }))
     }
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') {
         const a = args as Record<string, unknown> | undefined
@@ -2034,7 +2035,7 @@ describe('BlockTree handleNavigate', () => {
     const PAGE_ID = '01TESTPAGE00000000000NAV01'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === PAGE_ID) {
         return {
@@ -2078,7 +2079,7 @@ describe('BlockTree handleNavigate', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV03'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -2138,7 +2139,7 @@ describe('BlockTree handleNavigate', () => {
   it('handles missing/deleted block without crashing', async () => {
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block') throw new Error('Block not found')
       if (cmd === 'get_batch_properties') {
@@ -3658,7 +3659,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const BLOCK_ID = '01TESTLOCAL0000000000NAV01'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === BLOCK_ID) {
         return {
@@ -3705,7 +3706,7 @@ describe('BlockTree handleNavigate — same-tree navigation', () => {
     const PARENT_ID = '01TESTPAGE00000000000NAV05'
     const onNav = vi.fn()
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'get_block' && args?.blockId === CONTENT_ID) {
         return {
@@ -4640,11 +4641,11 @@ describe('BlockTree /attach slash command', () => {
     const mockFile = new File([new Uint8Array([1, 2, 3, 4])], 'test.pdf', {
       type: 'application/pdf',
     })
-    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
-      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 
@@ -4695,11 +4696,11 @@ describe('BlockTree /attach slash command', () => {
     const mockFile = new File([new Uint8Array([0, 1])], 'evil.exe', {
       type: 'application/x-msdownload',
     })
-    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
-      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 
@@ -4749,11 +4750,11 @@ describe('BlockTree /attach slash command', () => {
 
     // File with no type — guessMimeType should be used
     const mockFile = new File([new Uint8Array([9, 9, 9, 9])], 'photo.png', { type: '' })
-    // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+    // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
     Object.defineProperty(capturedInput!, 'files', { value: [mockFile] })
 
     await act(async () => {
-      // biome-ignore lint/style/noNonNullAssertion: guarded by expect(capturedInput).not.toBeNull() above
+      // oxlint-disable-next-line typescript/no-non-null-assertion -- guarded by expect(capturedInput).not.toBeNull() above
       capturedInput!.onchange?.(new Event('change'))
     })
 
@@ -5014,7 +5015,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     // Mock create_block to return a new block.  Throw from
     // load_page_subtree so load() falls into its catch branch and the
     // seeded tree survives.
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
       if (cmd === 'create_block') {
@@ -5070,7 +5071,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
@@ -5124,7 +5125,7 @@ describe('BlockTree Enter creates new sibling block', () => {
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
 
-    // biome-ignore lint/suspicious/noExplicitAny: test mock dispatch
+    // oxlint-disable-next-line typescript/no-explicit-any -- test mock dispatch
     mockedInvoke.mockImplementation(async (cmd: string, args?: any) => {
       if (cmd === 'create_block') {
         return {
