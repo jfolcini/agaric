@@ -6360,7 +6360,7 @@ mod pages_cache_count_parity {
         .unwrap();
         sqlx::query(
             "INSERT INTO pages_cache (page_id, title, updated_at, inbound_link_count, child_block_count) \
-             VALUES (?, ?, '2025-01-01T00:00:00Z', 0, 0)",
+             VALUES (?, ?, 1735689600000, 0, 0)",
         )
         .bind(id)
         .bind(title)

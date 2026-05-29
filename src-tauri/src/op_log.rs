@@ -2000,7 +2000,7 @@ mod tests {
         for page_id in ["PAGE_A", "PAGE_B"] {
             sqlx::query(
                 "INSERT INTO pages_cache (page_id, title, updated_at) \
-                 VALUES (?, ?, '2025-01-15T12:00:00Z')",
+                 VALUES (?, ?, 1736942400000)",
             )
             .bind(page_id)
             .bind(page_id)

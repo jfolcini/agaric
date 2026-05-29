@@ -288,7 +288,7 @@ async fn cascade_pages_cache_page_id_on_hard_delete() {
         "INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)",
         "PG09",
         "a page",
-        "2025-01-01T00:00:00Z"
+        1_735_689_600_000_i64
     )
     .execute(&pool)
     .await

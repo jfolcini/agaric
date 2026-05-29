@@ -765,7 +765,7 @@ async fn maintain_pages_cache_counts_after_op(
                     // `UPDATE` below sees a target. Title = content
                     // (matches `rebuild_pages_cache`'s desired-state SQL).
                     let title = pre_state.create_content.as_deref().unwrap_or("");
-                    let now = crate::now_rfc3339();
+                    let now = crate::db::now_ms();
                     sqlx::query(
                         "INSERT OR IGNORE INTO pages_cache \
                              (page_id, title, updated_at, inbound_link_count, child_block_count) \
@@ -773,7 +773,7 @@ async fn maintain_pages_cache_counts_after_op(
                     )
                     .bind(block_id)
                     .bind(title)
-                    .bind(&now)
+                    .bind(now)
                     .execute(&mut *conn)
                     .await?;
                     affected.insert(block_id.clone());

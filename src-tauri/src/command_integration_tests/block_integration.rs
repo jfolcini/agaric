@@ -1086,7 +1086,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .bind("readme.txt")
     .bind(256_i64)
     .bind("attachments/readme.txt")
-    .bind("2024-01-01T00:00:00Z")
+    .bind(1_704_067_200_000_i64)
     .execute(&pool)
     .await
     .unwrap();
@@ -1112,7 +1112,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .bind("PURGE_REL")
     .bind("purge-rel-tag")
     .bind(1_i64)
-    .bind("2024-01-01T00:00:00Z")
+    .bind(1_704_067_200_000_i64)
     .execute(&pool)
     .await
     .unwrap();
@@ -1122,14 +1122,14 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, ?)")
         .bind("PURGE_REL")
         .bind("has relations")
-        .bind("2024-01-01T00:00:00Z")
+        .bind(1_704_067_200_000_i64)
         .execute(&pool)
         .await
         .unwrap();
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind("PURGE_REL")
         .bind("draft content")
-        .bind("2024-01-01T00:00:00Z")
+        .bind(1_704_067_200_000_i64)
         .execute(&pool)
         .await
         .unwrap();

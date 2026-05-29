@@ -1490,7 +1490,7 @@ mod explain_query_plan_tests {
             sqlx::query(
                 "INSERT OR IGNORE INTO pages_cache \
                      (page_id, title, updated_at, inbound_link_count, child_block_count) \
-                 VALUES (?, ?, '2025-01-01T00:00:00Z', 0, 0)",
+                 VALUES (?, ?, 1735689600000, 0, 0)",
             )
             .bind(&id)
             .bind(format!("p{i}"))
