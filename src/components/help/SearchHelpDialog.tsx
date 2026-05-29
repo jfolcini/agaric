@@ -194,6 +194,7 @@ function TogglesBody() {
 
 /** PEND-55 — Regex syntax section body. */
 function RegexSyntaxBody() {
+  const { t } = useTranslation()
   const mono = <span className="font-mono" />
   return (
     <div className="text-muted-foreground text-sm space-y-2">
@@ -257,6 +258,7 @@ function RegexSyntaxBody() {
                 href="https://docs.rs/regex/latest/regex/#syntax"
                 target="_blank"
                 rel="noreferrer"
+                aria-label={t('search.help.regex.seeAlsoLinkLabel')}
               />
             ),
           }}

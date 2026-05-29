@@ -472,6 +472,7 @@ export const references: Record<string, string> = {
   // so the Trans HTML parser would self-close it and drop the inner text.
   'search.help.regex.seeAlso':
     "See <lnk>Rust regex syntax</lnk> for the full grammar. The in-page find (<mono>Ctrl+F</mono>) uses JavaScript's native <mono>RegExp</mono> instead — patterns may behave differently between the two surfaces; see <mono>docs/SEARCH.md</mono> for the cross-link.",
+  'search.help.regex.seeAlsoLinkLabel': 'Rust regex syntax documentation',
   // -- Boolean operators --
   'search.help.boolean.intro':
     'Non-regex queries support three FTS5 boolean operators (uppercase on the wire, case-insensitive on input):',

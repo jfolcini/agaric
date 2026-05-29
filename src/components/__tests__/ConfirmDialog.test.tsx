@@ -101,7 +101,7 @@ describe('ConfirmDialog', () => {
   it('renders children slot content', () => {
     render(
       <ConfirmDialog {...defaultProps}>
-        <input data-testid="custom-input" placeholder="Extra content" />
+        <input aria-label="Extra content" data-testid="custom-input" placeholder="Extra content" />
       </ConfirmDialog>,
     )
 
@@ -250,7 +250,7 @@ describe('ConfirmDialog', () => {
     const { container } = render(
       <ConfirmDialog {...defaultProps}>
         <label htmlFor="test-input">Name</label>
-        <input id="test-input" placeholder="Enter name" />
+        <input aria-label="Name" id="test-input" placeholder="Enter name" />
       </ConfirmDialog>,
     )
 
@@ -409,7 +409,11 @@ describe('ConfirmDialog', () => {
     it('renders children slot content', () => {
       render(
         <ConfirmDialog {...defaultProps}>
-          <input data-testid="custom-input" placeholder="Extra content" />
+          <input
+            aria-label="Extra content"
+            data-testid="custom-input"
+            placeholder="Extra content"
+          />
         </ConfirmDialog>,
       )
 

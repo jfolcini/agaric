@@ -262,7 +262,15 @@ export function PdfViewerDialog({
             )}
 
             {!loading && !error && numPages > 0 && (
-              <canvas ref={canvasRef} className="max-w-full" data-testid="pdf-canvas" />
+              <canvas
+                ref={canvasRef}
+                className="max-w-full"
+                data-testid="pdf-canvas"
+                aria-label={t('pdfViewer.pageIndicator', {
+                  current: currentPage,
+                  total: numPages,
+                })}
+              />
             )}
           </div>
         </Body>
