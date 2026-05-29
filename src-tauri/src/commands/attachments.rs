@@ -155,8 +155,8 @@ pub async fn add_attachment_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     Ok(AttachmentRow {
-        id: attachment_id,
-        block_id,
+        id: BlockId::from_trusted(&attachment_id),
+        block_id: BlockId::from_trusted(&block_id),
         mime_type,
         filename,
         size_bytes,
@@ -488,7 +488,10 @@ pub async fn list_attachments_batch_inner(
     let mut grouped: std::collections::HashMap<String, Vec<AttachmentRow>> =
         std::collections::HashMap::new();
     for row in rows {
-        grouped.entry(row.block_id.clone()).or_default().push(row);
+        grouped
+            .entry(row.block_id.clone().into_string())
+            .or_default()
+            .push(row);
     }
 
     Ok(grouped)

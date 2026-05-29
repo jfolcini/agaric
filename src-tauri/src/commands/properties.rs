@@ -1133,14 +1133,16 @@ pub async fn get_batch_properties_inner(
 
     let mut map: HashMap<String, Vec<PropertyRow>> = HashMap::new();
     for r in rows {
-        map.entry(r.block_id).or_default().push(PropertyRow {
-            key: r.key,
-            value_text: r.value_text,
-            value_num: r.value_num,
-            value_date: r.value_date,
-            value_ref: r.value_ref,
-            value_bool: r.value_bool,
-        });
+        map.entry(r.block_id.into_string())
+            .or_default()
+            .push(PropertyRow {
+                key: r.key,
+                value_text: r.value_text,
+                value_num: r.value_num,
+                value_date: r.value_date,
+                value_ref: r.value_ref,
+                value_bool: r.value_bool,
+            });
     }
 
     Ok(map)

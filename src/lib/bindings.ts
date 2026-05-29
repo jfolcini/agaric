@@ -861,8 +861,8 @@ export type AppError = {
 };
 
 export type AttachmentRow = {
-	id: string,
-	block_id: string,
+	id: BlockId,
+	block_id: BlockId,
 	mime_type: string,
 	filename: string,
 	size_bytes: number,

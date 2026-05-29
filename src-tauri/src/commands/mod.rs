@@ -583,8 +583,8 @@ pub struct SetPropertyArgs {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, sqlx::FromRow, specta::Type)]
 pub struct AttachmentRow {
-    pub id: String,
-    pub block_id: String,
+    pub id: crate::ulid::BlockId,
+    pub block_id: crate::ulid::BlockId,
     pub mime_type: String,
     pub filename: String,
     pub size_bytes: i64,
@@ -667,7 +667,7 @@ pub struct ResolvedBlock {
 /// Internal row type for the batch_resolve query (sqlx-compatible).
 #[derive(Debug, sqlx::FromRow)]
 struct ResolvedBlockRow {
-    id: String,
+    id: crate::ulid::BlockId,
     title: Option<String>,
     block_type: String,
     deleted: Option<bool>,
@@ -810,7 +810,7 @@ async fn delete_property_core(
 /// Internal row type for the batch properties query (sqlx-compatible).
 #[derive(Debug, sqlx::FromRow)]
 struct BatchPropertyRow {
-    block_id: String,
+    block_id: crate::ulid::BlockId,
     key: String,
     value_text: Option<String>,
     value_num: Option<f64>,
