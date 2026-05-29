@@ -111,6 +111,7 @@ function AttachmentImage({
   }
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this focusable group is the disclosure trigger for the inner ImageResizeToolbar: hover/focus reveal it and Enter/Space toggle it. It can't be a <button> because it wraps the <img> and a toolbar of nested buttons (nested interactive content is invalid), so the keyboard/pointer handlers must live on the group.
     <div
       className="relative inline-block"
       style={{ maxWidth: `${imageWidth}%` }}
@@ -123,7 +124,9 @@ function AttachmentImage({
       onPointerLeave={() => onImageHoveredChange(false)}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        // Only toggle the resize toolbar when the group itself is focused —
+        // not when the inner lightbox button bubbles its Enter/Space activation.
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
           e.preventDefault()
           onImageHoveredChange(!imageHovered)
         }
@@ -142,18 +145,23 @@ function AttachmentImage({
           onWidthChange={onImageWidthChange}
         />
       )}
-      {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- image open action is supplementary */}
-      <img
-        src={url}
-        alt={att.filename}
-        loading="lazy"
-        className="rounded-md cursor-pointer hover:opacity-90 transition-opacity"
-        style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
+      <button
+        type="button"
+        aria-label={t('attachment.openImageFullscreen', { filename: att.filename })}
+        className="block cursor-pointer rounded-md border-0 bg-transparent p-0 hover:opacity-90 transition-opacity"
         onClick={(e) => {
           e.stopPropagation()
           onLightboxOpen({ src: url, alt: att.filename, fsPath: att.fs_path })
         }}
-      />
+      >
+        <img
+          src={url}
+          alt={att.filename}
+          loading="lazy"
+          className="rounded-md"
+          style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
+        />
+      </button>
     </div>
   )
 }

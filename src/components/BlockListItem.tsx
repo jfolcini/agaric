@@ -392,6 +392,7 @@ function BlockListItemInner({
   )
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this li is the focusable, keyboard-navigable list row itself (roving tabindex + Enter/Space activation via onKeyDown); the activation handlers belong on the row, and it can't become a <button> because it is a list item that contains nested interactive controls (date chip, reschedule button)
     <li
       ref={liRef}
       style={style}

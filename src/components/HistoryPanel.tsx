@@ -331,6 +331,7 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
         empty={<EmptyState icon={Clock} message={t('history.noHistoryEmpty')} />}
       >
         {(items) => (
+          // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- intentional keyboard-event delegation: arrow/enter keys bubble up from the focused row buttons to drive list navigation. The interactive controls are the row <button>s; the <ul> only routes keys, so it must not claim an interactive role.
           <ul
             ref={listRef}
             className="history-list space-y-0 list-none p-0 m-0 focus:outline-none"

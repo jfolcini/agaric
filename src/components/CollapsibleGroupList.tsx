@@ -197,6 +197,7 @@ export function CollapsibleGroupList<G extends GroupItem>({
                 renderGroupList(group, title)
               ) : (
                 // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- `aria-activedescendant` is gated on `listRole === 'listbox'` at runtime; biome can't see the conditional. PEND-50 sets `listRole="listbox"` on search-result lists; other consumers leave `listRole` unset and never receive the attribute.
+                // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard-event delegation gated on the same runtime listRole: when `listRole="listbox"` the <ul> is interactive and owns listbox arrow-key navigation; otherwise `listOnKeyDown` is unset and no handler is attached. The handler routes keys to the option children, so the <ul> must not claim a static interactive role here.
                 <ul
                   className={listClassName ?? 'ml-4 mt-1 space-y-1'}
                   aria-label={listAriaLabel?.(title)}

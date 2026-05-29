@@ -29,7 +29,7 @@
     "jsx-a11y/no-autofocus": "warn",
     "jsx-a11y/interactive-supports-focus": "warn",
     "eslint/no-unsafe-optional-chaining": "error",
-    "jsx-a11y/no-noninteractive-element-interactions": "warn",
+    "jsx-a11y/no-noninteractive-element-interactions": "error",
     "unicorn/no-new-array": "error",
     "typescript/no-this-alias": "error",
     "jsx-a11y/role-supports-aria-props": "error",

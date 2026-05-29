@@ -190,6 +190,7 @@ function AddFilterForm({
   const usedTypes = useMemo(() => new Set(existingFilters.map((f) => f.type)), [existingFilters])
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- form-level onKeyDown intercepts Escape to cancel; belongs on the form container, not a child control
     <form
       className="flex flex-col gap-2"
       aria-label={t('graph.filter.addFilter')}

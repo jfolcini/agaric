@@ -205,6 +205,7 @@ export function QuickAccessBar(): React.ReactElement | null {
   const destCount = QUICK_NAV_DESTINATIONS.length
 
   return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- roving-tabindex keyboard navigation: the <nav> intercepts arrow keys delegated up from its focused QuickNavChip buttons to move focus between them. The chips are the interactive controls; the <nav> only routes keys.
     <nav
       aria-label={t('recent.ariaLabel')}
       className="border-b border-border/40 bg-background"

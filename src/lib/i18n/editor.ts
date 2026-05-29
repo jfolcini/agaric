@@ -15,6 +15,7 @@ export const editor: Record<string, string> = {
   'attachments.confirmDelete': 'Delete "{{name}}"?',
   'attachments.clickAgain': 'Click the delete button again to confirm.',
   'attachment.openFile': 'Open file {{filename}}',
+  'attachment.openImageFullscreen': 'Open image {{filename}} in full screen',
   'attachment.loadingImage': 'Loading image…',
   'attachment.imageLoadFailed': 'Failed to load image',
   'slash.repeatSet': 'Set repeat to {{value}}',

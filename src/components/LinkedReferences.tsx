@@ -370,6 +370,7 @@ export function LinkedReferences({
                 />
               </div>
 
+              {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
               <div
                 ref={listRef}
                 role="group"
