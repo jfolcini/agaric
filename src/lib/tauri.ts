@@ -1650,9 +1650,11 @@ export interface PeerRefRow {
   peer_id: string
   last_hash: string | null
   last_sent_hash: string | null
-  synced_at: string | null
+  /** Epoch milliseconds (UTC), or null if never synced. #109 Phase 2: was an ISO string. */
+  synced_at: number | null
   reset_count: number
-  last_reset_at: string | null
+  /** Epoch milliseconds (UTC), or null if never reset. #109 Phase 2: was an ISO string. */
+  last_reset_at: number | null
   cert_hash: string | null
   device_name: string | null
   last_address: string | null

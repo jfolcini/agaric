@@ -14,9 +14,13 @@ pub struct PeerRef {
     pub peer_id: String,
     pub last_hash: Option<String>,
     pub last_sent_hash: Option<String>,
-    pub synced_at: Option<String>,
+    /// Most recent successful sync, in milliseconds since the UNIX epoch
+    /// (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+    pub synced_at: Option<i64>,
     pub reset_count: i64,
-    pub last_reset_at: Option<String>,
+    /// Most recent protocol reset, in milliseconds since the UNIX epoch
+    /// (UTC); `None` = never reset. #109 Phase 2: was an RFC 3339 string.
+    pub last_reset_at: Option<i64>,
     /// SHA-256 hex of the peer's TLS certificate, observed during pairing.
     /// Used for certificate pinning on reconnection.
     pub cert_hash: Option<String>,
@@ -171,7 +175,7 @@ pub async fn update_on_sync(
     last_hash: &str,
     last_sent_hash: &str,
 ) -> Result<(), AppError> {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     let result = sqlx::query!(
         "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?
          WHERE peer_id = ?",
@@ -206,7 +210,7 @@ pub async fn update_on_sync_in_tx(
     last_hash: &str,
     last_sent_hash: &str,
 ) -> Result<(), AppError> {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     let result = sqlx::query!(
         "UPDATE peer_refs SET last_hash = ?, last_sent_hash = ?, synced_at = ?
          WHERE peer_id = ?",
@@ -228,7 +232,7 @@ pub async fn update_on_sync_in_tx(
 ///
 /// Returns [`AppError::NotFound`] if `peer_id` does not exist.
 pub async fn increment_reset_count(pool: &SqlitePool, peer_id: &str) -> Result<(), AppError> {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     let result = sqlx::query!(
         "UPDATE peer_refs SET reset_count = reset_count + 1, last_reset_at = ?
          WHERE peer_id = ?",

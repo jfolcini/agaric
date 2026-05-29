@@ -1,14 +1,16 @@
 /**
- * Format a timestamp string for display.
- * @param isoString - ISO 8601 timestamp string
+ * Format a timestamp for display.
+ * @param value - either an ISO 8601 string or epoch-milliseconds number
+ *   (#109 Phase 2 migrates several columns from ISO TEXT to INTEGER ms;
+ *   `new Date(value)` accepts both forms)
  * @param style - 'full' (date + time), 'date' (date only), 'relative' (e.g. "2 hours ago")
  */
 export function formatTimestamp(
-  isoString: string,
+  value: string | number,
   style: 'full' | 'date' | 'relative' = 'full',
 ): string {
-  const date = new Date(isoString)
-  if (Number.isNaN(date.getTime())) return isoString
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
 
   if (style === 'relative') {
     const now = Date.now()
@@ -40,8 +42,8 @@ export function formatTimestamp(
  * Format a last-synced timestamp for display. Returns 'Never synced' for null.
  * Delegates to formatTimestamp with 'relative' style for non-null values.
  */
-export function formatLastSynced(syncedAt: string | null): string {
-  if (!syncedAt) return 'Never synced'
+export function formatLastSynced(syncedAt: number | null): string {
+  if (syncedAt == null) return 'Never synced'
   return formatTimestamp(syncedAt, 'relative')
 }
 
