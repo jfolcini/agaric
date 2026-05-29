@@ -126,7 +126,12 @@ export function JournalCalendarDropdown({
 
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- monthKey encodes the month
+  // monthKey (`${year}-${month}`) is the intentional re-run key: agenda
+  // counts are fetched per visible month, so we deliberately do NOT depend
+  // on `currentDate` directly — that would refetch on every same-month day
+  // change for no benefit. currentDate is read inside but the month is what
+  // gates the fetch.
+  /* oxlint-disable react-hooks/exhaustive-deps -- currentDate is intentionally keyed via monthKey; see comment above. */
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -151,6 +156,7 @@ export function JournalCalendarDropdown({
       cancelled = true
     }
   }, [monthKey, invalidationKey, currentSpaceId])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const { datesWithDue, datesWithScheduled, datesWithProperty } = useMemo(
     () => computeSourceModifiers(agendaBySource),

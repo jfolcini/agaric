@@ -115,7 +115,9 @@ export function SearchAutocomplete({
   // `setQueryAndCaret` (history recall, chip add, completion apply),
   // otherwise sync the caret from the freshly-committed input value
   // (covers typing). Also re-arm dismissal so typing re-opens.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `query` is the trigger; we read the input post-commit.
+  // `query` is the real trigger (read the input post-commit); `inputRef`
+  // and `pendingCaretRef` are stable RefObject props so listing them is a
+  // no-op for re-runs — same pattern as the caret-tracker effect above.
   useEffect(() => {
     setDismissed(false)
     const input = inputRef.current
@@ -128,7 +130,7 @@ export function SearchAutocomplete({
     } else {
       setCaretPos(input.selectionStart ?? query.length)
     }
-  }, [query])
+  }, [query, inputRef, pendingCaretRef])
 
   // Default the highlight to the first item; keep a surviving selection.
   useEffect(() => {

@@ -376,12 +376,12 @@ export function GraphFilterBar({
   // persisted value with the parent's pre-hydration default (empty) state
   // before the hydration dispatch has propagated through the parent.
   const hasHydratedRef = useRef(false)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration; onFiltersChange is intentionally excluded so the effect does not re-run when the parent recreates the callback
   useEffect(() => {
     const persisted = readPersistedFilters()
     if (persisted !== null && persisted.length > 0) {
       onFiltersChange(persisted)
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only hydration; onFiltersChange is intentionally excluded so the effect does not re-run when the parent recreates the callback
   }, [])
 
   useEffect(() => {

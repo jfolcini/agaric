@@ -226,12 +226,12 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // cache, so the version bump is the trigger that re-derives the resolver
   // (and re-renders the chips) when tags finish loading — biome flags it as
   // an "extra" dep because the callback body never names it directly.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion drives re-resolution of the mutable cache
   const tagResolver = useCallback(
     (id: string): string => {
       const title = resolveTitle(id)
       return title.startsWith('[[') ? id : title
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion drives re-resolution of the mutable cache
     [resolveTitle, resolveVersion],
   )
   // Wire-shaped primitives (the `_addId` React key is dropped). A stable
@@ -837,7 +837,6 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   // points at the same row index. Allow restoration again on next
   // mount by leaving `restoredRef` intact within this mount but
   // dropping the stored value.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
   useEffect(() => {
     if (scrollStorageKey == null) return
     // Skip the very first run (mount) — that's when we want to
@@ -846,6 +845,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     // restoration completes, any subsequent change clears.
     if (!restoredRef.current) return
     sessionStorage.removeItem(scrollStorageKey)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- scrollStorageKey already covers space changes; filterText, sortOption, density, and the compound-filter set are the explicit triggers
   }, [filterText, sortOption, density, wireFiltersKey])
 
   // PageBrowser pagination UX (2026-05-14) — auto-load near the

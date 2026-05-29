@@ -70,7 +70,6 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
   // when the parent passes a new array reference but identical contents.
   const stableKey = useMemo(() => [...blockIds].sort().join('|'), [blockIds])
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- stableKey is the membership digest of blockIds (intentional substitute for the array dep); invalidationToken is a manual refresh signal that doesn't appear inside the effect body
   useEffect(() => {
     if (blockIds.length === 0) {
       setAttachmentsByBlock(new Map())
@@ -98,6 +97,7 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
     return () => {
       stale = true
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- blockIds/blockIds.length are read inside the effect, but stableKey is their membership digest (intentional substitute for the array dep); depending on blockIds directly would refetch on every reallocation with identical contents. invalidationToken is a manual refresh signal.
   }, [stableKey, invalidationToken])
 
   const get = useCallback(

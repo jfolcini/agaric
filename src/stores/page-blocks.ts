@@ -825,8 +825,10 @@ export function PageBlockStoreProvider({
 
   const store = storeRef.current.store
 
-  // Register in the global registry for cross-context access
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- store is stable for a given pageId via storeRef
+  // Register in the global registry for cross-context access. `store` is
+  // stable for a given pageId (storeRef only swaps it when pageId changes),
+  // so including it adds no extra runs and fixes the stale-closure the linter
+  // flags in the cleanup's `pageBlockRegistry.get(pageId) === store` guard.
   useEffect(() => {
     pageBlockRegistry.set(pageId, store)
     return () => {
@@ -834,7 +836,7 @@ export function PageBlockStoreProvider({
       // stale unmount cannot clobber a newer registration for the same pageId.
       if (pageBlockRegistry.get(pageId) === store) pageBlockRegistry.delete(pageId)
     }
-  }, [pageId])
+  }, [pageId, store])
 
   return createElement(PageBlockContext.Provider, { value: store }, children)
 }

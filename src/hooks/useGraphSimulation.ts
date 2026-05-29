@@ -385,7 +385,12 @@ export function useGraphSimulation({
   // ran with empty `nodes` (returning early before building anything),
   // this effect catches the first non-empty render and triggers the
   // setup effect by bumping `setupKey`. See `setupKey` below.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed — when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
+  // Note: workerFailed/runWorker/runMainThread are consumed via closure
+  // but intentionally NOT listed in this effect's deps — when they flip,
+  // the setup effect re-fires and rebuilds everything, so the patch
+  // effect must not also fire on those changes. (The functional
+  // oxlint-disable for that omission lives on the deps array below, where
+  // oxlint anchors the exhaustive-deps diagnostic.)
   useEffect(() => {
     const state = stateRef.current
     if (!svgRef.current) return
@@ -481,6 +486,7 @@ export function useGraphSimulation({
     // setup effect's cleanup (on unmount or simulation-kind change)
     // and in the next patch (which calls `state.handle.cleanup()`
     // above).
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- workerFailed/runWorker/runMainThread are consumed via closure but intentionally NOT listed: when they flip, the setup effect re-fires and rebuilds everything, so the patch effect must not also fire on those changes.
   }, [nodes, edges, svgRef])
 
   return { zoomIn, zoomOut, zoomReset }

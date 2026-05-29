@@ -303,11 +303,13 @@ export function BlockTree({
     t,
   })
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- parentId triggers reload when page changes
+  // Reload + reset zoom when the page changes (parentId). `load` and
+  // `zoomToRoot` are stable identities, so listing them is safe and only
+  // `parentId` actually drives re-runs.
   useEffect(() => {
     load()
     zoomToRoot()
-  }, [load, parentId])
+  }, [load, parentId, zoomToRoot])
 
   // ── H-9: Auto-create first block on empty pages ─────────────────────
   useBlockAutoCreateFirstBlock({

@@ -143,7 +143,7 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           notify.error(t(errorKey))
         })
     },
-    [pageId, t, pageStore.getState],
+    [pageId, t, pageStore],
   )
 
   const handlePageUndo = createUndoRedoHandler('undo')

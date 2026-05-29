@@ -55,6 +55,15 @@ import { cn } from '@/lib/utils'
 
 type ConfirmHandler = () => Promise<void> | void
 
+/**
+ * Stable no-op fallback for an absent `onConfirm`. Module-level so its
+ * identity never changes — this keeps `effectiveOnConfirm` (and the
+ * `handleConfirmClick` callback that depends on it) referentially stable
+ * across renders when no handler is supplied, instead of allocating a fresh
+ * `() => {}` every render.
+ */
+const NOOP_CONFIRM: ConfirmHandler = () => {}
+
 export interface ConfirmDialogSecondaryAction {
   /** i18n key for the secondary button label (resolved via `t()`). */
   labelKey?: string
@@ -170,7 +179,7 @@ export function ConfirmDialog({
   // ─── Resolve variant + handler ────────────────────────────────────────
   const effectiveVariant = variant ?? 'default'
   const isDestructive = effectiveVariant === 'destructive'
-  const effectiveOnConfirm: ConfirmHandler = onConfirm ?? (() => {})
+  const effectiveOnConfirm: ConfirmHandler = onConfirm ?? NOOP_CONFIRM
 
   const isPending = pending || loading
 

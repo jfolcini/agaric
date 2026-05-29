@@ -197,7 +197,6 @@ export function useListKeyboardNavigation(
   // Reset to 0 on query (resetKey) change. Skips the initial mount via a ref
   // so we don't fight the `useState(0)` initialiser.
   const firstResetKeyRun = useRef(true)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — reset only when resetKey changes
   useEffect(() => {
     if (!hasResetKey) return
     if (firstResetKeyRun.current) {
@@ -205,12 +204,21 @@ export function useListKeyboardNavigation(
       return
     }
     setFocusedIndex(0)
-  }, [resetKey])
+    // `hasResetKey` is a pure derivation of `resetKey` (`resetKey !== undefined`),
+    // so it only changes when `resetKey` itself changes — listing it adds the
+    // dependency the linter wants without introducing any extra effect runs.
+  }, [resetKey, hasResetKey])
 
   // itemCount change: clamp when keyed (resetKey present), else reset to 0.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional — runs on itemCount change
+  // `hasResetKey` only selects the branch; it must NOT be a reactive dependency
+  // here — a bare toggle of whether a resetKey is present (with itemCount
+  // unchanged) must not re-run this clamp/reset. The resetKey's own effect above
+  // already handles query changes. We read the current value through a ref so
+  // the effect stays keyed to `itemCount` alone while always seeing fresh props.
+  const hasResetKeyRef = useRef(hasResetKey)
+  hasResetKeyRef.current = hasResetKey
   useEffect(() => {
-    if (hasResetKey) {
+    if (hasResetKeyRef.current) {
       // Clamp into [0, itemCount - 1]; an empty list parks focus at 0.
       setFocusedIndex((prev) => (itemCount === 0 ? 0 : Math.min(prev, itemCount - 1)))
     } else {

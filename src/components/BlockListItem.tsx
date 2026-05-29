@@ -343,7 +343,6 @@ function BlockListItemInner({
   // makes them non-stable surfaces as a memo recompute instead of stale
   // rendered output.
   const resolveVersion = useResolveStore((s) => s.version)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
       content
@@ -356,6 +355,7 @@ function BlockListItemInner({
             resolveTagStatus,
           })
         : null,
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
     [
       content,
       onTagClick,

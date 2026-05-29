@@ -51,7 +51,6 @@ export function ResultCard({
   // ref; without subscribing to `version` the memo would render the
   // `[[ULID]]` fallback indefinitely after a space-switch preload completes.
   const resolveVersion = useResolveStore((s) => s.version)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that biome cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
   const richContent = useMemo(
     () =>
       block.content
@@ -67,6 +66,7 @@ export function ResultCard({
             resolveTagStatus,
           })
         : null,
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally load-bearing — the callbacks read a mutable cache via refs that oxlint cannot see through, so the version is the only trigger for re-resolution when the resolve store updates.
     [
       block.content,
       onTagClick,
