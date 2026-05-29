@@ -95,6 +95,7 @@ export function SearchHeader({
           aria-errormessage={invalid && inlineError ? 'search-inline-error' : undefined}
           aria-describedby={regexMode ? 'search-regex-hint' : undefined}
           className={regexMode ? 'flex-1 font-mono' : 'flex-1'}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: search input gets focus when the search panel opens so the user can type the query immediately
           autoFocus
           {...comboboxAttrs}
         />

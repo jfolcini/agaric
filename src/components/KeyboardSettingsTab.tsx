@@ -170,6 +170,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
                                   onChange={(e) => setEditValue(e.target.value)}
                                   placeholder={t('keyboard.settings.typeNewBinding')}
                                   className="text-xs"
+                                  // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: inline binding editor is shown only while editing this shortcut, so focus moves to the binding input the moment edit mode opens
                                   autoFocus
                                   aria-invalid={validationError ? true : undefined}
                                   aria-describedby={

@@ -278,6 +278,7 @@ export function ConfirmDialog({
                 disabled={isPending}
                 onClick={handleCancel}
                 // UX-259: destructive dialogs auto-focus Cancel.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- destructive confirm dialog (mobile Sheet): focus the safe Cancel action on open so a reflexive Enter dismisses rather than confirms the destructive action
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
               >
@@ -298,6 +299,7 @@ export function ConfirmDialog({
                 disabled={isPending}
                 onClick={handleConfirmClick}
                 // UX-259: only auto-focus Action for non-destructive variants.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (mobile Sheet): focus the primary Action on open so Enter confirms the expected, safe choice
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}
               >
@@ -311,6 +313,7 @@ export function ConfirmDialog({
                 disabled={isPending}
                 onClick={onCancel}
                 // UX-259: destructive dialogs auto-focus Cancel so reflex Enter dismisses.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- destructive confirm dialog (desktop AlertDialog): focus the safe Cancel action on open so a reflexive Enter dismisses rather than confirms the destructive action
                 autoFocus={isDestructive}
                 data-testid={cancelTestId}
               >
@@ -331,6 +334,7 @@ export function ConfirmDialog({
                 onClick={handleConfirmClick}
                 disabled={isPending}
                 // UX-259: only auto-focus Action for non-destructive variants.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- non-destructive confirm dialog (desktop AlertDialog): focus the primary Action on open so Enter confirms the expected, safe choice
                 autoFocus={!isDestructive}
                 data-testid={actionTestId}
               >

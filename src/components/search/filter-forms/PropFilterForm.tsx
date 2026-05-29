@@ -103,6 +103,7 @@ export function PropFilterForm({ onAddFilter, onBack }: PropFilterFormProps): Re
             aria-label={t('search.filterHelper.propKeyLabel')}
             aria-invalid={showKeyError || undefined}
             aria-errormessage={showKeyError ? keyErrorId : undefined}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- this prop-filter form renders only inside the open filter popover; focusing the property-key field (the form's first input) lets the user start typing immediately without an extra click/tab
             autoFocus
           />
           {showKeyError ? (

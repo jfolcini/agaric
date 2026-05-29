@@ -221,6 +221,7 @@ export function DiagnosticsCollector({
               // default focus-trap discovery, which previously left
               // focus on the body when the preview opened in a
               // truncated state).
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: nested log-preview dialog focuses its close button so the focus trap lands on a known dismissable target
               autoFocus
               data-testid="bug-report-log-preview-close"
             >

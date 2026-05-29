@@ -123,6 +123,7 @@ export function DateChipEditor({
           }}
           aria-label={t('dateChip.inputLabel')}
           aria-invalid={parseError}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- date-chip editor opens inside a Popover; focus the natural-language date input on open so the user can type a date immediately
           autoFocus
         />
         {dateInput && (

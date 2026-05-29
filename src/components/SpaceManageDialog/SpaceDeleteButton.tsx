@@ -125,6 +125,7 @@ export function SpaceDeleteButton({
             <AlertDialogDescription>{t('space.deleteConfirmDescription')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
+            {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: destructive-delete confirmation focuses the safe Cancel button so an accidental Enter dismisses rather than deletes */}
             <AlertDialogCancel autoFocus>{t('space.cancelLabel')}</AlertDialogCancel>
             <AlertDialogAction
               className={buttonVariants({ variant: 'destructive' })}

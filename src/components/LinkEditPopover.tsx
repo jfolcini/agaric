@@ -157,6 +157,7 @@ export function LinkEditPopover({
             setUrlError(null)
           }}
           onKeyDown={handleKeyDown}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- this URL input lives in the link-edit popover that opens on demand; focusing it lets the user type/paste the link URL immediately without an extra click/tab
           autoFocus
           className={cn(
             'h-8 [@media(pointer:coarse)]:h-11 text-sm',
