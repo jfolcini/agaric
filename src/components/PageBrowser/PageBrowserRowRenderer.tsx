@@ -118,6 +118,7 @@ function HeaderRow({
       data-index={virtualRow.index}
       ref={measureElement}
       data-page-section={row.section}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
       aria-labelledby={labelId}
       className={cn('page-browser-section', showDivider && 'border-t border-border mt-1')}
@@ -125,6 +126,7 @@ function HeaderRow({
     >
       {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell carries the section label — not interactive */}
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid cell inside role="row"; a real <td> needs a <table> and breaks the flex layout
         role="gridcell"
         className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
       >
@@ -180,13 +182,14 @@ function TreePageRow({
       ref={measureElement}
       data-page-tree-row
       data-page-index={pageIndex}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex/grid layout
       role="row"
       className={cn(
         focusedIndex === pageIndex && 'rounded-lg ring-2 ring-inset ring-ring/50 bg-accent/30',
       )}
       style={rowStyle(virtualRow.start)}
     >
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner button controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner button controls; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell">
         <PageTreeItem
           node={node}
@@ -336,6 +339,7 @@ function PageRow({
       id={`page-row-${page.id}`}
       data-index={virtualRow.index}
       ref={measureElement}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex layout
       role="row"
       aria-selected={focusedIndex === pageIndex}
       data-page-item
@@ -353,7 +357,7 @@ function PageRow({
     >
       {/* #81 / PEND-57 — batch-selection checkbox (additive to the
           single-row star/delete flow). */}
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to the inner checkbox */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner checkbox; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="shrink-0">
         <Checkbox
           checked={multiSelected}
@@ -369,7 +373,7 @@ function PageRow({
           )}
         />
       </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner controls; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="flex flex-1 items-center gap-3 min-w-0">
         <Button
           variant="ghost"
@@ -398,7 +402,7 @@ function PageRow({
           </span>
         </button>
       </div>
-      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner action buttons */}
+      {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to inner action buttons; CSS-grid cell would break as a <td> without a <table> */}
       <div role="gridcell" className="shrink-0">
         <Button
           variant="ghost"

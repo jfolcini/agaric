@@ -48,6 +48,7 @@ export function FilterChipRow({
         hasFilters && 'rounded-lg border border-primary/30 bg-primary/5 p-2',
       )}
       data-testid="filter-chip-bar"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="group" + aria-label on a flex-wrap chip container; <fieldset>/<details>/<hgroup> carry unwanted default rendering/semantics and would break the inline chip-bar layout
       role="group"
       aria-label={t('search.filtersActive')}
     >

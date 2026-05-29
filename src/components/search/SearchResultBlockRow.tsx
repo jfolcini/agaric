@@ -125,7 +125,7 @@ function SearchResultBlockRowImpl({
       ref={measureRef}
       data-index={dataIndex}
       style={style}
-      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">` — biome's rule misclassifies it as non-interactive.
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<li role="option">` is the canonical WAI-ARIA pattern for listbox options inside a `<ul role="listbox">`; native <option> can't host the rich row content (icons/title/excerpt) this virtualized listbox renders.
       role="option"
       aria-selected={isFocused}
       aria-disabled={loading ? true : undefined}

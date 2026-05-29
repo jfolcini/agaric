@@ -146,6 +146,7 @@ export function DependencyIndicator({
           <span
             className={cn('inline-flex items-center text-muted-foreground', className)}
             data-testid="dependency-indicator"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- labelled wrapper around an inline SVG icon and the Tooltip's asChild trigger ref; <img> is a void element that can't contain the SVG child
             role="img"
             aria-label={tooltipText}
           >

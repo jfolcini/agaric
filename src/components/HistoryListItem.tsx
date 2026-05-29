@@ -100,6 +100,7 @@ function HistoryListItemInner({
       data-index={dataIndex}
       data-history-item
       data-testid={`history-item-${index}`}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row in an aria grid (virtualized flex list); a <tr> requires table ancestry and would break the flex layout
       role="row"
       aria-selected={isSelected}
       className={cn(
@@ -119,6 +120,7 @@ function HistoryListItemInner({
       aria-disabled={isNonReversible || undefined}
     >
       {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout */}
       <div role="gridcell" className="flex items-center gap-3 w-full">
         {/* Checkbox.
             UX-275 sub-fix 5: keep both row-click and checkbox-click as active
@@ -212,6 +214,7 @@ function HistoryListItemInner({
         diffSpans != null && (
           // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner controls
           <div
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in an aria grid; <td> requires table ancestry and breaks the flex layout
             role="gridcell"
             className="diff-container mt-2 w-full"
             onClick={(e) => e.stopPropagation()}

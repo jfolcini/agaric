@@ -223,6 +223,7 @@ export function QueryBuilderModal({
                 key={type}
                 variant={queryType === type ? 'default' : 'outline'}
                 size="sm"
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
                 role="radio"
                 aria-checked={queryType === type}
                 tabIndex={queryType === type ? 0 : -1}

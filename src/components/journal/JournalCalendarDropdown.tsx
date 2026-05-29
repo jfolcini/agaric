@@ -87,6 +87,7 @@ function CalendarDayButton({
             <span
               key={d.key}
               className={cn('h-[5px] w-[5px] rounded-full ring-1 ring-background', d.color)}
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- decorative CSS dot; an <img> would demand src/alt and break the inline ring/color styling
               role="img"
               aria-hidden
             />
@@ -199,6 +200,7 @@ export function JournalCalendarDropdown({
       <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={calRef}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- anchored non-modal dropdown; a native <dialog> brings the top-layer/modal show() semantics this intentionally avoids (see comment below)
         role="dialog"
         // Intentionally NOT aria-modal: this is a lightweight anchored dropdown.
         // It does not trap focus or auto-focus on open, so claiming modality

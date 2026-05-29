@@ -84,11 +84,13 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
     >
       {/* Day-of-week headers */}
       {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- header row is not interactive */}
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid built on CSS grid divs; a real <tr> requires <table>/<tbody> ancestry that would break the grid-cols-7 layout */}
       <div role="row" className="grid grid-cols-7 gap-0.5">
         {dayHeaders.map((header) => (
           // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- header cells are not interactive
           <div
             key={header}
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid cell on a CSS-grid div; a real <th> requires <table>/<tr> ancestry that would break the grid layout
             role="columnheader"
             className="bg-background py-1.5 text-center text-xs font-medium text-muted-foreground"
           >
@@ -102,6 +104,7 @@ export function MonthlyView({ makeDayEntry }: MonthlyViewProps): React.ReactElem
         const weekKey = week[0]?.dateStr ?? ''
         return (
           // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- cells within handle focus
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid row on a CSS-grid div; a real <tr> requires <table>/<tbody> ancestry that would break the grid-cols-7 layout
           <div key={weekKey} role="row" className="grid grid-cols-7 gap-0.5">
             {week.map((entry) => {
               const isToday = entry.dateStr === todayStr

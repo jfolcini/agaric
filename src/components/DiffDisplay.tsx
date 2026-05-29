@@ -143,7 +143,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
 
   return (
     <div className="diff-display-wrapper">
-      <div role="region" aria-label={t('diff.regionLabel')}>
+      <section aria-label={t('diff.regionLabel')}>
         <p className="diff-display text-sm leading-relaxed whitespace-pre-wrap break-words m-0">
           {visibleSpans.map((span, i) => {
             const key = `${i}-${span.tag}`
@@ -199,7 +199,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
             }
           })}
         </p>
-      </div>
+      </section>
       {hasNav && (
         <div className="diff-hunk-nav mt-2 flex flex-wrap items-center gap-2">
           <span

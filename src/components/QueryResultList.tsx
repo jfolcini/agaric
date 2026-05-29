@@ -44,6 +44,7 @@ export function QueryResultList({
     <div
       className="divide-y divide-muted-foreground/10"
       tabIndex={0}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom listbox driven by aria-activedescendant + roving focus; <datalist>/<select> can't host the clickable result-row divs
       role="listbox"
       aria-label={t('query.resultsListLabel')}
       aria-activedescendant={
@@ -61,6 +62,7 @@ export function QueryResultList({
             id={`query-result-${block.id}`}
             className="query-result-item"
             data-testid="query-result-item"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable result-row div of the custom listbox; native <option> can't host the rich row content + click navigation
             role="option"
             aria-selected={index === focusedIndex}
             tabIndex={-1}

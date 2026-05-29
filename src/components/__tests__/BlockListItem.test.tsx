@@ -100,6 +100,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
 
 vi.mock('../PageLink', () => ({
   PageLink: ({ pageId, title }: { pageId: string; title: string; className?: string }) => (
+    /* oxlint-disable jsx-a11y/prefer-tag-over-role -- test mock mirrors PageLink's ARIA link role (a span, not an anchor) */
     <span
       role="link"
       tabIndex={0}
@@ -114,6 +115,7 @@ vi.mock('../PageLink', () => ({
     >
       {title}
     </span>
+    /* oxlint-enable jsx-a11y/prefer-tag-over-role */
   ),
 }))
 

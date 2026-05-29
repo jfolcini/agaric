@@ -112,7 +112,10 @@ vi.mock('../AgendaResults', () => ({
 // internals into this suite.
 vi.mock('../SpaceManageDialog', () => ({
   SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
-    open ? <div role="dialog" aria-label="Manage spaces" data-testid="space-manage-mock" /> : null,
+    open ? (
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock mirrors SpaceManageDialog's ARIA dialog role
+      <div role="dialog" aria-label="Manage spaces" data-testid="space-manage-mock" />
+    ) : null,
 }))
 
 // ── Mock MonthlyDayCell (UX-83) ─────────────────────────────────────
@@ -120,7 +123,7 @@ vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
-      // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- test mock
+      /* oxlint-disable jsx-a11y/click-events-have-key-events, jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell */
       <div
         role="gridcell"
         tabIndex={-1}
@@ -134,6 +137,7 @@ vi.mock('../journal/MonthlyDayCell', () => ({
       >
         {new Date(`${entry.dateStr}T12:00:00`).getDate()}
       </div>
+      /* oxlint-enable jsx-a11y/click-events-have-key-events, jsx-a11y/prefer-tag-over-role */
     )
   },
 }))

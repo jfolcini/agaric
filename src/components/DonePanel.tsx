@@ -282,6 +282,7 @@ export function DonePanel({
           <div
             className="done-panel-loading flex items-center gap-2 px-2 py-2"
             aria-busy="true"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> defaults to display:inline and would break this flex skeleton container; keep role="status" on the div
             role="status"
           >
             <LoadingSkeleton count={3} height="h-10" />

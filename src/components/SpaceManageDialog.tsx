@@ -164,6 +164,7 @@ function CreateSpaceForm({ onCreated }: CreateSpaceFormProps) {
         <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
         <div
           className="flex flex-wrap gap-1.5"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- toolbar-like group of swatch buttons; <fieldset>/<optgroup> etc. break the flex layout and add unwanted form/list semantics
           role="group"
           aria-label={t('space.accentColorLabel')}
         >

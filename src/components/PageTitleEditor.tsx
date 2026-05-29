@@ -46,6 +46,7 @@ export function PageTitleEditor({
     return (
       <div
         ref={titleRef as React.RefObject<HTMLDivElement>}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- contentEditable div editing rich inline-token title; <input>/<textarea> cannot host the chip markup
         role="textbox"
         tabIndex={0}
         aria-label={t('pageHeader.pageTitle')}
@@ -68,6 +69,7 @@ export function PageTitleEditor({
   return (
     <div className="relative group flex flex-1 items-center">
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- rich display surface hosting parsed pill chips; <input>/<textarea> cannot render that markup
         role="textbox"
         tabIndex={0}
         aria-label={t('pageHeader.pageTitle')}

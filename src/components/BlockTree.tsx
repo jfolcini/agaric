@@ -606,6 +606,7 @@ export function BlockTree({
     return (
       <div
         className="block-tree-loading space-y-3 p-2"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level skeleton container; native <output> is display:inline and would collapse the space-y-3 vertical stacking of the skeleton rows
         role="status"
         aria-busy="true"
         aria-label={t('blockTree.loadingLabel')}

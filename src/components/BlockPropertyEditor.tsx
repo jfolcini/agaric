@@ -231,6 +231,7 @@ export function BlockPropertyEditor({
       data-editor-portal=""
       className="rounded-md border bg-popover p-1 shadow-lg max-w-[calc(100vw-2rem)]"
       style={{ position: 'fixed', left: HIDDEN_LEFT, top: HIDDEN_TOP, zIndex: 50 }}
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- fixed-position custom popover; native <dialog> brings top-layer/modal semantics and ::backdrop that conflict with this manually-positioned non-modal popup
       role="dialog"
       aria-label={t('block.editProperty')}
     >
@@ -245,6 +246,7 @@ export function BlockPropertyEditor({
             <div
               className="flex flex-col gap-0.5"
               data-testid="select-options-dropdown"
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom ARIA listbox of styled <button> options with aria-activedescendant nav; <select>/<datalist> can't render this or support async setProperty handlers
               role="listbox"
               aria-label={t('block.editProperty')}
               aria-activedescendant={selectedIdx >= 0 ? optionId(selectedIdx) : undefined}
@@ -255,6 +257,7 @@ export function BlockPropertyEditor({
                   key={opt}
                   id={optionId(i)}
                   type="button"
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- option in a custom ARIA listbox; this is a <button> click target, native <option> can't host the handler or focus styling
                   role="option"
                   aria-selected={i === selectedIdx}
                   className={cn(

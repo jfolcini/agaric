@@ -45,6 +45,7 @@ export function IncludeExcludeToggle({
           <button
             key={String(value)}
             type="button"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled toggle <button>; a native <input type="radio"> would lose the segmented-button styling and aria-checked toggle behavior
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(value)}

@@ -155,14 +155,13 @@ export function DiagnosticsCollector({
           </DialogHeader>
 
           {previewLoading && (
-            <div
-              role="status"
+            <output
               aria-live="polite"
               className="flex items-center gap-2 text-sm text-muted-foreground"
             >
               <Spinner />
               <span>{t('bugReport.previewLoading')}</span>
-            </div>
+            </output>
           )}
 
           {!previewLoading && previewError != null && (

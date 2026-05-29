@@ -459,6 +459,7 @@ describe('ListViewState', () => {
           loading={true}
           items={[]}
           skeleton={
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test queries getByRole('status') on this fixture
             <div aria-busy="true" role="status">
               Loading content...
             </div>

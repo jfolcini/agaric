@@ -77,6 +77,7 @@ export function SearchHeader({
     <ViewHeader>
       <form
         onSubmit={onSubmit}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="search" must stay on the <form> that owns onSubmit; the <search> element is not a form-submitting element, so swapping would lose submit handling
         role="search"
         className="search-panel-header flex flex-col sm:flex-row sm:items-center gap-2"
       >

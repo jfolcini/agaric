@@ -167,6 +167,7 @@ export function TagValuePicker({
         }}
         onKeyDown={handleKeyDown}
         aria-label={t('agendaFilter.tagName')}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA autocomplete combobox pattern; this is already an <input>, the role wires up the popup listbox via aria-controls/aria-activedescendant
         role="combobox"
         tabIndex={0}
         aria-expanded={isExpanded}
@@ -180,6 +181,7 @@ export function TagValuePicker({
             <div
               ref={listRef}
               id={listboxId}
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom ARIA listbox driven by keyboard nav; <select>/<datalist> can't render the styled rows or support aria-activedescendant focus
               role="listbox"
               className="py-1"
               aria-label={t('agendaFilter.tagSearchResults')}
@@ -188,6 +190,7 @@ export function TagValuePicker({
                 <div
                   key={tag.tag_id}
                   id={`tag-option-${tag.tag_id}`}
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- option in a custom ARIA listbox; native <option> can't host the styled markup or click/key handlers
                   role="option"
                   tabIndex={-1}
                   aria-selected={idx === activeIndex}

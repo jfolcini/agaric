@@ -112,6 +112,7 @@ export function TemplatePicker({
       <div role="presentation" className="fixed inset-0 z-40" onClick={onClose} />
       <div
         ref={dialogRef}
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA dialog pattern; a native <dialog> needs showModal()/close() imperative control and provides its own backdrop/focus-trap, which would conflict with this custom positioned picker
         role="dialog"
         aria-modal="true"
         aria-label={t('slash.templatePicker')}

@@ -116,6 +116,7 @@ function AttachmentImage({
       className="relative inline-block"
       style={{ maxWidth: `${imageWidth}%` }}
       data-testid="image-resize-wrapper"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable disclosure wrapper around an <img> + nested toolbar buttons; <fieldset>/<optgroup> etc. break the inline-block resize layout and add form/list semantics
       role="group"
       aria-label={t('attachment.toggleResizeToolbar')}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- image container needs keyboard focus to expose the inner resize toolbar

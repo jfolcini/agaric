@@ -1224,9 +1224,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                 never carries an empty trailing row once everything is
                 loaded (`LoadMoreButton` itself also returns null then). */}
             {hasMore && (
-              // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- row focus is delegated to the inner load-more button
+              // oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- row focus is delegated to the inner load-more button; CSS-grid row would break as a <tr> without a <table>
               <div role="row" className="page-browser-load-more-row">
-                {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to the inner load-more button */}
+                {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- gridcell focus is delegated to the inner load-more button; CSS-grid cell would break as a <td> without a <table> */}
                 <div role="gridcell">
                   <LoadMoreButton
                     hasMore={hasMore}

@@ -459,6 +459,7 @@ export function BlockContextMenu({
     >
       {groups.map((group, groupIdx) => (
         // oxlint-disable-next-line react/no-array-index-key -- groups are static per render, never reorder
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- menu-item group inside a custom menu; <fieldset>/<optgroup> etc. would inject form/list semantics that conflict with the menu role
         <div key={groupIdx} role="group">
           {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
           {group.map((item) => {

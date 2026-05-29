@@ -49,14 +49,13 @@ export function BootGate({ children }: { children: React.ReactNode }) {
 
   if (state === 'booting') {
     return (
-      <div
-        role="status"
+      <output
         aria-live="polite"
         className="flex h-screen flex-col items-center justify-center gap-3 transition-opacity duration-200"
       >
         <Spinner size="xl" className="text-muted-foreground" aria-hidden="true" />
         <p className="text-sm text-muted-foreground">{t('boot.starting')}</p>
-      </div>
+      </output>
     )
   }
 

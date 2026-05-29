@@ -197,6 +197,7 @@ export const SuggestionList = ({
       onClick={() => selectItem(index)}
       onPointerEnter={() => setSelectedIndex(index)}
       type="button"
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable suggestion <button>; native <option> can't host the rich item content + click/pointer handlers
       role="option"
       aria-selected={index === selectedIndex}
     >
@@ -211,6 +212,7 @@ export const SuggestionList = ({
           ref={listRef}
           className="flex flex-col gap-0.5"
           data-testid="suggestion-list"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom editor-suggestion listbox driven by aria-activedescendant; <datalist>/<select> can't host the grouped clickable <button> options
           role="listbox"
           aria-label={label ?? 'Suggestions'}
           aria-activedescendant={

@@ -273,6 +273,7 @@ export function FilterHelperPopover({
               onKeyDown={handleTagKeyDown}
               placeholder={t('search.searchTags')}
               aria-label={t('search.searchTags')}
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- explicit role="combobox" on the tag-query <input> drives the aria-activedescendant listbox below; the native combobox mapping differs and would drop the aria-expanded/aria-controls wiring this custom popup relies on
               role="combobox"
               // The input is the actual text-entry field, so it must stay in
               // the tab order (`tabIndex={0}`); `interactive-supports-focus`
@@ -291,7 +292,7 @@ export function FilterHelperPopover({
             />
             <ul
               id={TAG_LISTBOX_ID}
-              // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input.
+              // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container for the combobox popup (mirrors VirtualizedResultListbox / SearchHistoryDropdown); keyboard activation flows through aria-activedescendant on the input, and <datalist>/<select> can't host the per-option <button> rows this widget uses.
               role="listbox"
               className="mt-2 max-h-60 overflow-y-auto list-none m-0 p-0"
               aria-label={t('search.filterHelper.tagResultsLabel')}
@@ -312,6 +313,7 @@ export function FilterHelperPopover({
                     <button
                       type="button"
                       id={tagOptionId(tag.tag_id)}
+                      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the <button> row of the custom combobox listbox; the native <option> tag can't carry a clickable button with hover/focus styling
                       role="option"
                       aria-selected={idx === activeIndex}
                       tabIndex={-1}
