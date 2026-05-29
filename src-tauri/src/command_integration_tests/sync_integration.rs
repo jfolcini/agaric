@@ -22,9 +22,10 @@ async fn list_peer_refs_returns_peers_ordered_by_synced_at() {
     peer_refs::upsert_peer_ref(&pool, "PEER_B").await.unwrap();
 
     // PEER_A synced earlier, PEER_B synced later → PEER_B should appear first.
+    // #109 Phase 2: synced_at is now epoch-ms (INTEGER), not an RFC 3339 string.
     sqlx::query!(
         "UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?",
-        "2025-01-01T00:00:00Z",
+        1_735_689_600_000_i64, // 2025-01-01T00:00:00Z
         "PEER_A"
     )
     .execute(&pool)
@@ -33,7 +34,7 @@ async fn list_peer_refs_returns_peers_ordered_by_synced_at() {
 
     sqlx::query!(
         "UPDATE peer_refs SET synced_at = ? WHERE peer_id = ?",
-        "2025-01-02T00:00:00Z",
+        1_735_776_000_000_i64, // 2025-01-02T00:00:00Z
         "PEER_B"
     )
     .execute(&pool)

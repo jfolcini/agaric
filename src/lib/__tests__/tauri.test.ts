@@ -1608,7 +1608,7 @@ describe('listPeerRefs', () => {
         peer_id: 'peer-1',
         last_hash: null,
         last_sent_hash: null,
-        synced_at: '2025-01-15T00:00:00Z',
+        synced_at: 1736899200000, // 2025-01-15T00:00:00Z
         reset_count: 0,
         last_reset_at: null,
         cert_hash: null,
@@ -1648,7 +1648,7 @@ describe('getPeerRef', () => {
       peer_id: 'peer-1',
       last_hash: null,
       last_sent_hash: null,
-      synced_at: '2025-01-15T00:00:00Z',
+      synced_at: 1736899200000, // 2025-01-15T00:00:00Z
       reset_count: 0,
       last_reset_at: null,
       cert_hash: null,

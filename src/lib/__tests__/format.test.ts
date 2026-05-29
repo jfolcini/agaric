@@ -136,17 +136,19 @@ describe('formatLastSynced', () => {
   })
 
   it('returns relative time for a valid timestamp', () => {
-    const fiveMinAgo = new Date(NOW.getTime() - 5 * 60_000).toISOString()
+    const fiveMinAgo = NOW.getTime() - 5 * 60_000 // epoch ms (#109 Phase 2)
     expect(formatLastSynced(fiveMinAgo)).toBe('5m ago')
   })
 
   it('returns "Just now" for a recent timestamp', () => {
-    const tenSecsAgo = new Date(NOW.getTime() - 10_000).toISOString()
+    const tenSecsAgo = NOW.getTime() - 10_000
     expect(formatLastSynced(tenSecsAgo)).toBe('Just now')
   })
 
-  it('returns raw string for an invalid timestamp', () => {
-    expect(formatLastSynced('not-a-date')).toBe('not-a-date')
+  it('treats epoch 0 as a real timestamp, not "Never synced"', () => {
+    // #109 Phase 2: synced_at is now a number; 0 is a valid (very old)
+    // timestamp and must not be confused with the null "never synced" case.
+    expect(formatLastSynced(0)).not.toBe('Never synced')
   })
 })
 
