@@ -637,7 +637,7 @@ describe('SelectionBubbleMenu', () => {
 
     it("Code button's tooltip appends the inlineCode keyboard binding", () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
-      const codeTooltip = tooltipTexts().find((text) => /^Inline code \(/.test(text))
+      const codeTooltip = tooltipTexts().find((text) => text.startsWith('Inline code ('))
       expect(codeTooltip).toBeDefined()
       expect(codeTooltip).toMatch(/Ctrl\s*\+\s*E\)/i)
     })
