@@ -957,10 +957,10 @@ async fn regex_mode_query(
         }
         let offsets = byte_to_utf16_offsets(content, &byte_matches);
         out.push(SearchBlockRow {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
+            id: crate::ulid::ActiveBlockId::from_trusted_active(r.id.as_str()),
             block_type: r.block_type,
             content: r.content,
-            parent_id: r.parent_id,
+            parent_id: r.parent_id.map(crate::ulid::BlockId::into_string),
             position: r.position,
             deleted_at: r.deleted_at,
             todo_state: r.todo_state,
@@ -988,10 +988,10 @@ async fn regex_mode_query(
 /// bypassed; recency ordering is used instead.
 #[derive(Debug, sqlx::FromRow)]
 struct RegexScanRow {
-    id: String,
+    id: crate::ulid::BlockId,
     block_type: String,
     content: Option<String>,
-    parent_id: Option<String>,
+    parent_id: Option<crate::ulid::BlockId>,
     position: Option<i64>,
     deleted_at: Option<String>,
     todo_state: Option<String>,
@@ -1203,10 +1203,10 @@ async fn filter_only_scan(
     let out: Vec<SearchBlockRow> = rows
         .into_iter()
         .map(|r| SearchBlockRow {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
+            id: crate::ulid::ActiveBlockId::from_trusted_active(r.id.as_str()),
             block_type: r.block_type,
             content: r.content,
-            parent_id: r.parent_id,
+            parent_id: r.parent_id.map(crate::ulid::BlockId::into_string),
             position: r.position,
             deleted_at: r.deleted_at,
             todo_state: r.todo_state,
