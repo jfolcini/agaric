@@ -373,6 +373,7 @@ function InlineValueEditor({
     <div className="flex flex-col gap-2">
       <span className="px-1 text-xs font-medium">{label}</span>
       <Input
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this sub-editor renders only after the user opens it from the filter menu; focusing the single required text input lets them type the value immediately without an extra click/tab
         autoFocus
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -431,6 +432,7 @@ function PathEditor({
     <div className="flex flex-col gap-2">
       <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetPath')}</span>
       <Input
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this facet-path sub-editor renders only after the user opens it from the filter menu; focusing the path input lets them type immediately without an extra click/tab
         autoFocus
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -523,6 +525,7 @@ function PropertyEditor({
     <div className="flex flex-col gap-2">
       <span className="px-1 text-xs font-medium">{t('pageBrowser.filter.facetHasProperty')}</span>
       <Input
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- this has-property sub-editor renders only after the user opens it from the filter menu; focusing the property-key input (the first of its fields) lets them type immediately without an extra click/tab
         autoFocus
         value={propKey}
         onChange={(e) => onKeyChange(e.target.value)}

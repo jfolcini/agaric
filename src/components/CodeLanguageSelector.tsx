@@ -75,6 +75,7 @@ export function CodeLanguageSelector({
   return (
     <div className="flex flex-col gap-0.5">
       <Input
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: language filter input is rendered inside a popover that opens on user action, so typing filters immediately
         autoFocus
         value={filter}
         onChange={(e) => setFilter(e.target.value)}

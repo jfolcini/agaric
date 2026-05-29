@@ -82,6 +82,7 @@ export function BlockDatePicker({
                   }
                 }}
                 aria-label={t('journal.typeDateLabel')}
+                // oxlint-disable-next-line jsx-a11y/no-autofocus -- block date picker opens inside a Dialog; focus the natural-language date input on open so the user can type a date immediately
                 autoFocus
               />
             </div>

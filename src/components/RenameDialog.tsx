@@ -134,6 +134,7 @@ export function RenameDialog({
         aria-invalid={showError ? true : undefined}
         aria-describedby={showError ? errorId : undefined}
         maxLength={MAX_RENAME_LENGTH * 2}
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- rename dialog opens on demand; focus the name input on open so the user can edit/replace the name immediately
         autoFocus
       />
       {showError && errorMessage ? (

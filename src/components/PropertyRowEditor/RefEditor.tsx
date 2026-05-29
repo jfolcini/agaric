@@ -70,6 +70,7 @@ export function RefEditor({ prop, state, ariaLabel, hasCreateNewPage }: RefEdito
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label={t('block.searchPages')}
+          // oxlint-disable-next-line jsx-a11y/no-autofocus -- this search input is the first element of the ref-picker popover content that opens on demand; focusing it lets the user start filtering pages immediately without an extra click/tab
           autoFocus
         />
         <ScrollArea className="max-h-48">

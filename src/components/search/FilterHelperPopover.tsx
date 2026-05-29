@@ -286,6 +286,7 @@ export function FilterHelperPopover({
               aria-expanded={true}
               aria-controls={TAG_LISTBOX_ID}
               {...(activeDescendant ? { 'aria-activedescendant': activeDescendant } : {})}
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- this combobox renders only after the user switches into tag mode inside the open filter popover; focusing it lets them type the tag query immediately (the listbox below is driven by this input via aria-activedescendant)
               autoFocus
             />
             <ul
@@ -350,6 +351,7 @@ export function FilterHelperPopover({
               onChange={(e) => setPathInput(e.target.value)}
               placeholder={t('search.filterHelper.pathPlaceholder')}
               className="mt-2"
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- this path input renders only after the user switches into pathInclude/pathExclude mode inside the open filter popover; focusing it lets them type the path immediately without an extra click/tab
               autoFocus
             />
             <div className="mt-2 flex gap-2 justify-end">
