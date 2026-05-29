@@ -60,7 +60,7 @@ describe('Label', () => {
     render(
       <>
         <Label htmlFor="email-input">Email</Label>
-        <input id="email-input" type="text" />
+        <input id="email-input" type="text" aria-label="Email" />
       </>,
     )
 
@@ -78,7 +78,7 @@ describe('Label', () => {
     render(
       <>
         <Label htmlFor="agree">I agree</Label>
-        <input id="agree" type="checkbox" onChange={onChange} />
+        <input id="agree" type="checkbox" onChange={onChange} aria-label="I agree" />
       </>,
     )
 
@@ -152,7 +152,7 @@ describe('Label', () => {
     const { container } = render(
       <div>
         <Label htmlFor="a11y-input">Name</Label>
-        <input id="a11y-input" type="text" />
+        <input id="a11y-input" type="text" aria-label="Name" />
       </div>,
     )
     const results = await axe(container)

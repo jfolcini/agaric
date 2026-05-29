@@ -246,16 +246,18 @@ function AddFilterForm({
                     className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-muted"
                   >
                     {/*
-                     * UX-270: the wrapping <label> element provides the
-                     * accessible name for the checkbox via its visible text,
-                     * so the redundant `aria-label={tag.name}` was dropped.
+                     * UX-270: the visible <span> is the single source of truth
+                     * for the checkbox's accessible name. We wire it up with
+                     * `aria-labelledby` (not `aria-label`) so the name stays in
+                     * one place — see the matching test in GraphFilterBar.test.
                      */}
                     <input
                       type="checkbox"
+                      aria-labelledby={`graph-tag-${tag.tag_id}`}
                       checked={tagIds.includes(tag.tag_id)}
                       onChange={() => setTagIds((c) => toggleMultiValue(c, tag.tag_id))}
                     />
-                    <span>{tag.name}</span>
+                    <span id={`graph-tag-${tag.tag_id}`}>{tag.name}</span>
                   </label>
                 ))}
               </div>

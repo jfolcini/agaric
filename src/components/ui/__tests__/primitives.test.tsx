@@ -326,7 +326,7 @@ describe('Label', () => {
     const { container } = render(
       <div>
         <Label htmlFor="test-input">Test field</Label>
-        <input id="test-input" type="text" />
+        <input id="test-input" type="text" aria-label="Test field" />
       </div>,
     )
     const results = await axe(container)
@@ -1035,7 +1035,7 @@ describe('FormField', () => {
   it('renders the label text', () => {
     render(
       <FormField label="Theme" htmlFor="theme-select">
-        <input id="theme-select" />
+        <input id="theme-select" aria-label="Theme" />
       </FormField>,
     )
     expect(screen.getByText('Theme')).toBeInTheDocument()
@@ -1044,7 +1044,7 @@ describe('FormField', () => {
   it('associates the label with the control via htmlFor', () => {
     render(
       <FormField label="Theme" htmlFor="theme-select">
-        <input id="theme-select" data-testid="control" />
+        <input id="theme-select" data-testid="control" aria-label="Theme" />
       </FormField>,
     )
     const label = screen.getByText('Theme')
@@ -1056,7 +1056,7 @@ describe('FormField', () => {
   it('renders the children control', () => {
     render(
       <FormField label="Theme" htmlFor="t">
-        <input id="t" data-testid="theme-input" />
+        <input id="t" data-testid="theme-input" aria-label="Theme" />
       </FormField>,
     )
     expect(screen.getByTestId('theme-input')).toBeInTheDocument()
@@ -1065,7 +1065,7 @@ describe('FormField', () => {
   it('renders the description when provided and no error', () => {
     render(
       <FormField label="Theme" description="Pick a UI theme" htmlFor="t">
-        <input id="t" />
+        <input id="t" aria-label="Theme" />
       </FormField>,
     )
     expect(screen.getByText('Pick a UI theme')).toBeInTheDocument()
@@ -1074,7 +1074,7 @@ describe('FormField', () => {
   it('renders the error in place of the description when both are provided', () => {
     render(
       <FormField label="Theme" description="Pick one" error="Required" htmlFor="t">
-        <input id="t" />
+        <input id="t" aria-label="Theme" />
       </FormField>,
     )
     expect(screen.getByText('Required')).toBeInTheDocument()
@@ -1084,7 +1084,7 @@ describe('FormField', () => {
   it('marks the error message with role="alert"', () => {
     render(
       <FormField label="Theme" error="Required" htmlFor="t">
-        <input id="t" />
+        <input id="t" aria-label="Theme" />
       </FormField>,
     )
     expect(screen.getByRole('alert')).toHaveTextContent('Required')
@@ -1093,7 +1093,7 @@ describe('FormField', () => {
   it('emits data-slot="form-field"', () => {
     const { container } = render(
       <FormField label="Theme" htmlFor="t">
-        <input id="t" />
+        <input id="t" aria-label="Theme" />
       </FormField>,
     )
     expect(container.querySelector('[data-slot="form-field"]')).toBeInTheDocument()
@@ -1102,7 +1102,7 @@ describe('FormField', () => {
   it('merges custom className on the wrapper', () => {
     const { container } = render(
       <FormField label="Theme" htmlFor="t" className="my-field">
-        <input id="t" />
+        <input id="t" aria-label="Theme" />
       </FormField>,
     )
     const wrapper = q(container, '[data-slot="form-field"]')
@@ -1113,7 +1113,7 @@ describe('FormField', () => {
   it('has no a11y violations', async () => {
     const { container } = render(
       <FormField label="Theme" description="Pick one" htmlFor="theme-select">
-        <input id="theme-select" />
+        <input id="theme-select" aria-label="Theme" />
       </FormField>,
     )
     const results = await axe(container)

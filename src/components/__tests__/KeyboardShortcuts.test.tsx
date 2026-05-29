@@ -175,7 +175,7 @@ describe('KeyboardShortcuts', () => {
     const onOpenChange = vi.fn()
     const { container } = render(
       <div>
-        <input data-testid="test-input" />
+        <input aria-label="Test input" data-testid="test-input" />
         <KeyboardShortcuts open={false} onOpenChange={onOpenChange} />
       </div>,
     )
@@ -190,7 +190,7 @@ describe('KeyboardShortcuts', () => {
     const onOpenChange = vi.fn()
     const { container } = render(
       <div>
-        <textarea data-testid="test-textarea" />
+        <textarea aria-label="Test textarea" data-testid="test-textarea" />
         <KeyboardShortcuts open={false} onOpenChange={onOpenChange} />
       </div>,
     )

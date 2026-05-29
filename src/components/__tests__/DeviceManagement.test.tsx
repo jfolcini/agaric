@@ -52,7 +52,7 @@ vi.mock('../RenameDialog', () => ({
   }) =>
     open ? (
       <div data-testid="rename-dialog">
-        <input data-testid="rename-input" defaultValue={currentName} />
+        <input aria-label="Device name" data-testid="rename-input" defaultValue={currentName} />
         <button
           type="button"
           data-testid="rename-save"

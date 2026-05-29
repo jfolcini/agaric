@@ -29,6 +29,7 @@ export function ChoiceValuePicker({
             <input
               type="checkbox"
               checked={checked}
+              aria-label={choice}
               onChange={() => {
                 if (checked) {
                   onChange(selected.filter((v) => v !== choice))

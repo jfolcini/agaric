@@ -263,7 +263,9 @@ export function QueryBuilderModal({
               />
               <datalist id="qb-prop-key-list" data-testid="qb-prop-key-list">
                 {knownPropertyKeys.map((k) => (
-                  <option key={k} value={k} />
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
                 ))}
               </datalist>
               {propertyKeyUnknown && (
@@ -326,6 +328,7 @@ export function QueryBuilderModal({
             <input
               type="checkbox"
               id="qb-show-table"
+              aria-label={t('queryBuilder.showAsTable')}
               checked={showAsTable}
               onChange={(e) => setShowAsTable(e.target.checked)}
               className="size-4 [@media(pointer:coarse)]:size-6 rounded border accent-primary"

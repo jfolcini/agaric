@@ -25,7 +25,7 @@
 
     "jsx-a11y/prefer-tag-over-role": "warn",
     "react-hooks/exhaustive-deps": "warn",
-    "jsx-a11y/control-has-associated-label": "warn",
+    "jsx-a11y/control-has-associated-label": "error",
     "jsx-a11y/no-autofocus": "warn",
     "jsx-a11y/interactive-supports-focus": "warn",
     "eslint/no-unsafe-optional-chaining": "error",
