@@ -6,7 +6,7 @@
  */
 
 import type React from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -49,6 +49,10 @@ export interface QueryBuilderModalProps {
 
 type QueryType = 'tag' | 'property' | 'backlinks'
 
+// Shared by the roving-tabindex keyboard handler and the `.map` below so the
+// arrow-key navigation order always matches the rendered radio order.
+const QUERY_TYPES = ['tag', 'property', 'backlinks'] as const
+
 /**
  * Map UI operator symbols to backend operator names.
  *
@@ -83,6 +87,7 @@ export function QueryBuilderModal({
 
   // ---- State ----
   const [queryType, setQueryType] = useState<QueryType>('tag')
+  const radioRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const [tagExpr, setTagExpr] = useState('')
   const [propertyKey, setPropertyKey] = useState('')
   const [propertyValue, setPropertyValue] = useState('')
@@ -207,6 +212,38 @@ export function QueryBuilderModal({
     onSave(expression)
   }
 
+  // WAI-ARIA radiogroup: vertical+horizontal roving tabindex with automatic
+  // activation — arrow keys move focus AND select the radio. Up/Left go to the
+  // previous option, Down/Right to the next, both with wraparound; Home/End
+  // jump to the ends.
+  const handleRadioGroupKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const count = QUERY_TYPES.length
+    const currentIndex = QUERY_TYPES.indexOf(queryType)
+    let nextIndex: number
+    switch (e.key) {
+      case 'ArrowDown':
+      case 'ArrowRight':
+        nextIndex = (currentIndex + 1) % count
+        break
+      case 'ArrowUp':
+      case 'ArrowLeft':
+        nextIndex = (currentIndex - 1 + count) % count
+        break
+      case 'Home':
+        nextIndex = 0
+        break
+      case 'End':
+        nextIndex = count - 1
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    const target = QUERY_TYPES[nextIndex] as QueryType
+    setQueryType(target)
+    radioRefs.current[target]?.focus()
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -217,10 +254,19 @@ export function QueryBuilderModal({
 
         <DialogBody>
           {/* ---- Query Type Selector ---- */}
-          <div className="flex gap-2" role="radiogroup" aria-label={t('queryBuilder.typeLabel')}>
-            {(['tag', 'property', 'backlinks'] as const).map((type) => (
+          <div
+            className="flex gap-2"
+            role="radiogroup"
+            aria-label={t('queryBuilder.typeLabel')}
+            tabIndex={-1}
+            onKeyDown={handleRadioGroupKeyDown}
+          >
+            {QUERY_TYPES.map((type) => (
               <Button
                 key={type}
+                ref={(el) => {
+                  radioRefs.current[type] = el
+                }}
                 variant={queryType === type ? 'default' : 'outline'}
                 size="sm"
                 // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="radio" on a styled <Button> inside a roving-tabindex radiogroup; a native <input type="radio"> would lose the Button styling and the aria-checked/roving-focus toggle behavior
