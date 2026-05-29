@@ -18,7 +18,7 @@ use crate::import::ImportResult;
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
 use crate::space::SpaceScope;
-use crate::ulid::BlockId;
+use crate::ulid::{BlockId, PageId};
 
 use super::*;
 
@@ -164,7 +164,7 @@ const MAX_PAGE_ALIASES_PREFIX: i64 = 50;
 /// `Page Title (alias: X)` without a second round trip), and the page's
 /// current title (`blocks.content`).
 struct PageAliasPrefixRow {
-    page_id: BlockId,
+    page_id: PageId,
     alias: String,
     title: Option<String>,
 }
@@ -209,7 +209,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     let space_filter = scope.as_filter_param();
     let rows = sqlx::query_as!(
         PageAliasPrefixRow,
-        r#"SELECT pa.page_id AS "page_id!: BlockId", pa.alias AS "alias!", b.content AS "title?"
+        r#"SELECT pa.page_id AS "page_id!: PageId", pa.alias AS "alias!", b.content AS "title?"
          FROM page_aliases pa
          JOIN blocks b ON b.id = pa.page_id
          WHERE pa.alias LIKE ?1 ESCAPE '\' COLLATE NOCASE
@@ -1593,7 +1593,7 @@ pub struct PageWithMetadataRow {
     pub priority: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
-    pub page_id: Option<BlockId>,
+    pub page_id: Option<PageId>,
     /// max(`op_log.created_at`) over the page itself. None if the
     /// page has no op-log entries (which should never happen — every
     /// active page has at least its own creation row — but the column
