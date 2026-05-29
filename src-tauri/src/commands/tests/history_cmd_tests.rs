@@ -241,10 +241,9 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
     .await
     .unwrap();
 
-    let spans =
-        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), first_edit.seq)
-            .await
-            .unwrap();
+    let spans = compute_block_vs_current_diff_inner(&pool, created.id, first_edit.seq)
+        .await
+        .unwrap();
 
     use crate::word_diff::DiffTag;
     assert!(
@@ -298,10 +297,9 @@ async fn compute_block_vs_current_diff_returns_no_spans_for_unmodified_block() {
     .await
     .unwrap();
 
-    let spans =
-        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), create_op.seq)
-            .await
-            .unwrap();
+    let spans = compute_block_vs_current_diff_inner(&pool, created.id, create_op.seq)
+        .await
+        .unwrap();
 
     use crate::word_diff::DiffTag;
     assert!(
@@ -345,9 +343,7 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
     .await
     .unwrap();
 
-    let result =
-        compute_block_vs_current_diff_inner(&pool, created.id.as_str().to_string(), create_op.seq)
-            .await;
+    let result = compute_block_vs_current_diff_inner(&pool, created.id, create_op.seq).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(ref msg)) if msg.contains("soft-deleted")),
@@ -431,7 +427,7 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
     // Equal). With the fix, this must be dev2's text — proving the
     // ORDER BY `created_at DESC, seq DESC` tie-break picked the newer
     // op even though dev1 was inserted first.
-    let spans = compute_block_vs_current_diff_inner(&pool, block_id_upper, 5)
+    let spans = compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 5)
         .await
         .unwrap();
     use crate::word_diff::DiffTag;

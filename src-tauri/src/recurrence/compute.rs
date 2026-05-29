@@ -803,7 +803,7 @@ mod tests_h17_m77 {
         // the full set of recurrence properties — IMMEDIATE rollback
         // means we never observe a half-formed sibling.
         for sibling in &siblings {
-            let props = get_properties_inner(&pool, sibling.id.to_string())
+            let props = get_properties_inner(&pool, sibling.id.clone())
                 .await
                 .unwrap();
             let has_repeat = props.iter().any(|p| p.key == "repeat");
@@ -1012,7 +1012,7 @@ mod tests_l99_l100 {
         let siblings = find_todo_siblings(&pool, &id).await;
         assert_eq!(siblings.len(), 1, "expected exactly one TODO sibling");
         let sibling = &siblings[0];
-        let props = get_properties_inner(&pool, sibling.id.to_string())
+        let props = get_properties_inner(&pool, sibling.id.clone())
             .await
             .unwrap();
 

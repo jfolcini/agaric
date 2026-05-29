@@ -341,9 +341,7 @@ async fn boolean_property_set_and_read_back() {
 
     // 3. Read back via `get_properties_inner`. SQLite stores booleans
     //    as INTEGER (0/1); `value_bool` deserializes to `Option<i64>`.
-    let rows = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let flag = rows
         .iter()
         .find(|r| r.key == "flag")
@@ -397,9 +395,7 @@ async fn boolean_property_false_persists_as_zero() {
     .unwrap();
     settle(&mat).await;
 
-    let rows = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let archived = rows
         .iter()
         .find(|r| r.key == "archived")
@@ -599,12 +595,9 @@ async fn get_batch_properties_happy_path() {
     settle(&mat).await;
 
     // Batch-fetch
-    let result = get_batch_properties_inner(
-        &pool,
-        vec![b1.id.clone().into_string(), b2.id.clone().into_string()],
-    )
-    .await
-    .unwrap();
+    let result = get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone()])
+        .await
+        .unwrap();
 
     assert_eq!(result.len(), 2, "both blocks must be in result");
     assert_eq!(result[b1.id.as_str()][0].key, "importance");
@@ -666,7 +659,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
         .unwrap();
 
     // Read-only batch fetch
-    let _ = get_batch_properties_inner(&pool, vec![block.id.clone().into_string()])
+    let _ = get_batch_properties_inner(&pool, vec![block.id.clone()])
         .await
         .unwrap();
 

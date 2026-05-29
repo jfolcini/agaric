@@ -999,7 +999,7 @@ async fn list_backlinks_global_scope_parity() {
     // Path B: direct call to the migrated `_inner` with the same scope.
     let via_inner = list_backlinks_grouped_inner(
         &tools.pool,
-        target.id.to_string(),
+        target.id.clone(),
         None,
         None,
         None,

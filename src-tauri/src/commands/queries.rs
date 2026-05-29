@@ -19,6 +19,7 @@ use crate::materializer::StatusInfo;
 use crate::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
 use crate::space::SpaceScope;
 use crate::sync_scheduler::SyncScheduler;
+use crate::ulid::{BlockId, PageId};
 
 use super::*;
 
@@ -99,13 +100,13 @@ pub struct TagFilterExpr {
 #[instrument(skip(pool), err)]
 pub async fn get_backlinks_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
     let page = pagination::PageRequest::new(cursor, limit)?;
-    pagination::list_backlinks(pool, &block_id, &page, scope.as_filter_param()).await
+    pagination::list_backlinks(pool, block_id.as_str(), &page, scope.as_filter_param()).await
 }
 
 /// Return current materializer queue metrics and system status.
@@ -666,20 +667,20 @@ pub async fn list_unfinished_tasks_inner(
 #[instrument(skip(pool, filters, sort), err)]
 pub async fn query_backlinks_filtered_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    if block_id.trim().is_empty() {
+    if block_id.as_str().trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     backlink::eval_backlink_query(
         pool,
-        &block_id,
+        block_id.as_str(),
         filters,
         sort,
         &page,
@@ -701,20 +702,20 @@ pub async fn query_backlinks_filtered_inner(
 #[instrument(skip(pool, filters, sort), err)]
 pub async fn list_backlinks_grouped_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    if block_id.trim().is_empty() {
+    if block_id.as_str().trim().is_empty() {
         return Err(AppError::Validation("block_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     backlink::eval_backlink_query_grouped(
         pool,
-        &block_id,
+        block_id.as_str(),
         filters,
         sort,
         &page,
@@ -744,19 +745,26 @@ pub async fn list_backlinks_grouped_inner(
 #[instrument(skip(pool, filters, sort), err)]
 pub async fn list_unlinked_references_inner(
     pool: &SqlitePool,
-    page_id: &str,
+    page_id: &PageId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<GroupedBacklinkResponse, AppError> {
-    if page_id.trim().is_empty() {
+    if page_id.as_str().trim().is_empty() {
         return Err(AppError::Validation("page_id must not be empty".into()));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
-    backlink::eval_unlinked_references(pool, page_id, filters, sort, &page, scope.as_filter_param())
-        .await
+    backlink::eval_unlinked_references(
+        pool,
+        page_id.as_str(),
+        filters,
+        sort,
+        &page,
+        scope.as_filter_param(),
+    )
+    .await
 }
 
 /// Count backlinks per target page for a batch of page IDs in a single query.
@@ -779,13 +787,15 @@ pub async fn list_unlinked_references_inner(
 #[instrument(skip(pool, page_ids), err)]
 pub async fn count_backlinks_batch_inner(
     pool: &SqlitePool,
-    page_ids: Vec<String>,
+    page_ids: Vec<PageId>,
     scope: &SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     if page_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let ids_json = serde_json::to_string(&page_ids)?;
+    // `json_each(?1)` binds a JSON array of the canonical id strings.
+    let id_strings: Vec<&str> = page_ids.iter().map(PageId::as_str).collect();
+    let ids_json = serde_json::to_string(&id_strings)?;
     // PEND-35 Tier 1.6 — `?2` carries the active space id (or NULL for
     // [`SpaceScope::Global`]). The shape mirrors
     // `crate::backlink::query::eval_backlink_query`:
@@ -827,7 +837,7 @@ pub async fn count_backlinks_batch_inner(
 #[specta::specta]
 pub async fn get_backlinks(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
     cursor: Option<String>,
     limit: Option<i64>,
     scope: SpaceScope,
@@ -1205,7 +1215,7 @@ pub async fn list_unfinished_tasks(
 #[allow(clippy::too_many_arguments)]
 pub async fn query_backlinks_filtered(
     read_pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
@@ -1224,7 +1234,7 @@ pub async fn query_backlinks_filtered(
 #[allow(clippy::too_many_arguments)]
 pub async fn list_backlinks_grouped(
     read_pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
@@ -1243,7 +1253,7 @@ pub async fn list_backlinks_grouped(
 #[allow(clippy::too_many_arguments)]
 pub async fn list_unlinked_references(
     read_pool: State<'_, ReadPool>,
-    page_id: String,
+    page_id: PageId,
     filters: Option<Vec<BacklinkFilter>>,
     sort: Option<BacklinkSort>,
     cursor: Option<String>,
@@ -1261,7 +1271,7 @@ pub async fn list_unlinked_references(
 #[specta::specta]
 pub async fn count_backlinks_batch(
     read_pool: State<'_, ReadPool>,
-    page_ids: Vec<String>,
+    page_ids: Vec<PageId>,
     scope: SpaceScope,
 ) -> Result<HashMap<String, usize>, AppError> {
     count_backlinks_batch_inner(&read_pool.0, page_ids, &scope)

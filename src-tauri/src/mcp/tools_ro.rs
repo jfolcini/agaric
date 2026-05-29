@@ -848,8 +848,16 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
         Some(id) => SpaceScope::Active(SpaceId::from_string(id)?),
         None => SpaceScope::Global,
     };
-    let resp = list_backlinks_grouped_inner(pool, block_id, None, None, args.cursor, limit, &scope)
-        .await?;
+    let resp = list_backlinks_grouped_inner(
+        pool,
+        crate::ulid::BlockId::from(block_id),
+        None,
+        None,
+        args.cursor,
+        limit,
+        &scope,
+    )
+    .await?;
     to_tool_result(&resp)
 }
 

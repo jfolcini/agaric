@@ -635,7 +635,11 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
             b.to_async(&rt).iter(|| {
                 count_backlinks_batch_inner(
                     &pool,
-                    page_ids.clone(),
+                    page_ids
+                        .clone()
+                        .into_iter()
+                        .map(Into::into)
+                        .collect::<Vec<agaric_lib::ulid::PageId>>(),
                     &agaric_lib::space::SpaceScope::Global,
                 )
             });
@@ -705,16 +709,9 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
             // takes `&SpaceScope`. The bench query is content-addressed by
             // page id with no space-scope filter, so use `Global`.
             let scope = agaric_lib::space::SpaceScope::Global;
+            let target = agaric_lib::ulid::PageId::from("UNLINK_TARGET_0000000000");
             b.to_async(&rt).iter(|| {
-                list_unlinked_references_inner(
-                    &pool,
-                    "UNLINK_TARGET_0000000000",
-                    None,
-                    None,
-                    None,
-                    Some(50),
-                    &scope,
-                )
+                list_unlinked_references_inner(&pool, &target, None, None, None, Some(50), &scope)
             });
         });
     }

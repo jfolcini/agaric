@@ -47,9 +47,7 @@ async fn set_property_creates_property() {
     mat.flush_background().await.unwrap();
 
     // Verify via get_properties
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(props.len(), 1, "should have exactly one property");
     assert_eq!(
         props[0].key, "importance",
@@ -387,9 +385,7 @@ async fn delete_property_removes_property() {
     mat.flush_background().await.unwrap();
 
     // Verify it's gone
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props.is_empty(),
         "properties should be empty after delete, got: {props:?}"
@@ -459,9 +455,7 @@ async fn delete_property_allows_builtin_key() {
     .unwrap();
 
     // Verify it's gone
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         !props.iter().any(|p| p.key == "created_at"),
         "created_at should be deleted, got: {props:?}"
@@ -638,9 +632,7 @@ async fn get_properties_returns_empty_for_new_block() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props.is_empty(),
         "new block should have no properties, got: {props:?}"
@@ -730,12 +722,10 @@ async fn batch_properties_returns_all_for_multiple_blocks() {
     mat.flush_background().await.unwrap();
 
     // Batch-fetch for all 3
-    let result = get_batch_properties_inner(
-        &pool,
-        vec![b1.id.to_string(), b2.id.to_string(), b3.id.to_string()],
-    )
-    .await
-    .unwrap();
+    let result =
+        get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone(), b3.id.clone()])
+            .await
+            .unwrap();
 
     // b1 and b2 should have properties, b3 should be omitted
     assert!(result.contains_key(b1.id.as_str()), "b1 must be in result");
@@ -792,7 +782,7 @@ async fn batch_properties_omits_blocks_without_properties() {
     .await
     .unwrap();
 
-    let result = get_batch_properties_inner(&pool, vec![block.id.to_string()])
+    let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
         .await
         .unwrap();
 
@@ -872,7 +862,7 @@ async fn batch_properties_returns_multiple_props_per_block() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = get_batch_properties_inner(&pool, vec![block.id.to_string()])
+    let result = get_batch_properties_inner(&pool, vec![block.id.clone()])
         .await
         .unwrap();
 
@@ -2520,9 +2510,7 @@ async fn todo_state_auto_null_to_todo_sets_created_at() {
     mat.flush_background().await.unwrap();
 
     // Check created_at property was set
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let created_at = props.iter().find(|p| p.key == "created_at");
     assert!(
         created_at.is_some(),
@@ -2582,9 +2570,7 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
     mat.flush_background().await.unwrap();
 
     // Check completed_at property was set
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let completed_at = props.iter().find(|p| p.key == "completed_at");
     assert!(
         completed_at.is_some(),
@@ -2651,9 +2637,7 @@ async fn todo_state_auto_done_to_todo_sets_created_at_clears_completed_at() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
 
     // created_at should be set (refreshed)
     let created_at = props.iter().find(|p| p.key == "created_at");
@@ -2704,9 +2688,7 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
     mat.flush_background().await.unwrap();
 
     // Verify created_at exists
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props.iter().any(|p| p.key == "created_at"),
         "created_at should exist after null→TODO"
@@ -2719,9 +2701,7 @@ async fn todo_state_auto_todo_to_null_clears_both_timestamps() {
     mat.flush_background().await.unwrap();
 
     // Both should be cleared
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let created_at = props.iter().find(|p| p.key == "created_at");
     let completed_at = props.iter().find(|p| p.key == "completed_at");
     assert!(
@@ -2862,7 +2842,7 @@ async fn recurrence_daily_creates_next_occurrence() {
     );
 
     // Check repeat property was copied
-    let props = get_properties_inner(&pool, new_block.id.clone().into_string())
+    let props = get_properties_inner(&pool, new_block.id.clone())
         .await
         .unwrap();
     let repeat_prop = props.iter().find(|p| p.key == "repeat");
@@ -3254,7 +3234,7 @@ async fn test_set_todo_state_recurrence_is_atomic() {
         "recurrence block should copy content"
     );
 
-    let props = get_properties_inner(&pool, new_block.id.clone().into_string())
+    let props = get_properties_inner(&pool, new_block.id.clone())
         .await
         .unwrap();
     let repeat_prop = props.iter().find(|p| p.key == "repeat");
@@ -3559,7 +3539,7 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
     assert_eq!(new_blocks.len(), 1, "should create one new block");
 
     // Check that repeat-seq was incremented to 2
-    let props = get_properties_inner(&pool, new_blocks[0].id.clone().into_string())
+    let props = get_properties_inner(&pool, new_blocks[0].id.clone())
         .await
         .unwrap();
     let seq_prop = props.iter().find(|p| p.key == "repeat-seq");
@@ -3653,7 +3633,7 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
     let sibling = &new_blocks[0];
 
     // Check repeat-origin points to original block
-    let props = get_properties_inner(&pool, sibling.id.clone().into_string())
+    let props = get_properties_inner(&pool, sibling.id.clone())
         .await
         .unwrap();
     let origin_prop = props.iter().find(|p| p.key == "repeat-origin");
@@ -3754,7 +3734,9 @@ async fn recurrence_preserves_repeat_origin_across_chain() {
     .unwrap();
 
     // Both sibling1 and sibling2 should point to the original block
-    let props1 = get_properties_inner(&pool, sibling1_id).await.unwrap();
+    let props1 = get_properties_inner(&pool, sibling1_id.into())
+        .await
+        .unwrap();
     let origin1 = props1.iter().find(|p| p.key == "repeat-origin");
     assert_eq!(
         origin1.unwrap().value_ref.as_deref(),
@@ -3762,7 +3744,9 @@ async fn recurrence_preserves_repeat_origin_across_chain() {
         "first sibling repeat-origin should point to original"
     );
 
-    let props2 = get_properties_inner(&pool, sibling2_id).await.unwrap();
+    let props2 = get_properties_inner(&pool, sibling2_id.into())
+        .await
+        .unwrap();
     let origin2 = props2.iter().find(|p| p.key == "repeat-origin");
     assert_eq!(
         origin2.unwrap().value_ref.as_deref(),
@@ -4676,9 +4660,7 @@ async fn bug20_set_property_text_type_has_no_options_restriction() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(props.len(), 1, "text property should be saved");
     assert_eq!(
         props[0].value_text.as_deref(),
@@ -4737,9 +4719,7 @@ async fn bug20_select_property_with_null_options_is_permissive() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         props.len(),
         1,
@@ -5258,9 +5238,7 @@ async fn set_is_space_to_true_succeeds_m90() {
     .await
     .unwrap();
 
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let is_space = props
         .iter()
         .find(|p| p.key == "is_space")
@@ -5419,7 +5397,7 @@ async fn get_property_returns_some_for_present_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let row = get_property_inner(&pool, block.id.as_str(), "image_width")
+    let row = get_property_inner(&pool, &block.id, "image_width")
         .await
         .unwrap()
         .expect("present key must yield Some(row)");
@@ -5469,7 +5447,7 @@ async fn get_property_returns_none_for_missing_key() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = get_property_inner(&pool, block.id.as_str(), "journal_template")
+    let result = get_property_inner(&pool, &block.id, "journal_template")
         .await
         .unwrap();
     assert!(
@@ -5523,10 +5501,14 @@ async fn get_property_normalizes_lowercase_block_id() {
         "fixture must produce a non-trivial uppercase ULID for the case-normalisation test"
     );
 
-    let row = get_property_inner(&pool, &lower, "journal_template")
-        .await
-        .unwrap()
-        .expect("lowercase block_id must still resolve to the canonical row");
+    let row = get_property_inner(
+        &pool,
+        &crate::ulid::BlockId::from(lower),
+        "journal_template",
+    )
+    .await
+    .unwrap()
+    .expect("lowercase block_id must still resolve to the canonical row");
     assert_eq!(row.value_text.as_deref(), Some("## Daily"));
 
     mat.shutdown();
@@ -5574,9 +5556,18 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
     .await
     .unwrap();
 
-    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, ids.clone(), Some("DONE".into()))
-        .await
-        .unwrap();
+    let updated = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::BlockId>>(),
+        Some("DONE".into()),
+    )
+    .await
+    .unwrap();
     assert_eq!(updated, 5, "all five blocks should be reported as updated");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -5665,7 +5656,7 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
         &pool,
         DEV,
         &mat,
-        vec![live.id.to_string(), deleted.id.to_string(), "GHOST".into()],
+        vec![live.id.clone(), deleted.id.clone(), "GHOST".into()],
         Some("TODO".into()),
     )
     .await
@@ -5735,7 +5726,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
         &pool,
         DEV,
         &mat,
-        vec![b1.id.to_string(), b2.id.to_string()],
+        vec![b1.id.clone(), b2.id.clone()],
         Some("CANCELLED".into()),
     )
     .await;
@@ -5791,7 +5782,17 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
-    let result = set_todo_state_batch_inner(&pool, DEV, &mat, oversize, Some("TODO".into())).await;
+    let result = set_todo_state_batch_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversize
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::BlockId>>(),
+        Some("TODO".into()),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversize list must reject with Validation, got {result:?}"
@@ -5822,7 +5823,7 @@ async fn set_todo_state_batch_clears_state() {
         .unwrap();
     settle(&mat).await;
 
-    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.to_string()], None)
+    let updated = set_todo_state_batch_inner(&pool, DEV, &mat, vec![b.id.clone()], None)
         .await
         .unwrap();
     assert_eq!(updated, 1);

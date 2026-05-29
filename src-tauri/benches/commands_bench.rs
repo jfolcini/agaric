@@ -698,7 +698,8 @@ fn bench_batch_properties(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
-                    let ids = subset.clone();
+                    let ids: Vec<agaric_lib::ulid::BlockId> =
+                        subset.clone().into_iter().map(Into::into).collect();
                     async move { get_batch_properties_inner(&pool, ids).await.unwrap() }
                 })
             },

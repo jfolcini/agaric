@@ -946,7 +946,7 @@ async fn handle_recurrence_copies_properties_to_sibling() {
     let sibling = &siblings[0];
 
     // Verify properties on the sibling
-    let props = get_properties_inner(&pool, sibling.id.to_string())
+    let props = get_properties_inner(&pool, sibling.id.clone())
         .await
         .unwrap();
 
@@ -1065,7 +1065,7 @@ async fn handle_recurrence_sets_repeat_origin_on_sibling() {
     let sibling = &siblings[0];
 
     // Verify repeat-origin points back to original block
-    let props = get_properties_inner(&pool, sibling.id.to_string())
+    let props = get_properties_inner(&pool, sibling.id.clone())
         .await
         .unwrap();
     let origin_prop = props.iter().find(|p| p.key == "repeat-origin");

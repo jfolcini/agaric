@@ -153,7 +153,7 @@ fn bench_get_properties(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
-                    async move { get_properties_inner(&pool, target_id).await.unwrap() }
+                    async move { get_properties_inner(&pool, target_id.into()).await.unwrap() }
                 })
             },
         );
