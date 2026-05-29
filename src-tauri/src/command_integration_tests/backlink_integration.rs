@@ -77,7 +77,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone().into_string(),
+        page.id.clone(),
         None,
         None,
         None,
@@ -115,7 +115,7 @@ async fn backlinks_filtered_empty_for_no_links() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone().into_string(),
+        page.id.clone(),
         None,
         None,
         None,
@@ -177,7 +177,7 @@ async fn backlinks_filtered_excludes_deleted() {
     // Verify backlink exists
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone().into_string(),
+        page.id.clone(),
         None,
         None,
         None,
@@ -196,7 +196,7 @@ async fn backlinks_filtered_excludes_deleted() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        page.id.clone().into_string(),
+        page.id.clone(),
         None,
         None,
         None,
@@ -288,7 +288,7 @@ async fn backlinks_filtered_with_block_type_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -373,7 +373,7 @@ async fn backlinks_filtered_with_contains_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -494,7 +494,7 @@ async fn backlinks_filtered_with_property_text_filter() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -578,7 +578,7 @@ async fn backlinks_filtered_with_sort_created() {
     // Sort ascending (oldest first)
     let resp_asc = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
@@ -603,7 +603,7 @@ async fn backlinks_filtered_with_sort_created() {
     // Sort descending (newest first)
     let resp_desc = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Desc }),
         None,
@@ -729,7 +729,7 @@ async fn backlinks_filtered_with_sort_property() {
     // Sort by importance Desc (highest first)
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::PropertyNum {
             key: "importance".into(),
@@ -806,7 +806,7 @@ async fn backlinks_filtered_pagination() {
     // First page: limit=3
     let resp1 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         None,
@@ -828,7 +828,7 @@ async fn backlinks_filtered_pagination() {
     // Second page
     let resp2 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp1.next_cursor,
@@ -845,7 +845,7 @@ async fn backlinks_filtered_pagination() {
     // Third page (last)
     let resp3 = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         Some(BacklinkSort::Created { dir: SortDir::Asc }),
         resp2.next_cursor,
@@ -908,7 +908,7 @@ async fn backlinks_filtered_total_count_matches() {
     // Query with limit=2 — total_count should still be 5
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -1139,7 +1139,7 @@ async fn backlinks_filtered_and_filter_intersection() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -1200,7 +1200,7 @@ async fn backlinks_filtered_unicode_content() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -1254,7 +1254,7 @@ async fn backlinks_filtered_self_reference_excluded() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         None,
         None,
         None,
@@ -1324,7 +1324,7 @@ async fn backlinks_filtered_multiple_refs_same_block() {
 
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -1390,7 +1390,7 @@ async fn backlinks_filtered_created_in_range() {
     }];
     let resp = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -1409,7 +1409,7 @@ async fn backlinks_filtered_created_in_range() {
     }];
     let resp_past = query_backlinks_filtered_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters_past),
         None,
         None,
@@ -1781,15 +1781,9 @@ async fn get_backlinks_returns_linking_blocks() {
         .await
         .unwrap();
 
-    let resp = get_backlinks_inner(
-        &pool,
-        target.id.clone().into_string(),
-        None,
-        None,
-        &SpaceScope::Global,
-    )
-    .await
-    .unwrap();
+    let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &SpaceScope::Global)
+        .await
+        .unwrap();
 
     assert_eq!(resp.items.len(), 1, "one backlink expected");
     assert_eq!(
@@ -1995,7 +1989,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2044,7 +2038,7 @@ async fn grouped_backlinks_empty_for_no_links() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2143,7 +2137,7 @@ async fn grouped_backlinks_single_block_page() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2212,7 +2206,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2294,7 +2288,7 @@ async fn grouped_backlinks_excludes_deleted() {
     // Verify it appears before deletion
     let before = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2313,7 +2307,7 @@ async fn grouped_backlinks_excludes_deleted() {
 
     let after = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2394,7 +2388,7 @@ async fn grouped_backlinks_pagination() {
     // Request limit=1
     let resp1 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2411,7 +2405,7 @@ async fn grouped_backlinks_pagination() {
     // Fetch page 2 with cursor
     let resp2 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         resp1.next_cursor.clone(),
@@ -2431,7 +2425,7 @@ async fn grouped_backlinks_pagination() {
     // Fetch page 3
     let resp3 = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         resp2.next_cursor.clone(),
@@ -2554,7 +2548,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
     // Without filter
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         None,
         None,
         None,
@@ -2576,7 +2570,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
     }];
     let resp_filtered = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -2668,7 +2662,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -2759,7 +2753,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -2861,7 +2855,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,
@@ -3008,7 +3002,7 @@ async fn grouped_backlinks_with_contains_filter() {
 
     let resp = list_backlinks_grouped_inner(
         &pool,
-        target.id.clone().into_string(),
+        target.id.clone(),
         Some(filters),
         None,
         None,

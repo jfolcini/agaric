@@ -1503,7 +1503,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
     assert_eq!(b_tags[0], tag1.id, "block_b must still be tagged with tag1");
 
     // Properties
-    let a_props = get_properties_inner(&pool, block_a.id.to_string())
+    let a_props = get_properties_inner(&pool, block_a.id.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -1518,7 +1518,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         "property value_text must survive"
     );
 
-    let b_props = get_properties_inner(&pool, block_b.id.to_string())
+    let b_props = get_properties_inner(&pool, block_b.id.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -1807,9 +1807,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
     settle_bg_tasks(&mat).await;
 
     // 3. Get properties — verify it's there
-    let props = get_properties_inner(&pool, block.id.to_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(props.len(), 1, "block must have 1 property after set");
     assert_eq!(props[0].key, "status", "property key must match");
     assert_eq!(
@@ -1830,9 +1828,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
     .unwrap();
     settle_bg_tasks(&mat).await;
 
-    let props_after_edit = get_properties_inner(&pool, block.id.clone().to_string())
-        .await
-        .unwrap();
+    let props_after_edit = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         props_after_edit.len(),
         1,
@@ -1850,9 +1846,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         .unwrap();
     settle_bg_tasks(&mat).await;
 
-    let props_after_del = get_properties_inner(&pool, block.id.to_string())
-        .await
-        .unwrap();
+    let props_after_del = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props_after_del.is_empty(),
         "property must be gone after delete_property"
@@ -1876,9 +1870,7 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
     .unwrap();
     settle_bg_tasks(&mat).await;
 
-    let props_re_set = get_properties_inner(&pool, block.id.to_string())
-        .await
-        .unwrap();
+    let props_re_set = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         props_re_set.len(),
         1,

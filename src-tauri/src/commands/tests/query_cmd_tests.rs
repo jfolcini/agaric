@@ -1615,9 +1615,15 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
     ids.push("BIG_TGT1".into());
     ids.push("BIG_TGT2".into());
 
-    let result = count_backlinks_batch_inner(&pool, ids, &SpaceScope::Global)
-        .await
-        .unwrap();
+    let result = count_backlinks_batch_inner(
+        &pool,
+        ids.into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::PageId>>(),
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 2, "only two IDs have backlinks");
     assert_eq!(result.get("BIG_TGT1"), Some(&2), "BIG_TGT1 has 2 backlinks");
@@ -1670,16 +1676,28 @@ async fn count_backlinks_batch_active_scope() {
     let page_ids = vec!["PG_A".to_string(), "PG_B".to_string()];
 
     // Global — every backlink counted regardless of space.
-    let global = count_backlinks_batch_inner(&pool, page_ids.clone(), &SpaceScope::Global)
-        .await
-        .unwrap();
+    let global = count_backlinks_batch_inner(
+        &pool,
+        page_ids
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::PageId>>(),
+        &SpaceScope::Global,
+    )
+    .await
+    .unwrap();
     assert_eq!(global.get("PG_A"), Some(&2), "Global counts both sources");
     assert_eq!(global.get("PG_B"), Some(&2), "Global counts both sources");
 
     // Active(A) — only SRC_A's links are visible.
     let active_a = count_backlinks_batch_inner(
         &pool,
-        page_ids.clone(),
+        page_ids
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::PageId>>(),
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -1698,7 +1716,10 @@ async fn count_backlinks_batch_active_scope() {
     // Active(B) — only SRC_B's links are visible.
     let active_b = count_backlinks_batch_inner(
         &pool,
-        page_ids,
+        page_ids
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<crate::ulid::PageId>>(),
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
     )
     .await
@@ -2940,7 +2961,7 @@ async fn list_unlinked_references_returns_only_current_space_blocks_feat3p4() {
 
     let resp = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3014,7 +3035,7 @@ async fn list_unlinked_references_with_none_space_id_returns_all_feat3p4() {
 
     let resp = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3066,7 +3087,7 @@ async fn list_unlinked_references_with_nonexistent_space_id_returns_empty_feat3p
 
     let resp = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3148,7 +3169,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     };
     let a = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3159,7 +3180,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     .unwrap();
     let b = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3170,7 +3191,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     .unwrap();
     let unscoped = list_unlinked_references_inner(
         &pool,
-        "LUR_TGT",
+        &crate::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,

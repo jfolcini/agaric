@@ -1070,13 +1070,13 @@ pub async fn compute_edit_diff(
 #[instrument(skip(pool), err)]
 pub async fn compute_block_vs_current_diff_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
     historical_seq: i64,
 ) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
-    // AGENTS.md invariant #8: ULIDs are stored uppercase; mirror the
-    // `find_prior_text` normalization so a lowercase block_id from the
-    // frontend still hits the indexed column.
-    let block_id_upper = block_id.to_ascii_uppercase();
+    // AGENTS.md invariant #8: ULIDs are stored uppercase; `BlockId`
+    // already holds the canonical uppercase form on construction, so the
+    // indexed column comparison hits the on-disk row directly.
+    let block_id_upper = block_id.into_string();
 
     // 1. Live current content. We deliberately exclude soft-deleted
     //    blocks: there is nothing meaningful to diff against if the
@@ -1168,7 +1168,7 @@ pub async fn compute_block_vs_current_diff_inner(
 #[specta::specta]
 pub async fn compute_block_vs_current_diff(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
     historical_seq: i64,
 ) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
     compute_block_vs_current_diff_inner(&pool.0, block_id, historical_seq)

@@ -229,9 +229,7 @@ async fn undo_property_change_restores_prior_value() {
     );
 
     // "importance" should be back to "low" (prior value restored)
-    let props = get_properties_inner(&pool, child.id.into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, child.id).await.unwrap();
     let importance = props.iter().find(|p| p.key == "importance");
     assert!(
         importance.is_some(),

@@ -2319,9 +2319,7 @@ async fn revert_set_property_restores_prior_value() {
     mat.flush_background().await.unwrap();
 
     // Verify it's "low"
-    let props_before = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let p_before = props_before.iter().find(|p| p.key == "importance").unwrap();
     assert_eq!(
         p_before.value_text.as_deref(),
@@ -2350,9 +2348,7 @@ async fn revert_set_property_restores_prior_value() {
     .unwrap();
 
     // Verify it's back to "high"
-    let props_after = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let p_after = props_after.iter().find(|p| p.key == "importance").unwrap();
     assert_eq!(
         p_after.value_text.as_deref(),
@@ -2417,9 +2413,7 @@ async fn revert_set_property_first_produces_delete() {
     .unwrap();
 
     // Verify the property row no longer exists
-    let props = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props.iter().all(|p| p.key != "color"),
         "property 'color' should be deleted after reverting first set"
@@ -2469,9 +2463,7 @@ async fn revert_delete_property_restores_value() {
     mat.flush_background().await.unwrap();
 
     // Verify property is gone
-    let props_before = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         props_before.iter().all(|p| p.key != "due"),
         "property 'due' should be deleted"
@@ -2497,9 +2489,7 @@ async fn revert_delete_property_restores_value() {
     .unwrap();
 
     // Verify the property is restored with value_date="2025-06-15"
-    let props_after = get_properties_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let due = props_after
         .iter()
         .find(|p| p.key == "due")
@@ -3608,9 +3598,7 @@ async fn undo_page_op_reverses_set_property() {
     mat.flush_background().await.unwrap();
 
     // Verify property exists
-    let props = get_properties_inner(&pool, child.id.clone().into_string())
-        .await
-        .unwrap();
+    let props = get_properties_inner(&pool, child.id.clone()).await.unwrap();
     assert!(
         props
             .iter()
@@ -3630,9 +3618,7 @@ async fn undo_page_op_reverses_set_property() {
     );
 
     // Verify property removed
-    let props_after = get_properties_inner(&pool, child.id.clone().into_string())
-        .await
-        .unwrap();
+    let props_after = get_properties_inner(&pool, child.id.clone()).await.unwrap();
     assert!(
         !props_after.iter().any(|p| p.key == "importance"),
         "property should be removed after undo"

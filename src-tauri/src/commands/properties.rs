@@ -429,7 +429,7 @@ pub async fn set_todo_state_batch_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
     state: Option<String>,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
@@ -451,14 +451,13 @@ pub async fn set_todo_state_batch_inner(
         }
     }
 
-    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — normalise every input id
-    // to canonical uppercase before any SQL touch so the membership
-    // probe matches the byte-exact ULID on disk regardless of casing
-    // supplied by the caller (MCP, sync replay, hand-crafted scripts).
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — `BlockId` normalises to
+    // canonical uppercase on construction, so the membership probe matches
+    // the byte-exact ULID on disk regardless of casing supplied by the
+    // caller (MCP, sync replay, hand-crafted scripts). Project to the
+    // owned `String` form once for the `json_each` bind below.
+    let block_id_strings: Vec<String> =
+        block_ids.iter().map(|id| id.as_str().to_string()).collect();
 
     // SQL-review M-7: this batch path skips the timestamp + recurrence
     // side-effects that the single-row `set_todo_state_inner` performs.
@@ -471,7 +470,7 @@ pub async fn set_todo_state_batch_inner(
         "SELECT block_id FROM block_properties \
          WHERE key = 'repeat' AND block_id IN (SELECT value FROM json_each(?))",
     )
-    .bind(serde_json::to_string(&block_ids)?)
+    .bind(serde_json::to_string(&block_id_strings)?)
     .fetch_all(pool)
     .await?;
     if !repeat_carriers.is_empty() {
@@ -511,9 +510,10 @@ pub async fn set_todo_state_batch_inner(
         // Probe existence inside the tx so a concurrent delete that
         // landed between the FE selection and this call cleanly skips
         // rather than aborting the whole batch.
+        let block_id_str = block_id.as_str();
         let exists = sqlx::query_scalar!(
             r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-            block_id
+            block_id_str
         )
         .fetch_optional(&mut **tx)
         .await?;
@@ -530,7 +530,7 @@ pub async fn set_todo_state_batch_inner(
         let (_row, op_record) = crate::commands::blocks::set_property_in_tx(
             &mut tx,
             device_id,
-            block_id,
+            block_id.into_string(),
             "todo_state",
             state.clone(),
             None,
@@ -732,8 +732,9 @@ pub async fn delete_property_inner(
 #[instrument(skip(pool), err)]
 pub async fn get_properties_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<PropertyRow>, AppError> {
+    let block_id = block_id.as_str();
     let rows = sqlx::query_as!(
         PropertyRow,
         "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
@@ -768,10 +769,13 @@ pub async fn get_properties_inner(
 #[instrument(skip(pool), err)]
 pub async fn get_property_inner(
     pool: &SqlitePool,
-    block_id: &str,
+    block_id: &BlockId,
     key: &str,
 ) -> Result<Option<PropertyRow>, AppError> {
-    let block_id = block_id.to_ascii_uppercase();
+    // `BlockId` is already normalised to canonical uppercase on
+    // construction (AGENTS.md invariant #8), so the byte-exact column
+    // comparison hits the on-disk row without a redundant uppercase pass.
+    let block_id = block_id.as_str();
     let row = sqlx::query_as!(
         PropertyRow,
         "SELECT key, value_text, value_num, value_date, value_ref, value_bool \
@@ -1112,7 +1116,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 #[instrument(skip(pool, block_ids), err)]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::Validation(
@@ -1120,7 +1124,10 @@ pub async fn get_batch_properties_inner(
         ));
     }
 
-    let ids_json = serde_json::to_string(&block_ids)?;
+    // `json_each(?)` binds a JSON array of the canonical id strings;
+    // `BlockId` already holds the normalised uppercase form.
+    let id_strings: Vec<&str> = block_ids.iter().map(BlockId::as_str).collect();
+    let ids_json = serde_json::to_string(&id_strings)?;
 
     let rows = sqlx::query_as!(
         BatchPropertyRow,
@@ -1172,13 +1179,13 @@ pub async fn set_property(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     key: String,
     value: SetPropertyArgs,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone();
+    let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result = set_property_inner(
@@ -1209,11 +1216,11 @@ pub async fn set_todo_state(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     state: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let block_id_clone = block_id.clone().into_string();
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result = set_todo_state_inner(&pool.0, device_id.as_str(), &materializer, active_id, state)
@@ -1242,7 +1249,7 @@ pub async fn set_todo_state_batch(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
     state: Option<String>,
 ) -> Result<i64, AppError> {
     let block_ids_for_emit = block_ids.clone();
@@ -1256,11 +1263,7 @@ pub async fn set_todo_state_batch(
     // but emitting for ids that did not actually update is harmless —
     // the listener side already debounces / re-reads.
     for id in block_ids_for_emit {
-        emit_property_changed_event(
-            &app,
-            id.to_ascii_uppercase(),
-            vec!["todo_state".to_string()],
-        );
+        emit_property_changed_event(&app, id.into_string(), vec!["todo_state".to_string()]);
     }
     Ok(updated)
 }
@@ -1281,11 +1284,11 @@ pub async fn set_priority(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     level: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let block_id_clone = block_id.clone().into_string();
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result = set_priority_inner(&pool.0, device_id.as_str(), &materializer, active_id, level)
@@ -1304,11 +1307,11 @@ pub async fn set_due_date(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let block_id_clone = block_id.clone().into_string();
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result = set_due_date_inner(&pool.0, device_id.as_str(), &materializer, active_id, date)
@@ -1327,11 +1330,11 @@ pub async fn set_scheduled_date(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     date: Option<String>,
 ) -> Result<BlockRow, AppError> {
-    let block_id_clone = block_id.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let block_id_clone = block_id.clone().into_string();
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     let result =
@@ -1351,12 +1354,12 @@ pub async fn delete_property(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     key: String,
 ) -> Result<(), AppError> {
-    let block_id_clone = block_id.clone();
+    let block_id_clone = block_id.clone().into_string();
     let key_clone = key.clone();
-    let active_id = verify_active(&pool.0, &BlockId::from_trusted(&block_id))
+    let active_id = verify_active(&pool.0, &block_id)
         .await
         .map_err(sanitize_internal_error)?;
     delete_property_inner(&pool.0, device_id.as_str(), &materializer, active_id, key)
@@ -1372,7 +1375,7 @@ pub async fn delete_property(
 #[specta::specta]
 pub async fn get_properties(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<PropertyRow>, AppError> {
     get_properties_inner(&pool.0, block_id)
         .await
@@ -1386,7 +1389,7 @@ pub async fn get_properties(
 #[specta::specta]
 pub async fn get_property(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
     key: String,
 ) -> Result<Option<PropertyRow>, AppError> {
     get_property_inner(&pool.0, &block_id, &key)
@@ -1400,7 +1403,7 @@ pub async fn get_property(
 #[specta::specta]
 pub async fn get_batch_properties(
     pool: State<'_, ReadPool>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, Vec<PropertyRow>>, AppError> {
     get_batch_properties_inner(&pool.0, block_ids)
         .await

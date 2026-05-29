@@ -1099,10 +1099,10 @@ pub async fn get_page_unscoped_inner(
 #[specta::specta]
 pub async fn set_page_aliases(
     write_pool: State<'_, WritePool>,
-    page_id: String,
+    page_id: PageId,
     aliases: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
-    set_page_aliases_inner(&write_pool.0, &page_id, aliases)
+    set_page_aliases_inner(&write_pool.0, page_id.as_str(), aliases)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1113,9 +1113,9 @@ pub async fn set_page_aliases(
 #[specta::specta]
 pub async fn get_page_aliases(
     read_pool: State<'_, ReadPool>,
-    page_id: String,
+    page_id: PageId,
 ) -> Result<Vec<String>, AppError> {
-    get_page_aliases_inner(&read_pool.0, &page_id)
+    get_page_aliases_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1156,9 +1156,9 @@ pub async fn list_page_aliases_by_prefix(
 #[specta::specta]
 pub async fn export_page_markdown(
     read_pool: State<'_, ReadPool>,
-    page_id: String,
+    page_id: PageId,
 ) -> Result<String, AppError> {
-    export_page_markdown_inner(&read_pool.0, &page_id)
+    export_page_markdown_inner(&read_pool.0, page_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1446,10 +1446,10 @@ pub async fn load_page_subtree_inner(
 #[specta::specta]
 pub async fn load_page_subtree(
     pool: State<'_, ReadPool>,
-    root_block_id: String,
+    root_block_id: BlockId,
     space_id: String,
 ) -> Result<Vec<BlockRow>, AppError> {
-    load_page_subtree_inner(&pool.0, &root_block_id, &space_id)
+    load_page_subtree_inner(&pool.0, root_block_id.as_str(), &space_id)
         .await
         .map_err(sanitize_internal_error)
 }

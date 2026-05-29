@@ -740,7 +740,7 @@ fn bench_get_properties(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ = get_properties_inner(&pool, target_id.clone())
+                    let _ = get_properties_inner(&pool, target_id.clone().into())
                         .await
                         .unwrap();
                 }
@@ -950,10 +950,17 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ =
-                        count_backlinks_batch_inner(&pool, page_ids.clone(), &SpaceScope::Global)
-                            .await
-                            .unwrap();
+                    let _ = count_backlinks_batch_inner(
+                        &pool,
+                        page_ids
+                            .clone()
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<agaric_lib::ulid::PageId>>(),
+                        &SpaceScope::Global,
+                    )
+                    .await
+                    .unwrap();
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
