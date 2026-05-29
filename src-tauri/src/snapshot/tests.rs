@@ -39,7 +39,7 @@ fn sample_snapshot_data() -> SnapshotData {
         up_to_hash: "abc123".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "block-1".to_string(),
+                id: BlockId::test_id("BLOCK-1"),
                 block_type: "content".to_string(),
                 content: Some("hello world".to_string()),
                 parent_id: None,
@@ -51,11 +51,11 @@ fn sample_snapshot_data() -> SnapshotData {
                 scheduled_date: None,
             }],
             block_tags: vec![BlockTagSnapshot {
-                block_id: "block-1".to_string(),
+                block_id: BlockId::test_id("BLOCK-1"),
                 tag_id: "tag-1".to_string(),
             }],
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "block-1".to_string(),
+                block_id: BlockId::test_id("BLOCK-1"),
                 key: "due".to_string(),
                 value_text: None,
                 value_num: None,
@@ -64,12 +64,12 @@ fn sample_snapshot_data() -> SnapshotData {
                 value_bool: None,
             }],
             block_links: vec![BlockLinkSnapshot {
-                source_id: "block-1".to_string(),
-                target_id: "block-2".to_string(),
+                source_id: BlockId::test_id("BLOCK-1"),
+                target_id: BlockId::test_id("BLOCK-2"),
             }],
             attachments: vec![AttachmentSnapshot {
-                id: "att-1".to_string(),
-                block_id: "block-1".to_string(),
+                id: BlockId::test_id("ATT-1"),
+                block_id: BlockId::test_id("BLOCK-1"),
                 mime_type: "image/png".to_string(),
                 filename: "photo.png".to_string(),
                 size_bytes: 1024,
@@ -152,7 +152,7 @@ fn encode_decode_round_trip() {
         "blocks table should have exactly one entry"
     );
     assert_eq!(
-        decoded.tables.blocks[0].id, "block-1",
+        decoded.tables.blocks[0].id, "BLOCK-1",
         "block id must survive round-trip"
     );
     assert_eq!(
@@ -192,7 +192,7 @@ fn encode_decode_round_trip() {
         "block_links table should have exactly one entry"
     );
     assert_eq!(
-        decoded.tables.block_links[0].source_id, "block-1",
+        decoded.tables.block_links[0].source_id, "BLOCK-1",
         "link source_id must survive round-trip"
     );
 
@@ -324,8 +324,8 @@ async fn create_snapshot_and_read_back() {
     let device_id = "dev-1";
 
     // Insert a block and an op so the frontier query succeeds
-    insert_block(&pool, "block-1", "hello").await;
-    insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-1", "hello").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
 
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
     assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
@@ -354,7 +354,7 @@ async fn create_snapshot_and_read_back() {
         "snapshot should contain exactly one block"
     );
     assert_eq!(
-        decoded.tables.blocks[0].id, "block-1",
+        decoded.tables.blocks[0].id, "BLOCK-1",
         "snapshot block id must match inserted block"
     );
     assert_eq!(
@@ -374,8 +374,8 @@ async fn create_snapshot_writes_pending_then_complete() {
     let device_id = "dev-1";
 
     // Need at least one op for frontier
-    insert_block(&pool, "block-1", "content").await;
-    insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-1", "content").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
 
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
 
@@ -415,8 +415,8 @@ async fn apply_snapshot_wipes_and_restores() {
     let device_id = "dev-1";
 
     // Insert original data + op
-    insert_block(&pool, "block-orig", "original").await;
-    insert_op_at(&pool, device_id, "block-orig", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-ORIG", "original").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", "2025-01-01T00:00:00Z").await;
 
     // Create snapshot capturing original state
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
@@ -432,8 +432,8 @@ async fn apply_snapshot_wipes_and_restores() {
     let snap_data = snap_row.data;
 
     // Insert additional data that should be wiped by apply
-    insert_block(&pool, "block-extra", "extra").await;
-    insert_op_at(&pool, device_id, "block-extra", "2025-06-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-EXTRA", "extra").await;
+    insert_op_at(&pool, device_id, "BLOCK-EXTRA", "2025-06-01T00:00:00Z").await;
 
     // Verify extra data exists
     let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
@@ -457,7 +457,7 @@ async fn apply_snapshot_wipes_and_restores() {
         .await
         .unwrap();
     assert_eq!(
-        id, "block-orig",
+        id, "BLOCK-ORIG",
         "only the original block should remain after apply"
     );
 
@@ -475,7 +475,7 @@ async fn apply_snapshot_wipes_and_restores() {
         "restored data should contain exactly one block"
     );
     assert_eq!(
-        restored.tables.blocks[0].id, "block-orig",
+        restored.tables.blocks[0].id, "BLOCK-ORIG",
         "restored block id must be the original"
     );
 }
@@ -503,8 +503,8 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     let device_id = "dev-1";
 
     // Original op + snapshot.
-    insert_block(&pool, "block-orig", "original").await;
-    insert_op_at(&pool, device_id, "block-orig", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-ORIG", "original").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", "2025-01-01T00:00:00Z").await;
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
     let snap_row = sqlx::query!(
         "SELECT id, data FROM log_snapshots WHERE id = ?",
@@ -594,7 +594,7 @@ async fn apply_snapshot_empty_db() {
         up_to_hash: "hash".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "blk-A".to_string(),
+                id: BlockId::test_id("BLK-A"),
                 block_type: "content".to_string(),
                 content: Some("applied content".to_string()),
                 parent_id: None,
@@ -625,7 +625,7 @@ async fn apply_snapshot_empty_db() {
         "restored snapshot should contain one block"
     );
     assert_eq!(
-        restored.tables.blocks[0].id, "blk-A",
+        restored.tables.blocks[0].id, "BLK-A",
         "restored block id must match snapshot data"
     );
 
@@ -640,7 +640,7 @@ async fn apply_snapshot_empty_db() {
     );
 
     let content: Option<String> =
-        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'blk-A'")
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'BLK-A'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -664,9 +664,9 @@ async fn compact_noop_when_no_old_ops() {
     let device_id = "dev-1";
 
     // Insert a recent op (now)
-    insert_block(&pool, "block-1", "recent").await;
+    insert_block(&pool, "BLOCK-1", "recent").await;
     let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "block-1", &now).await;
+    insert_op_at(&pool, device_id, "BLOCK-1", &now).await;
 
     // Compact with 90-day retention — all ops are recent
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -695,8 +695,8 @@ async fn compact_creates_snapshot_and_purges() {
     let device_id = "dev-1";
 
     // Insert a block and an old op (200 days ago)
-    insert_block(&pool, "block-old", "old content").await;
-    insert_op_at(&pool, device_id, "block-old", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD", "old content").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
 
     // Compact with 90-day retention
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -733,13 +733,13 @@ async fn compact_preserves_recent_ops() {
     let device_id = "dev-1";
 
     // Insert a block with an old op
-    insert_block(&pool, "block-old", "old").await;
-    insert_op_at(&pool, device_id, "block-old", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD", "old").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
 
     // Insert a block with a recent op
-    insert_block(&pool, "block-new", "new").await;
+    insert_block(&pool, "BLOCK-NEW", "new").await;
     let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "block-new", &now).await;
+    insert_op_at(&pool, device_id, "BLOCK-NEW", &now).await;
 
     // Compact with 90-day retention
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -794,14 +794,14 @@ async fn get_latest_snapshot_returns_most_recent() {
     let device_id = "dev-1";
 
     // Insert a block + op
-    insert_block(&pool, "block-1", "v1").await;
-    insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-1", "v1").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
 
     // Create first snapshot
     let snap1_id = create_snapshot(&pool, device_id).await.unwrap();
 
     // Modify and create second snapshot
-    sqlx::query("UPDATE blocks SET content = 'v2' WHERE id = 'block-1'")
+    sqlx::query("UPDATE blocks SET content = 'v2' WHERE id = 'BLOCK-1'")
         .execute(&pool)
         .await
         .unwrap();
@@ -846,7 +846,7 @@ fn cbor_round_trip_option_f64() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "b1".to_string(),
+                id: BlockId::test_id("B1"),
                 block_type: "content".to_string(),
                 content: None,
                 parent_id: None,
@@ -860,7 +860,7 @@ fn cbor_round_trip_option_f64() {
             block_tags: vec![],
             block_properties: vec![
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "none".to_string(),
                     value_text: None,
                     value_num: None,
@@ -869,7 +869,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "normal".to_string(),
                     value_text: None,
                     value_num: Some(42.5),
@@ -878,7 +878,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "zero".to_string(),
                     value_text: None,
                     value_num: Some(0.0),
@@ -887,7 +887,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "negative".to_string(),
                     value_text: None,
                     value_num: Some(-1.0e10),
@@ -896,7 +896,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "inf".to_string(),
                     value_text: None,
                     value_num: Some(f64::INFINITY),
@@ -905,7 +905,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "neg_inf".to_string(),
                     value_text: None,
                     value_num: Some(f64::NEG_INFINITY),
@@ -914,7 +914,7 @@ fn cbor_round_trip_option_f64() {
                     value_bool: None,
                 },
                 BlockPropertySnapshot {
-                    block_id: "b1".to_string(),
+                    block_id: BlockId::test_id("B1"),
                     key: "nan".to_string(),
                     value_text: None,
                     value_num: Some(f64::NAN),
@@ -995,7 +995,7 @@ async fn create_snapshot_empty_op_log_returns_empty_snapshot_i_lifecycle_2() {
     let (pool, _dir) = test_pool().await;
 
     // DB has blocks but no ops — the very-fresh-device shape.
-    insert_block(&pool, "block-1", "content").await;
+    insert_block(&pool, "BLOCK-1", "content").await;
 
     let snapshot_id = create_snapshot(&pool, "dev-1")
         .await
@@ -1092,16 +1092,16 @@ async fn compact_multi_device_ops() {
     let (pool, _dir) = test_pool().await;
 
     // Device A: old op
-    insert_block(&pool, "block-A", "from A").await;
-    insert_op_at(&pool, "device-A", "block-A", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-A", "from A").await;
+    insert_op_at(&pool, "device-A", "BLOCK-A", "2024-01-01T00:00:00Z").await;
 
     // Device B: old op + recent op
-    insert_block(&pool, "block-B1", "old from B").await;
-    insert_op_at(&pool, "device-B", "block-B1", "2024-01-15T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-B1", "old from B").await;
+    insert_op_at(&pool, "device-B", "BLOCK-B1", "2024-01-15T00:00:00Z").await;
 
-    insert_block(&pool, "block-B2", "recent from B").await;
+    insert_block(&pool, "BLOCK-B2", "recent from B").await;
     let now = crate::now_rfc3339();
-    insert_op_at(&pool, "device-B", "block-B2", &now).await;
+    insert_op_at(&pool, "device-B", "BLOCK-B2", &now).await;
 
     // Compact
     let result = compact_op_log(&pool, "device-A", DEFAULT_RETENTION_DAYS)
@@ -1157,7 +1157,7 @@ async fn apply_snapshot_rejects_fk_violation() {
         tables: SnapshotTables {
             blocks: vec![], // no blocks!
             block_tags: vec![BlockTagSnapshot {
-                block_id: "nonexistent-block".to_string(),
+                block_id: BlockId::test_id("NONEXISTENT-BLOCK"),
                 tag_id: "also-nonexistent".to_string(),
             }],
             block_properties: vec![],
@@ -1236,7 +1236,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         up_to_hash: "h",
         tables: NullableTables {
             blocks: vec![NullableBlockSnap {
-                id: "blk-A",
+                id: "BLK-A",
                 block_type: None, // <-- defect: NULL in NOT NULL column
                 content: Some("x"),
                 parent_id: None,
@@ -1287,7 +1287,7 @@ async fn apply_snapshot_rejects_invalid_block_type() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "blk-A".to_string(),
+                id: BlockId::test_id("BLK-A"),
                 block_type: "banana".to_string(), // <-- defect
                 content: Some("x".to_string()),
                 parent_id: None,
@@ -1338,12 +1338,12 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "blk-A".to_string(),
+                id: BlockId::test_id("BLK-A"),
                 block_type: "content".to_string(),
                 content: Some("x".to_string()),
                 // <-- defect: a malformed (non-ULID) string referenced
                 // as parent_id, with no matching row in `blocks`.
-                parent_id: Some("not-a-valid-ulid!@#".to_string()),
+                parent_id: Some(BlockId::test_id("not-a-valid-ulid!@#")),
                 position: Some(1),
                 deleted_at: None,
                 todo_state: None,
@@ -1390,7 +1390,7 @@ async fn apply_snapshot_full_all_5_tables() {
         tables: SnapshotTables {
             blocks: vec![
                 BlockSnapshot {
-                    id: "blk-parent".to_string(),
+                    id: BlockId::test_id("BLK-PARENT"),
                     block_type: "content".to_string(),
                     content: Some("Parent block".to_string()),
                     parent_id: None,
@@ -1402,10 +1402,10 @@ async fn apply_snapshot_full_all_5_tables() {
                     scheduled_date: None,
                 },
                 BlockSnapshot {
-                    id: "blk-child".to_string(),
+                    id: BlockId::test_id("BLK-CHILD"),
                     block_type: "content".to_string(),
                     content: Some("Child block".to_string()),
-                    parent_id: Some("blk-parent".to_string()),
+                    parent_id: Some(BlockId::test_id("BLK-PARENT")),
                     position: Some(1),
                     deleted_at: None,
                     todo_state: None,
@@ -1415,7 +1415,7 @@ async fn apply_snapshot_full_all_5_tables() {
                 },
                 // Tag block — needed for FK on block_tags.tag_id
                 BlockSnapshot {
-                    id: "tag-urgent".to_string(),
+                    id: BlockId::test_id("TAG-URGENT"),
                     block_type: "tag".to_string(),
                     content: Some("urgent".to_string()),
                     parent_id: None,
@@ -1428,11 +1428,11 @@ async fn apply_snapshot_full_all_5_tables() {
                 },
             ],
             block_tags: vec![BlockTagSnapshot {
-                block_id: "blk-parent".to_string(),
-                tag_id: "tag-urgent".to_string(),
+                block_id: BlockId::test_id("BLK-PARENT"),
+                tag_id: "TAG-URGENT".to_string(),
             }],
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "blk-child".to_string(),
+                block_id: BlockId::test_id("BLK-CHILD"),
                 key: "due".to_string(),
                 value_text: None,
                 value_num: None,
@@ -1441,12 +1441,12 @@ async fn apply_snapshot_full_all_5_tables() {
                 value_bool: None,
             }],
             block_links: vec![BlockLinkSnapshot {
-                source_id: "blk-child".to_string(),
-                target_id: "blk-parent".to_string(),
+                source_id: BlockId::test_id("BLK-CHILD"),
+                target_id: BlockId::test_id("BLK-PARENT"),
             }],
             attachments: vec![AttachmentSnapshot {
-                id: "att-1".to_string(),
-                block_id: "blk-parent".to_string(),
+                id: BlockId::test_id("ATT-1"),
+                block_id: BlockId::test_id("BLK-PARENT"),
                 mime_type: "text/plain".to_string(),
                 filename: "notes.txt".to_string(),
                 size_bytes: 256,
@@ -1531,17 +1531,17 @@ async fn apply_snapshot_full_all_5_tables() {
 
     // Verify specific content
     let tag_id: String =
-        sqlx::query_scalar!("SELECT tag_id FROM block_tags WHERE block_id = 'blk-parent'")
+        sqlx::query_scalar!("SELECT tag_id FROM block_tags WHERE block_id = 'BLK-PARENT'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(
-        tag_id, "tag-urgent",
+        tag_id, "TAG-URGENT",
         "block_tag tag_id must match snapshot data"
     );
 
     let due: Option<String> =
-        sqlx::query_scalar!("SELECT value_date FROM block_properties WHERE block_id = 'blk-child'")
+        sqlx::query_scalar!("SELECT value_date FROM block_properties WHERE block_id = 'BLK-CHILD'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -1564,8 +1564,8 @@ async fn double_compaction() {
     let device_id = "dev-1";
 
     // Insert an old op (200 days ago)
-    insert_block(&pool, "block-old", "old").await;
-    insert_op_at(&pool, device_id, "block-old", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD", "old").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
 
     // First compaction — should create snapshot and purge
     let first = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1621,8 +1621,8 @@ async fn compact_op_log_timestamp_format_consistency() {
     // (e.g. `...:00.000Z`) whereas this fixture omits them
     // (`...:00Z`). Lex comparison must still treat the older instant
     // as older despite the precision mismatch.
-    insert_block(&pool, "block-old", "old").await;
-    insert_op_at(&pool, device_id, "block-old", "2024-01-15T12:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD", "old").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-15T12:00:00Z").await;
 
     // Compact with 90-day retention — the old op should be purged
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1652,8 +1652,8 @@ async fn old_snapshots_accumulate() {
     let device_id = "dev-1";
 
     // Need block + op for snapshots
-    insert_block(&pool, "block-1", "content").await;
-    insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-1", "content").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
 
     // Create 3 snapshots
     let _snap1 = create_snapshot(&pool, device_id).await.unwrap();
@@ -1762,7 +1762,7 @@ fn large_text_field_round_trip() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "b-large".to_string(),
+                id: BlockId::test_id("B-LARGE"),
                 block_type: "content".to_string(),
                 content: Some(large_content.clone()),
                 parent_id: None,
@@ -1775,7 +1775,7 @@ fn large_text_field_round_trip() {
             }],
             block_tags: vec![],
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "b-large".to_string(),
+                block_id: BlockId::test_id("B-LARGE"),
                 key: "notes".to_string(),
                 value_text: Some("y".repeat(12_000)),
                 value_num: None,
@@ -1837,7 +1837,7 @@ fn all_nullable_fields_null_round_trip() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "b-null".to_string(),
+                id: BlockId::test_id("B-NULL"),
                 block_type: "content".to_string(),
                 content: None,
                 parent_id: None,
@@ -1850,7 +1850,7 @@ fn all_nullable_fields_null_round_trip() {
             }],
             block_tags: vec![],
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "b-null".to_string(),
+                block_id: BlockId::test_id("B-NULL"),
                 key: "empty-prop".to_string(),
                 value_text: None,
                 value_num: None,
@@ -1903,10 +1903,10 @@ async fn create_snapshot_captures_all_related_tables() {
     let device_id = "dev-1";
 
     // 1. Insert blocks (including a tag block for FK on block_tags)
-    insert_block(&pool, "blk-1", "main content").await;
+    insert_block(&pool, "BLK-1", "main content").await;
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position) \
-             VALUES ('blk-2', 'content', 'linked target', 2)",
+             VALUES ('BLK-2', 'content', 'linked target', 2)",
     )
     .execute(&pool)
     .await
@@ -1920,7 +1920,7 @@ async fn create_snapshot_captures_all_related_tables() {
     .unwrap();
 
     // 2. Insert block_tags
-    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('blk-1', 'tag-1')")
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('BLK-1', 'tag-1')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1928,14 +1928,14 @@ async fn create_snapshot_captures_all_related_tables() {
     // 3. Insert block_properties
     sqlx::query(
         "INSERT INTO block_properties (block_id, key, value_text) \
-             VALUES ('blk-1', 'status', 'active')",
+             VALUES ('BLK-1', 'status', 'active')",
     )
     .execute(&pool)
     .await
     .unwrap();
 
     // 4. Insert block_links
-    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('blk-1', 'blk-2')")
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES ('BLK-1', 'BLK-2')")
         .execute(&pool)
         .await
         .unwrap();
@@ -1943,14 +1943,14 @@ async fn create_snapshot_captures_all_related_tables() {
     // 5. Insert attachments
     sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('att-1', 'blk-1', 'image/png', 'photo.png', 1024, 'attachments/photo.png', '2025-01-01T00:00:00Z')",
+             VALUES ('ATT-1', 'BLK-1', 'image/png', 'photo.png', 1024, 'attachments/photo.png', '2025-01-01T00:00:00Z')",
         )
         .execute(&pool)
         .await
         .unwrap();
 
     // 6. Insert an op so the frontier query succeeds
-    insert_op_at(&pool, device_id, "blk-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-1", "2025-01-01T00:00:00Z").await;
 
     // 7. Create snapshot and decode
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
@@ -1973,7 +1973,7 @@ async fn create_snapshot_captures_all_related_tables() {
         "should capture block_tags"
     );
     assert_eq!(
-        decoded.tables.block_tags[0].block_id, "blk-1",
+        decoded.tables.block_tags[0].block_id, "BLK-1",
         "captured block_tag block_id must match"
     );
     assert_eq!(
@@ -1987,7 +1987,7 @@ async fn create_snapshot_captures_all_related_tables() {
         "should capture block_properties"
     );
     assert_eq!(
-        decoded.tables.block_properties[0].block_id, "blk-1",
+        decoded.tables.block_properties[0].block_id, "BLK-1",
         "captured property block_id must match"
     );
     assert_eq!(
@@ -2006,11 +2006,11 @@ async fn create_snapshot_captures_all_related_tables() {
         "should capture block_links"
     );
     assert_eq!(
-        decoded.tables.block_links[0].source_id, "blk-1",
+        decoded.tables.block_links[0].source_id, "BLK-1",
         "captured link source_id must match"
     );
     assert_eq!(
-        decoded.tables.block_links[0].target_id, "blk-2",
+        decoded.tables.block_links[0].target_id, "BLK-2",
         "captured link target_id must match"
     );
 
@@ -2024,7 +2024,7 @@ async fn create_snapshot_captures_all_related_tables() {
         "captured attachment filename must match"
     );
     assert_eq!(
-        decoded.tables.attachments[0].block_id, "blk-1",
+        decoded.tables.attachments[0].block_id, "BLK-1",
         "captured attachment block_id must match"
     );
 }
@@ -2039,7 +2039,7 @@ async fn cleanup_old_snapshots_keeps_n_most_recent() {
     let dev = "test-device";
 
     // Insert a block so the snapshot has content
-    insert_block(&pool, "blk-cleanup", "cleanup test").await;
+    insert_block(&pool, "BLK-CLEANUP", "cleanup test").await;
 
     // Create 5 snapshots by inserting a new op before each (frontier needs at least one op)
     for i in 0..5 {
@@ -2081,8 +2081,8 @@ async fn cleanup_old_snapshots_noop_when_fewer_than_keep() {
     let dev = "test-device";
 
     // Insert a block and one op so we can create a snapshot
-    insert_block(&pool, "blk-noop", "noop test").await;
-    insert_op_at(&pool, dev, "blk-noop1", "2025-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLK-NOOP", "noop test").await;
+    insert_op_at(&pool, dev, "BLK-NOOP1", "2025-01-01T00:00:00Z").await;
     create_snapshot(&pool, dev).await.unwrap();
 
     let deleted = cleanup_old_snapshots(&pool, 5).await.unwrap();
@@ -2095,7 +2095,7 @@ async fn cleanup_old_snapshots_deletes_pending_snapshots() {
     let dev = "test-device";
 
     // Create 3 complete snapshots
-    insert_block(&pool, "blk-pend", "pending test").await;
+    insert_block(&pool, "BLK-PEND", "pending test").await;
     for i in 0..3 {
         insert_op_at(
             &pool,
@@ -2159,7 +2159,7 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
     let dev = "test-device";
 
     // Create 5 complete snapshots
-    insert_block(&pool, "blk-mix", "mixed test").await;
+    insert_block(&pool, "BLK-MIX", "mixed test").await;
     for i in 0..5 {
         insert_op_at(
             &pool,
@@ -2240,7 +2240,7 @@ async fn cleanup_old_snapshots_with_zero_keep_is_noop() {
     let dev = "test-device";
 
     // Create 3 complete snapshots
-    insert_block(&pool, "blk-zero", "zero keep test").await;
+    insert_block(&pool, "BLK-ZERO", "zero keep test").await;
     for i in 0..3 {
         insert_op_at(
             &pool,
@@ -2341,7 +2341,7 @@ fn snapshot_v1_deserializes_with_default_fields() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTablesV1 {
             blocks: vec![BlockSnapshotV1 {
-                id: "b1".to_string(),
+                id: "B1".to_string(),
                 block_type: "content".to_string(),
                 content: Some("hello".to_string()),
                 parent_id: None,
@@ -2374,7 +2374,7 @@ fn snapshot_v1_deserializes_with_default_fields() {
         "v1 snapshot should have one block"
     );
     let b = &decoded.tables.blocks[0];
-    assert_eq!(b.id, "b1", "v1 block id must be preserved");
+    assert_eq!(b.id, "B1", "v1 block id must be preserved");
     assert!(
         b.todo_state.is_none(),
         "v1 data should default todo_state to None"
@@ -2401,7 +2401,7 @@ fn snapshot_v2_round_trips_new_fields() {
         up_to_hash: "h".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "b1".to_string(),
+                id: BlockId::test_id("B1"),
                 block_type: "content".to_string(),
                 content: Some("hello".to_string()),
                 parent_id: None,
@@ -2491,17 +2491,17 @@ async fn compact_op_log_transaction_happy_path() {
     let device_id = "dev-tx";
 
     // Insert a block with an old op (> 90 days ago)
-    insert_block(&pool, "block-old-1", "old content 1").await;
-    insert_op_at(&pool, device_id, "block-old-1", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD-1", "old content 1").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD-1", "2024-01-01T00:00:00Z").await;
 
     // Insert another block with an old op
-    insert_block(&pool, "block-old-2", "old content 2").await;
-    insert_op_at(&pool, device_id, "block-old-2", "2024-02-01T00:00:00Z").await;
+    insert_block(&pool, "BLOCK-OLD-2", "old content 2").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD-2", "2024-02-01T00:00:00Z").await;
 
     // Insert a block with a recent op (should survive compaction)
-    insert_block(&pool, "block-recent", "recent content").await;
+    insert_block(&pool, "BLOCK-RECENT", "recent content").await;
     let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "block-recent", &now).await;
+    insert_op_at(&pool, device_id, "BLOCK-RECENT", &now).await;
 
     // Verify starting state: 3 ops, 0 snapshots
     let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -2645,7 +2645,7 @@ async fn apply_snapshot_rebuilds_caches() {
         tables: SnapshotTables {
             blocks: vec![
                 BlockSnapshot {
-                    id: "page-1".to_string(),
+                    id: BlockId::test_id("PAGE-1"),
                     block_type: "page".to_string(),
                     content: Some("My Page".to_string()),
                     parent_id: None,
@@ -2657,7 +2657,7 @@ async fn apply_snapshot_rebuilds_caches() {
                     scheduled_date: None,
                 },
                 BlockSnapshot {
-                    id: "tag-work".to_string(),
+                    id: BlockId::test_id("TAG-WORK"),
                     block_type: "tag".to_string(),
                     content: Some("work".to_string()),
                     parent_id: None,
@@ -2669,10 +2669,10 @@ async fn apply_snapshot_rebuilds_caches() {
                     scheduled_date: None,
                 },
                 BlockSnapshot {
-                    id: "blk-child".to_string(),
+                    id: BlockId::test_id("BLK-CHILD"),
                     block_type: "content".to_string(),
                     content: Some("tagged child".to_string()),
-                    parent_id: Some("page-1".to_string()),
+                    parent_id: Some(BlockId::test_id("PAGE-1")),
                     position: Some(1),
                     deleted_at: None,
                     todo_state: None,
@@ -2682,11 +2682,11 @@ async fn apply_snapshot_rebuilds_caches() {
                 },
             ],
             block_tags: vec![BlockTagSnapshot {
-                block_id: "blk-child".to_string(),
-                tag_id: "tag-work".to_string(),
+                block_id: BlockId::test_id("BLK-CHILD"),
+                tag_id: "TAG-WORK".to_string(),
             }],
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "page-1".to_string(),
+                block_id: BlockId::test_id("PAGE-1"),
                 key: "due".to_string(),
                 value_text: None,
                 value_num: None,
@@ -2790,7 +2790,7 @@ async fn apply_snapshot_rebuilds_caches() {
         "stale tags_cache row must be gone after rebuild; got {tags_after:?}"
     );
     assert!(
-        tags_after.iter().any(|(tid, _)| tid == "tag-work"),
+        tags_after.iter().any(|(tid, _)| tid == "TAG-WORK"),
         "tags_cache must contain the rebuilt tag from the snapshot; got {tags_after:?}"
     );
 
@@ -2804,7 +2804,7 @@ async fn apply_snapshot_rebuilds_caches() {
         "stale pages_cache row must be gone after rebuild; got {pages_after:?}"
     );
     assert!(
-        pages_after.iter().any(|(pid, _)| pid == "page-1"),
+        pages_after.iter().any(|(pid, _)| pid == "PAGE-1"),
         "pages_cache must contain the rebuilt page from the snapshot; got {pages_after:?}"
     );
 
@@ -2848,7 +2848,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
         tables: SnapshotTables {
             blocks: vec![
                 BlockSnapshot {
-                    id: "tpl-page".to_string(),
+                    id: BlockId::test_id("TPL-PAGE"),
                     block_type: "page".to_string(),
                     content: Some("Template Page".to_string()),
                     parent_id: None,
@@ -2860,10 +2860,10 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     scheduled_date: None,
                 },
                 BlockSnapshot {
-                    id: "tpl-child".to_string(),
+                    id: BlockId::test_id("TPL-CHILD"),
                     block_type: "content".to_string(),
                     content: Some("agenda-bait".to_string()),
-                    parent_id: Some("tpl-page".to_string()),
+                    parent_id: Some(BlockId::test_id("TPL-PAGE")),
                     position: Some(1),
                     deleted_at: None,
                     todo_state: None,
@@ -2877,7 +2877,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
             // FEAT-5a NOT EXISTS predicate keys off `tp.key = 'template'`
             // alone (any value). Use the cheapest typed slot.
             block_properties: vec![BlockPropertySnapshot {
-                block_id: "tpl-page".to_string(),
+                block_id: BlockId::test_id("TPL-PAGE"),
                 key: "template".to_string(),
                 value_text: Some("1".to_string()),
                 value_num: None,
@@ -2908,7 +2908,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
             .await
             .unwrap();
     assert!(
-        agenda_rows.iter().all(|(_, b)| b != "tpl-child"),
+        agenda_rows.iter().all(|(_, b)| b != "TPL-CHILD"),
         "M-15: agenda_cache must exclude blocks whose page is template-tagged \
          immediately after restore (no further events). RebuildPageIds must \
          run before RebuildAgendaCache so b.page_id is populated when the \
@@ -2920,13 +2920,13 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
     // RebuildPageIds task ran, not just that the agenda rebuild was
     // skipped for some unrelated reason).
     let child_page_id: Option<String> =
-        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'tpl-child'")
+        sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'TPL-CHILD'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(
         child_page_id.as_deref(),
-        Some("tpl-page"),
+        Some("TPL-PAGE"),
         "RebuildPageIds must populate page_id for descendants of the template page"
     );
 
@@ -2986,7 +2986,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
         up_to_hash: "m67-test".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "blk-m67".to_string(),
+                id: BlockId::test_id("BLK-M67"),
                 block_type: "content".to_string(),
                 content: Some("hello".to_string()),
                 parent_id: None,
@@ -3073,7 +3073,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
         up_to_hash: "traversal-test".to_string(),
         tables: SnapshotTables {
             blocks: vec![BlockSnapshot {
-                id: "blk-1".to_string(),
+                id: BlockId::test_id("BLK-1"),
                 block_type: "content".to_string(),
                 content: Some("hosts an attachment".to_string()),
                 parent_id: None,
@@ -3088,8 +3088,8 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
             block_properties: vec![],
             block_links: vec![],
             attachments: vec![AttachmentSnapshot {
-                id: "att-bad".to_string(),
-                block_id: "blk-1".to_string(),
+                id: BlockId::test_id("ATT-BAD"),
+                block_id: BlockId::test_id("BLK-1"),
                 mime_type: "text/plain".to_string(),
                 filename: "leak.txt".to_string(),
                 size_bytes: 10,
@@ -3150,7 +3150,7 @@ async fn compact_read_phase_collects_data() {
     let device_id = "dev-read";
 
     // Insert blocks, tags, properties, and ops
-    insert_block(&pool, "blk-r1", "read phase block").await;
+    insert_block(&pool, "BLK-R1", "read phase block").await;
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content) \
          VALUES ('tag-r1', 'tag', 'readtag')",
@@ -3159,21 +3159,21 @@ async fn compact_read_phase_collects_data() {
     .await
     .unwrap();
 
-    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('blk-r1', 'tag-r1')")
+    sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('BLK-R1', 'tag-r1')")
         .execute(&pool)
         .await
         .unwrap();
 
     sqlx::query(
         "INSERT INTO block_properties (block_id, key, value_text) \
-         VALUES ('blk-r1', 'status', 'draft')",
+         VALUES ('BLK-R1', 'status', 'draft')",
     )
     .execute(&pool)
     .await
     .unwrap();
 
-    insert_op_at(&pool, device_id, "blk-r1", "2025-01-01T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "blk-r2", "2025-01-02T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-R1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-R2", "2025-01-02T00:00:00Z").await;
 
     // Use a DEFERRED read transaction, same as compact_op_log Phase 1
     let mut read_tx = pool.begin().await.unwrap();
@@ -3223,15 +3223,15 @@ async fn compact_stale_read_safety() {
     let (pool, _dir) = test_pool().await;
 
     // Insert an old op for device A
-    insert_block(&pool, "blk-old", "old").await;
-    insert_op_at(&pool, "dev-A", "blk-old", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLK-OLD", "old").await;
+    insert_op_at(&pool, "dev-A", "BLK-OLD", "2024-01-01T00:00:00Z").await;
 
     // Insert a recent op for a different device (B) — this simulates an
     // op that arrives between Phase 1 read and Phase 3 write in a real
     // concurrent scenario.
-    insert_block(&pool, "blk-new", "new").await;
+    insert_block(&pool, "BLK-NEW", "new").await;
     let now = crate::now_rfc3339();
-    insert_op_at(&pool, "dev-B", "blk-new", &now).await;
+    insert_op_at(&pool, "dev-B", "BLK-NEW", &now).await;
 
     // Run compaction — the frontier will include both devices, but the
     // time cutoff should only remove dev-A's old op.
@@ -3282,12 +3282,12 @@ async fn compact_stale_read_seq_guard() {
     let (pool, _dir) = test_pool().await;
 
     // Insert 3 old ops for the same device (seq 1, 2, 3)
-    insert_block(&pool, "blk-s1", "s1").await;
-    insert_op_at(&pool, "dev-1", "blk-s1", "2024-01-01T00:00:00Z").await;
-    insert_block(&pool, "blk-s2", "s2").await;
-    insert_op_at(&pool, "dev-1", "blk-s2", "2024-01-02T00:00:00Z").await;
-    insert_block(&pool, "blk-s3", "s3").await;
-    insert_op_at(&pool, "dev-1", "blk-s3", "2024-01-03T00:00:00Z").await;
+    insert_block(&pool, "BLK-S1", "s1").await;
+    insert_op_at(&pool, "dev-1", "BLK-S1", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLK-S2", "s2").await;
+    insert_op_at(&pool, "dev-1", "BLK-S2", "2024-01-02T00:00:00Z").await;
+    insert_block(&pool, "BLK-S3", "s3").await;
+    insert_op_at(&pool, "dev-1", "BLK-S3", "2024-01-03T00:00:00Z").await;
 
     // Simulate a "stale" frontier that only saw up to seq 2
     let stale_frontier: BTreeMap<String, i64> = [("dev-1".to_string(), 2)].into_iter().collect();
@@ -3354,10 +3354,10 @@ mod proptest_tests {
         )
             .prop_map(
                 |(id, block_type, content, parent_id, position)| BlockSnapshot {
-                    id,
+                    id: id.into(),
                     block_type,
                     content,
-                    parent_id,
+                    parent_id: parent_id.map(Into::into),
                     position,
                     deleted_at: None,
                     todo_state: None,
@@ -3370,8 +3370,10 @@ mod proptest_tests {
 
     /// Strategy for generating an arbitrary `BlockTagSnapshot`.
     fn arb_block_tag() -> impl Strategy<Value = BlockTagSnapshot> {
-        ("BLK_[0-9]{1,4}", "tag_[a-z]{2,6}")
-            .prop_map(|(block_id, tag_id)| BlockTagSnapshot { block_id, tag_id })
+        ("BLK_[0-9]{1,4}", "tag_[a-z]{2,6}").prop_map(|(block_id, tag_id)| BlockTagSnapshot {
+            block_id: block_id.into(),
+            tag_id,
+        })
     }
 
     /// Strategy for generating an arbitrary `BlockPropertySnapshot`.
@@ -3382,7 +3384,7 @@ mod proptest_tests {
             proptest::option::of("[a-zA-Z0-9]{0,20}"),
         )
             .prop_map(|(block_id, key, value_text)| BlockPropertySnapshot {
-                block_id,
+                block_id: block_id.into(),
                 key,
                 value_text,
                 value_num: None,
@@ -3395,8 +3397,8 @@ mod proptest_tests {
     /// Strategy for generating an arbitrary `BlockLinkSnapshot`.
     fn arb_block_link() -> impl Strategy<Value = BlockLinkSnapshot> {
         ("BLK_[0-9]{1,4}", "BLK_[0-9]{1,4}").prop_map(|(source_id, target_id)| BlockLinkSnapshot {
-            source_id,
-            target_id,
+            source_id: source_id.into(),
+            target_id: target_id.into(),
         })
     }
 
@@ -3412,8 +3414,8 @@ mod proptest_tests {
         )
             .prop_map(|(id, block_id, mime_type, filename, size_bytes, fs_path)| {
                 AttachmentSnapshot {
-                    id,
-                    block_id,
+                    id: id.into(),
+                    block_id: block_id.into(),
                     mime_type,
                     filename,
                     size_bytes,
@@ -3510,7 +3512,7 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
         tables: SnapshotTables {
             blocks: vec![
                 BlockSnapshot {
-                    id: tag_id.to_string(),
+                    id: BlockId::test_id(tag_id),
                     block_type: "tag".to_string(),
                     content: Some("meeting".to_string()),
                     parent_id: None,
@@ -3522,7 +3524,7 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     scheduled_date: None,
                 },
                 BlockSnapshot {
-                    id: blk_id.to_string(),
+                    id: BlockId::test_id(blk_id),
                     block_type: "content".to_string(),
                     content: Some(format!("see #[{tag_id}] for notes")),
                     parent_id: None,
@@ -3649,7 +3651,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 
     // One block to satisfy the FK on block_properties.block_id.
     let blocks = vec![BlockSnapshot {
-        id: "blk-host".to_string(),
+        id: BlockId::test_id("BLK-HOST"),
         block_type: "content".to_string(),
         content: Some("hosts many properties".to_string()),
         parent_id: None,
@@ -3664,7 +3666,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
     // Build chunk-1: exactly CHUNK rows with unique keys. All valid.
     let mut block_properties: Vec<BlockPropertySnapshot> = (0..CHUNK)
         .map(|i| BlockPropertySnapshot {
-            block_id: "blk-host".to_string(),
+            block_id: BlockId::test_id("BLK-HOST"),
             key: format!("key-c1-{i:05}"),
             value_text: Some(format!("v{i}")),
             value_num: None,
@@ -3676,7 +3678,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
 
     // Chunk-2, row 0: a fresh, valid row.
     block_properties.push(BlockPropertySnapshot {
-        block_id: "blk-host".to_string(),
+        block_id: BlockId::test_id("BLK-HOST"),
         key: "key-c2-fresh".to_string(),
         value_text: Some("ok".to_string()),
         value_num: None,
@@ -3689,7 +3691,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
     // the chunk-2 INSERT fail — chunk-1 has already been INSERTed in the
     // same transaction by this point.
     block_properties.push(BlockPropertySnapshot {
-        block_id: "blk-host".to_string(),
+        block_id: BlockId::test_id("BLK-HOST"),
         key: "key-c1-00050".to_string(),
         value_text: Some("duplicate".to_string()),
         value_num: None,
@@ -3788,8 +3790,8 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
     let device_id = "dev-l109";
 
     // Insert a block with an old op so compaction has something to delete.
-    insert_block(&pool, "blk-l109", "content").await;
-    insert_op_at(&pool, device_id, "blk-l109", "2024-01-01T00:00:00Z").await;
+    insert_block(&pool, "BLK-L109", "content").await;
+    insert_op_at(&pool, device_id, "BLK-L109", "2024-01-01T00:00:00Z").await;
 
     // Snapshot pre-compaction state.
     let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -3923,9 +3925,9 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     //    `CreateBlock` body — so `payload_bytes` must be > 0.
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-l105";
-    insert_op_at(&pool, device_id, "blk-l105-a", "2025-01-01T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "blk-l105-b", "2025-01-02T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "blk-l105-c", "2025-01-03T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-L105-A", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-L105-B", "2025-01-02T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-L105-C", "2025-01-03T00:00:00Z").await;
 
     let mut conn = pool.acquire().await.unwrap();
     let (row_count, payload_bytes) = measure_op_log_size(&mut conn).await.unwrap();
@@ -3982,7 +3984,7 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     //    Phase 1 read transaction. We don't assert on logs here (no
     //    tracing capture); a successful return proves the production
     //    path now contains and exercises the L-105 probe.
-    insert_block(&pool, "blk-l105-a", "content").await;
+    insert_block(&pool, "BLK-L105-A", "content").await;
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS).await;
     assert!(
         result.is_ok(),

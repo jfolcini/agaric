@@ -1750,7 +1750,11 @@ mod tests {
         let mut blocks = Vec::with_capacity(1000);
         for i in 0..1000 {
             blocks.push(BlockSnapshot {
-                id: format!("01HZ{i:026X}").chars().take(26).collect::<String>(),
+                id: format!("01HZ{i:026X}")
+                    .chars()
+                    .take(26)
+                    .collect::<String>()
+                    .into(),
                 block_type: "content".into(),
                 content: Some(format!(
                     "Highly compressible block content #{i} \

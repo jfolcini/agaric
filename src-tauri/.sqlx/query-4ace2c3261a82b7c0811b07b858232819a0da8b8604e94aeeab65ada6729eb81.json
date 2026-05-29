@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT tag_id FROM block_tags WHERE block_id = 'blk-parent'",
+  "query": "SELECT tag_id FROM block_tags WHERE block_id = 'BLK-PARENT'",
   "describe": {
     "columns": [
       {
@@ -22,5 +22,5 @@
       false
     ]
   },
-  "hash": "bed78e702113656709e70d5128c0638b219abf394dc354de578518b9af5db172"
+  "hash": "4ace2c3261a82b7c0811b07b858232819a0da8b8604e94aeeab65ada6729eb81"
 }

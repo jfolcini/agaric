@@ -19,10 +19,10 @@ pub(crate) const SCHEMA_VERSION: u32 = 4;
 /// A single block row captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockSnapshot {
-    pub id: String,
+    pub id: crate::ulid::BlockId,
     pub block_type: String,
     pub content: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
     #[serde(default)]
@@ -38,14 +38,14 @@ pub struct BlockSnapshot {
 /// A block–tag association captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockTagSnapshot {
-    pub block_id: String,
+    pub block_id: crate::ulid::BlockId,
     pub tag_id: String,
 }
 
 /// A block property row captured in a snapshot (key–value with typed values).
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockPropertySnapshot {
-    pub block_id: String,
+    pub block_id: crate::ulid::BlockId,
     pub key: String,
     pub value_text: Option<String>,
     pub value_num: Option<f64>,
@@ -61,15 +61,15 @@ pub struct BlockPropertySnapshot {
 /// A block-to-block link captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BlockLinkSnapshot {
-    pub source_id: String,
-    pub target_id: String,
+    pub source_id: crate::ulid::BlockId,
+    pub target_id: crate::ulid::BlockId,
 }
 
 /// A file attachment row captured in a snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AttachmentSnapshot {
-    pub id: String,
-    pub block_id: String,
+    pub id: crate::ulid::BlockId,
+    pub block_id: crate::ulid::BlockId,
     pub mime_type: String,
     pub filename: String,
     pub size_bytes: i64,
