@@ -34,7 +34,7 @@
     "typescript/no-this-alias": "warn",
     "jsx-a11y/role-supports-aria-props": "warn",
     "unicorn/no-useless-fallback-in-spread": "error",
-    "unicorn/prefer-string-starts-ends-with": "warn",
+    "unicorn/prefer-string-starts-ends-with": "error",
     "jsx-a11y/no-static-element-interactions": "warn",
     "jsx-a11y/click-events-have-key-events": "warn",
     "unicorn/no-thenable": "warn",
