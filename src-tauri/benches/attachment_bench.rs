@@ -106,7 +106,7 @@ fn bench_add_attachment(c: &mut Criterion) {
                             "dev-bench",
                             mat_ref,
                             &app_data_dir,
-                            block_id,
+                            block_id.into(),
                             format!("file_{counter}.txt"),
                             "text/plain".into(),
                             0,
@@ -202,7 +202,7 @@ fn bench_delete_attachment(c: &mut Criterion) {
                                 "dev-bench",
                                 mat_ref,
                                 &app_data_dir,
-                                target_att_id.clone(),
+                                target_att_id.clone().into(),
                             )
                             .await
                             .unwrap();
@@ -246,7 +246,9 @@ fn bench_list_attachments(c: &mut Criterion) {
                     let pool = pool.clone();
                     let target_block = target_block.clone();
                     async move {
-                        let rows = list_attachments_inner(&pool, target_block).await.unwrap();
+                        let rows = list_attachments_inner(&pool, target_block.into())
+                            .await
+                            .unwrap();
                         assert_eq!(rows.len(), 10);
                     }
                 })

@@ -477,7 +477,14 @@ async fn handle_add_tag(
     // (no `space` property by design), so validating `tag_id` would
     // reject every legitimate add_tag call.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = add_tag_inner(pool, device_id, materializer, block_id, tag_id).await?;
+    let resp = add_tag_inner(
+        pool,
+        device_id,
+        materializer,
+        crate::ulid::BlockId::from(block_id),
+        crate::ulid::BlockId::from(tag_id),
+    )
+    .await?;
     to_tool_result(&resp)
 }
 

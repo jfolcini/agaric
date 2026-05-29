@@ -15,7 +15,7 @@ use crate::materializer::Materializer;
 use crate::now_rfc3339;
 use crate::op::OpPayload;
 use crate::op_log;
-use crate::ulid::BlockId;
+use crate::ulid::{AttachmentId, BlockId};
 
 use super::*;
 
@@ -48,7 +48,7 @@ pub async fn add_attachment_inner(
     device_id: &str,
     materializer: &Materializer,
     app_data_dir: &Path,
-    block_id: String,
+    block_id: BlockId,
     filename: String,
     mime_type: String,
     size_bytes: i64,
@@ -87,7 +87,7 @@ pub async fn add_attachment_inner(
     // uppercase) without re-validating the ULID format.
     let payload = OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
         attachment_id: BlockId::from_trusted(&attachment_id),
-        block_id: BlockId::from_trusted(&block_id),
+        block_id: block_id.clone(),
         mime_type: mime_type.clone(),
         filename: filename.clone(),
         size_bytes,
@@ -99,9 +99,10 @@ pub async fn add_attachment_inner(
     let mut tx = CommandTx::begin_immediate(pool, "add_attachment").await?;
 
     // Validate block exists and is not deleted (TOCTOU-safe inside tx)
+    let block_id_str = block_id.as_str();
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-        block_id
+        block_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -141,7 +142,7 @@ pub async fn add_attachment_inner(
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&attachment_id)
-    .bind(&block_id)
+    .bind(block_id.as_str())
     .bind(&mime_type)
     .bind(&filename)
     .bind(size_bytes)
@@ -156,7 +157,7 @@ pub async fn add_attachment_inner(
 
     Ok(AttachmentRow {
         id: BlockId::from_trusted(&attachment_id),
-        block_id: BlockId::from_trusted(&block_id),
+        block_id,
         mime_type,
         filename,
         size_bytes,
@@ -189,7 +190,7 @@ pub async fn add_attachment_with_bytes_inner(
     device_id: &str,
     materializer: &Materializer,
     app_data_dir: &Path,
-    block_id: String,
+    block_id: BlockId,
     filename: String,
     mime_type: String,
     bytes: Vec<u8>,
@@ -278,11 +279,12 @@ pub async fn add_attachment_with_bytes_inner(
 pub async fn read_attachment_inner(
     pool: &SqlitePool,
     app_data_dir: &Path,
-    attachment_id: String,
+    attachment_id: AttachmentId,
 ) -> Result<Vec<u8>, AppError> {
+    let attachment_id_str = attachment_id.as_str();
     let fs_path = sqlx::query_scalar!(
         "SELECT fs_path FROM attachments WHERE id = ?",
-        attachment_id
+        attachment_id_str
     )
     .fetch_optional(pool)
     .await?
@@ -323,7 +325,7 @@ pub async fn delete_attachment_inner(
     device_id: &str,
     materializer: &Materializer,
     app_data_dir: &Path,
-    attachment_id: String,
+    attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
     // Single IMMEDIATE transaction: validation + op_log + delete.
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
@@ -332,9 +334,10 @@ pub async fn delete_attachment_inner(
     // Validate attachment exists AND fetch its fs_path in one query.
     // The fs_path goes into the op-log payload (so remote peers / future
     // GC passes can reconcile) and into the post-commit unlink.
+    let attachment_id_str = attachment_id.as_str();
     let row = sqlx::query!(
         r#"SELECT fs_path FROM attachments WHERE id = ?"#,
-        attachment_id
+        attachment_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -344,7 +347,7 @@ pub async fn delete_attachment_inner(
     let fs_path = row.fs_path;
 
     let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
-        attachment_id: BlockId::from_trusted(&attachment_id),
+        attachment_id: attachment_id.clone(),
         fs_path: fs_path.clone(),
     });
 
@@ -354,7 +357,7 @@ pub async fn delete_attachment_inner(
 
     // Delete from attachments table within same transaction
     sqlx::query("DELETE FROM attachments WHERE id = ?")
-        .bind(&attachment_id)
+        .bind(attachment_id.as_str())
         .execute(&mut **tx)
         .await?;
 
@@ -418,14 +421,15 @@ pub async fn delete_attachment_inner(
 #[instrument(skip(pool), err)]
 pub async fn list_attachments_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<AttachmentRow>, AppError> {
+    let block_id_str = block_id.as_str();
     let rows = sqlx::query_as!(
         AttachmentRow,
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
          FROM attachments WHERE block_id = ? \
          ORDER BY created_at",
-        block_id
+        block_id_str
     )
     .fetch_all(pool)
     .await?;
@@ -459,7 +463,7 @@ pub async fn list_attachments_inner(
 #[instrument(skip(pool, block_ids), err)]
 pub async fn list_attachments_batch_inner(
     pool: &SqlitePool,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<std::collections::HashMap<String, Vec<AttachmentRow>>, AppError> {
     if block_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
@@ -507,7 +511,7 @@ pub async fn add_attachment(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     filename: String,
     mime_type: String,
     size_bytes: i64,
@@ -543,7 +547,7 @@ pub async fn add_attachment_with_bytes(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     filename: String,
     mime_type: String,
     bytes: Vec<u8>,
@@ -574,7 +578,7 @@ pub async fn add_attachment_with_bytes(
 pub async fn read_attachment(
     app: tauri::AppHandle,
     pool: State<'_, ReadPool>,
-    attachment_id: String,
+    attachment_id: AttachmentId,
 ) -> Result<Vec<u8>, AppError> {
     let app_data_dir = app
         .path()
@@ -594,7 +598,7 @@ pub async fn delete_attachment(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    attachment_id: String,
+    attachment_id: AttachmentId,
 ) -> Result<(), AppError> {
     let app_data_dir = app
         .path()
@@ -617,7 +621,7 @@ pub async fn delete_attachment(
 #[specta::specta]
 pub async fn list_attachments(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<AttachmentRow>, AppError> {
     list_attachments_inner(&pool.0, block_id)
         .await
@@ -630,7 +634,7 @@ pub async fn list_attachments(
 #[specta::specta]
 pub async fn list_attachments_batch(
     pool: State<'_, ReadPool>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<std::collections::HashMap<String, Vec<AttachmentRow>>, AppError> {
     list_attachments_batch_inner(&pool.0, block_ids)
         .await

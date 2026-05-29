@@ -410,7 +410,7 @@ fn bench_list_tags_for_block(c: &mut Criterion) {
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
             b.to_async(&rt)
-                .iter(|| list_tags_for_block_inner(&pool, "TARGET_BLOCK_000000000000".to_string()));
+                .iter(|| list_tags_for_block_inner(&pool, "TARGET_BLOCK_000000000000".into()));
         });
     }
     group.finish();

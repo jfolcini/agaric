@@ -1350,33 +1350,15 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
     settle_bg_tasks(&mat).await;
 
     // Add tags to blocks
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        block_a.id.to_string(),
-        tag1.id.to_string(),
-    )
-    .await
-    .unwrap();
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        block_a.id.to_string(),
-        tag2.id.to_string(),
-    )
-    .await
-    .unwrap();
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        block_b.id.to_string(),
-        tag1.id.to_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, block_a.id.clone(), tag1.id.clone())
+        .await
+        .unwrap();
+    add_tag_inner(&pool, DEV, &mat, block_a.id.clone(), tag2.id.clone())
+        .await
+        .unwrap();
+    add_tag_inner(&pool, DEV, &mat, block_b.id.clone(), tag1.id.clone())
+        .await
+        .unwrap();
 
     // Set properties
     set_property_inner(
@@ -1718,33 +1700,21 @@ async fn tag_prefix_query_returns_hierarchy_matches_only() {
     let blk_email = create_content(&pool, &mat, "inbox zero plan", None, Some(3)).await;
 
     // Tag each block with a different tag
+    add_tag_inner(&pool, DEV, &mat, blk_work.id.clone(), tag_work.id.clone())
+        .await
+        .unwrap();
     add_tag_inner(
         &pool,
         DEV,
         &mat,
-        blk_work.id.to_string(),
-        tag_work.id.to_string(),
+        blk_meeting.id.clone(),
+        tag_meeting.id.clone(),
     )
     .await
     .unwrap();
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        blk_meeting.id.to_string(),
-        tag_meeting.id.to_string(),
-    )
-    .await
-    .unwrap();
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        blk_email.id.to_string(),
-        tag_email.id.to_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, blk_email.id.clone(), tag_email.id.clone())
+        .await
+        .unwrap();
 
     // Query with prefix "work/" — should match "work/meeting" and
     // "work/email" but NOT "work" (exact match without slash suffix)

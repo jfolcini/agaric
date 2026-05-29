@@ -2768,7 +2768,7 @@ async fn add_attachment_creates_row() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "photo.png".into(),
         "image/png".into(),
         1024,
@@ -2842,7 +2842,7 @@ async fn delete_attachment_removes_row() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "doc.pdf".into(),
         "application/pdf".into(),
         2048,
@@ -2852,7 +2852,7 @@ async fn delete_attachment_removes_row() {
     .unwrap();
 
     // Delete it
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
         .await
         .unwrap();
 
@@ -2908,7 +2908,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "c3b_happy.pdf".into(),
         "application/pdf".into(),
         64,
@@ -2923,7 +2923,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         "fixture file must be on disk before delete"
     );
 
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
         .await
         .expect("delete_attachment_inner happy path must succeed");
 
@@ -3002,7 +3002,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "c3b_ghost.pdf".into(),
         "application/pdf".into(),
         1,
@@ -3020,7 +3020,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     );
 
     // Must still succeed: missing file is non-fatal.
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
         .await
         .expect("delete must succeed even if the on-disk file is already gone");
 
@@ -3071,7 +3071,7 @@ async fn add_attachment_validates_size_limit() {
         DEV,
         &mat,
         _dir.path(),
-        block.id.clone().into_string(),
+        block.id.clone(),
         "big.bin".into(),
         "application/zip".into(),
         over_limit,
@@ -3115,7 +3115,7 @@ async fn add_attachment_validates_mime_type() {
         DEV,
         &mat,
         _dir.path(),
-        block.id.clone().into_string(),
+        block.id.clone(),
         "virus.exe".into(),
         "application/x-msdownload".into(),
         1024,
@@ -3172,7 +3172,7 @@ async fn add_attachment_size_mismatch_returns_validation_error() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "mismatch.png".into(),
         "image/png".into(),
         64, // declared, not the actual on-disk size
@@ -3246,7 +3246,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "a1.png".into(),
         "image/png".into(),
         100,
@@ -3260,7 +3260,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "a2.pdf".into(),
         "application/pdf".into(),
         200,
@@ -3275,7 +3275,7 @@ async fn list_attachments_returns_for_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone().into_string(),
+        block_b.id.clone(),
         "b1.txt".into(),
         "text/plain".into(),
         50,
@@ -3285,7 +3285,7 @@ async fn list_attachments_returns_for_block() {
     .unwrap();
 
     // List for block_a — should get 2
-    let list_a = list_attachments_inner(&pool, block_a.id.clone().into_string())
+    let list_a = list_attachments_inner(&pool, block_a.id.clone())
         .await
         .unwrap();
     assert_eq!(list_a.len(), 2, "block_a should have 2 attachments");
@@ -3299,7 +3299,7 @@ async fn list_attachments_returns_for_block() {
     );
 
     // List for block_b — should get 1
-    let list_b = list_attachments_inner(&pool, block_b.id.clone().into_string())
+    let list_b = list_attachments_inner(&pool, block_b.id.clone())
         .await
         .unwrap();
     assert_eq!(list_b.len(), 1, "block_b should have 1 attachment");
@@ -3370,7 +3370,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "a1.png".into(),
         "image/png".into(),
         10,
@@ -3387,7 +3387,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "a2.pdf".into(),
         "application/pdf".into(),
         20,
@@ -3400,7 +3400,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone().into_string(),
+        block_b.id.clone(),
         "b1.txt".into(),
         "text/plain".into(),
         5,
@@ -3411,11 +3411,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
 
     let grouped = list_attachments_batch_inner(
         &pool,
-        vec![
-            block_a.id.to_string(),
-            block_b.id.to_string(),
-            block_c.id.to_string(),
-        ],
+        vec![block_a.id.clone(), block_b.id.clone(), block_c.id.clone()],
     )
     .await
     .unwrap();
@@ -3512,7 +3508,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "a1.png".into(),
         "image/png".into(),
         10,
@@ -3525,7 +3521,7 @@ async fn list_attachments_batch_filters_by_block_id() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone().into_string(),
+        block_b.id.clone(),
         "b1.txt".into(),
         "text/plain".into(),
         5,
@@ -3535,7 +3531,7 @@ async fn list_attachments_batch_filters_by_block_id() {
     .unwrap();
 
     // Only ask about block_a — block_b's row must be filtered out by the IN clause.
-    let grouped = list_attachments_batch_inner(&pool, vec![block_a.id.to_string()])
+    let grouped = list_attachments_batch_inner(&pool, vec![block_a.id.clone()])
         .await
         .unwrap();
 
@@ -3587,7 +3583,7 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "shape.png".into(),
         "image/png".into(),
         7,
@@ -3596,10 +3592,10 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
     .await
     .unwrap();
 
-    let single = list_attachments_inner(&pool, block.id.clone().into_string())
+    let single = list_attachments_inner(&pool, block.id.clone())
         .await
         .unwrap();
-    let batch = list_attachments_batch_inner(&pool, vec![block.id.to_string()])
+    let batch = list_attachments_batch_inner(&pool, vec![block.id.clone()])
         .await
         .unwrap();
 
@@ -3668,7 +3664,7 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
     .await
     .unwrap();
 
-    let rows = list_attachments_inner(&pool, block.id.clone().into_string())
+    let rows = list_attachments_inner(&pool, block.id.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -3711,7 +3707,7 @@ async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "ghost.png".into(),
         "image/png".into(),
         1024,
@@ -3792,7 +3788,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block_a.id.clone().into_string(),
+        block_a.id.clone(),
         "m30_dup.png".into(),
         "image/png".into(),
         16,
@@ -3808,7 +3804,7 @@ async fn add_attachment_duplicate_fs_path_returns_error_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block_b.id.clone().into_string(),
+        block_b.id.clone(),
         "m30_dup.png".into(),
         "image/png".into(),
         16,
@@ -3879,7 +3875,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "m30_reuse.png".into(),
         "image/png".into(),
         8,
@@ -3906,7 +3902,7 @@ async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "m30_reuse.png".into(),
         "image/png".into(),
         8,
@@ -5547,7 +5543,7 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "photo.png".into(),
         "image/png".into(),
         bytes.clone(),
@@ -5568,7 +5564,7 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
     assert_eq!(on_disk, bytes, "file on disk must match the uploaded bytes");
 
     // read_attachment returns the same bytes.
-    let read_back = read_attachment_inner(&pool, app_data_dir, att.id.clone().into_string())
+    let read_back = read_attachment_inner(&pool, app_data_dir, att.id.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -5601,7 +5597,7 @@ async fn add_attachment_with_bytes_rejects_disallowed_mime_without_writing() {
         DEV,
         &mat,
         app_data_dir,
-        block.id.clone().into_string(),
+        block.id.clone(),
         "evil.exe".into(),
         "application/x-msdownload".into(),
         vec![0u8; 16],
