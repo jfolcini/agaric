@@ -225,6 +225,7 @@ export function QueryBuilderModal({
                 size="sm"
                 role="radio"
                 aria-checked={queryType === type}
+                tabIndex={queryType === type ? 0 : -1}
                 onClick={() => setQueryType(type)}
               >
                 {t(`queryBuilder.type.${type}`)}

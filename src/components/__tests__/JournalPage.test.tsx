@@ -120,10 +120,10 @@ vi.mock('../journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
-      // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test mock
       // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- test mock
       <div
         role="gridcell"
+        tabIndex={-1}
         data-testid={`monthly-cell-${entry.dateStr}`}
         data-is-today={String(!!props['isToday'])}
         data-is-current-month={String(!!props['isCurrentMonth'])}

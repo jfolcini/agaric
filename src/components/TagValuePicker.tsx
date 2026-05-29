@@ -168,6 +168,7 @@ export function TagValuePicker({
         onKeyDown={handleKeyDown}
         aria-label={t('agendaFilter.tagName')}
         role="combobox"
+        tabIndex={0}
         aria-expanded={isExpanded}
         aria-autocomplete="list"
         aria-activedescendant={activeId}

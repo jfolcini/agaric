@@ -104,6 +104,7 @@ export function PaletteActionMenu({
     <div
       ref={menuRef}
       role="menu"
+      tabIndex={-1}
       onKeyDown={handleKeyDown}
       data-testid="palette-action-menu"
       // `fixed` so the menu floats above the palette dialog without
