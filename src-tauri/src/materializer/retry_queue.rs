@@ -349,8 +349,8 @@ pub(crate) async fn record_failure(
     // The DO UPDATE side reuses this value verbatim; if the SQL-side
     // increment escalates `attempts` past 1 we follow up below to fix
     // it to the correct backoff step.
-    let initial_next_attempt = (chrono::Utc::now() + backoff_delay_for(1))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // #109 Phase 2: next_attempt_at is epoch-ms — `now + backoff` as i64 ms.
+    let initial_next_attempt = crate::db::now_ms() + backoff_delay_for(1).num_milliseconds();
 
     let attempts_after = sqlx::query_scalar!(
         "INSERT INTO materializer_retry_queue \
@@ -374,8 +374,7 @@ pub(crate) async fn record_failure(
     // `backoff_delay_for(1)` is too short. Recompute against the
     // actual `attempts_after` returned by the UPSERT and patch the row.
     let next_attempt = if attempts_after > 1 {
-        let escalated = (chrono::Utc::now() + backoff_delay_for(attempts_after))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let escalated = crate::db::now_ms() + backoff_delay_for(attempts_after).num_milliseconds();
         sqlx::query!(
             "UPDATE materializer_retry_queue SET next_attempt_at = ? \
              WHERE block_id = ? AND task_kind = ?",
@@ -450,19 +449,15 @@ const GIVE_UP_AGE_DAYS: i64 = 7;
 /// designed for, and the metric/log labels are more useful with the
 /// failure-count signal when both apply.
 ///
-/// An unparseable `created_at` is treated as fresh (no age give-up).
-/// This matches the conservative bias of the rest of the module: if the
-/// row was written by a future schema variant the sweeper doesn't
-/// understand, defer to it rather than dropping it.
+/// A future `created_at` (clock skew) yields a negative age and is treated
+/// as fresh — the conservative bias of the rest of the module.
 fn give_up_reason(row: &DueRow) -> Option<&'static str> {
     if row.attempts >= MAX_ATTEMPTS {
         return Some("max_attempts");
     }
-    let Ok(created) = chrono::DateTime::parse_from_rfc3339(&row.created_at) else {
-        return None;
-    };
-    let age = chrono::Utc::now().signed_duration_since(created.with_timezone(&chrono::Utc));
-    if age >= chrono::Duration::days(GIVE_UP_AGE_DAYS) {
+    // #109 Phase 2: created_at is epoch-ms — age is plain integer subtraction.
+    let age_ms = crate::db::now_ms() - row.created_at;
+    if age_ms >= GIVE_UP_AGE_DAYS * 86_400_000 {
         return Some("age_exceeded");
     }
     None
@@ -475,16 +470,16 @@ pub(crate) struct DueRow {
     /// Number of times this task has already been retried — gates the
     /// `MAX_ATTEMPTS` give-up trigger in [`sweep_once`].
     pub attempts: i64,
-    /// RFC 3339 timestamp the row was first persisted — gates the
-    /// `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once`].
-    pub created_at: String,
+    /// Epoch-ms timestamp the row was first persisted (#109 Phase 2) — gates
+    /// the `GIVE_UP_AGE_DAYS` give-up trigger in [`sweep_once`].
+    pub created_at: i64,
 }
 
 /// Return rows where `next_attempt_at <= now`, up to `limit` entries.
 /// Uses the read pool; the sweeper re-enqueues them via the normal
 /// background queue path. Cap to avoid flooding the queue.
 pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRow>, AppError> {
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = crate::db::now_ms();
     let rows = sqlx::query!(
         "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue \
          WHERE next_attempt_at <= ? \
@@ -944,8 +939,7 @@ mod tests {
     async fn fetch_due_and_clear_entry_round_trip() {
         let (pool, _dir) = test_pool().await;
         // Insert a row with an already-past next_attempt_at
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, next_attempt_at) \
@@ -974,8 +968,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_due_skips_future_entries() {
         let (pool, _dir) = test_pool().await;
-        let future = (chrono::Utc::now() + chrono::Duration::hours(1))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let future = crate::db::now_ms() + 3_600_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, next_attempt_at) \
@@ -1002,7 +995,7 @@ mod tests {
             block_id: "BLK_TR".into(),
             task_kind: "UpdateFtsBlock".into(),
             attempts: 0,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            created_at: crate::db::now_ms(),
         };
         let t = task_from_row(&row).unwrap();
         assert!(
@@ -1013,7 +1006,7 @@ mod tests {
             block_id: "x".into(),
             task_kind: "SomeFutureTaskKind".into(),
             attempts: 0,
-            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            created_at: crate::db::now_ms(),
         };
         assert!(
             task_from_row(&unknown).is_none(),
@@ -1112,8 +1105,7 @@ mod tests {
         let mat = Materializer::new(pool.clone());
 
         // Insert a due row
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, next_attempt_at) \
@@ -1143,8 +1135,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let future = (chrono::Utc::now() + chrono::Duration::hours(1))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let future = crate::db::now_ms() + 3_600_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, next_attempt_at) \
@@ -1170,8 +1161,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, next_attempt_at) \
@@ -1208,10 +1198,8 @@ mod tests {
 
         // A due row that has already failed MAX_ATTEMPTS times — the
         // sweeper must give up and delete it, not re-enqueue.
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let recent_created =
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent_created = crate::db::now_ms();
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, created_at, next_attempt_at) \
@@ -1256,10 +1244,8 @@ mod tests {
         // A due row whose `created_at` is older than GIVE_UP_AGE_DAYS —
         // the sweeper must give up and delete it even though `attempts`
         // is still below the cap.
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let stale_created = (chrono::Utc::now() - chrono::Duration::days(GIVE_UP_AGE_DAYS + 1))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let stale_created = crate::db::now_ms() - (GIVE_UP_AGE_DAYS + 1) * 86_400_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, created_at, next_attempt_at) \
@@ -1297,10 +1283,8 @@ mod tests {
 
         // Both triggers below threshold — the row must follow the normal
         // re-enqueue path, not the give-up path. Pins the boundary.
-        let past = (chrono::Utc::now() - chrono::Duration::minutes(5))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let recent_created = (chrono::Utc::now() - chrono::Duration::days(GIVE_UP_AGE_DAYS - 1))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let recent_created = crate::db::now_ms() - (GIVE_UP_AGE_DAYS - 1) * 86_400_000;
         sqlx::query!(
             "INSERT INTO materializer_retry_queue \
                  (block_id, task_kind, attempts, created_at, next_attempt_at) \
@@ -1415,7 +1399,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let first_next: String = sqlx::query_scalar!(
+        let first_next: i64 = sqlx::query_scalar!(
             "SELECT next_attempt_at FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
             GLOBAL_TASK_SENTINEL,
@@ -1435,7 +1419,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let second_next: String = sqlx::query_scalar!(
+        let second_next: i64 = sqlx::query_scalar!(
             "SELECT next_attempt_at FROM materializer_retry_queue \
              WHERE block_id = ? AND task_kind = ?",
             GLOBAL_TASK_SENTINEL,
@@ -1603,7 +1587,7 @@ mod tests {
         // EXPLAIN QUERY PLAN must reference the new index for the
         // sweeper SELECT shape. The bind values are placeholders — the
         // planner only inspects the SQL shape, not the bound data.
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let limit: i64 = 64;
         let plan_rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(
             "EXPLAIN QUERY PLAN \

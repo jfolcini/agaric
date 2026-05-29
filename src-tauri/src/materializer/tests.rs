@@ -1126,8 +1126,7 @@ async fn test_global_task_re_enqueued_after_backoff() {
 
     // Plant a global retry row with an already-past next_attempt_at,
     // simulating "the backoff window expired".
-    let past = (chrono::Utc::now() - chrono::Duration::minutes(2))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let past = crate::db::now_ms() - 2 * 60_000;
     sqlx::query!(
         "INSERT INTO materializer_retry_queue \
              (block_id, task_kind, attempts, next_attempt_at) \
@@ -3144,8 +3143,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
     )
     .await;
     let task_kind = format!("ApplyOp:{}:{}", valid_record.seq, valid_record.device_id);
-    let past = (chrono::Utc::now() - chrono::Duration::minutes(2))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let past = crate::db::now_ms() - 2 * 60_000;
     sqlx::query!(
         "INSERT INTO materializer_retry_queue \
              (block_id, task_kind, attempts, next_attempt_at) \
