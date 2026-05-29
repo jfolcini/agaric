@@ -78,12 +78,12 @@ ALLOWLIST_GLOBS = [
     # External-integration internals, no op_log.
     "src-tauri/src/gcal_push/connector.rs",
     "src-tauri/src/gcal_push/lease.rs",
-    # TEMP allowlist pending op_log/dag CommandTx API refactor (#224).
-    # The single kept-raw production sites carry an explicit
-    # `// allow-raw-tx:` marker; the file allowlist covers them belt-and-
-    # suspenders so a churned line number can't reopen the gap.
-    "src-tauri/src/op_log.rs",
-    "src-tauri/src/dag.rs",
+    # NOTE (#224 resolved): op_log.rs `append_local_op[_at]` and
+    # dag.rs `append_merge_op` are test/bench-only convenience wrappers that
+    # open their own tx — production appends via the `*_in_tx` variants on an
+    # outer CommandTx. They carry per-line `// allow-raw-tx:` markers (no file
+    # allowlist needed); their other raw sites live in `#[cfg(test)]` modules,
+    # which this hook already skips.
 ]
 
 # Whole-file test modules. Files named `tests.rs`, anything under a
@@ -222,6 +222,10 @@ def check_file(path: Path, repo_root: Path) -> list[str]:
 
     for idx, line in enumerate(lines):
         if not RAW_TX_RE.search(line):
+            continue
+        # A match inside a `//` comment (rustdoc rationale, a commented-out
+        # example) is documentation, not a real tx site — never flag it.
+        if line.lstrip().startswith("//"):
             continue
         if idx in test_lines:
             continue

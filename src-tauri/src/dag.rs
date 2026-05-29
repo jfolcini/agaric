@@ -459,6 +459,9 @@ pub async fn insert_remote_op(pool: &SqlitePool, record: &OpRecord) -> Result<bo
 ///
 /// `parent_entries` must contain at least 2 entries. They are sorted
 /// lexicographically by `(device_id, seq)` for deterministic hashing.
+///
+/// **Test/bench-only convenience** (#224) — opens its own transaction.
+/// Production merge ingestion appends within an outer transaction.
 pub async fn append_merge_op(
     pool: &SqlitePool,
     device_id: &str,
@@ -487,7 +490,10 @@ pub async fn append_merge_op(
     let payload_json = serialize_inner_payload(&op_payload)?;
     let created_at = crate::now_rfc3339();
 
-    // allow-raw-tx: pending op_log/dag CommandTx API refactor (#224)
+    // Test/bench-only convenience wrapper — production merge ingestion appends
+    // within an outer transaction; this self-opened tx only ever serves unit
+    // tests + benches.
+    // allow-raw-tx: test/bench-only helper (#224)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let row = sqlx::query!(

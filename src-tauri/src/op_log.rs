@@ -90,6 +90,11 @@ impl OpRecord {
 /// Append a local operation to the op log inside a transaction.
 ///
 /// Delegates to [`append_local_op_at`] with the current UTC timestamp.
+///
+/// **Test/bench-only convenience** (#224): this self-opening-transaction form
+/// is used solely by unit tests and benchmarks. Production code appends via
+/// [`append_local_op_in_tx`] on an outer `CommandTx` so post-commit dispatch
+/// stays coupled to the commit — never call this wrapper from runtime paths.
 pub async fn append_local_op(
     pool: &SqlitePool,
     device_id: &str,
@@ -285,6 +290,9 @@ pub async fn append_local_op_in_tx(
 /// 3. Serializes the payload to canonical JSON.
 /// 4. Computes the blake3 content hash.
 /// 5. Inserts the row and returns the full [`OpRecord`].
+///
+/// **Test/bench-only convenience** (#224) — opens its own transaction.
+/// Production appends via [`append_local_op_in_tx`] on an outer `CommandTx`.
 pub async fn append_local_op_at(
     pool: &SqlitePool,
     device_id: &str,
@@ -305,7 +313,10 @@ pub async fn append_local_op_at(
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT when a concurrent background cache rebuild
     // commits between our first read and first write inside the tx.
-    // allow-raw-tx: pending op_log/dag CommandTx API refactor (#224)
+    // Test/bench-only convenience wrapper — production couples dispatch via
+    // append_local_op_in_tx on an outer CommandTx; this self-opened tx only
+    // ever serves unit tests + benches, never a runtime path.
+    // allow-raw-tx: test/bench-only helper (#224)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let record = append_local_op_in_tx(&mut tx, device_id, op_payload, created_at).await?;
     tx.commit().await?;
