@@ -239,10 +239,10 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
 #[derive(Debug, sqlx::FromRow)]
 struct FtsSearchRow {
     // Block fields
-    id: String,
+    id: crate::ulid::BlockId,
     block_type: String,
     content: Option<String>,
-    parent_id: Option<String>,
+    parent_id: Option<crate::ulid::BlockId>,
     position: Option<i64>,
     deleted_at: Option<String>,
     todo_state: Option<String>,
@@ -382,7 +382,7 @@ pub async fn search_fts(
     let has_more = rows.len() > limit_usize;
     let cursor_data = if has_more {
         let last = &rows[limit_usize - 1];
-        Some((last.id.clone(), last.search_rank))
+        Some((last.id.as_str().to_string(), last.search_rank))
     } else {
         None
     };
@@ -574,7 +574,7 @@ where
 
         for r in rows {
             let rank = r.search_rank;
-            let id_clone = r.id.clone();
+            let id_clone = r.id.as_str().to_string();
             let mut block_row = fts_row_to_block_row(r);
             // Advance the FTS cursor by EVERY candidate (the last candidate
             // of the window wins) so dropped rows are never re-scanned by a
@@ -1038,10 +1038,10 @@ fn fts_row_to_block_row(r: FtsSearchRow) -> SearchBlockRow {
         // `deleted_at IS NULL`, so every surviving row is active.
         // `from_trusted_active` records the claim in the type system
         // without re-running the predicate.
-        id: crate::ulid::ActiveBlockId::from_trusted_active(&r.id),
+        id: crate::ulid::ActiveBlockId::from_trusted_active(r.id.as_str()),
         block_type: r.block_type,
         content: r.content,
-        parent_id: r.parent_id,
+        parent_id: r.parent_id.map(crate::ulid::BlockId::into_string),
         position: r.position,
         deleted_at: r.deleted_at,
         todo_state: r.todo_state,
