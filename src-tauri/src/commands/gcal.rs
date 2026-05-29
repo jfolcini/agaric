@@ -292,6 +292,7 @@ pub async fn disconnect_gcal_inner(
     // → "Connected as alice@example.com — keyring missing tokens" in
     // Settings).  `oauth_account_email` is always cleared, even when
     // `delete_calendar = false`, matching the prior behaviour.
+    // allow-raw-tx: writes settings + gcal map, no op_log (#110)
     let mut tx = crate::db::begin_immediate_logged(pool, "gcal_disconnect").await?;
     if delete_calendar {
         models::set_setting_in_tx(&mut *tx, GcalSettingKey::CalendarId.as_str(), "").await?;

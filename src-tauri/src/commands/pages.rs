@@ -73,6 +73,7 @@ pub async fn set_page_aliases_inner(
     // its prior alias set instead of leaving a partial replacement.
     // Concurrent callers for the same page also serialize on the
     // immediate write lock instead of interleaving their phases.
+    // allow-raw-tx: page_aliases is its own table, emits no op_log entries (#110)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Delete existing aliases

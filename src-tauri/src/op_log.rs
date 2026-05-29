@@ -305,6 +305,7 @@ pub async fn append_local_op_at(
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT when a concurrent background cache rebuild
     // commits between our first read and first write inside the tx.
+    // allow-raw-tx: pending op_log/dag CommandTx API refactor (#224)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let record = append_local_op_in_tx(&mut tx, device_id, op_payload, created_at).await?;
     tx.commit().await?;

@@ -180,6 +180,7 @@ pub async fn compact_op_log_cmd_inner(
     // MAINT-30: slow-acquire timed via `begin_immediate_logged` so a
     // recount that blocks on the write lock surfaces as a `warn` log
     // instead of disappearing into the 5s busy_timeout.
+    // allow-raw-tx: compaction admin op, no user-edit shape (#110)
     let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
 
     // Recount inside the transaction (TOCTOU recount, not atomicity —
