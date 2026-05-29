@@ -10,8 +10,10 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::bootstrap::{
-    bootstrap_spaces, migrate_personal_pages_to_work, MIGRATION_THRESHOLD_ULID,
-    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
+    bootstrap_spaces_for_test as bootstrap_spaces,
+    migrate_personal_pages_to_work_for_test as migrate_personal_pages_to_work,
+    MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
+    SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
 };
 use crate::db::init_pool;
 use crate::ulid::BlockId;

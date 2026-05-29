@@ -849,6 +849,7 @@ pub fn run() {
             if let Err(e) = tauri::async_runtime::block_on(spaces::bootstrap_spaces(
                 &pools.write,
                 &device_id,
+                &materializer,
             )) {
                 tracing::error!(error = %e, "failed to bootstrap spaces — aborting boot");
                 return Err(Box::new(e));
@@ -959,8 +960,12 @@ pub fn run() {
                     // MAINT-1: one-shot Personal→Work migration for the
                     // maintainer's vault. Hardcoded-ULID-gated so fresh
                     // installs are a no-op. Non-fatal; next boot retries.
-                    if let Err(e) =
-                        spaces::migrate_personal_pages_to_work(&write_pool, &device_id_owned).await
+                    if let Err(e) = spaces::migrate_personal_pages_to_work(
+                        &write_pool,
+                        &device_id_owned,
+                        &materializer_handle,
+                    )
+                    .await
                     {
                         tracing::warn!(
                             error = %e,

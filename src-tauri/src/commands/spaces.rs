@@ -419,7 +419,7 @@ mod tests {
 
     use super::*;
     use crate::db::init_pool;
-    use crate::spaces::bootstrap_spaces;
+    use crate::spaces::bootstrap_spaces_for_test as bootstrap_spaces;
     use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
 
     const DEV: &str = "test-device";
@@ -978,7 +978,7 @@ mod tests_p6 {
 
     use super::*;
     use crate::db::init_pool;
-    use crate::spaces::bootstrap_spaces;
+    use crate::spaces::bootstrap_spaces_for_test as bootstrap_spaces;
 
     const DEV: &str = "test-device-p6";
 

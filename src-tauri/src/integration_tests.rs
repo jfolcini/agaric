@@ -2159,7 +2159,9 @@ async fn run_drift_audit(pool: &SqlitePool, label: &str) {
 async fn page_id_space_drift_audit_per_block() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     // Two pages, one per space.
     let p1 = create_page_in_space_inner(
@@ -2252,7 +2254,9 @@ async fn page_id_space_drift_audit_per_block() {
 async fn page_id_space_drift_audit_after_lifecycle_ops() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     let p1 = create_page_in_space_inner(
         &pool,

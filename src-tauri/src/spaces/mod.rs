@@ -24,4 +24,7 @@ pub use bootstrap::{
 };
 
 #[cfg(test)]
+pub(crate) use bootstrap::bootstrap_spaces_for_test;
+
+#[cfg(test)]
 mod tests;
