@@ -197,7 +197,7 @@ fn bench_create_block_with_parent(c: &mut Criterion) {
                     materializer_ref,
                     "content".into(),
                     content,
-                    Some(parent_id.into_string()),
+                    Some(parent_id),
                     None,
                 )
                 .await
@@ -263,9 +263,15 @@ fn bench_edit_block_small_content(c: &mut Criterion) {
             let block_id = block_id.clone();
             let content = small_content.clone();
             async move {
-                edit_block_inner(&pool, "dev-bench", materializer_ref, block_id, content)
-                    .await
-                    .unwrap()
+                edit_block_inner(
+                    &pool,
+                    "dev-bench",
+                    materializer_ref,
+                    block_id.into(),
+                    content,
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -293,9 +299,15 @@ fn bench_edit_block_large_content(c: &mut Criterion) {
             let block_id = block_id.clone();
             let content = large_content.clone();
             async move {
-                edit_block_inner(&pool, "dev-bench", materializer_ref, block_id, content)
-                    .await
-                    .unwrap()
+                edit_block_inner(
+                    &pool,
+                    "dev-bench",
+                    materializer_ref,
+                    block_id.into(),
+                    content,
+                )
+                .await
+                .unwrap()
             }
         })
     });
@@ -325,7 +337,7 @@ fn bench_edit_block_sequential_10(c: &mut Criterion) {
                         &pool,
                         "dev-bench",
                         materializer_ref,
-                        block_id.clone(),
+                        block_id.clone().into(),
                         format!("Sequential edit number {i} with some content padding here"),
                     )
                     .await
@@ -607,7 +619,13 @@ fn bench_batch_resolve(c: &mut Criterion) {
                         let scope = agaric_lib::space::SpaceScope::Active(
                             agaric_lib::space::SpaceId::from_trusted(BENCH_SPACE_ID),
                         );
-                        batch_resolve_inner(&pool, ids, &scope).await.unwrap()
+                        batch_resolve_inner(
+                            &pool,
+                            ids.into_iter().map(Into::into).collect::<Vec<_>>(),
+                            &scope,
+                        )
+                        .await
+                        .unwrap()
                     }
                 })
             },
@@ -760,7 +778,7 @@ fn bench_edit_block_at_scale(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             materializer_ref,
-                            target_id,
+                            target_id.into(),
                             "Edited content at scale".into(),
                         )
                         .await
@@ -838,7 +856,7 @@ fn bench_get_block(c: &mut Criterion) {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
                     let target_id = target_id.clone();
-                    async move { get_block_inner(&pool, target_id).await.unwrap() }
+                    async move { get_block_inner(&pool, target_id.into()).await.unwrap() }
                 })
             },
         );
@@ -870,7 +888,7 @@ fn bench_get_block_history(c: &mut Criterion) {
                     &pool,
                     "dev-bench",
                     &materializer,
-                    id.clone(),
+                    id.clone().into(),
                     format!("History edit number {i} with padding content"),
                 )
                 .await

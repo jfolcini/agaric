@@ -1151,7 +1151,7 @@ mod tests_p6 {
         .expect("create_page_in_space must succeed");
 
         // Try to delete the non-empty space — must fail.
-        let result = delete_block_inner(&pool, DEV, &mat, space_id_str.clone()).await;
+        let result = delete_block_inner(&pool, DEV, &mat, space_id_str.clone().into()).await;
         assert!(
             matches!(result, Err(AppError::InvalidOperation(ref msg))
                 if msg.contains("cannot delete space")
@@ -1195,7 +1195,7 @@ mod tests_p6 {
             .await
             .expect("create_space must succeed");
         let space_id_str = space_id.to_string();
-        delete_block_inner(&pool, DEV, &mat, space_id_str.clone())
+        delete_block_inner(&pool, DEV, &mat, space_id_str.clone().into())
             .await
             .expect("delete on an empty space must succeed");
 

@@ -277,7 +277,7 @@ pub async fn quick_capture_block_inner(
         materializer,
         "content".into(),
         content,
-        Some(page.id.into_string()),
+        Some(page.id),
         None,
     )
     .await

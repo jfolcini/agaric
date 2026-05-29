@@ -21,19 +21,14 @@ pub async fn move_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
-    new_parent_id: Option<String>,
+    block_id: BlockId,
+    new_parent_id: Option<BlockId>,
     new_position: i64,
 ) -> Result<MoveResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here. Both
-    // `block_id` and `new_parent_id` are matched against `blocks.id`.
-    let block_id = block_id.to_ascii_uppercase();
-    let new_parent_id = new_parent_id.map(|s| s.to_ascii_uppercase());
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form for sqlx binds / format! / the MoveResponse below.
+    let block_id = block_id.into_string();
+    let new_parent_id = new_parent_id.map(BlockId::into_string);
 
     // 1. Validate block cannot become its own parent (pure-logic check, no DB)
     if let Some(ref pid) = new_parent_id {
@@ -261,8 +256,8 @@ pub async fn move_block(
         &pool.0,
         device_id.as_str(),
         &materializer,
-        block_id,
-        new_parent_id,
+        block_id.into(),
+        new_parent_id.map(Into::into),
         new_position,
     )
     .await

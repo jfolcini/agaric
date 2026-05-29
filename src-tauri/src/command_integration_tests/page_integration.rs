@@ -227,9 +227,7 @@ async fn navigate_journal_creates_page_for_date() {
     );
 
     // Verify persisted in DB
-    let fetched = get_block_inner(&pool, page.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(fetched.id, page.id);
     assert_eq!(fetched.block_type, "page");
 
@@ -317,9 +315,7 @@ async fn quick_capture_block_creates_today_journal_and_block() {
     );
 
     let parent_id = block.parent_id.clone().unwrap();
-    let parent = get_block_inner(&pool, parent_id.clone().into_string())
-        .await
-        .unwrap();
+    let parent = get_block_inner(&pool, parent_id.clone()).await.unwrap();
     assert_eq!(
         parent.block_type, "page",
         "parent of a quick-captured block must be a page (the journal)"
@@ -437,7 +433,7 @@ async fn restore_page_to_op_reverts_edits_after_target() {
         &mat,
         "content".into(),
         "content-A".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -445,15 +441,9 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     settle(&mat).await;
 
     // Edit block: A → B
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "content-B".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-B".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     // Record the seq of the op that set content to B
@@ -464,20 +454,14 @@ async fn restore_page_to_op_reverts_edits_after_target() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit block: B → C (this should be reverted)
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "content-C".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "content-C".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     // Verify block is at C before restore
     assert_eq!(
-        get_block_inner(&pool, child.id.clone().into_string())
+        get_block_inner(&pool, child.id.clone())
             .await
             .unwrap()
             .content,
@@ -504,10 +488,7 @@ async fn restore_page_to_op_reverts_edits_after_target() {
         "should have reverted at least one op"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id.into_string())
-            .await
-            .unwrap()
-            .content,
+        get_block_inner(&pool, child.id).await.unwrap().content,
         Some("content-B".into()),
         "block content should revert to B after restore"
     );
@@ -540,7 +521,7 @@ async fn restore_page_to_op_with_all_pages_target() {
         &mat,
         "content".into(),
         "orig-1".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(1),
     )
     .await
@@ -566,7 +547,7 @@ async fn restore_page_to_op_with_all_pages_target() {
         &mat,
         "content".into(),
         "orig-2".into(),
-        Some(page2.id.clone().into_string()),
+        Some(page2.id.clone()),
         Some(1),
     )
     .await
@@ -581,25 +562,13 @@ async fn restore_page_to_op_with_all_pages_target() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Edit blocks on both pages
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        b1.id.clone().into_string(),
-        "changed-1".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
+        .await
+        .unwrap();
     settle(&mat).await;
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        b2.id.clone().into_string(),
-        "changed-2".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "changed-2".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     // Restore to early seq with page_id = "__all__"
@@ -611,18 +580,12 @@ async fn restore_page_to_op_with_all_pages_target() {
 
     assert_eq!(result.ops_reverted, 2, "should revert edits on both pages");
     assert_eq!(
-        get_block_inner(&pool, b1.id.into_string())
-            .await
-            .unwrap()
-            .content,
+        get_block_inner(&pool, b1.id).await.unwrap().content,
         Some("orig-1".into()),
         "b1 should revert to original"
     );
     assert_eq!(
-        get_block_inner(&pool, b2.id.into_string())
-            .await
-            .unwrap()
-            .content,
+        get_block_inner(&pool, b2.id).await.unwrap().content,
         Some("orig-2".into()),
         "b2 should revert to original"
     );
@@ -672,7 +635,7 @@ async fn restore_page_to_op_invalid_seq_returns_empty() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -734,7 +697,7 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -749,26 +712,14 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
     // Make edits that will be reverted
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "edited-1".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-1".into())
+        .await
+        .unwrap();
     settle(&mat).await;
     tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "edited-2".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-2".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     let ops_before_restore = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
@@ -906,7 +857,7 @@ async fn list_page_links_rolls_up_content_block_links_to_pages() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -975,7 +926,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         &mat,
         "content".into(),
         format!("link [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -991,7 +942,7 @@ async fn list_page_links_excludes_deleted_blocks() {
         .unwrap();
 
     // Soft-delete the source block
-    delete_block_inner(&pool, DEV, &mat, b1.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, b1.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -1035,7 +986,7 @@ async fn list_page_links_excludes_self_links() {
         &mat,
         "content".into(),
         format!("self [[{}]]", p1.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -1101,7 +1052,7 @@ async fn list_page_links_deduplicates() {
         &mat,
         "content".into(),
         format!("first [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -1114,7 +1065,7 @@ async fn list_page_links_deduplicates() {
         &mat,
         "content".into(),
         format!("second [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(2),
     )
     .await

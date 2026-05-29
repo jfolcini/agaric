@@ -44,7 +44,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("links to [[{}]]", page.id),
     )
     .await
@@ -68,7 +68,7 @@ async fn backlinks_filtered_returns_linking_blocks() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("also links to [[{}]]", page.id),
     )
     .await
@@ -167,7 +167,7 @@ async fn backlinks_filtered_excludes_deleted() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("link [[{}]]", page.id),
     )
     .await
@@ -189,7 +189,7 @@ async fn backlinks_filtered_excludes_deleted() {
     assert_eq!(resp.items.len(), 1, "one backlink before deletion");
 
     // Delete the linking block
-    delete_block_inner(&pool, DEV, &mat, b1.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, b1.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -250,7 +250,7 @@ async fn backlinks_filtered_with_block_type_filter() {
         &pool,
         DEV,
         &mat,
-        page_linker.id.clone().into_string(),
+        page_linker.id.clone(),
         format!("page ref [[{}]]", target.id),
     )
     .await
@@ -275,7 +275,7 @@ async fn backlinks_filtered_with_block_type_filter() {
         &pool,
         DEV,
         &mat,
-        content_linker.id.clone().into_string(),
+        content_linker.id.clone(),
         format!("content ref [[{}]]", target.id),
     )
     .await
@@ -337,7 +337,7 @@ async fn backlinks_filtered_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("foo bar [[{}]]", target.id),
     )
     .await
@@ -361,7 +361,7 @@ async fn backlinks_filtered_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("baz qux [[{}]]", target.id),
     )
     .await
@@ -422,7 +422,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("first [[{}]]", target.id),
     )
     .await
@@ -463,7 +463,7 @@ async fn backlinks_filtered_with_property_text_filter() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("second [[{}]]", target.id),
     )
     .await
@@ -544,7 +544,7 @@ async fn backlinks_filtered_with_sort_created() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("first [[{}]]", target.id),
     )
     .await
@@ -568,7 +568,7 @@ async fn backlinks_filtered_with_sort_created() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("second [[{}]]", target.id),
     )
     .await
@@ -661,7 +661,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("low [[{}]]", target.id),
     )
     .await
@@ -702,7 +702,7 @@ async fn backlinks_filtered_with_sort_property() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("high [[{}]]", target.id),
     )
     .await
@@ -793,7 +793,7 @@ async fn backlinks_filtered_pagination() {
             &pool,
             DEV,
             &mat,
-            b.id.clone().into_string(),
+            b.id.clone(),
             format!("link {} [[{}]]", i, target.id),
         )
         .await
@@ -897,7 +897,7 @@ async fn backlinks_filtered_total_count_matches() {
             &pool,
             DEV,
             &mat,
-            b.id.clone().into_string(),
+            b.id.clone(),
             format!("link {} [[{}]]", i, target.id),
         )
         .await
@@ -1015,7 +1015,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("b1 [[{}]]", target.id),
     )
     .await
@@ -1057,7 +1057,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into_string(),
+        b2.id.clone(),
         format!("b2 [[{}]]", target.id),
     )
     .await
@@ -1099,7 +1099,7 @@ async fn backlinks_filtered_and_filter_intersection() {
         &pool,
         DEV,
         &mat,
-        b3.id.clone().into_string(),
+        b3.id.clone(),
         format!("b3 [[{}]]", target.id),
     )
     .await
@@ -1193,15 +1193,9 @@ async fn backlinks_filtered_unicode_content() {
     settle(&mat).await;
 
     let unicode_content = format!("日本語テスト 🚀 [[{}]]", target.id);
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        b1.id.clone().into_string(),
-        unicode_content.clone(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), unicode_content.clone())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     let resp = query_backlinks_filtered_inner(
@@ -1251,7 +1245,7 @@ async fn backlinks_filtered_self_reference_excluded() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("self-ref [[{}]]", b1.id),
     )
     .await
@@ -1321,7 +1315,7 @@ async fn backlinks_filtered_multiple_refs_same_block() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("first [[{}]] second [[{}]]", target.id, target.id),
     )
     .await
@@ -1382,7 +1376,7 @@ async fn backlinks_filtered_created_in_range() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into_string(),
+        b1.id.clone(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -1672,11 +1666,7 @@ async fn batch_resolve_returns_matching_blocks() {
 
     let resolved = batch_resolve_inner(
         &pool,
-        vec![
-            b1.id.clone().into_string(),
-            b2.id.clone().into_string(),
-            "NONEXISTENT".into(),
-        ],
+        vec![b1.id.clone(), b2.id.clone(), "NONEXISTENT".into()],
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -1714,7 +1704,7 @@ async fn batch_resolve_marks_deleted_block() {
         .unwrap();
     assign_to_test_space(&pool, block.id.as_str()).await;
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -1738,7 +1728,7 @@ async fn batch_resolve_marks_deleted_block() {
 
     let resolved = batch_resolve_inner(
         &pool,
-        vec![block.id.clone().into_string()],
+        vec![block.id.clone()],
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -1854,15 +1844,9 @@ async fn get_block_history_returns_ops_for_block() {
     .await
     .unwrap();
 
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.clone().into_string(),
-        "v2".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "v2".into())
+        .await
+        .unwrap();
 
     let resp = get_block_history_inner(&pool, block.id.clone().into_string(), None, None, None)
         .await
@@ -1929,7 +1913,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(1),
     )
     .await
@@ -1940,7 +1924,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c1a.id.clone().into_string(),
+        c1a.id.clone(),
         format!("link to [[{}]]", target.id),
     )
     .await
@@ -1953,7 +1937,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(2),
     )
     .await
@@ -1964,7 +1948,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c1b.id.clone().into_string(),
+        c1b.id.clone(),
         format!("another link [[{}]]", target.id),
     )
     .await
@@ -1991,7 +1975,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone().into_string()),
+        Some(page2.id.clone()),
         Some(1),
     )
     .await
@@ -2002,7 +1986,7 @@ async fn grouped_backlinks_returns_groups_by_source_page() {
         &pool,
         DEV,
         &mat,
-        c2.id.clone().into_string(),
+        c2.id.clone(),
         format!("see [[{}]]", target.id),
     )
     .await
@@ -2139,7 +2123,7 @@ async fn grouped_backlinks_single_block_page() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(1),
     )
     .await
@@ -2150,7 +2134,7 @@ async fn grouped_backlinks_single_block_page() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into_string(),
+        child.id.clone(),
         format!("ref [[{}]]", target.id),
     )
     .await
@@ -2219,7 +2203,7 @@ async fn grouped_backlinks_orphan_blocks_excluded_from_groups() {
         &pool,
         DEV,
         &mat,
-        orphan.id.clone().into_string(),
+        orphan.id.clone(),
         format!("orphan link [[{}]]", target.id),
     )
     .await
@@ -2289,7 +2273,7 @@ async fn grouped_backlinks_excludes_deleted() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(1),
     )
     .await
@@ -2300,7 +2284,7 @@ async fn grouped_backlinks_excludes_deleted() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into_string(),
+        child.id.clone(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -2322,7 +2306,7 @@ async fn grouped_backlinks_excludes_deleted() {
     assert_eq!(before.groups.len(), 1, "link present before delete");
 
     // Soft-delete the linking block
-    delete_block_inner(&pool, DEV, &mat, child.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, child.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -2386,7 +2370,7 @@ async fn grouped_backlinks_pagination() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone().into_string()),
+            Some(page.id.clone()),
             Some(1),
         )
         .await
@@ -2397,7 +2381,7 @@ async fn grouped_backlinks_pagination() {
             &pool,
             DEV,
             &mat,
-            child.id.clone().into_string(),
+            child.id.clone(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2510,7 +2494,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page1.id.clone().into_string()),
+            Some(page1.id.clone()),
             Some(pos),
         )
         .await
@@ -2521,7 +2505,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
             &pool,
             DEV,
             &mat,
-            child.id.clone().into_string(),
+            child.id.clone(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2549,7 +2533,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone().into_string()),
+        Some(page2.id.clone()),
         Some(1),
     )
     .await
@@ -2560,7 +2544,7 @@ async fn grouped_backlinks_total_and_filtered_count() {
         &pool,
         DEV,
         &mat,
-        child2.id.clone().into_string(),
+        child2.id.clone(),
         format!("link [[{}]]", target.id),
     )
     .await
@@ -2655,7 +2639,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone().into_string()),
+            Some(page.id.clone()),
             Some(1),
         )
         .await
@@ -2666,7 +2650,7 @@ async fn grouped_backlinks_with_source_page_include_filter() {
             &pool,
             DEV,
             &mat,
-            child.id.clone().into_string(),
+            child.id.clone(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2746,7 +2730,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone().into_string()),
+            Some(page.id.clone()),
             Some(1),
         )
         .await
@@ -2757,7 +2741,7 @@ async fn grouped_backlinks_with_source_page_exclude_filter() {
             &pool,
             DEV,
             &mat,
-            child.id.clone().into_string(),
+            child.id.clone(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2845,7 +2829,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
             &mat,
             "content".into(),
             "placeholder".into(),
-            Some(page.id.clone().into_string()),
+            Some(page.id.clone()),
             Some(1),
         )
         .await
@@ -2856,7 +2840,7 @@ async fn grouped_backlinks_with_source_page_include_and_exclude() {
             &pool,
             DEV,
             &mat,
-            child.id.clone().into_string(),
+            child.id.clone(),
             format!("link [[{}]]", target.id),
         )
         .await
@@ -2936,7 +2920,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(1),
     )
     .await
@@ -2947,7 +2931,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        alpha.id.clone().into_string(),
+        alpha.id.clone(),
         format!("alpha link [[{}]]", target.id),
     )
     .await
@@ -2961,7 +2945,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page1.id.clone().into_string()),
+        Some(page1.id.clone()),
         Some(2),
     )
     .await
@@ -2972,7 +2956,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        beta.id.clone().into_string(),
+        beta.id.clone(),
         format!("beta link [[{}]]", target.id),
     )
     .await
@@ -2999,7 +2983,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &mat,
         "content".into(),
         "placeholder".into(),
-        Some(page2.id.clone().into_string()),
+        Some(page2.id.clone()),
         Some(1),
     )
     .await
@@ -3010,7 +2994,7 @@ async fn grouped_backlinks_with_contains_filter() {
         &pool,
         DEV,
         &mat,
-        beta2.id.clone().into_string(),
+        beta2.id.clone(),
         format!("beta link [[{}]]", target.id),
     )
     .await

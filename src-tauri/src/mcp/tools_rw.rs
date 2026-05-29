@@ -396,7 +396,7 @@ async fn handle_append_block(
         materializer,
         "content".to_string(),
         args.content,
-        Some(parent_id),
+        Some(parent_id.into()),
         args.position,
     )
     .await?;
@@ -415,7 +415,8 @@ async fn handle_update_block_content(
     let space_id = normalize_ulid_arg(&args.space_id);
     // PEND-24 C2 — refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = edit_block_inner(pool, device_id, materializer, block_id, args.content).await?;
+    let resp =
+        edit_block_inner(pool, device_id, materializer, block_id.into(), args.content).await?;
     to_tool_result(&resp)
 }
 
@@ -529,7 +530,7 @@ async fn handle_delete_block(
     let space_id = normalize_ulid_arg(&args.space_id);
     // PEND-24 C2 — refuse cross-space writes at the MCP boundary.
     validate_block_in_space(pool, &block_id, &space_id).await?;
-    let resp = delete_block_inner(pool, device_id, materializer, block_id).await?;
+    let resp = delete_block_inner(pool, device_id, materializer, block_id.into()).await?;
     to_tool_result(&resp)
 }
 

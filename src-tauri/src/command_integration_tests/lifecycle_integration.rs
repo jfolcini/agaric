@@ -33,7 +33,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     assert!(created.deleted_at.is_none(), "create: not deleted");
 
     // 2. Edit
-    let edited = edit_block_inner(&pool, DEV, &mat, bid.clone(), "version 2".into())
+    let edited = edit_block_inner(&pool, DEV, &mat, bid.clone().into(), "version 2".into())
         .await
         .unwrap();
     settle(&mat).await;
@@ -45,13 +45,13 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     );
 
     // 3. Delete
-    let deleted = delete_block_inner(&pool, DEV, &mat, bid.clone())
+    let deleted = delete_block_inner(&pool, DEV, &mat, bid.clone().into())
         .await
         .unwrap();
     let deleted_ts = deleted.deleted_at.clone();
     settle(&mat).await;
 
-    let row = get_block_inner(&pool, bid.clone()).await.unwrap();
+    let row = get_block_inner(&pool, bid.clone().into()).await.unwrap();
     assert!(row.deleted_at.is_some(), "block must be deleted");
     assert_eq!(
         row.content,
@@ -60,11 +60,11 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     );
 
     // 4. Restore
-    restore_block_inner(&pool, DEV, &mat, bid.clone(), deleted_ts)
+    restore_block_inner(&pool, DEV, &mat, bid.clone().into(), deleted_ts)
         .await
         .unwrap();
 
-    let row = get_block_inner(&pool, bid.clone()).await.unwrap();
+    let row = get_block_inner(&pool, bid.clone().into()).await.unwrap();
     assert!(row.deleted_at.is_none(), "block must be restored");
     assert_eq!(
         row.content,
@@ -73,7 +73,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     );
 
     // 5. Edit again after restore
-    let re_edited = edit_block_inner(&pool, DEV, &mat, bid.clone(), "version 3".into())
+    let re_edited = edit_block_inner(&pool, DEV, &mat, bid.clone().into(), "version 3".into())
         .await
         .unwrap();
 
@@ -83,7 +83,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
         "re-edit after restore must update content"
     );
 
-    let final_row = get_block_inner(&pool, bid).await.unwrap();
+    let final_row = get_block_inner(&pool, bid.into()).await.unwrap();
     assert_eq!(
         final_row.content,
         Some("version 3".into()),
@@ -142,7 +142,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "parent".into(),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         None,
     )
     .await
@@ -155,7 +155,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "leaf".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         None,
     )
     .await
@@ -171,7 +171,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
     );
 
     // Soft-delete the leaf. Its parent stays alive.
-    let del = delete_block_inner(&pool, DEV, &mat, leaf.id.clone().into_string())
+    let del = delete_block_inner(&pool, DEV, &mat, leaf.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -192,8 +192,8 @@ async fn restore_block_synchronously_refreshes_page_id() {
         &pool,
         DEV,
         &mat,
-        parent.id.clone().into_string(),
-        Some(page_b.id.clone().into_string()),
+        parent.id.clone(),
+        Some(page_b.id.clone()),
         1,
     )
     .await
@@ -222,15 +222,9 @@ async fn restore_block_synchronously_refreshes_page_id() {
     // rewrites leaf.page_id = page_b inside the restore tx itself.
     // Without M6, the sync path leaves it at page_a (the async
     // RebuildPageIds catch-up is blocked by the shutdown).
-    restore_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        leaf.id.clone().into_string(),
-        del.deleted_at,
-    )
-    .await
-    .unwrap();
+    restore_block_inner(&pool, DEV, &mat, leaf.id.clone(), del.deleted_at)
+        .await
+        .unwrap();
 
     let leaf_page_after_restore: Option<String> =
         sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
@@ -507,7 +501,7 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
         &mat,
         "content".into(),
         "block".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -556,13 +550,11 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     );
 
     // 4. Move block to root
-    move_block_inner(&pool, DEV, &mat, block.id.clone().into_string(), None, 99)
+    move_block_inner(&pool, DEV, &mat, block.id.clone(), None, 99)
         .await
         .unwrap();
 
-    let moved = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let moved = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(moved.parent_id.is_none(), "block moved to root");
     assert_eq!(moved.position, Some(99), "position updated");
 
@@ -690,7 +682,7 @@ async fn test_move_block_rejects_zero_position() {
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id.into_string(), None, 0).await;
+    let result = move_block_inner(&pool, DEV, &mat, block.id, None, 0).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -720,7 +712,7 @@ async fn test_move_block_rejects_negative_position() {
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id.into_string(), None, -3).await;
+    let result = move_block_inner(&pool, DEV, &mat, block.id, None, -3).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -973,7 +965,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "first".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         None,
     )
     .await
@@ -987,7 +979,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "second".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         None,
     )
     .await
@@ -1001,7 +993,7 @@ async fn create_block_with_none_position_appends_after_siblings() {
         &mat,
         "content".into(),
         "third".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         None,
     )
     .await

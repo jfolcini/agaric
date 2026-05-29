@@ -228,7 +228,7 @@ pub async fn tombstone_purge(
         pool,
         device_id,
         materializer,
-        ids,
+        ids.into_iter().map(Into::into).collect(),
     )
     .await?;
 

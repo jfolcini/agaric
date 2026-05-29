@@ -25,7 +25,7 @@ use crate::space::SpaceScope;
 #[instrument(skip(pool), err)]
 pub async fn list_blocks_inner(
     pool: &SqlitePool,
-    parent_id: Option<String>,
+    parent_id: Option<BlockId>,
     block_type: Option<String>,
     tag_id: Option<String>,
     agenda_date: Option<String>,
@@ -36,6 +36,9 @@ pub async fn list_blocks_inner(
     limit: Option<i64>,
     space_id: String,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form so `as_deref()` / sqlx binds below stay unchanged.
+    let parent_id = parent_id.map(BlockId::into_string);
     // Treat agenda_date_start/end as an agenda filter for conflict detection
     let has_agenda_range = agenda_date_start.is_some() && agenda_date_end.is_some();
 
@@ -178,7 +181,7 @@ async fn count_blocks_by_type(
 ///
 /// - [`AppError::NotFound`] — no block with the given ID exists
 #[instrument(skip(pool), err)]
-pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<BlockRow, AppError> {
+pub async fn get_block_inner(pool: &SqlitePool, block_id: BlockId) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
         r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
@@ -211,7 +214,7 @@ pub async fn get_block_inner(pool: &SqlitePool, block_id: String) -> Result<Bloc
 #[instrument(skip(pool), err)]
 pub async fn get_active_block_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
@@ -255,13 +258,15 @@ pub async fn get_active_block_inner(
 #[instrument(skip(pool, ids), err)]
 pub async fn batch_resolve_inner(
     pool: &SqlitePool,
-    ids: Vec<String>,
+    ids: Vec<BlockId>,
     scope: &SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
     }
 
+    // #107: re-derive owned String form for the JSON membership probe below.
+    let ids: Vec<String> = ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&ids)?;
     let space_filter = scope.as_filter_param();
 
@@ -325,7 +330,7 @@ pub async fn batch_resolve_inner(
 #[allow(clippy::too_many_arguments)]
 pub async fn list_blocks(
     pool: State<'_, ReadPool>,
-    parent_id: Option<String>,
+    parent_id: Option<BlockId>,
     block_type: Option<String>,
     tag_id: Option<String>,
     agenda: Option<AgendaQuery>,
@@ -424,7 +429,7 @@ pub async fn list_trash(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<BlockRow, AppError> {
+pub async fn get_block(pool: State<'_, ReadPool>, block_id: BlockId) -> Result<BlockRow, AppError> {
     get_active_block_inner(&pool.0, block_id)
         .await
         .map_err(sanitize_internal_error)
@@ -440,7 +445,7 @@ pub async fn get_block(pool: State<'_, ReadPool>, block_id: String) -> Result<Bl
 #[specta::specta]
 pub async fn batch_resolve(
     pool: State<'_, ReadPool>,
-    ids: Vec<String>,
+    ids: Vec<BlockId>,
     scope: SpaceScope,
 ) -> Result<Vec<ResolvedBlock>, AppError> {
     batch_resolve_inner(&pool.0, ids, &scope)
@@ -509,11 +514,13 @@ pub async fn trash_descendant_counts(
 #[instrument(skip(pool, block_ids), err)]
 pub async fn first_child_for_blocks_inner(
     pool: &SqlitePool,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, BlockRow>, AppError> {
     if block_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    // #107: re-derive owned String form for the JSON membership probe below.
+    let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
     // ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY position, id)
@@ -556,7 +563,7 @@ pub async fn first_child_for_blocks_inner(
 #[specta::specta]
 pub async fn first_child_for_blocks(
     pool: State<'_, ReadPool>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<HashMap<String, BlockRow>, AppError> {
     first_child_for_blocks_inner(&pool.0, block_ids)
         .await
@@ -594,7 +601,7 @@ pub async fn first_child_for_blocks(
 #[instrument(skip(pool, ids), err)]
 pub async fn get_blocks_inner(
     pool: &SqlitePool,
-    ids: Vec<String>,
+    ids: Vec<BlockId>,
 ) -> Result<Vec<BlockRow>, AppError> {
     if ids.is_empty() {
         return Err(AppError::Validation("ids list cannot be empty".into()));
@@ -606,6 +613,8 @@ pub async fn get_blocks_inner(
             crate::commands::properties::MAX_BATCH_BLOCK_IDS,
         )));
     }
+    // #107: re-derive owned String form for the JSON membership probe below.
+    let ids: Vec<String> = ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&ids)?;
 
     // Runtime sqlx form: format! the canonical column const into the SELECT
@@ -630,7 +639,7 @@ pub async fn get_blocks_inner(
 #[specta::specta]
 pub async fn get_blocks(
     pool: State<'_, ReadPool>,
-    ids: Vec<String>,
+    ids: Vec<BlockId>,
 ) -> Result<Vec<BlockRow>, AppError> {
     get_blocks_inner(&pool.0, ids)
         .await

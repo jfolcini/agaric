@@ -319,7 +319,7 @@ async fn get_page_happy_path_returns_subtree() {
         &mat,
         "content".into(),
         "c1".into(),
-        Some(page.id.to_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -330,7 +330,7 @@ async fn get_page_happy_path_returns_subtree() {
         &mat,
         "content".into(),
         "g1".into(),
-        Some(child1.id.to_string()),
+        Some(child1.id),
         Some(1),
     )
     .await
@@ -393,7 +393,7 @@ async fn get_page_on_non_page_block_validation_error() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(page.id.to_string()),
+        Some(page.id),
         Some(1),
     )
     .await
@@ -1770,7 +1770,7 @@ async fn inner_get_page_composes_root_and_subtree() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(page.id.to_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -1785,7 +1785,7 @@ async fn inner_get_page_composes_root_and_subtree() {
 
     let resp = get_page_inner(
         &pool,
-        page.id.as_str(),
+        page.id.clone().as_str(),
         crate::spaces::SPACE_PERSONAL_ULID,
         None,
         Some(10),
@@ -1948,7 +1948,7 @@ async fn snapshot_get_page_response_shape() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.to_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await

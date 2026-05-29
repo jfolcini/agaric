@@ -4543,7 +4543,7 @@ mod tests_p7 {
                     // Same-space — both APIs must succeed.
                     let resolved = batch_resolve_inner(
                         &pool,
-                        vec![page_id.clone()],
+                        vec![page_id.clone().into()],
                         &SpaceScope::Active(SpaceId::from_trusted(candidate_space)),
                     )
                     .await
@@ -4563,7 +4563,7 @@ mod tests_p7 {
                     // Foreign-space — both APIs must reject.
                     let resolved = batch_resolve_inner(
                         &pool,
-                        vec![page_id.clone()],
+                        vec![page_id.clone().into()],
                         &SpaceScope::Active(SpaceId::from_trusted(candidate_space)),
                     )
                     .await

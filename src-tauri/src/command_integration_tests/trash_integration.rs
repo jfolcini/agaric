@@ -165,7 +165,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "leaf".into(),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         Some(1),
     )
     .await
@@ -186,8 +186,8 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
         &pool,
         DEV,
         &mat,
-        leaf.id.clone().into_string(),
-        Some(page_b.id.clone().into_string()),
+        leaf.id.clone(),
+        Some(page_b.id.clone()),
         1,
     )
     .await
@@ -207,7 +207,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
     );
 
     // Soft-delete the leaf individually.
-    delete_block_inner(&pool, DEV, &mat, leaf.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, leaf.id.clone())
         .await
         .unwrap();
     settle(&mat).await;

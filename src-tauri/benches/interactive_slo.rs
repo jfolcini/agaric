@@ -687,7 +687,9 @@ fn bench_get_block(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ = get_block_inner(&pool, target_id.clone()).await.unwrap();
+                    let _ = get_block_inner(&pool, target_id.clone().into())
+                        .await
+                        .unwrap();
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);
@@ -850,9 +852,17 @@ fn bench_batch_resolve(c: &mut Criterion) {
             async move {
                 let start = Instant::now();
                 for _ in 0..iters {
-                    let _ = batch_resolve_inner(&pool, request_ids.clone(), &scope)
-                        .await
-                        .unwrap();
+                    let _ = batch_resolve_inner(
+                        &pool,
+                        request_ids
+                            .clone()
+                            .into_iter()
+                            .map(Into::into)
+                            .collect::<Vec<_>>(),
+                        &scope,
+                    )
+                    .await
+                    .unwrap();
                 }
                 let elapsed = start.elapsed();
                 acc.record(elapsed, iters);

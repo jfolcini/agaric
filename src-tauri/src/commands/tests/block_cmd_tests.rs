@@ -35,9 +35,7 @@ async fn create_block_returns_correct_fields_and_persists() {
     assert!(resp.deleted_at.is_none(), "new block should not be deleted");
 
     // Verify persistence in DB via direct query
-    let row = get_block_inner(&pool, resp.id.clone().into_string())
-        .await
-        .unwrap();
+    let row = get_block_inner(&pool, resp.id.clone()).await.unwrap();
     assert_eq!(row.id, resp.id, "DB row should match response ID");
     assert_eq!(
         row.block_type, "content",
@@ -112,7 +110,7 @@ async fn create_block_with_parent_sets_parent_id() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -166,7 +164,7 @@ async fn create_block_deleted_parent_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, parent.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
 
@@ -178,7 +176,7 @@ async fn create_block_deleted_parent_returns_not_found() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.into_string()),
+        Some(parent.id),
         Some(1),
     )
     .await;
@@ -307,7 +305,7 @@ async fn create_block_with_unicode_content_preserves_text() {
     );
 
     // Also verify round-trip through DB
-    let row = get_block_inner(&pool, resp.id.into_string()).await.unwrap();
+    let row = get_block_inner(&pool, resp.id).await.unwrap();
     assert_eq!(
         row.content,
         Some(unicode_content.into()),
@@ -589,7 +587,7 @@ async fn create_block_non_page_ignores_space_id() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
         &SpaceScope::Global,
     )
@@ -620,15 +618,9 @@ async fn edit_block_updates_content() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "updated".into(),
-    )
-    .await
-    .unwrap();
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
+        .await
+        .unwrap();
 
     assert_eq!(
         edited.content,
@@ -666,26 +658,14 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     .unwrap();
 
     // First edit
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "v2".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+        .await
+        .unwrap();
 
     // Second edit — should have prev_edit pointing to the first edit
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "v3".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
+        .await
+        .unwrap();
 
     // Check the last op_log entry has prev_edit set
     let row = sqlx::query!(
@@ -729,33 +709,15 @@ async fn edit_block_prev_edit_picks_highest_seq_after_b1_rewrite() {
     .await
     .unwrap();
 
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "v2".into(),
-    )
-    .await
-    .unwrap();
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "v3".into(),
-    )
-    .await
-    .unwrap();
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "v4".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
+        .await
+        .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
+        .await
+        .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v4".into())
+        .await
+        .unwrap();
 
     // The op_log holds: 1 create + 3 edit ops. The latest edit's
     // `prev_edit` must reference the second-latest edit, i.e. the op
@@ -817,18 +779,11 @@ async fn edit_block_deleted_block_returns_not_found() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone())
         .await
         .unwrap();
 
-    let result = edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.into_string(),
-        "should fail".into(),
-    )
-    .await;
+    let result = edit_block_inner(&pool, DEV, &mat, created.id, "should fail".into()).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -854,7 +809,7 @@ async fn edit_block_with_unicode_preserves_text() {
     .unwrap();
 
     let unicode = "日本語テスト 🎌 über";
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), unicode.into())
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id, unicode.into())
         .await
         .unwrap();
 
@@ -886,15 +841,9 @@ async fn edit_block_with_empty_to_text() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "".into(),
-    )
-    .await
-    .unwrap();
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
+        .await
+        .unwrap();
 
     assert_eq!(
         edited.content,
@@ -942,15 +891,9 @@ async fn edit_block_with_identical_content_is_noop() {
         .unwrap();
 
     // Edit with identical content
-    let edited = edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "same text".into(),
-    )
-    .await
-    .unwrap();
+    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "same text".into())
+        .await
+        .unwrap();
 
     assert_eq!(
         edited.content,
@@ -1000,7 +943,7 @@ async fn edit_block_rejects_oversized_content() {
     .unwrap();
 
     let oversized = "x".repeat(MAX_CONTENT_LENGTH + 1);
-    let result = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), oversized).await;
+    let result = edit_block_inner(&pool, DEV, &mat, created.id, oversized).await;
 
     let err = result.unwrap_err();
     assert!(
@@ -1027,7 +970,7 @@ async fn edit_block_accepts_content_at_max_length() {
     .unwrap();
 
     let at_limit = "x".repeat(MAX_CONTENT_LENGTH);
-    let result = edit_block_inner(&pool, DEV, &mat, created.id.into_string(), at_limit).await;
+    let result = edit_block_inner(&pool, DEV, &mat, created.id, at_limit).await;
 
     assert!(
         result.is_ok(),
@@ -1068,13 +1011,13 @@ async fn delete_block_cascades_to_children() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
     .unwrap();
 
-    let resp = delete_block_inner(&pool, DEV, &mat, parent.id.into_string())
+    let resp = delete_block_inner(&pool, DEV, &mat, parent.id)
         .await
         .unwrap();
 
@@ -1114,11 +1057,11 @@ async fn delete_block_already_deleted_returns_invalid_operation() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone())
         .await
         .unwrap();
 
-    let result = delete_block_inner(&pool, DEV, &mat, created.id.into_string()).await;
+    let result = delete_block_inner(&pool, DEV, &mat, created.id).await;
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),
         "second delete should return InvalidOperation"
@@ -1440,9 +1383,14 @@ async fn restore_blocks_by_ids_clears_deleted_at_for_n_blocks() {
     }
 
     let ids: Vec<String> = (0..4).map(|i| format!("RBBI{i:03}")).collect();
-    let resp = restore_blocks_by_ids_inner(&pool, DEV, &mat, ids.clone())
-        .await
-        .unwrap();
+    let resp = restore_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone().into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(resp.affected_count, 4, "all 4 roots should restore");
 
@@ -1568,7 +1516,13 @@ async fn restore_blocks_by_ids_rejects_oversize_list() {
     let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
-    let result = restore_blocks_by_ids_inner(&pool, DEV, &mat, oversize).await;
+    let result = restore_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversize list must reject with Validation, got {result:?}"
@@ -1599,9 +1553,14 @@ async fn restore_blocks_by_ids_writes_one_op_log_seq_range() {
             .unwrap_or(0);
 
     let ids: Vec<String> = (0..3).map(|i| format!("RBBOPS{i}")).collect();
-    restore_blocks_by_ids_inner(&pool, DEV, &mat, ids)
-        .await
-        .unwrap();
+    restore_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap();
 
     // The 3 RestoreBlock ops should have consecutive seqs (no gaps,
     // i.e. one tx, atomic). Read all RestoreBlock op seqs since the
@@ -1774,7 +1733,13 @@ async fn purge_blocks_by_ids_atomic_rollback_on_validation_error() {
         .unwrap();
 
     let oversized: Vec<String> = (0..1001).map(|i| format!("X{i:04}")).collect();
-    let result = purge_blocks_by_ids_inner(&pool, DEV, &mat, oversized).await;
+    let result = purge_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversized.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversized input must return Validation"
@@ -2541,7 +2506,15 @@ async fn move_block_exceeding_max_depth_returns_validation_error() {
     insert_block(&pool, "DEPTH_EXTRA", "content", "extra", None, Some(99)).await;
 
     // Try moving the loose block under the deepest level — should fail
-    let result = move_block_inner(&pool, DEV, &mat, "DEPTH_EXTRA".into(), Some(parent), 1).await;
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "DEPTH_EXTRA".into(),
+        Some(parent.into()),
+        1,
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -2574,7 +2547,7 @@ async fn move_block_at_depth_limit_succeeds() {
     // Create a loose block and move under the (MAX_BLOCK_DEPTH - 1)th level — should succeed
     insert_block(&pool, "DLIM_OK", "content", "ok", None, Some(99)).await;
 
-    let result = move_block_inner(&pool, DEV, &mat, "DLIM_OK".into(), Some(parent), 1).await;
+    let result = move_block_inner(&pool, DEV, &mat, "DLIM_OK".into(), Some(parent.into()), 1).await;
 
     assert!(
         result.is_ok(),
@@ -2621,7 +2594,7 @@ async fn create_block_at_max_depth_succeeds() {
         &mat,
         "content".into(),
         "at-limit".into(),
-        Some(parent),
+        Some(parent.into()),
         Some(1),
     )
     .await;
@@ -2662,7 +2635,7 @@ async fn create_block_exceeding_max_depth_returns_validation_error() {
         &mat,
         "content".into(),
         "over-limit".into(),
-        Some(parent),
+        Some(parent.into()),
         Some(1),
     )
     .await;
@@ -2727,7 +2700,7 @@ async fn move_block_with_subtree_exceeding_max_depth_returns_validation_error() 
     insert_block(&pool, "SUB_D", "content", "d", Some("SUB_C"), Some(1)).await;
 
     // Moving A under d17 means D ends up at depth 17+1+3 = 21 > 20
-    let result = move_block_inner(&pool, DEV, &mat, "SUB_A".into(), Some(parent), 1).await;
+    let result = move_block_inner(&pool, DEV, &mat, "SUB_A".into(), Some(parent.into()), 1).await;
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
@@ -4482,7 +4455,7 @@ async fn delete_blocks_by_ids_cascades_descendants() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -4494,14 +4467,14 @@ async fn delete_blocks_by_ids_cascades_descendants() {
         &mat,
         "content".into(),
         "grandchild".into(),
-        Some(child.id.clone().into_string()),
+        Some(child.id.clone()),
         Some(1),
     )
     .await
     .unwrap();
     settle(&mat).await;
 
-    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.to_string()])
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![parent.id.clone()])
         .await
         .unwrap();
     assert_eq!(
@@ -4560,7 +4533,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
         &mat,
         "content".into(),
         "r1c".into(),
-        Some(r1.id.clone().into_string()),
+        Some(r1.id.clone()),
         Some(1),
     )
     .await
@@ -4571,7 +4544,7 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
         &mat,
         "content".into(),
         "r2c".into(),
-        Some(r2.id.clone().into_string()),
+        Some(r2.id.clone()),
         Some(1),
     )
     .await
@@ -4589,10 +4562,9 @@ async fn delete_blocks_by_ids_writes_one_op_per_root_in_one_tx() {
     .await
     .unwrap();
 
-    let affected =
-        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id.to_string(), r2.id.to_string()])
-            .await
-            .unwrap();
+    let affected = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![r1.id, r2.id])
+        .await
+        .unwrap();
     assert_eq!(affected, 4, "2 roots + 2 children = 4 cascade rows");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -4648,12 +4620,12 @@ async fn delete_blocks_by_ids_skips_already_deleted() {
     .unwrap();
     settle(&mat).await;
 
-    let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.to_string()])
+    let first = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
         .await
         .unwrap();
     assert_eq!(first, 1, "first call soft-deletes the block");
 
-    let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.to_string()])
+    let second = delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b.id.clone()])
         .await
         .unwrap();
     assert_eq!(
@@ -4733,7 +4705,7 @@ async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
     settle(&mat).await;
 
     let affected =
-        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.to_string(), "GHOST".into()])
+        delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![live.id.clone(), "GHOST".into()])
             .await
             .unwrap();
     assert_eq!(affected, 1, "the live root is soft-deleted; ghost ignored");
@@ -4771,7 +4743,13 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
-    let result = delete_blocks_by_ids_inner(&pool, DEV, &mat, oversize).await;
+    let result = delete_blocks_by_ids_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversize list must reject with Validation, got {result:?}"
@@ -4807,7 +4785,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
         &mat,
         "content".into(),
         "desc".into(),
-        Some(ancestor.id.clone().into_string()),
+        Some(ancestor.id.clone()),
         Some(1),
     )
     .await
@@ -4818,7 +4796,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
         &pool,
         DEV,
         &mat,
-        vec![ancestor.id.to_string(), descendant.id.to_string()],
+        vec![ancestor.id.clone(), descendant.id.clone()],
     )
     .await
     .unwrap();
@@ -4904,9 +4882,15 @@ async fn move_blocks_to_space_moves_all_in_one_tx() {
     .await
     .unwrap();
 
-    let moved = move_blocks_to_space_inner(&pool, DEV, &mat, ids.clone(), "MBS_SPACE".into())
-        .await
-        .unwrap();
+    let moved = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        ids.clone().into_iter().map(Into::into).collect::<Vec<_>>(),
+        "MBS_SPACE".into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(moved, 4, "all four blocks should be reported as moved");
 
     let post_max: i64 = sqlx::query_scalar!(
@@ -5005,7 +4989,7 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
     .await
     .unwrap();
     settle(&mat).await;
-    delete_block_inner(&pool, DEV, &mat, deleted.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -5014,11 +4998,7 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
         &pool,
         DEV,
         &mat,
-        vec![
-            live.id.to_string(),
-            deleted.id.to_string(),
-            "MBS3_GHOST".into(),
-        ],
+        vec![live.id.clone(), deleted.id, "MBS3_GHOST".into()],
         "MBS3_SPACE".into(),
     )
     .await
@@ -5081,7 +5061,14 @@ async fn move_blocks_to_space_rejects_oversize_list() {
     let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("MBS6_{i:026}"))
         .collect();
-    let result = move_blocks_to_space_inner(&pool, DEV, &mat, oversize, "MBS6_SPACE".into()).await;
+    let result = move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+        "MBS6_SPACE".into(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::Validation(_))),
         "oversize block_ids must be rejected, got {result:?}"
@@ -5461,7 +5448,7 @@ async fn edit_block_cross_space_content_rejected() {
         &pool,
         DEV,
         &mat,
-        src.id.clone().into_string(),
+        src.id.clone(),
         format!("see [[{}]]", target.id),
     )
     .await;
@@ -5505,7 +5492,7 @@ async fn create_block_cross_space_content_rejected() {
         &mat,
         "content".into(),
         format!("see [[{}]]", target.id),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         None,
     )
     .await;

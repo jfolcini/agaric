@@ -183,7 +183,7 @@ async fn update_block_content_happy_path() {
         &mat,
         "content".into(),
         "before".into(),
-        Some(parent.id.to_string()),
+        Some(parent.id),
         Some(1),
     )
     .await
@@ -261,7 +261,7 @@ async fn mk_in_space_content_block(
         mat,
         "content".into(),
         content.into(),
-        Some(parent.id.to_string()),
+        Some(parent.id),
         Some(1),
     )
     .await
@@ -431,7 +431,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(parent.id.to_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -442,7 +442,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         &mat,
         "content".into(),
         "not-a-tag".into(),
-        Some(parent.id.into_string()),
+        Some(parent.id.clone()),
         Some(2),
     )
     .await
@@ -651,7 +651,7 @@ async fn delete_block_is_reversible_via_restore() {
         .expect("deleted_at timestamp")
         .to_string();
 
-    let restore = restore_block_inner(&pool, DEV, &mat, block.id.to_string(), deleted_at).await;
+    let restore = restore_block_inner(&pool, DEV, &mat, block.id, deleted_at).await;
     assert!(
         restore.is_ok(),
         "delete_block output must be usable as a restore ref: {restore:?}",
