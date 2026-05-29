@@ -344,9 +344,11 @@ impl SyncScheduler {
     /// (the daemon needs an owned id), but no per-tick clone of
     /// up-to-date peers.
     pub fn peers_due_for_resync(&self, peers: &[PeerRef]) -> Vec<String> {
-        let now = chrono::Utc::now();
-        let interval = chrono::Duration::from_std(self.resync_interval)
-            .unwrap_or(chrono::Duration::seconds(60));
+        // #109 Phase 2: `synced_at` is now epoch-ms, so the staleness check is
+        // plain integer subtraction against the current instant (was an
+        // RFC 3339 parse + `chrono::Duration` diff).
+        let now_ms = crate::db::now_ms();
+        let interval_ms = i64::try_from(self.resync_interval.as_millis()).unwrap_or(i64::MAX);
 
         peers
             .iter()
@@ -355,13 +357,9 @@ impl SyncScheduler {
                 if !self.may_retry(&p.peer_id) {
                     return false;
                 }
-                match p.synced_at.as_deref() {
+                match p.synced_at {
                     None => true,
-                    Some(ts) => {
-                        chrono::DateTime::parse_from_rfc3339(ts)
-                            .map(|dt| now - dt.with_timezone(&chrono::Utc) > interval)
-                            .unwrap_or(true) // unparseable timestamp → resync
-                    }
+                    Some(synced_ms) => now_ms - synced_ms > interval_ms,
                 }
             })
             .map(|p| p.peer_id.clone())
@@ -610,12 +608,12 @@ mod tests {
     /// `peers_due_for_resync` reads (`peer_id`, `synced_at`); the rest
     /// default to None / 0. Keeps the resync tests as terse as the
     /// pre-L-76 tuple form they replaced.
-    fn pr(peer_id: &str, synced_at: Option<&str>) -> PeerRef {
+    fn pr(peer_id: &str, synced_at: Option<i64>) -> PeerRef {
         PeerRef {
             peer_id: peer_id.to_string(),
             last_hash: None,
             last_sent_hash: None,
-            synced_at: synced_at.map(String::from),
+            synced_at,
             reset_count: 0,
             last_reset_at: None,
             cert_hash: None,
@@ -635,8 +633,8 @@ mod tests {
     #[test]
     fn peers_due_for_resync_recent_excluded() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
-        let recent = chrono::Utc::now().to_rfc3339();
-        let peers = vec![pr("peer-a", Some(&recent)), pr("peer-b", None)];
+        let recent = crate::db::now_ms();
+        let peers = vec![pr("peer-a", Some(recent)), pr("peer-b", None)];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due, vec!["peer-b".to_string()]);
     }
@@ -644,8 +642,8 @@ mod tests {
     #[test]
     fn peers_due_for_resync_old_included() {
         let sched = SyncScheduler::with_intervals(DEFAULT_DEBOUNCE, Duration::from_secs(60));
-        let old = (chrono::Utc::now() - chrono::Duration::seconds(120)).to_rfc3339();
-        let peers = vec![pr("peer-a", Some(&old))];
+        let old = crate::db::now_ms() - 120_000;
+        let peers = vec![pr("peer-a", Some(old))];
         let due = sched.peers_due_for_resync(&peers);
         assert_eq!(due, vec!["peer-a".to_string()]);
     }
@@ -711,22 +709,21 @@ mod tests {
     }
 
     #[test]
-    fn peers_due_for_resync_unparseable_timestamp() {
+    fn peers_due_for_resync_epoch_zero_is_overdue() {
+        // #109 Phase 2: `synced_at` is now epoch-ms, so there is no
+        // "unparseable" case; the analogous edge is an ancient timestamp.
+        // Epoch 0 (1970) is far older than any resync interval → overdue.
         let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
-        let peers = vec![pr("PEER_BAD", Some("not-a-date"))];
+        let peers = vec![pr("PEER_OLD", Some(0))];
         let due = sched.peers_due_for_resync(&peers);
-        assert_eq!(
-            due,
-            vec!["PEER_BAD"],
-            "unparseable timestamp should be treated as overdue"
-        );
+        assert_eq!(due, vec!["PEER_OLD"], "epoch-0 timestamp should be overdue");
     }
 
     #[test]
     fn peers_due_for_resync_future_timestamp() {
         let sched = SyncScheduler::with_intervals(Duration::from_secs(3), Duration::from_secs(60));
-        let future = (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339();
-        let peers = vec![pr("PEER_FUTURE", Some(&future))];
+        let future = crate::db::now_ms() + 3_600_000; // +1h
+        let peers = vec![pr("PEER_FUTURE", Some(future))];
         let due = sched.peers_due_for_resync(&peers);
         assert!(
             due.is_empty(),

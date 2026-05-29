@@ -95,7 +95,7 @@ const mockPeers = [
     peer_id: 'peer-abc-1234567890',
     last_hash: 'hash1',
     last_sent_hash: null,
-    synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 min ago
+    synced_at: Date.now() - 5 * 60 * 1000,
     reset_count: 0,
     last_reset_at: null,
     cert_hash: null,
@@ -107,7 +107,7 @@ const mockPeers = [
     last_sent_hash: null,
     synced_at: null,
     reset_count: 2,
-    last_reset_at: '2025-01-01T00:00:00Z',
+    last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
     cert_hash: null,
     device_name: null,
   },

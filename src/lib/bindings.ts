@@ -342,9 +342,17 @@ export const commands = {
 	peer_id: string,
 	last_hash: string | null,
 	last_sent_hash: string | null,
-	synced_at: string | null,
+	/**
+	 *  Most recent successful sync, in milliseconds since the UNIX epoch
+	 *  (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+	 */
+	synced_at: number | null,
 	reset_count: number,
-	last_reset_at: string | null,
+	/**
+	 *  Most recent protocol reset, in milliseconds since the UNIX epoch
+	 *  (UTC); `None` = never reset. #109 Phase 2: was an RFC 3339 string.
+	 */
+	last_reset_at: number | null,
 	/**
 	 *  SHA-256 hex of the peer's TLS certificate, observed during pairing.
 	 *  Used for certificate pinning on reconnection.
@@ -1689,9 +1697,17 @@ export type PeerRef = {
 	peer_id: string,
 	last_hash: string | null,
 	last_sent_hash: string | null,
-	synced_at: string | null,
+	/**
+	 *  Most recent successful sync, in milliseconds since the UNIX epoch
+	 *  (UTC); `None` = never synced. #109 Phase 2: was an RFC 3339 string.
+	 */
+	synced_at: number | null,
 	reset_count: number,
-	last_reset_at: string | null,
+	/**
+	 *  Most recent protocol reset, in milliseconds since the UNIX epoch
+	 *  (UTC); `None` = never reset. #109 Phase 2: was an RFC 3339 string.
+	 */
+	last_reset_at: number | null,
 	/**
 	 *  SHA-256 hex of the peer's TLS certificate, observed during pairing.
 	 *  Used for certificate pinning on reconnection.

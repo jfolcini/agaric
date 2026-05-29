@@ -94,7 +94,7 @@ const mockPeers = [
     peer_id: 'peer-abc-1234567890',
     last_hash: 'hash1',
     last_sent_hash: null,
-    synced_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    synced_at: Date.now() - 5 * 60 * 1000,
     reset_count: 0,
     last_reset_at: null,
     cert_hash: null,
@@ -107,7 +107,7 @@ const mockPeers = [
     last_sent_hash: null,
     synced_at: null,
     reset_count: 1,
-    last_reset_at: '2025-01-01T00:00:00Z',
+    last_reset_at: 1735689600000, // 2025-01-01T00:00:00Z
     cert_hash: null,
     device_name: null,
     last_address: null,
@@ -861,7 +861,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-3',
           last_hash: null,
           last_sent_hash: null,
-          synced_at: '2025-01-03T00:00:00Z',
+          synced_at: 1735862400000, // 2025-01-03T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
           cert_hash: null,
@@ -871,7 +871,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-1',
           last_hash: null,
           last_sent_hash: null,
-          synced_at: '2025-01-01T00:00:00Z',
+          synced_at: 1735689600000, // 2025-01-01T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
           cert_hash: null,
@@ -881,7 +881,7 @@ describe('DeviceManagement', () => {
           peer_id: 'peer-2',
           last_hash: null,
           last_sent_hash: null,
-          synced_at: '2025-01-02T00:00:00Z',
+          synced_at: 1735776000000, // 2025-01-02T00:00:00Z
           reset_count: 0,
           last_reset_at: null,
           cert_hash: null,
