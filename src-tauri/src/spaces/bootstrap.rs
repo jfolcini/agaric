@@ -9,11 +9,12 @@
 use sqlx::SqlitePool;
 
 use crate::commands::set_property_in_tx;
-use crate::db::MAX_SQL_PARAMS;
+use crate::db::{CommandTx, MAX_SQL_PARAMS};
 use crate::error::AppError;
+use crate::materializer::Materializer;
 use crate::now_rfc3339;
 use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
-use crate::op_log;
+use crate::op_log::{self, OpRecord};
 use crate::ulid::BlockId;
 
 /// M-92 — chunk size for the batched `block_properties` UPSERT in
@@ -85,7 +86,11 @@ pub const MIGRATION_THRESHOLD_ULID: &str = "01KQ5WWYR00000000000000000";
 /// Any database error is propagated. Bootstrap failure is boot-fatal: the
 /// app cannot honour the "every page belongs to a space" invariant
 /// without completing this step.
-pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), AppError> {
+pub async fn bootstrap_spaces(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+) -> Result<(), AppError> {
     // BUG-1 / L-133 — split the seeded-block creation fast-path from
     // the `pages_without_space` backfill. The seeded-block path stays
     // gated on `is_bootstrap_complete` (so we don't re-emit `is_space`
@@ -94,7 +99,12 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
     // page+space invariant (legacy callsites, sync replay, etc.).
     let seeded_blocks_already_done = is_bootstrap_complete(pool).await?;
 
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112 (#110) — `CommandTx` so the op records emitted below
+    // are coupled to a post-commit materializer dispatch instead of
+    // being discarded. Helpers append the `OpRecord`s into `records`,
+    // which we drain into the tx's pending queue before commit.
+    let mut tx = CommandTx::begin_immediate(pool, "bootstrap_spaces").await?;
+    let mut records: Vec<OpRecord> = Vec::new();
 
     let (
         personal_created,
@@ -110,10 +120,16 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
         );
         (false, false, false, false, false, false)
     } else {
-        let personal_created =
-            ensure_space_block(&mut tx, device_id, SPACE_PERSONAL_ULID, "Personal").await?;
+        let personal_created = ensure_space_block(
+            &mut tx,
+            device_id,
+            SPACE_PERSONAL_ULID,
+            "Personal",
+            &mut records,
+        )
+        .await?;
         let personal_is_space_set =
-            ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID).await?;
+            ensure_is_space_property(&mut tx, device_id, SPACE_PERSONAL_ULID, &mut records).await?;
         // FEAT-3p10 — seed the default `accent_color` for Personal. The
         // helper short-circuits when the property already exists so a
         // re-run / partial-resume never piles up duplicate ops.
@@ -122,12 +138,14 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
             device_id,
             SPACE_PERSONAL_ULID,
             SPACE_PERSONAL_DEFAULT_ACCENT,
+            &mut records,
         )
         .await?;
 
-        let work_created = ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work").await?;
+        let work_created =
+            ensure_space_block(&mut tx, device_id, SPACE_WORK_ULID, "Work", &mut records).await?;
         let work_is_space_set =
-            ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID).await?;
+            ensure_is_space_property(&mut tx, device_id, SPACE_WORK_ULID, &mut records).await?;
         // FEAT-3p10 — seed the default `accent_color` for Work. Same
         // idempotency guard as Personal above.
         let work_accent_set = ensure_accent_color_property(
@@ -135,6 +153,7 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
             device_id,
             SPACE_WORK_ULID,
             SPACE_WORK_DEFAULT_ACCENT,
+            &mut records,
         )
         .await?;
 
@@ -159,16 +178,22 @@ pub async fn bootstrap_spaces(pool: &SqlitePool, device_id: &str) -> Result<(), 
     // `set_property_in_tx` loop. For a 5000-page first-boot vault this
     // collapses ~20k SQL round-trips down to ~5k op_log appends + ~30
     // chunked block_properties UPSERTs.
-    migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate).await?;
+    migrate_pages_to_personal_space_batched(&mut tx, device_id, &pages_to_migrate, &mut records)
+        .await?;
 
     // PEND-15 Phase 1 — Path A tag-space bootstrap. Assign every
     // orphan tag (no `space` property) to the space that most
     // frequently references it, or Personal as fallback. Idempotent
     // — the inner query filters to tags WITHOUT a `space` property,
     // so steady-state boots see zero candidates.
-    let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id).await?;
+    let tags_migrated = migrate_orphan_tags_to_space(&mut tx, device_id, &mut records).await?;
 
-    tx.commit().await?;
+    // MAINT-112 (#110) — couple every emitted op record to a
+    // post-commit cache rebuild. Mirrors `flush_all_drafts_inner`.
+    for record in records {
+        tx.enqueue_background(record);
+    }
+    tx.commit_and_dispatch(materializer).await?;
 
     let spaces_created = i32::from(personal_created) + i32::from(work_created);
     let is_space_props_set = i32::from(personal_is_space_set) + i32::from(work_is_space_set);
@@ -218,6 +243,7 @@ async fn ensure_space_block(
     device_id: &str,
     block_id: &str,
     name: &str,
+    records: &mut Vec<OpRecord>,
 ) -> Result<bool, AppError> {
     let exists = sqlx::query_scalar!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, block_id)
         .fetch_optional(&mut **tx)
@@ -242,7 +268,8 @@ async fn ensure_space_block(
         position: Some(1),
         content: name.into(),
     });
-    op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    records.push(record);
 
     // Materialize the block row immediately so downstream steps in this
     // same transaction (ensure_is_space_property, set_property_in_tx for
@@ -272,6 +299,7 @@ async fn ensure_is_space_property(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     block_id: &str,
+    records: &mut Vec<OpRecord>,
 ) -> Result<bool, AppError> {
     let already_set = sqlx::query_scalar!(
         r#"SELECT 1 as "v: i32" FROM block_properties
@@ -285,7 +313,7 @@ async fn ensure_is_space_property(
         return Ok(false);
     }
 
-    set_property_in_tx(
+    let (_block, record) = set_property_in_tx(
         tx,
         device_id,
         block_id.to_owned(),
@@ -297,6 +325,7 @@ async fn ensure_is_space_property(
         None,
     )
     .await?;
+    records.push(record);
     Ok(true)
 }
 
@@ -317,6 +346,7 @@ async fn ensure_accent_color_property(
     device_id: &str,
     block_id: &str,
     default_token: &str,
+    records: &mut Vec<OpRecord>,
 ) -> Result<bool, AppError> {
     let already_set = sqlx::query_scalar!(
         r#"SELECT 1 as "v: i32" FROM block_properties
@@ -330,7 +360,7 @@ async fn ensure_accent_color_property(
         return Ok(false);
     }
 
-    set_property_in_tx(
+    let (_block, record) = set_property_in_tx(
         tx,
         device_id,
         block_id.to_owned(),
@@ -342,6 +372,7 @@ async fn ensure_accent_color_property(
         None,
     )
     .await?;
+    records.push(record);
     Ok(true)
 }
 
@@ -381,6 +412,7 @@ async fn migrate_pages_to_personal_space_batched(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     page_ids: &[String],
+    records: &mut Vec<OpRecord>,
 ) -> Result<(), AppError> {
     if page_ids.is_empty() {
         return Ok(());
@@ -421,7 +453,8 @@ async fn migrate_pages_to_personal_space_batched(
             value_ref: Some(SPACE_PERSONAL_ULID.to_owned()),
             value_bool: None,
         });
-        op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        records.push(record);
     }
 
     // Step C — chunked `INSERT OR REPLACE INTO block_properties`. The
@@ -548,6 +581,7 @@ async fn pages_without_space(
 pub async fn migrate_personal_pages_to_work(
     pool: &SqlitePool,
     device_id: &str,
+    materializer: &Materializer,
 ) -> Result<(), AppError> {
     // Guard #1 — marker fast-path. Read the marker from outside any
     // transaction so the common (already-migrated) case skips the
@@ -557,13 +591,15 @@ pub async fn migrate_personal_pages_to_work(
         return Ok(());
     }
 
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112 (#110) — `CommandTx` so the page-rebind + marker
+    // `set_property` ops are coupled to a post-commit cache dispatch.
+    let mut tx = CommandTx::begin_immediate(pool, "migrate_personal_pages_to_work").await?;
 
     // Re-check the marker inside the transaction. Two concurrent boots
     // can both pass the outer fast-path; BEGIN IMMEDIATE serialises
     // them and the loser sees the marker the winner committed and
     // becomes a no-op.
-    if migration_marker_set(&mut *tx).await? {
+    if migration_marker_set(&mut **tx).await? {
         tx.rollback().await?;
         tracing::debug!(
             "personal_to_work_migration_v1 marker observed inside tx; concurrent peer won"
@@ -574,7 +610,7 @@ pub async fn migrate_personal_pages_to_work(
     let pages = pages_to_migrate(&mut tx).await?;
     let pages_moved = pages.len();
     for page_id in pages {
-        set_property_in_tx(
+        let (_block, record) = set_property_in_tx(
             &mut tx,
             device_id,
             page_id,
@@ -586,13 +622,14 @@ pub async fn migrate_personal_pages_to_work(
             None,
         )
         .await?;
+        tx.enqueue_background(record);
     }
 
     // Mark complete on the seeded Personal space block. Re-uses the
     // existing `text` value type — system-internal markers are
     // advisory and do not require a `property_definitions` row (same
     // pattern as `is_space = "true"` itself).
-    set_property_in_tx(
+    let (_block, marker_record) = set_property_in_tx(
         &mut tx,
         device_id,
         SPACE_PERSONAL_ULID.to_owned(),
@@ -604,8 +641,9 @@ pub async fn migrate_personal_pages_to_work(
         None,
     )
     .await?;
+    tx.enqueue_background(marker_record);
 
-    tx.commit().await?;
+    tx.commit_and_dispatch(materializer).await?;
 
     tracing::info!(
         pages_moved,
@@ -698,6 +736,7 @@ async fn pages_to_migrate(
 pub async fn migrate_orphan_tags_to_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
+    records: &mut Vec<OpRecord>,
 ) -> Result<usize, AppError> {
     // Step 1 — find every live, non-conflict tag block that has no
     // `space` property.
@@ -765,7 +804,8 @@ pub async fn migrate_orphan_tags_to_space(
             value_ref: Some(target_space.to_owned()),
             value_bool: None,
         });
-        op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        records.push(record);
 
         // Materialize the property row immediately so downstream
         // enforcement steps in the same transaction see it.
@@ -783,6 +823,36 @@ pub async fn migrate_orphan_tags_to_space(
     }
 
     Ok(migrated)
+}
+
+/// MAINT-112 (#110) test helper: run [`bootstrap_spaces`] with a
+/// throwaway [`Materializer`] that is shut down immediately after the
+/// call. The seeded-space + page-migration tests assert on the
+/// resulting DB rows / op_log, not on cache dispatch, so a transient
+/// materializer (created → run → `shutdown()`) is the minimal shim that
+/// satisfies the coupled-dispatch signature without leaking a worker.
+#[cfg(test)]
+pub(crate) async fn bootstrap_spaces_for_test(
+    pool: &SqlitePool,
+    device_id: &str,
+) -> Result<(), AppError> {
+    let mat = Materializer::new(pool.clone());
+    let result = bootstrap_spaces(pool, device_id, &mat).await;
+    mat.shutdown();
+    result
+}
+
+/// MAINT-112 (#110) test helper: run [`migrate_personal_pages_to_work`]
+/// with a throwaway [`Materializer`]. See [`bootstrap_spaces_for_test`].
+#[cfg(test)]
+pub(crate) async fn migrate_personal_pages_to_work_for_test(
+    pool: &SqlitePool,
+    device_id: &str,
+) -> Result<(), AppError> {
+    let mat = Materializer::new(pool.clone());
+    let result = migrate_personal_pages_to_work(pool, device_id, &mat).await;
+    mat.shutdown();
+    result
 }
 
 #[cfg(test)]
@@ -833,7 +903,9 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -888,7 +960,9 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -916,12 +990,16 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let m1 = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let m1 = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(m1, 1);
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let m2 = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let m2 = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(m2, 0);
     }
@@ -947,7 +1025,9 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 0);
@@ -1005,7 +1085,9 @@ mod tests {
         .execute(&mut *tx)
         .await
         .unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
@@ -1023,7 +1105,9 @@ mod tests {
     async fn empty_table_returns_zero() {
         let (pool, _tmp) = fresh_pool().await;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV).await.unwrap();
+        let migrated = migrate_orphan_tags_to_space(&mut tx, DEV, &mut Vec::new())
+            .await
+            .unwrap();
         tx.commit().await.unwrap();
         assert_eq!(migrated, 0);
     }

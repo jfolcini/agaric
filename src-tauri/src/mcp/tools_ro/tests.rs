@@ -339,7 +339,7 @@ async fn get_page_happy_path_returns_subtree() {
     // FEAT-3 Phase 7 — MCP `handle_get_page` looks up the page's own
     // `space` property and threads it through `get_page_inner`. Run
     // bootstrap so the page lands in Personal via the back-fill sweep.
-    crate::spaces::bootstrap_spaces(&tools.pool, DEV)
+    crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
         .await
         .unwrap();
 
@@ -1779,7 +1779,9 @@ async fn inner_get_page_composes_root_and_subtree() {
     // FEAT-3 Phase 7 — `get_page_inner` enforces space membership.
     // Bootstrap seeds Personal + Work and back-fills any pages missing a
     // `space` property into Personal, which is exactly what we want.
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     let resp = get_page_inner(
         &pool,
@@ -1955,7 +1957,7 @@ async fn snapshot_get_page_response_shape() {
     // FEAT-3 Phase 7 — bootstrap so the page lands in Personal via the
     // back-fill sweep; otherwise `handle_get_page` rejects pages with
     // no `space` property.
-    crate::spaces::bootstrap_spaces(&tools.pool, DEV)
+    crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
         .await
         .unwrap();
     let result = tools

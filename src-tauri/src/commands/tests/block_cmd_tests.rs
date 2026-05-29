@@ -406,7 +406,9 @@ async fn create_block_position_negative_returns_validation_error() {
 async fn create_block_rejects_page_without_space_id() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     let before_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
         .fetch_one(&pool)
@@ -459,7 +461,9 @@ async fn create_block_rejects_page_without_space_id() {
 async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     let before_ops: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
         .fetch_one(&pool)
@@ -557,7 +561,9 @@ async fn create_block_non_page_ignores_space_id() {
     // — `space_id` (when supplied) is ignored, no validation error.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    crate::spaces::bootstrap_spaces(&pool, DEV).await.unwrap();
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
 
     // First create a page parent so the content block has somewhere to go.
     let page = create_block_inner_with_space(
