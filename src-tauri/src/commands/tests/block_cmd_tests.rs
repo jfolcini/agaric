@@ -2785,7 +2785,10 @@ async fn add_attachment_creates_row() {
         att.fs_path, "attachments/photo.png",
         "attachment fs_path should match"
     );
-    assert!(!att.id.is_empty(), "attachment should have a generated ID");
+    assert!(
+        !att.id.as_str().is_empty(),
+        "attachment should have a generated ID"
+    );
     assert!(!att.created_at.is_empty(), "created_at should be set");
 
     // Verify persistence in DB via direct query
@@ -2843,7 +2846,7 @@ async fn delete_attachment_removes_row() {
     .unwrap();
 
     // Delete it
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
         .await
         .unwrap();
 
@@ -2914,7 +2917,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         "fixture file must be on disk before delete"
     );
 
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
         .await
         .expect("delete_attachment_inner happy path must succeed");
 
@@ -3011,7 +3014,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     );
 
     // Must still succeed: missing file is non-fatal.
-    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
+    delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone().into_string())
         .await
         .expect("delete must succeed even if the on-disk file is already gone");
 
@@ -5556,7 +5559,7 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
     assert_eq!(on_disk, bytes, "file on disk must match the uploaded bytes");
 
     // read_attachment returns the same bytes.
-    let read_back = read_attachment_inner(&pool, app_data_dir, att.id.clone())
+    let read_back = read_attachment_inner(&pool, app_data_dir, att.id.clone().into_string())
         .await
         .unwrap();
     assert_eq!(

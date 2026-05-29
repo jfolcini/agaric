@@ -302,7 +302,7 @@ pub async fn batch_resolve_inner(
     Ok(rows
         .into_iter()
         .map(|r| ResolvedBlock {
-            id: r.id,
+            id: r.id.into_string(),
             title: r.title,
             block_type: r.block_type,
             deleted: r.deleted.unwrap_or(false),
