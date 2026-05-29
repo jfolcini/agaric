@@ -209,7 +209,7 @@ pub fn digest_for_date(
         a.source
             .cmp(&b.source)
             .then_with(|| a.block.todo_state.cmp(&b.block.todo_state))
-            .then_with(|| a.block.id.cmp(&b.block.id))
+            .then_with(|| a.block.id.as_str().cmp(b.block.id.as_str()))
     });
 
     let summary = format_summary(date);
@@ -368,7 +368,7 @@ fn breadcrumb_for(entry: &ProjectedAgendaEntry, page_titles: &HashMap<String, St
         .block
         .page_id
         .as_ref()
-        .and_then(|id| page_titles.get(id))
+        .and_then(|id| page_titles.get(id.as_str()))
         .map(String::as_str)
         .unwrap_or(UNKNOWN_PAGE_LABEL);
     truncate_with_ellipsis(title, BREADCRUMB_MAX_CHARS)
@@ -418,6 +418,7 @@ fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
 mod tests {
     use super::*;
     use crate::pagination::BlockRow;
+    use crate::ulid::BlockId;
 
     // ── L-128 tripwire ───────────────────────────────────────────────
 
@@ -474,7 +475,7 @@ mod tests {
     /// fields we care about in digest tests.
     fn block(id: &str, content: &str, state: Option<&str>, page_id: Option<&str>) -> BlockRow {
         BlockRow {
-            id: id.to_owned(),
+            id: BlockId::from_trusted(id),
             block_type: "content".to_owned(),
             content: Some(content.to_owned()),
             parent_id: None,
@@ -484,7 +485,7 @@ mod tests {
             priority: None,
             due_date: None,
             scheduled_date: None,
-            page_id: page_id.map(str::to_owned),
+            page_id: page_id.map(BlockId::from_trusted),
         }
     }
 
@@ -773,7 +774,7 @@ mod tests {
             Some("TODO"),
             "due_date",
         );
-        e.block.page_id = Some("DOES_NOT_EXIST".to_owned());
+        e.block.page_id = Some(BlockId::from_trusted("DOES_NOT_EXIST"));
         let got = digest_for_date(fixed_date(), &[e], &page_titles(), PrivacyMode::Full);
         let DigestResult::Create(ev) = got else {
             unreachable!()
@@ -1215,7 +1216,7 @@ mod tests {
                 .prop_map(|(id, content, state, source, page_id)| {
                     ProjectedAgendaEntry {
                         block: BlockRow {
-                            id,
+                            id: BlockId::from(id),
                             block_type: "content".to_owned(),
                             content: Some(content),
                             parent_id: None,
@@ -1225,7 +1226,7 @@ mod tests {
                             priority: None,
                             due_date: None,
                             scheduled_date: None,
-                            page_id,
+                            page_id: page_id.map(BlockId::from),
                         },
                         projected_date: DATE.to_owned(),
                         source,

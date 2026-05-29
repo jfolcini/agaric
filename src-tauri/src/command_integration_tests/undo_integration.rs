@@ -30,7 +30,7 @@ async fn undo_page_op_reverses_edit() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -38,13 +38,19 @@ async fn undo_page_op_reverses_edit() {
     settle(&mat).await;
 
     // Edit child to "modified"
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "modified".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Undo the most recent op on the page
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     settle(&mat).await;
@@ -60,7 +66,9 @@ async fn undo_page_op_reverses_edit() {
     assert!(!result.is_redo, "undo must not be flagged as redo");
 
     // Content should be back to "original"
-    let fetched = get_block_inner(&pool, child.id).await.unwrap();
+    let fetched = get_block_inner(&pool, child.id.into_string())
+        .await
+        .unwrap();
     assert_eq!(
         fetched.content,
         Some("original".into()),
@@ -94,7 +102,7 @@ async fn undo_then_redo_restores_edit() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -102,19 +110,27 @@ async fn undo_then_redo_restores_edit() {
     settle(&mat).await;
 
     // Edit to "modified"
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "modified".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Undo
-    let undo_result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let undo_result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     settle(&mat).await;
 
     // Content should be "original" after undo
-    let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         fetched.content,
         Some("original".into()),
@@ -140,7 +156,9 @@ async fn undo_then_redo_restores_edit() {
     );
 
     // Content should be back to "modified"
-    let fetched = get_block_inner(&pool, child.id).await.unwrap();
+    let fetched = get_block_inner(&pool, child.id.into_string())
+        .await
+        .unwrap();
     assert_eq!(
         fetched.content,
         Some("modified".into()),
@@ -174,7 +192,7 @@ async fn undo_property_change_restores_prior_value() {
         &mat,
         "content".into(),
         "task".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -186,7 +204,7 @@ async fn undo_property_change_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into(),
+        child.id.as_str().into(),
         "importance".into(),
         Some("low".into()),
         None,
@@ -204,7 +222,7 @@ async fn undo_property_change_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into(),
+        child.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -218,7 +236,7 @@ async fn undo_property_change_restores_prior_value() {
     settle(&mat).await;
 
     // Undo the most recent op on the page (the "high" set)
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     settle(&mat).await;
@@ -229,7 +247,9 @@ async fn undo_property_change_restores_prior_value() {
     );
 
     // "importance" should be back to "low" (prior value restored)
-    let props = get_properties_inner(&pool, child.id).await.unwrap();
+    let props = get_properties_inner(&pool, child.id.into_string())
+        .await
+        .unwrap();
     let importance = props.iter().find(|p| p.key == "importance");
     assert!(
         importance.is_some(),
@@ -296,7 +316,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "leaf".into(),
-        Some(page_a.id.clone()),
+        Some(page_a.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -304,7 +324,9 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     settle(&mat).await;
 
     assert_eq!(
-        leaf.page_id.as_deref(),
+        leaf.page_id
+            .as_ref()
+            .map(super::super::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: leaf starts under page_a"
     );
@@ -315,8 +337,8 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         &pool,
         DEV,
         &mat,
-        leaf.id.clone(),
-        Some(page_b.id.clone()),
+        leaf.id.clone().into_string(),
+        Some(page_b.id.clone().into_string()),
         1,
     )
     .await
@@ -342,7 +364,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
 
     // Undo on page_b (where the move op was journalled — move_block
     // ops attach to the new parent's page).
-    let undo_result = undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone(), 0)
+    let undo_result = undo_page_op_inner(&pool, DEV, &mat, page_b.id.clone().into_string(), 0)
         .await
         .unwrap();
     assert_eq!(
@@ -365,9 +387,14 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     );
 
     // Sanity: leaf is now parented to page_a again.
-    let leaf_row = get_block_inner(&pool, leaf.id.clone()).await.unwrap();
+    let leaf_row = get_block_inner(&pool, leaf.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
-        leaf_row.parent_id.as_deref(),
+        leaf_row
+            .parent_id
+            .as_ref()
+            .map(super::super::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: undo restored parent_id to page_a"
     );

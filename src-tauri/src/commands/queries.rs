@@ -1619,7 +1619,9 @@ pub async fn filtered_blocks_query_inner(
     }
     let rows = q.fetch_all(pool).await?;
 
-    pagination::build_page_response(rows, page.limit, |last| Cursor::for_id(last.id.clone()))
+    pagination::build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.clone().into_string())
+    })
 }
 
 /// Tauri command: AND-intersect property + tag predicates in SQL.

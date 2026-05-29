@@ -878,7 +878,12 @@ async fn resolve_page_titles(
 ) -> Result<HashMap<String, String>, AppError> {
     let mut ids: Vec<&str> = entries
         .iter()
-        .filter_map(|e| e.block.page_id.as_deref())
+        .filter_map(|e| {
+            e.block
+                .page_id
+                .as_ref()
+                .map(super::super::ulid::BlockId::as_str)
+        })
         .collect();
     ids.sort_unstable();
     ids.dedup();

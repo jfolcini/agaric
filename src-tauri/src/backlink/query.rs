@@ -296,7 +296,7 @@ async fn eval_created_sort_keyset(
 
     let next_cursor = if has_more {
         let last = rows.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.id.clone()).encode()?)
+        Some(Cursor::for_id(last.id.as_str().to_string()).encode()?)
     } else {
         None
     };
@@ -483,8 +483,8 @@ pub(super) async fn resolve_root_pages(
 
     #[derive(sqlx::FromRow)]
     struct RootPageRow {
-        block_id: String,
-        root_id: String,
+        block_id: crate::ulid::BlockId,
+        root_id: crate::ulid::BlockId,
         root_title: Option<String>,
     }
 
@@ -496,7 +496,10 @@ pub(super) async fn resolve_root_pages(
 
     let mut map: FxHashMap<String, (String, Option<String>)> = FxHashMap::default();
     for row in rows {
-        map.insert(row.block_id, (row.root_id, row.root_title));
+        map.insert(
+            row.block_id.into_string(),
+            (row.root_id.into_string(), row.root_title),
+        );
     }
     Ok(map)
 }
@@ -581,8 +584,8 @@ pub(super) async fn resolve_root_pages_cte(
 
     #[derive(sqlx::FromRow)]
     struct RootPageRow {
-        block_id: String,
-        root_id: String,
+        block_id: crate::ulid::BlockId,
+        root_id: crate::ulid::BlockId,
         root_title: Option<String>,
     }
 
@@ -594,7 +597,10 @@ pub(super) async fn resolve_root_pages_cte(
 
     let mut map: FxHashMap<String, (String, Option<String>)> = FxHashMap::default();
     for row in rows {
-        map.insert(row.block_id, (row.root_id, row.root_title));
+        map.insert(
+            row.block_id.into_string(),
+            (row.root_id.into_string(), row.root_title),
+        );
     }
     Ok(map)
 }

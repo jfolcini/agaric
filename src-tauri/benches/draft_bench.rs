@@ -41,7 +41,7 @@ async fn create_block(pool: &SqlitePool, mat: &Materializer) -> String {
     )
     .await
     .unwrap();
-    resp.id
+    resp.id.into_string()
 }
 
 /// Seed `n` drafts for distinct blocks.

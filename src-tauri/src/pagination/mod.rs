@@ -123,17 +123,17 @@ pub(crate) const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 /// the type system at the helper signature.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 pub struct BlockRow {
-    pub id: String,
+    pub id: crate::ulid::BlockId,
     pub block_type: String,
     pub content: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
-    pub page_id: Option<String>,
+    pub page_id: Option<crate::ulid::BlockId>,
 }
 
 /// A projected future occurrence of a repeating block.
@@ -176,14 +176,14 @@ pub struct ActiveBlockRow {
     pub id: crate::ulid::ActiveBlockId,
     pub block_type: String,
     pub content: Option<String>,
-    pub parent_id: Option<String>,
+    pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
     pub deleted_at: Option<String>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
-    pub page_id: Option<String>,
+    pub page_id: Option<crate::ulid::BlockId>,
 }
 
 impl ActiveBlockRow {
@@ -198,7 +198,7 @@ impl ActiveBlockRow {
     /// instead.
     pub fn from_block_row_unchecked(row: BlockRow) -> Self {
         Self {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(&row.id),
+            id: crate::ulid::ActiveBlockId::from_trusted_active(row.id.as_str()),
             block_type: row.block_type,
             content: row.content,
             parent_id: row.parent_id,
@@ -218,7 +218,7 @@ impl From<ActiveBlockRow> for BlockRow {
     /// always safe and infallible.
     fn from(active: ActiveBlockRow) -> Self {
         Self {
-            id: active.id.into_string(),
+            id: active.id.into(),
             block_type: active.block_type,
             content: active.content,
             parent_id: active.parent_id,

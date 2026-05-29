@@ -35,10 +35,10 @@ pub async fn list_agenda(
     // every inlined copy.
     let rows = sqlx::query_as!(
         ActiveBlockRow,
-        r#"SELECT b.id as "id: crate::ulid::ActiveBlockId", b.block_type, b.content, b.parent_id, b.position,
+        r#"SELECT b.id as "id: crate::ulid::ActiveBlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
-                b.page_id
+                b.page_id as "page_id: crate::ulid::BlockId"
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
@@ -106,10 +106,10 @@ pub async fn list_agenda_range(
     // Mirrors `crate::space_filter_clause!` — kept inline because
     // `sqlx::query!` requires a string literal directly.
     let raw_rows = sqlx::query!(
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
-                b.page_id, ac.date as "ac_date: String"
+                b.page_id as "page_id: crate::ulid::BlockId", ac.date as "ac_date: String"
          FROM agenda_cache ac
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date >= ?1 AND ac.date <= ?2

@@ -34,21 +34,21 @@ async fn f11_concurrent_edits_do_not_corrupt() {
     let bid1 = block_id.clone();
     let bid2 = block_id.clone();
 
-    let h1 =
-        tokio::spawn(
-            async move { edit_block_inner(&pool1, DEV, &mat1, bid1, "edit-A".into()).await },
-        );
-    let h2 =
-        tokio::spawn(
-            async move { edit_block_inner(&pool2, DEV, &mat2, bid2, "edit-B".into()).await },
-        );
+    let h1 = tokio::spawn(async move {
+        edit_block_inner(&pool1, DEV, &mat1, bid1.into_string(), "edit-A".into()).await
+    });
+    let h2 = tokio::spawn(async move {
+        edit_block_inner(&pool2, DEV, &mat2, bid2.into_string(), "edit-B".into()).await
+    });
 
     let (r1, r2) = tokio::join!(h1, h2);
     assert!(r1.unwrap().is_ok(), "first concurrent edit should succeed");
     assert!(r2.unwrap().is_ok(), "second concurrent edit should succeed");
 
     // Final DB state should be one of the two edits
-    let row = get_block_inner(&pool, block_id.clone()).await.unwrap();
+    let row = get_block_inner(&pool, block_id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         row.content == Some("edit-A".into()) || row.content == Some("edit-B".into()),
         "final content should be one of the concurrent edits, got: {:?}",

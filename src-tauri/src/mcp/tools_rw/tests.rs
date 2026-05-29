@@ -122,7 +122,7 @@ async fn append_block_happy_path() {
         .await
         .expect("happy path");
     assert_eq!(result["block_type"], "content");
-    assert_eq!(result["parent_id"], parent.id);
+    assert_eq!(result["parent_id"], parent.id.as_str());
     assert_eq!(result["content"], "hello");
 }
 
@@ -183,7 +183,7 @@ async fn update_block_content_happy_path() {
         &mat,
         "content".into(),
         "before".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(1),
     )
     .await
@@ -198,7 +198,7 @@ async fn update_block_content_happy_path() {
         )
         .await
         .expect("happy path");
-    assert_eq!(result["id"], block.id);
+    assert_eq!(result["id"], block.id.as_str());
     assert_eq!(result["content"], "after");
 }
 
@@ -261,7 +261,7 @@ async fn mk_in_space_content_block(
         mat,
         "content".into(),
         content.into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(1),
     )
     .await
@@ -290,7 +290,7 @@ async fn set_property_happy_path() {
         )
         .await
         .expect("happy path");
-    assert_eq!(result["id"], block.id);
+    assert_eq!(result["id"], block.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -366,7 +366,7 @@ async fn add_tag_happy_path() {
         &pool,
         DEV,
         &mat,
-        tag.id.clone().into(),
+        tag.id.as_str().into(),
         "space".into(),
         None,
         None,
@@ -387,8 +387,8 @@ async fn add_tag_happy_path() {
         )
         .await
         .expect("happy path");
-    assert_eq!(result["block_id"], block.id);
-    assert_eq!(result["tag_id"], tag.id);
+    assert_eq!(result["block_id"], block.id.as_str());
+    assert_eq!(result["tag_id"], tag.id.as_str());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -431,7 +431,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         &mat,
         "content".into(),
         "c".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.to_string()),
         Some(1),
     )
     .await
@@ -442,7 +442,7 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         &mat,
         "content".into(),
         "not-a-tag".into(),
-        Some(parent.id),
+        Some(parent.id.into_string()),
         Some(2),
     )
     .await
@@ -578,7 +578,7 @@ async fn delete_block_happy_path() {
         )
         .await
         .expect("happy path");
-    assert_eq!(result["block_id"], block.id);
+    assert_eq!(result["block_id"], block.id.as_str());
     assert!(
         result["deleted_at"].is_string(),
         "delete_block must return a deleted_at timestamp for the restore ref",
@@ -651,7 +651,7 @@ async fn delete_block_is_reversible_via_restore() {
         .expect("deleted_at timestamp")
         .to_string();
 
-    let restore = restore_block_inner(&pool, DEV, &mat, block.id.clone(), deleted_at).await;
+    let restore = restore_block_inner(&pool, DEV, &mat, block.id.to_string(), deleted_at).await;
     assert!(
         restore.is_ok(),
         "delete_block output must be usable as a restore ref: {restore:?}",
@@ -872,7 +872,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         &pool,
         DEV,
         &mat,
-        tag.id.clone().into(),
+        tag.id.as_str().into(),
         "space".into(),
         None,
         None,
@@ -949,7 +949,7 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
                     &mat,
                     "content".into(),
                     format!("frontend block {iter}"),
-                    Some(parent_id.clone()),
+                    Some(parent_id.as_str().into()),
                     Some(i64::try_from(iter + 100).expect("test iteration index fits i64")),
                 )
                 .await

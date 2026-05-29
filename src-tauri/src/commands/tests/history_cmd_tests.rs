@@ -22,11 +22,17 @@ async fn get_block_history_returns_ops_for_block() {
     .await
     .unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "updated".into(),
+    )
+    .await
+    .unwrap();
 
-    let resp = get_block_history_inner(&pool, created.id, None, None, None)
+    let resp = get_block_history_inner(&pool, created.id.into_string(), None, None, None)
         .await
         .unwrap();
 
@@ -69,7 +75,7 @@ async fn test_compute_edit_diff_inner_happy_path() {
         &pool,
         DEV,
         &mat,
-        created.id.clone(),
+        created.id.clone().into_string(),
         "hello universe".into(),
     )
     .await
@@ -126,9 +132,15 @@ async fn test_compute_edit_diff_inner_same_text_produces_equal_spans() {
     .unwrap();
 
     // Edit the block once — the prior text comes from create_block
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "initial text".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "initial text".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Grab the edit_block op
@@ -216,7 +228,7 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
         &pool,
         DEV,
         &mat,
-        created.id.clone(),
+        created.id.clone().into_string(),
         "hello universe".into(),
     )
     .await
@@ -225,7 +237,7 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
         &pool,
         DEV,
         &mat,
-        created.id.clone(),
+        created.id.clone().into_string(),
         "goodbye universe".into(),
     )
     .await
@@ -494,7 +506,7 @@ async fn seed_page_with_ops(
         mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -511,7 +523,7 @@ async fn seed_page_with_ops(
         // on the same device would collide anyway, but this also keeps
         // the test readable).
         let payload = OpPayload::EditBlock(crate::op::EditBlockPayload {
-            block_id: BlockId::from_trusted(&child.id),
+            block_id: child.id.clone(),
             to_text: format!("edit-{i}"),
             prev_edit: None,
         });
@@ -530,7 +542,7 @@ async fn seed_page_with_ops(
             .unwrap();
     }
 
-    (page.id, child.id)
+    (page.id.into_string(), child.id.into_string())
 }
 
 /// Single op, no neighbors → group of 1.

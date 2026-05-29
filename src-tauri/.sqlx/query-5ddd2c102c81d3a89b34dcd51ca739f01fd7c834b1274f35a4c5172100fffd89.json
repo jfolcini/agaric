@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id\n         FROM block_links bl\n         JOIN blocks b ON b.id = bl.source_id\n         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position, b.deleted_at,\n                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as \"page_id: crate::ulid::BlockId\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.content LIKE '____-__-__'\n             AND b.content >= ?\n             AND b.content <= ?\n             AND EXISTS (\n                 SELECT 1 FROM block_properties bp\n                 WHERE bp.block_id = b.id\n                   AND bp.key = 'space'\n                   AND bp.value_ref = ?\n             )\n           ORDER BY b.content ASC",
   "describe": {
     "columns": [
       {
-        "name": "id: crate::ulid::ActiveBlockId",
+        "name": "id!: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 5
+      "Right": 3
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "00c3d1aa123cee43f2b29249f7510296ec7bd5c168536088d39a1f3e06252f35"
+  "hash": "5ddd2c102c81d3a89b34dcd51ca739f01fd7c834b1274f35a4c5172100fffd89"
 }

@@ -1363,9 +1363,15 @@ mod tests {
         )
         .await
         .unwrap();
-        edit_block_inner(&pool, DEV, &mat, created.id.clone(), "hello rust".into())
-            .await
-            .unwrap();
+        edit_block_inner(
+            &pool,
+            DEV,
+            &mat,
+            created.id.to_string(),
+            "hello rust".into(),
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
 
         let op_row = sqlx::query!(

@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR ac.source = ?2)\n           AND (?3 IS NULL OR b.id > ?4)\n           AND (?6 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?6))\n         ORDER BY b.id ASC\n         LIMIT ?5",
+  "query": "SELECT id as \"id!: crate::ulid::BlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position, deleted_at,  todo_state, priority,\n                      due_date, scheduled_date, page_id as \"page_id: crate::ulid::BlockId\"\n               FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
-        "name": "id: crate::ulid::ActiveBlockId",
+        "name": "id!: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -126,7 +126,7 @@
       }
     ],
     "parameters": {
-      "Right": 6
+      "Right": 1
     },
     "nullable": [
       false,
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "1f536738983eb4d69ff6cc90e5a6996e1e612938cbcb5675c356d25c5df73b39"
+  "hash": "47c405c0805b1ffd6b1b52b7463ef713461e0a14b71a47f1d08cabd702a73e9f"
 }

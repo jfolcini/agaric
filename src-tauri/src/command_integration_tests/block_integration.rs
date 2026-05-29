@@ -33,7 +33,7 @@ async fn create_content_block_returns_correct_fields() {
     assert!(resp.parent_id.is_none(), "top-level block has no parent");
     assert_eq!(resp.position, Some(1), "position must match input");
     assert!(resp.deleted_at.is_none(), "new block must not be deleted");
-    assert_eq!(resp.id.len(), 26, "ULID must be 26 chars");
+    assert_eq!(resp.id.as_str().len(), 26, "ULID must be 26 chars");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -101,7 +101,7 @@ async fn create_block_with_parent_sets_parent_id() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -138,7 +138,7 @@ async fn create_block_with_position_preserves_position() {
     );
 
     // Verify in DB
-    let row = get_block_inner(&pool, resp.id).await.unwrap();
+    let row = get_block_inner(&pool, resp.id.into_string()).await.unwrap();
     assert_eq!(row.position, Some(42), "position must be persisted in DB");
 }
 
@@ -191,7 +191,7 @@ async fn create_block_with_large_unicode_content_preserves_data() {
     );
 
     // Round-trip through DB
-    let row = get_block_inner(&pool, resp.id).await.unwrap();
+    let row = get_block_inner(&pool, resp.id.into_string()).await.unwrap();
     assert_eq!(
         row.content,
         Some(large_content),
@@ -272,7 +272,7 @@ async fn create_block_deleted_parent_returns_not_found() {
     .unwrap();
     settle(&mat).await;
 
-    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
@@ -283,7 +283,7 @@ async fn create_block_deleted_parent_returns_not_found() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id),
+        Some(parent.id.into_string()),
         Some(1),
     )
     .await;
@@ -354,7 +354,7 @@ async fn create_block_writes_op_log_entry() {
     );
     assert_eq!(ops[0].device_id, DEV, "device_id must match");
     assert!(
-        ops[0].payload.contains(&resp.id),
+        ops[0].payload.contains(resp.id.as_str()),
         "payload must contain the block ID"
     );
 }
@@ -380,9 +380,15 @@ async fn edit_block_updates_content_and_returns_new_value() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "updated".into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -396,7 +402,9 @@ async fn edit_block_updates_content_and_returns_new_value() {
     );
 
     // Verify in DB
-    let row = get_block_inner(&pool, created.id).await.unwrap();
+    let row = get_block_inner(&pool, created.id.into_string())
+        .await
+        .unwrap();
     assert_eq!(
         row.content,
         Some("updated".into()),
@@ -422,9 +430,15 @@ async fn edit_block_with_unicode_content_preserved() {
     .unwrap();
 
     let unicode = "日本語テスト 🎌 über café résumé Ñoño";
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), unicode.into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        unicode.into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -432,7 +446,9 @@ async fn edit_block_with_unicode_content_preserved() {
         "unicode content must survive edit round-trip"
     );
 
-    let row = get_block_inner(&pool, created.id).await.unwrap();
+    let row = get_block_inner(&pool, created.id.into_string())
+        .await
+        .unwrap();
     assert_eq!(
         row.content,
         Some(unicode.into()),
@@ -457,9 +473,15 @@ async fn edit_block_with_empty_string_succeeds() {
     .await
     .unwrap();
 
-    let edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "".into())
-        .await
-        .unwrap();
+    let edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "".into(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         edited.content,
@@ -486,15 +508,27 @@ async fn edit_block_sequential_edits_chain_prev_edit() {
     .unwrap();
 
     // First edit
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Second edit — should chain prev_edit
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v3".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v3".into(),
+    )
+    .await
+    .unwrap();
 
     // Inspect the last edit_block op_log entry
     let row = sqlx::query!(
@@ -545,12 +579,19 @@ async fn edit_deleted_block_returns_not_found() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
 
-    let result = edit_block_inner(&pool, DEV, &mat, created.id, "should fail".into()).await;
+    let result = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.into_string(),
+        "should fail".into(),
+    )
+    .await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -579,7 +620,7 @@ async fn delete_block_marks_as_deleted() {
     .await
     .unwrap();
 
-    let del = delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    let del = delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
 
@@ -589,7 +630,9 @@ async fn delete_block_marks_as_deleted() {
     );
     assert_eq!(del.block_id, created.id, "block_id must match");
 
-    let row = get_block_inner(&pool, created.id).await.unwrap();
+    let row = get_block_inner(&pool, created.id.into_string())
+        .await
+        .unwrap();
     assert!(
         row.deleted_at.is_some(),
         "block must be marked as deleted in DB"
@@ -620,13 +663,13 @@ async fn delete_block_cascades_to_children() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
     .unwrap();
 
-    let del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
+    let del = delete_block_inner(&pool, DEV, &mat, parent.id.clone().into_string())
         .await
         .unwrap();
 
@@ -635,7 +678,9 @@ async fn delete_block_cascades_to_children() {
         "parent + child = 2 descendants affected"
     );
 
-    let child_row = get_block_inner(&pool, child.id).await.unwrap();
+    let child_row = get_block_inner(&pool, child.id.into_string())
+        .await
+        .unwrap();
     assert!(
         child_row.deleted_at.is_some(),
         "child must be cascade-deleted"
@@ -670,7 +715,7 @@ async fn deleted_blocks_excluded_from_list_blocks() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, b2.id.clone())
+    delete_block_inner(&pool, DEV, &mat, b2.id.clone().into_string())
         .await
         .unwrap();
 
@@ -694,7 +739,11 @@ async fn deleted_blocks_excluded_from_list_blocks() {
     .unwrap();
 
     assert_eq!(live.items.len(), 1, "only alive blocks in normal list");
-    assert_eq!(live.items[0].id, b1.id, "surviving block must be b1");
+    assert_eq!(
+        live.items[0].id.as_str(),
+        b1.id.as_str(),
+        "surviving block must be b1"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -725,7 +774,7 @@ async fn deleted_blocks_visible_in_list_blocks_show_deleted() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, b2.id.clone())
+    delete_block_inner(&pool, DEV, &mat, b2.id.clone().into_string())
         .await
         .unwrap();
 
@@ -765,7 +814,7 @@ async fn delete_block_writes_op_log_entry() {
     .unwrap();
 
     // seq 1 = create_block
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
 
@@ -779,7 +828,7 @@ async fn delete_block_writes_op_log_entry() {
     );
     assert_eq!(ops[1].device_id, DEV, "device_id must match");
     assert!(
-        ops[1].payload.contains(&created.id),
+        ops[1].payload.contains(created.id.as_str()),
         "payload must contain the block ID"
     );
 }
@@ -818,11 +867,11 @@ async fn delete_already_deleted_returns_invalid_operation() {
     .await
     .unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
 
-    let result = delete_block_inner(&pool, DEV, &mat, created.id).await;
+    let result = delete_block_inner(&pool, DEV, &mat, created.id.into_string()).await;
 
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),

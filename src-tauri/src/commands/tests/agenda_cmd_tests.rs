@@ -819,7 +819,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
     let due_date = (today - chrono::Duration::days(21))
         .format("%Y-%m-%d")
         .to_string();
-    set_due_date_inner(&pool, DEV, &mat, resp.id.clone().into(), Some(due_date))
+    set_due_date_inner(&pool, DEV, &mat, resp.id.as_str().into(), Some(due_date))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -829,7 +829,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -847,7 +847,7 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -897,7 +897,8 @@ async fn projected_agenda_returns_future_weekly_occurrences() {
         "projection source should be due_date"
     );
     assert_eq!(
-        entries[0].block.id, resp.id,
+        entries[0].block.id.as_str(),
+        resp.id.as_str(),
         "projected block id should match original"
     );
 
@@ -926,7 +927,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some({
             let today = chrono::Local::now().date_naive();
             (today - chrono::Duration::days(14))
@@ -942,7 +943,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -965,7 +966,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-until".into(),
         None,
         None,
@@ -982,7 +983,7 @@ async fn projected_agenda_respects_repeat_until_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1051,7 +1052,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1062,7 +1063,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1080,7 +1081,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -1097,7 +1098,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-seq".into(),
         None,
         Some(1.0),
@@ -1114,7 +1115,7 @@ async fn projected_agenda_respects_repeat_count_end_condition() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1174,7 +1175,7 @@ async fn projected_agenda_skips_done_blocks() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1185,7 +1186,7 @@ async fn projected_agenda_skips_done_blocks() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -1203,7 +1204,7 @@ async fn projected_agenda_skips_done_blocks() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("DONE".into()),
     )
     .await
@@ -1224,7 +1225,10 @@ async fn projected_agenda_skips_done_blocks() {
 
     // The original block is DONE, but set_todo_state may have created a new
     // TODO sibling with repeat. Filter to only entries from our block.
-    let from_original: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
+    let from_original: Vec<_> = entries
+        .iter()
+        .filter(|e| e.block.id.as_str() == resp.id.as_str())
+        .collect();
     assert!(
         from_original.is_empty(),
         "DONE blocks should not be projected"
@@ -1313,7 +1317,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2025-01-01".into()),
     )
     .await
@@ -1325,7 +1329,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some(".+weekly".into()),
         None,
@@ -1342,7 +1346,7 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1401,7 +1405,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2025-01-06".into()),
     )
     .await
@@ -1413,7 +1417,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("++weekly".into()),
         None,
@@ -1430,7 +1434,7 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1489,7 +1493,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1500,7 +1504,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1511,7 +1515,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -1528,7 +1532,7 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1584,7 +1588,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1595,7 +1599,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1613,7 +1617,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -1630,7 +1634,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat-seq".into(),
         None,
         Some(3.0),
@@ -1647,7 +1651,7 @@ async fn projected_agenda_exhausted_count_returns_zero() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1666,7 +1670,10 @@ async fn projected_agenda_exhausted_count_returns_zero() {
     .unwrap()
     .items;
 
-    let from_block: Vec<_> = entries.iter().filter(|e| e.block.id == resp.id).collect();
+    let from_block: Vec<_> = entries
+        .iter()
+        .filter(|e| e.block.id.as_str() == resp.id.as_str())
+        .collect();
     assert!(
         from_block.is_empty(),
         "exhausted repeat-count should produce zero projections"
@@ -1697,7 +1704,7 @@ async fn projected_agenda_limit_caps_results() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1708,7 +1715,7 @@ async fn projected_agenda_limit_caps_results() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1725,7 +1732,7 @@ async fn projected_agenda_limit_caps_results() {
         &pool,
         DEV,
         &mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1787,7 +1794,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &pool,
         DEV,
         &mat,
-        page.id.clone().into(),
+        page.id.as_str().into(),
         "template".into(),
         Some("true".into()),
         None,
@@ -1806,7 +1813,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &mat,
         "content".into(),
         "Recurring template task".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         None,
     )
     .await
@@ -1817,7 +1824,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1826,7 +1833,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1841,7 +1848,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1917,7 +1924,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &pool,
         DEV,
         &mat,
-        page.id.clone().into(),
+        page.id.as_str().into(),
         "template".into(),
         Some("true".into()),
         None,
@@ -1936,7 +1943,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &mat,
         "content".into(),
         "Now a real task".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         None,
     )
     .await
@@ -1947,7 +1954,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("2026-04-06".into()),
     )
     .await
@@ -1956,7 +1963,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -1971,7 +1978,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1995,7 +2002,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
     // Remove the template property and the task must re-enter the
     // agenda (on-the-fly path — we clear the cache to keep the test
     // deterministic).
-    delete_property_inner(&pool, DEV, &mat, page.id.clone().into(), "template".into())
+    delete_property_inner(&pool, DEV, &mat, page.id.as_str().into(), "template".into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2021,7 +2028,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         "expected four daily projections (2026-04-07..2026-04-10) once template flag is cleared"
     );
     for entry in &entries {
-        assert_eq!(entry.block.id, task.id);
+        assert_eq!(entry.block.id.as_str(), task.id.as_str());
     }
 
     mat.shutdown();
@@ -2054,7 +2061,7 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         &mat,
         "content".into(),
         "undated task".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         None,
     )
     .await
@@ -2063,7 +2070,7 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2111,7 +2118,7 @@ async fn list_undated_tasks_excludes_dated_tasks() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -2120,7 +2127,7 @@ async fn list_undated_tasks_excludes_dated_tasks() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("2025-06-01".into()),
     )
     .await
@@ -2157,12 +2164,12 @@ async fn list_undated_tasks_excludes_deleted() {
         &pool,
         DEV,
         &mat,
-        task.id.clone().into(),
+        task.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
     .unwrap();
-    delete_block_inner(&pool, DEV, &mat, task.id.clone())
+    delete_block_inner(&pool, DEV, &mat, task.id.clone().into_string())
         .await
         .unwrap();
 
@@ -2196,7 +2203,7 @@ async fn list_undated_tasks_pagination() {
             &pool,
             DEV,
             &mat,
-            task.id.clone().into(),
+            task.id.as_str().into(),
             Some("TODO".into()),
         )
         .await
@@ -2275,7 +2282,7 @@ async fn seed_daily_repeating_block(
     let due = (today - chrono::Duration::days(days_before_today))
         .format("%Y-%m-%d")
         .to_string();
-    set_due_date_inner(pool, DEV, mat, resp.id.clone().into(), Some(due))
+    set_due_date_inner(pool, DEV, mat, resp.id.as_str().into(), Some(due))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2284,7 +2291,7 @@ async fn seed_daily_repeating_block(
         pool,
         DEV,
         mat,
-        resp.id.clone().into(),
+        resp.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -2297,12 +2304,12 @@ async fn seed_daily_repeating_block(
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    set_todo_state_inner(pool, DEV, mat, resp.id.clone().into(), Some("TODO".into()))
+    set_todo_state_inner(pool, DEV, mat, resp.id.as_str().into(), Some("TODO".into()))
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    resp.id
+    resp.id.to_string()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2379,7 +2386,7 @@ async fn list_projected_agenda_walks_pages_correctly_m25() {
         for entry in &page.items {
             walked.push((
                 entry.projected_date.clone(),
-                entry.block.id.clone().into(),
+                entry.block.id.as_str().into(),
                 entry.source.clone(),
             ));
         }
@@ -3142,7 +3149,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        a.id.clone().into(),
+        a.id.as_str().into(),
         Some("2050-04-06".into()),
     )
     .await
@@ -3152,7 +3159,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        a.id.clone().into(),
+        a.id.as_str().into(),
         "repeat".into(),
         Some("daily".into()),
         None,
@@ -3168,7 +3175,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        a.id.clone().into(),
+        a.id.as_str().into(),
         "repeat-count".into(),
         None,
         Some(5.0),
@@ -3209,7 +3216,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        b.id.clone().into(),
+        b.id.as_str().into(),
         "repeat".into(),
         Some("weekly".into()),
         None,
@@ -3225,7 +3232,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        b.id.clone().into(),
+        b.id.as_str().into(),
         "repeat-until".into(),
         None,
         None,
@@ -3255,7 +3262,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        c.id.clone().into(),
+        c.id.as_str().into(),
         Some("2050-04-15".into()),
     )
     .await
@@ -3265,7 +3272,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        c.id.clone().into(),
+        c.id.as_str().into(),
         "repeat".into(),
         Some("+3d".into()),
         None,
@@ -3281,7 +3288,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        c.id.clone().into(),
+        c.id.as_str().into(),
         "repeat-count".into(),
         None,
         Some(3.0),
@@ -3311,7 +3318,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        d.id.clone().into(),
+        d.id.as_str().into(),
         Some("2050-04-20".into()),
     )
     .await
@@ -3321,7 +3328,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        d.id.clone().into(),
+        d.id.as_str().into(),
         "repeat".into(),
         Some(".+1w".into()),
         None,
@@ -3351,7 +3358,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        e.id.clone().into(),
+        e.id.as_str().into(),
         Some("2050-04-25".into()),
     )
     .await
@@ -3361,7 +3368,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
         &pool,
         DEV,
         &mat,
-        e.id.clone().into(),
+        e.id.as_str().into(),
         "repeat".into(),
         Some("++1w".into()),
         None,

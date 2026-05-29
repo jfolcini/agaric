@@ -77,7 +77,7 @@ async fn seed_blocks(pool: &SqlitePool, materializer: &Materializer, n: usize) -
         )
         .await
         .unwrap();
-        ids.push(resp.id);
+        ids.push(resp.id.into_string());
     }
     ids
 }
@@ -197,7 +197,7 @@ fn bench_create_block_with_parent(c: &mut Criterion) {
                     materializer_ref,
                     "content".into(),
                     content,
-                    Some(parent_id),
+                    Some(parent_id.into_string()),
                     None,
                 )
                 .await

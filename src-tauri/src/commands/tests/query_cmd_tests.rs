@@ -770,7 +770,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         Some("2025-06-15".into()),
     )
     .await
@@ -791,7 +791,7 @@ async fn query_by_property_reserved_date_key_filters_by_value_date() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         Some("2025-12-31".into()),
     )
     .await
@@ -1269,7 +1269,7 @@ async fn query_by_property_value_date_range() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         Some("2026-01-01".into()),
     )
     .await
@@ -1289,7 +1289,7 @@ async fn query_by_property_value_date_range() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         Some("2026-01-15".into()),
     )
     .await
@@ -1309,7 +1309,7 @@ async fn query_by_property_value_date_range() {
         &pool,
         DEV,
         &mat,
-        b3.id.clone().into(),
+        b3.id.as_str().into(),
         Some("2026-02-01".into()),
     )
     .await
@@ -2865,7 +2865,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
     let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
-            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.clone().into() }))
+            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.as_str().into() }))
             .collect::<std::collections::HashSet<_>>()
     };
     let a_ids = collect_ids(&a);
@@ -3143,7 +3143,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
-            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.clone().into() }))
+            .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.as_str().into() }))
             .collect::<std::collections::HashSet<_>>()
     };
     let a = list_unlinked_references_inner(
@@ -3627,13 +3627,18 @@ async fn get_blocks_returns_full_rows_for_n_ids() {
     assert_eq!(rows.len(), 5, "all 5 ids resolve to a row");
 
     // Map by id so we can pin specific fields without depending on row order.
-    let by_id: std::collections::HashMap<String, _> =
-        rows.into_iter().map(|r| (r.id.clone(), r)).collect();
+    let by_id: std::collections::HashMap<String, _> = rows
+        .into_iter()
+        .map(|r| (r.id.clone().into_string(), r))
+        .collect();
 
     let c2 = by_id.get("GB_C2").expect("GB_C2 returned");
     assert_eq!(c2.block_type, "content");
     assert_eq!(c2.content.as_deref(), Some("child two"));
-    assert_eq!(c2.parent_id.as_deref(), Some("GB_PAGE"));
+    assert_eq!(
+        c2.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        Some("GB_PAGE")
+    );
     assert_eq!(c2.position, Some(2));
     assert_eq!(c2.todo_state.as_deref(), Some("TODO"));
     assert_eq!(c2.priority.as_deref(), Some("A"));

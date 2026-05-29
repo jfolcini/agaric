@@ -707,17 +707,17 @@ export const commands = {
 	 *  [`get_journal_page_by_date_inner`].
 	 */
 	getJournalPageByDate: (date: string, spaceId: string) => typedError<{
-	id: string,
+	id: BlockId,
 	block_type: string,
 	content: string | null,
-	parent_id: string | null,
+	parent_id: BlockId | null,
 	position: number | null,
 	deleted_at: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
 	scheduled_date: string | null,
-	page_id: string | null,
+	page_id: BlockId | null,
 } | null, AppError>(__TAURI_INVOKE("get_journal_page_by_date", { date, spaceId })),
 	/**
 	 *  Tauri command: list date-formatted journal pages in `[start_date,
@@ -797,14 +797,14 @@ export type ActiveBlockRow = {
 	id: ActiveBlockId,
 	block_type: string,
 	content: string | null,
-	parent_id: string | null,
+	parent_id: BlockId | null,
 	position: number | null,
 	deleted_at: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
 	scheduled_date: string | null,
-	page_id: string | null,
+	page_id: BlockId | null,
 };
 
 /**
@@ -957,17 +957,17 @@ export type BlockId = string;
  *  the type system at the helper signature.
  */
 export type BlockRow = {
-	id: string,
+	id: BlockId,
 	block_type: string,
 	content: string | null,
-	parent_id: string | null,
+	parent_id: BlockId | null,
 	position: number | null,
 	deleted_at: string | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
 	scheduled_date: string | null,
-	page_id: string | null,
+	page_id: BlockId | null,
 };
 
 /**  Metadata returned by [`collect_bug_report_metadata`]. */

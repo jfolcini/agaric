@@ -27,7 +27,7 @@ async fn set_property_writes_op_log_entry() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -49,7 +49,7 @@ async fn set_property_writes_op_log_entry() {
     );
     assert_eq!(ops[1].device_id, DEV, "device_id must match");
     assert!(
-        ops[1].payload.contains(&block.id),
+        ops[1].payload.contains(block.id.as_str()),
         "payload must contain block_id"
     );
     assert!(
@@ -82,7 +82,7 @@ async fn delete_property_writes_op_log_entry() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -95,7 +95,7 @@ async fn delete_property_writes_op_log_entry() {
     .unwrap();
     settle(&mat).await;
 
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "status".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "status".into())
         .await
         .unwrap();
 
@@ -109,7 +109,7 @@ async fn delete_property_writes_op_log_entry() {
     );
     assert_eq!(ops[2].device_id, DEV, "device_id must match");
     assert!(
-        ops[2].payload.contains(&block.id),
+        ops[2].payload.contains(block.id.as_str()),
         "payload must contain block_id"
     );
     assert!(
@@ -199,7 +199,7 @@ async fn set_property_inner_with_empty_key_returns_validation() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         // Empty key — fails the `1-64 characters` check in
         // `op::validate_set_property` *before* any DB write happens.
         "".into(),
@@ -264,7 +264,7 @@ async fn set_property_inner_with_type_mismatch_returns_validation() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "deadline".into(),
         Some("not-a-date".into()),
         None,
@@ -326,7 +326,7 @@ async fn boolean_property_set_and_read_back() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "flag".into(),
         None,
         None,
@@ -341,7 +341,9 @@ async fn boolean_property_set_and_read_back() {
 
     // 3. Read back via `get_properties_inner`. SQLite stores booleans
     //    as INTEGER (0/1); `value_bool` deserializes to `Option<i64>`.
-    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let rows = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let flag = rows
         .iter()
         .find(|r| r.key == "flag")
@@ -382,7 +384,7 @@ async fn boolean_property_false_persists_as_zero() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "archived".into(),
         None,
         None,
@@ -395,7 +397,9 @@ async fn boolean_property_false_persists_as_zero() {
     .unwrap();
     settle(&mat).await;
 
-    let rows = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let rows = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let archived = rows
         .iter()
         .find(|r| r.key == "archived")
@@ -433,7 +437,7 @@ async fn boolean_property_type_mismatch_returns_validation() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "label".into(),
         None,
         None,
@@ -475,7 +479,7 @@ async fn delete_property_on_deleted_block_returns_not_found() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "status".into(),
         Some("active".into()),
         None,
@@ -488,14 +492,14 @@ async fn delete_property_on_deleted_block_returns_not_found() {
     .unwrap();
     settle(&mat).await;
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
         .await
         .unwrap();
     settle(&mat).await;
 
     // Attempt to delete property on the now-deleted block
     let result =
-        delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "status".into()).await;
+        delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "status".into()).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -564,7 +568,7 @@ async fn get_batch_properties_happy_path() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -581,7 +585,7 @@ async fn get_batch_properties_happy_path() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "status".into(),
         Some("done".into()),
         None,
@@ -595,15 +599,18 @@ async fn get_batch_properties_happy_path() {
     settle(&mat).await;
 
     // Batch-fetch
-    let result = get_batch_properties_inner(&pool, vec![b1.id.clone(), b2.id.clone()])
-        .await
-        .unwrap();
+    let result = get_batch_properties_inner(
+        &pool,
+        vec![b1.id.clone().into_string(), b2.id.clone().into_string()],
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.len(), 2, "both blocks must be in result");
-    assert_eq!(result[&b1.id][0].key, "importance");
-    assert_eq!(result[&b1.id][0].value_text, Some("high".into()));
-    assert_eq!(result[&b2.id][0].key, "status");
-    assert_eq!(result[&b2.id][0].value_text, Some("done".into()));
+    assert_eq!(result[b1.id.as_str()][0].key, "importance");
+    assert_eq!(result[b1.id.as_str()][0].value_text, Some("high".into()));
+    assert_eq!(result[b2.id.as_str()][0].key, "status");
+    assert_eq!(result[b2.id.as_str()][0].value_text, Some("done".into()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -640,7 +647,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "key1".into(),
         Some("val".into()),
         None,
@@ -659,7 +666,7 @@ async fn get_batch_properties_does_not_affect_op_log() {
         .unwrap();
 
     // Read-only batch fetch
-    let _ = get_batch_properties_inner(&pool, vec![block.id.clone()])
+    let _ = get_batch_properties_inner(&pool, vec![block.id.clone().into_string()])
         .await
         .unwrap();
 
@@ -857,7 +864,7 @@ async fn query_by_property_happy_path() {
         &pool,
         DEV,
         &mat,
-        b1.id.clone().into(),
+        b1.id.as_str().into(),
         "todo".into(),
         Some("TODO".into()),
         None,
@@ -874,7 +881,7 @@ async fn query_by_property_happy_path() {
         &pool,
         DEV,
         &mat,
-        b2.id.clone().into(),
+        b2.id.as_str().into(),
         "todo".into(),
         Some("DONE".into()),
         None,
@@ -891,7 +898,7 @@ async fn query_by_property_happy_path() {
         &pool,
         DEV,
         &mat,
-        b3.id.clone().into(),
+        b3.id.as_str().into(),
         "priority".into(),
         Some("1".into()),
         None,
@@ -1267,7 +1274,7 @@ async fn query_by_property_finds_reserved_key_in_blocks_column() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1321,13 +1328,15 @@ async fn delete_property_clears_reserved_key_column() {
     .unwrap();
     settle(&mat).await;
 
-    set_priority_inner(&pool, DEV, &mat, block.id.clone().into(), Some("2".into()))
+    set_priority_inner(&pool, DEV, &mat, block.id.as_str().into(), Some("2".into()))
         .await
         .unwrap();
     settle(&mat).await;
 
     // Verify it's set
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         fetched.priority.as_deref(),
         Some("2"),
@@ -1335,13 +1344,21 @@ async fn delete_property_clears_reserved_key_column() {
     );
 
     // Delete the reserved key property — should succeed and NULL the column
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "priority".into())
-        .await
-        .unwrap();
+    delete_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "priority".into(),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
 
     // Verify column IS cleared
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         fetched.priority.is_none(),
         "priority should be NULL after delete, got: {:?}",
@@ -1377,7 +1394,7 @@ async fn set_todo_state_then_query_by_property_returns_match() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1433,7 +1450,7 @@ async fn set_due_date_then_query_by_property_returns_match() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("2026-06-01".into()),
     )
     .await
@@ -1490,7 +1507,7 @@ async fn thin_commands_survive_delete_property_cycle() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         Some("TODO".into()),
     )
     .await
@@ -1498,7 +1515,9 @@ async fn thin_commands_survive_delete_property_cycle() {
     settle(&mat).await;
 
     // Verify it's set
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         fetched.todo_state.as_deref(),
         Some("TODO"),
@@ -1510,7 +1529,7 @@ async fn thin_commands_survive_delete_property_cycle() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "todo_state".into(),
     )
     .await
@@ -1518,7 +1537,9 @@ async fn thin_commands_survive_delete_property_cycle() {
     settle(&mat).await;
 
     // Verify todo_state is cleared
-    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         fetched.todo_state.is_none(),
         "todo_state should be NULL after delete, got: {:?}",

@@ -97,8 +97,8 @@ pub(crate) async fn handle_recurrence_in_tx(
     // same IMMEDIATE transaction as the property reads below.
     let original: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
-                  due_date, scheduled_date, page_id
+        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
            FROM blocks WHERE id = ?"#,
         block_id
     )
@@ -230,8 +230,14 @@ pub(crate) async fn handle_recurrence_in_tx(
     let new_position = match original.position {
         Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
         Some(_) => Some(
-            next_sibling_position_excluding_sentinel(&mut ***tx, original.parent_id.as_deref())
-                .await?,
+            next_sibling_position_excluding_sentinel(
+                &mut ***tx,
+                original
+                    .parent_id
+                    .as_ref()
+                    .map(super::super::ulid::BlockId::as_str),
+            )
+            .await?,
         ),
         None => Some(NULL_POSITION_SENTINEL),
     };
@@ -242,7 +248,10 @@ pub(crate) async fn handle_recurrence_in_tx(
         device_id,
         original.block_type.clone(),
         original.content.unwrap_or_default(),
-        original.parent_id.clone(),
+        original
+            .parent_id
+            .clone()
+            .map(super::super::ulid::BlockId::into_string),
         new_position,
     )
     .await?;
@@ -252,7 +261,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     set_recurrence_property(
         &mut *tx,
         device_id,
-        new_block.id.clone(),
+        new_block.id.clone().into_string(),
         "todo_state",
         Some("TODO".to_string()),
         None,
@@ -266,7 +275,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     set_recurrence_property(
         &mut *tx,
         device_id,
-        new_block.id.clone(),
+        new_block.id.clone().into_string(),
         "repeat",
         Some(rule.clone()),
         None,
@@ -295,7 +304,7 @@ pub(crate) async fn handle_recurrence_in_tx(
             set_recurrence_property(
                 &mut *tx,
                 device_id,
-                new_block.id.clone(),
+                new_block.id.clone().into_string(),
                 "due_date",
                 None,
                 None,
@@ -320,7 +329,7 @@ pub(crate) async fn handle_recurrence_in_tx(
             set_recurrence_property(
                 &mut *tx,
                 device_id,
-                new_block.id.clone(),
+                new_block.id.clone().into_string(),
                 "scheduled_date",
                 None,
                 None,
@@ -337,7 +346,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         set_recurrence_property(
             &mut *tx,
             device_id,
-            new_block.id.clone(),
+            new_block.id.clone().into_string(),
             "repeat-until",
             None,
             None,
@@ -395,7 +404,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         set_recurrence_property(
             &mut *tx,
             device_id,
-            new_block.id.clone(),
+            new_block.id.clone().into_string(),
             "repeat-count",
             None,
             Some(count),
@@ -409,7 +418,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         set_recurrence_property(
             &mut *tx,
             device_id,
-            new_block.id.clone(),
+            new_block.id.clone().into_string(),
             "repeat-seq",
             None,
             Some(next_seq as f64),
@@ -425,7 +434,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     set_recurrence_property(
         &mut *tx,
         device_id,
-        new_block.id.clone(),
+        new_block.id.clone().into_string(),
         "repeat-origin",
         None,
         None,
@@ -516,8 +525,8 @@ mod tests_h17_m77 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
-                      due_date, scheduled_date, page_id
+            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                      due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
         )
@@ -571,7 +580,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             Some("TODO".into()),
         )
         .await
@@ -583,7 +592,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             Some("2025-06-15".into()),
         )
         .await
@@ -617,7 +626,7 @@ mod tests_h17_m77 {
         // this from set_todo_state_inner after flipping to DONE, but
         // calling directly keeps the assertion focused on this fn's
         // contract.
-        let result = handle_recurrence(&pool, DEV, &mat, &block.id).await;
+        let result = handle_recurrence(&pool, DEV, &mat, block.id.as_str()).await;
 
         assert!(
             result.is_err(),
@@ -632,7 +641,7 @@ mod tests_h17_m77 {
 
         // No new TODO sibling: the IMMEDIATE tx rolled back the
         // create_block_in_tx + property-set ops together.
-        let siblings = find_todo_siblings(&pool, &block.id).await;
+        let siblings = find_todo_siblings(&pool, block.id.as_str()).await;
         assert_eq!(
             siblings.len(),
             0,
@@ -685,7 +694,7 @@ mod tests_h17_m77 {
             &mat,
             "content".into(),
             "concurrent recurring task".into(),
-            Some(parent.id.clone()),
+            Some(parent.id.to_string()),
             Some(1),
         )
         .await
@@ -697,7 +706,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             Some("TODO".into()),
         )
         .await
@@ -709,7 +718,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             Some("2025-06-15".into()),
         )
         .await
@@ -721,7 +730,7 @@ mod tests_h17_m77 {
             &pool,
             DEV,
             &mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             "repeat".into(),
             Some("daily".into()),
             None,
@@ -746,7 +755,7 @@ mod tests_h17_m77 {
         //
         // Snapshot any pre-existing siblings (none expected, but guard
         // against environment leakage from earlier setup ops).
-        let pre_siblings = find_todo_siblings(&pool, &block.id).await;
+        let pre_siblings = find_todo_siblings(&pool, block.id.as_str()).await;
         assert_eq!(
             pre_siblings.len(),
             0,
@@ -764,8 +773,8 @@ mod tests_h17_m77 {
         let id_a = block.id.clone();
         let id_b = block.id.clone();
         let (r_a, r_b) = tokio::join!(
-            async move { handle_recurrence(&pool_a, DEV, &mat_a, &id_a).await },
-            async move { handle_recurrence(&pool_b, DEV, &mat_b, &id_b).await },
+            async move { handle_recurrence(&pool_a, DEV, &mat_a, id_a.as_str()).await },
+            async move { handle_recurrence(&pool_b, DEV, &mat_b, id_b.as_str()).await },
         );
 
         // At least one call must have succeeded; if either errored, that
@@ -775,7 +784,7 @@ mod tests_h17_m77 {
             "at least one concurrent handle_recurrence call must succeed; got r_a={r_a:?} r_b={r_b:?}"
         );
 
-        let siblings = find_todo_siblings(&pool, &block.id).await;
+        let siblings = find_todo_siblings(&pool, block.id.as_str()).await;
 
         // With IMMEDIATE serialization, each call independently passes the
         // end-condition guard (no repeat-count is set on the original) and
@@ -794,7 +803,7 @@ mod tests_h17_m77 {
         // the full set of recurrence properties — IMMEDIATE rollback
         // means we never observe a half-formed sibling.
         for sibling in &siblings {
-            let props = get_properties_inner(&pool, sibling.id.clone())
+            let props = get_properties_inner(&pool, sibling.id.to_string())
                 .await
                 .unwrap();
             let has_repeat = props.iter().any(|p| p.key == "repeat");
@@ -895,8 +904,8 @@ mod tests_l99_l100 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id, block_type, content, parent_id, position, deleted_at,  todo_state, priority,
-                      due_date, scheduled_date, page_id
+            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                      due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
         )
@@ -914,13 +923,19 @@ mod tests_l99_l100 {
             .unwrap();
         mat.flush_background().await.unwrap();
 
-        set_todo_state_inner(pool, DEV, mat, block.id.clone().into(), Some("TODO".into()))
-            .await
-            .unwrap();
+        set_todo_state_inner(
+            pool,
+            DEV,
+            mat,
+            block.id.as_str().into(),
+            Some("TODO".into()),
+        )
+        .await
+        .unwrap();
         mat.flush_background().await.unwrap();
         settle().await;
 
-        set_due_date_inner(pool, DEV, mat, block.id.clone().into(), Some(due.into()))
+        set_due_date_inner(pool, DEV, mat, block.id.as_str().into(), Some(due.into()))
             .await
             .unwrap();
         mat.flush_background().await.unwrap();
@@ -930,7 +945,7 @@ mod tests_l99_l100 {
             pool,
             DEV,
             mat,
-            block.id.clone().into(),
+            block.id.as_str().into(),
             "repeat".into(),
             Some("daily".into()),
             None,
@@ -944,7 +959,7 @@ mod tests_l99_l100 {
         mat.flush_background().await.unwrap();
         settle().await;
 
-        block.id
+        block.id.into_string()
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -997,7 +1012,7 @@ mod tests_l99_l100 {
         let siblings = find_todo_siblings(&pool, &id).await;
         assert_eq!(siblings.len(), 1, "expected exactly one TODO sibling");
         let sibling = &siblings[0];
-        let props = get_properties_inner(&pool, sibling.id.clone())
+        let props = get_properties_inner(&pool, sibling.id.to_string())
             .await
             .unwrap();
 

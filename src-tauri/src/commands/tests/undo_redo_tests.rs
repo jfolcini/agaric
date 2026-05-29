@@ -39,7 +39,7 @@ async fn create_page_with_children(pool: &SqlitePool, mat: &Materializer) -> (St
         mat,
         "content".into(),
         "child one".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -52,14 +52,17 @@ async fn create_page_with_children(pool: &SqlitePool, mat: &Materializer) -> (St
         mat,
         "content".into(),
         "child two".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    (page.id, vec![child1.id, child2.id])
+    (
+        page.id.into_string(),
+        vec![child1.id.into_string(), child2.id.into_string()],
+    )
 }
 
 // -- list_page_history tests --
@@ -225,7 +228,7 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
         &mat,
         "content".into(),
         "child of page b".into(),
-        Some(page_b.id.clone()),
+        Some(page_b.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -263,11 +266,11 @@ async fn list_page_history_all_returns_ops_from_all_pages() {
         .collect();
     assert!(block_ids.contains(&page_a), "should contain ops for page_a");
     assert!(
-        block_ids.contains(&page_b.id),
+        block_ids.contains(&page_b.id.clone().into_string()),
         "should contain ops for page_b"
     );
     assert!(
-        block_ids.contains(&child_b.id),
+        block_ids.contains(&child_b.id.clone().into_string()),
         "should contain ops for child_b"
     );
 
@@ -334,13 +337,21 @@ async fn revert_ops_reverses_single_edit() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    let _edited = edit_block_inner(&pool, DEV, &mat, created.id.clone(), "modified".into())
-        .await
-        .unwrap();
+    let _edited = edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "modified".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify block is now "modified"
-    let before_undo = get_block_inner(&pool, created.id.clone()).await.unwrap();
+    let before_undo = get_block_inner(&pool, created.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         before_undo.content,
         Some("modified".into()),
@@ -385,7 +396,9 @@ async fn revert_ops_reverses_single_edit() {
     );
 
     // Block should be back to "original"
-    let after_undo = get_block_inner(&pool, created.id).await.unwrap();
+    let after_undo = get_block_inner(&pool, created.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(
         after_undo.content,
         Some("original".into()),
@@ -412,14 +425,26 @@ async fn revert_ops_reverses_multiple_ops_in_correct_order() {
     mat.flush_background().await.unwrap();
 
     // Edit twice
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v1".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Get both edit ops
@@ -442,7 +467,9 @@ async fn revert_ops_reverses_multiple_ops_in_correct_order() {
     assert_eq!(results.len(), 2, "should have two results");
 
     // After reverting both edits, block should be back to "v0"
-    let after = get_block_inner(&pool, created.id).await.unwrap();
+    let after = get_block_inner(&pool, created.id.to_string())
+        .await
+        .unwrap();
     assert_eq!(
         after.content,
         Some("v0".into()),
@@ -469,9 +496,15 @@ async fn revert_ops_appends_op_log_entry() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "after".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        created.id.clone().into_string(),
+        "after".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
@@ -538,12 +571,12 @@ async fn revert_ops_rejects_non_reversible_op() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, created.id.clone())
+    delete_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    purge_block_inner(&pool, DEV, &mat, created.id.clone())
+    purge_block_inner(&pool, DEV, &mat, created.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -599,7 +632,7 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         &mat,
         "content".into(),
         "first".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -610,7 +643,7 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         &mat,
         "content".into(),
         "second".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -621,16 +654,22 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         &mat,
         "content".into(),
         "third".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(3),
     )
     .await
     .unwrap();
 
     // Edit each block
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "first-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        "first-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Record the seq after b1 edit — this will be our restore target
@@ -644,32 +683,57 @@ async fn restore_page_to_op_reverts_ops_after_target() {
         .unwrap();
     let target_seq = target_op.seq;
 
-    edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "second-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into_string(),
+        "second-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, b3.id.clone(), "third-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b3.id.clone().into_string(),
+        "third-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify all blocks have edited content
     assert_eq!(
-        get_block_inner(&pool, b2.id.clone()).await.unwrap().content,
+        get_block_inner(&pool, b2.id.clone().into_string())
+            .await
+            .unwrap()
+            .content,
         Some("second-edited".into()),
         "b2 should be edited before restore"
     );
     assert_eq!(
-        get_block_inner(&pool, b3.id.clone()).await.unwrap().content,
+        get_block_inner(&pool, b3.id.clone().into_string())
+            .await
+            .unwrap()
+            .content,
         Some("third-edited".into()),
         "b3 should be edited before restore"
     );
 
     // Restore to the point after b1 edit
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     assert_eq!(
@@ -683,18 +747,27 @@ async fn restore_page_to_op_reverts_ops_after_target() {
 
     // b1 should still be "first-edited" (at or before the target)
     assert_eq!(
-        get_block_inner(&pool, b1.id).await.unwrap().content,
+        get_block_inner(&pool, b1.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("first-edited".into()),
         "b1 should keep its edit (at/before target)"
     );
     // b2 and b3 should be back to original
     assert_eq!(
-        get_block_inner(&pool, b2.id).await.unwrap().content,
+        get_block_inner(&pool, b2.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("second".into()),
         "b2 should revert to original"
     );
     assert_eq!(
-        get_block_inner(&pool, b3.id).await.unwrap().content,
+        get_block_inner(&pool, b3.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("third".into()),
         "b3 should revert to original"
     );
@@ -724,7 +797,7 @@ async fn restore_page_to_op_skips_non_reversible() {
         &mat,
         "content".into(),
         "keep".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -743,28 +816,43 @@ async fn restore_page_to_op_skips_non_reversible() {
         &mat,
         "content".into(),
         "doomed".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
-    delete_block_inner(&pool, DEV, &mat, b2.id.clone())
+    delete_block_inner(&pool, DEV, &mat, b2.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
-    purge_block_inner(&pool, DEV, &mat, b2.id).await.unwrap();
+    purge_block_inner(&pool, DEV, &mat, b2.id.to_string())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
     // Also edit b1 (this IS reversible)
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "modified".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        "modified".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // b2 was purged — it's no longer in the blocks table, so the recursive
@@ -778,7 +866,10 @@ async fn restore_page_to_op_skips_non_reversible() {
         "should revert exactly 1 op (edit_block b1)"
     );
     assert_eq!(
-        get_block_inner(&pool, b1.id).await.unwrap().content,
+        get_block_inner(&pool, b1.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("keep".into()),
         "b1 should revert to original"
     );
@@ -807,7 +898,7 @@ async fn restore_page_to_op_global_scope() {
         &mat,
         "content".into(),
         "orig-1".into(),
-        Some(page1.id.clone()),
+        Some(page1.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -831,7 +922,7 @@ async fn restore_page_to_op_global_scope() {
         &mat,
         "content".into(),
         "orig-2".into(),
-        Some(page2.id.clone()),
+        Some(page2.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -843,13 +934,25 @@ async fn restore_page_to_op_global_scope() {
     let target_seq = ops.last().unwrap().seq;
 
     // Edit blocks on BOTH pages
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "changed-1".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        "changed-1".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
-    edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "changed-2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into_string(),
+        "changed-2".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Global restore
@@ -861,12 +964,18 @@ async fn restore_page_to_op_global_scope() {
 
     assert_eq!(result.ops_reverted, 2, "should revert edits on both pages");
     assert_eq!(
-        get_block_inner(&pool, b1.id).await.unwrap().content,
+        get_block_inner(&pool, b1.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("orig-1".into()),
         "b1 should revert"
     );
     assert_eq!(
-        get_block_inner(&pool, b2.id).await.unwrap().content,
+        get_block_inner(&pool, b2.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("orig-2".into()),
         "b2 should revert"
     );
@@ -895,7 +1004,7 @@ async fn restore_page_to_op_no_ops_after_target() {
         &mat,
         "content".into(),
         "block".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -906,9 +1015,16 @@ async fn restore_page_to_op_no_ops_after_target() {
         .unwrap();
     let target_seq = ops.last().unwrap().seq;
 
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         result.ops_reverted, 0,
@@ -946,7 +1062,7 @@ async fn restore_page_to_op_includes_nested_blocks() {
         &mat,
         "content".into(),
         "parent-orig".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -958,7 +1074,7 @@ async fn restore_page_to_op_includes_nested_blocks() {
         &mat,
         "content".into(),
         "child-orig".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -971,18 +1087,30 @@ async fn restore_page_to_op_includes_nested_blocks() {
     let target_seq = ops.last().unwrap().seq;
 
     // Edit both the parent and the nested child
-    edit_block_inner(&pool, DEV, &mat, parent.id.clone(), "parent-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        parent.id.clone().into_string(),
+        "parent-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "child-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify both are edited
     assert_eq!(
-        get_block_inner(&pool, parent.id.clone())
+        get_block_inner(&pool, parent.id.clone().into_string())
             .await
             .unwrap()
             .content,
@@ -990,7 +1118,7 @@ async fn restore_page_to_op_includes_nested_blocks() {
         "parent should be edited before restore"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id.clone())
+        get_block_inner(&pool, child.id.clone().into_string())
             .await
             .unwrap()
             .content,
@@ -999,9 +1127,16 @@ async fn restore_page_to_op_includes_nested_blocks() {
     );
 
     // Page-scoped restore — must find nested child too
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     assert_eq!(
@@ -1009,12 +1144,18 @@ async fn restore_page_to_op_includes_nested_blocks() {
         "should revert both parent and nested child edits"
     );
     assert_eq!(
-        get_block_inner(&pool, parent.id).await.unwrap().content,
+        get_block_inner(&pool, parent.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("parent-orig".into()),
         "parent should revert to original"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id).await.unwrap().content,
+        get_block_inner(&pool, child.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("child-orig".into()),
         "nested child should revert to original (recursive CTE)"
     );
@@ -1039,7 +1180,8 @@ async fn restore_page_to_op_invalid_target_returns_error() {
     mat.flush_background().await.unwrap();
 
     // Use a seq that doesn't exist in the op log
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), 999_999).await;
+    let result =
+        restore_page_to_op_inner(&pool, DEV, &mat, page.id.to_string(), DEV.into(), 999_999).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -1072,7 +1214,7 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
         &mat,
         "content".into(),
         "alpha".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1083,7 +1225,7 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
         &mat,
         "content".into(),
         "beta".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -1096,14 +1238,26 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
     let target_seq = ops_before.last().unwrap().seq;
 
     // Edit both blocks (these will be reverted)
-    edit_block_inner(&pool, DEV, &mat, b1.id.clone(), "alpha-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.clone().into_string(),
+        "alpha-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, b2.id.clone(), "beta-edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.clone().into_string(),
+        "beta-edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     let ops_before_restore = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
@@ -1112,9 +1266,16 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
     let count_before = ops_before_restore.len();
 
     // Restore to target — should revert both edits
-    let result = restore_page_to_op_inner(&pool, DEV, &mat, page.id, DEV.into(), target_seq)
-        .await
-        .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.to_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     assert_eq!(result.ops_reverted, 2, "should revert exactly 2 edit ops");
@@ -1205,7 +1366,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         &mat,
         "content".into(),
         "child block".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1234,7 +1395,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            block_id: BlockId::from_trusted(&child.id),
+            block_id: child.id.clone(),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
@@ -1272,9 +1433,15 @@ async fn restore_page_to_op_skips_delete_attachment() {
         .unwrap();
 
     // Also edit the child block after target (this IS reversible)
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "child edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Restore using global scope (__all__) so the delete_attachment op is
@@ -1295,7 +1462,10 @@ async fn restore_page_to_op_skips_delete_attachment() {
         "should revert exactly 1 reversible op (edit_block)"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id).await.unwrap().content,
+        get_block_inner(&pool, child.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("child block".into()),
         "child block content should revert to original"
     );
@@ -1326,7 +1496,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         &mat,
         "content".into(),
         "child block".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1356,7 +1526,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            block_id: BlockId::from_trusted(&child.id),
+            block_id: child.id.clone(),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
@@ -1396,18 +1566,30 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         .unwrap();
 
     // Also edit the child block after target (reversible)
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "child edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // PAGE-SCOPED restore (not __all__) — before B-59 fix, the
     // delete_attachment op was silently missed because it has
     // $.attachment_id instead of $.block_id.
-    let result =
-        restore_page_to_op_inner(&pool, DEV, &mat, page.id.clone(), DEV.into(), target_seq)
-            .await
-            .unwrap();
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.clone().into_string(),
+        DEV.into(),
+        target_seq,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // delete_attachment is in the non_reversible list, so it should be
@@ -1421,7 +1603,10 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
         "should revert exactly 1 reversible op (edit_block)"
     );
     assert_eq!(
-        get_block_inner(&pool, child.id).await.unwrap().content,
+        get_block_inner(&pool, child.id.to_string())
+            .await
+            .unwrap()
+            .content,
         Some("child block".into()),
         "child block content should revert to original"
     );
@@ -1538,7 +1723,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         &mat,
         "content".into(),
         "child block".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1576,7 +1761,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            block_id: BlockId::from_trusted(&child.id),
+            block_id: child.id.clone(),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
@@ -1623,7 +1808,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     );
 
     // 4. Undo most recent op — should find the delete_attachment op
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .expect("undo should find delete_attachment op on the page");
 
@@ -1730,7 +1915,7 @@ async fn full_cycle_create_edit_undo_redo() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -1738,12 +1923,20 @@ async fn full_cycle_create_edit_undo_redo() {
     mat.flush_background().await.unwrap();
 
     // Edit
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "modified".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    let after_edit = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after_edit = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after_edit.content,
         Some("modified".into()),
@@ -1751,12 +1944,14 @@ async fn full_cycle_create_edit_undo_redo() {
     );
 
     // Undo the edit (depth=0 = most recent)
-    let undo = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let undo = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     assert!(!undo.is_redo, "undo should not be flagged as redo");
 
-    let after_undo = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after_undo = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after_undo.content,
         Some("original".into()),
@@ -1775,7 +1970,9 @@ async fn full_cycle_create_edit_undo_redo() {
     .unwrap();
     assert!(redo.is_redo, "redo should be flagged as redo");
 
-    let after_redo = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after_redo = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after_redo.content,
         Some("modified".into()),
@@ -1837,7 +2034,9 @@ async fn revert_create_block_soft_deletes() {
     );
 
     // Verify the block is now soft-deleted
-    let block = get_block_inner(&pool, created.id).await.unwrap();
+    let block = get_block_inner(&pool, created.id.to_string())
+        .await
+        .unwrap();
     assert!(
         block.deleted_at.is_some(),
         "block should be soft-deleted after reverting create"
@@ -1869,20 +2068,22 @@ async fn revert_delete_block_restores_with_descendants() {
         &mat,
         "content".into(),
         "Child".into(),
-        Some(parent.id.clone()),
+        Some(parent.id.clone().into_string()),
         Some(1),
     )
     .await
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify both are deleted
-    let p_row = get_block_inner(&pool, parent.id.clone()).await.unwrap();
+    let p_row = get_block_inner(&pool, parent.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(p_row.deleted_at.is_some(), "parent should be deleted");
 
     // Get the delete_block op
@@ -1911,13 +2112,17 @@ async fn revert_delete_block_restores_with_descendants() {
     );
 
     // Verify both are restored
-    let p_after = get_block_inner(&pool, parent.id.clone()).await.unwrap();
+    let p_after = get_block_inner(&pool, parent.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         p_after.deleted_at.is_none(),
         "parent should be restored after revert"
     );
 
-    let c_after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let c_after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         c_after.deleted_at.is_none(),
         "child should be restored after revert"
@@ -1963,7 +2168,7 @@ async fn revert_move_block_restores_original_position() {
         &mat,
         "content".into(),
         "movable".into(),
-        Some(p1.id.clone()),
+        Some(p1.id.clone().into_string()),
         Some(3),
     )
     .await
@@ -1971,15 +2176,24 @@ async fn revert_move_block_restores_original_position() {
     mat.flush_background().await.unwrap();
 
     // Move child to P2 at position 7
-    move_block_inner(&pool, DEV, &mat, child.id.clone(), Some(p2.id.clone()), 7)
-        .await
-        .unwrap();
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        Some(p2.id.clone().into_string()),
+        7,
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify it's at P2, pos 7
-    let before = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let before = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
-        before.parent_id.as_deref(),
+        before.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(p2.id.as_str()),
         "block should be under P2 after move"
     );
@@ -2009,9 +2223,11 @@ async fn revert_move_block_restores_original_position() {
     .unwrap();
 
     // Verify it's back at P1, pos 3
-    let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
-        after.parent_id.as_deref(),
+        after.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(p1.id.as_str()),
         "parent should be restored to P1"
     );
@@ -2051,9 +2267,15 @@ async fn revert_add_tag_removes_association() {
     mat.flush_background().await.unwrap();
 
     // Add the tag
-    add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify the tag is applied
@@ -2127,14 +2349,26 @@ async fn revert_remove_tag_restores_association() {
     mat.flush_background().await.unwrap();
 
     // Add tag, then remove tag
-    add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    remove_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    remove_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify tag is removed
@@ -2198,7 +2432,7 @@ async fn revert_set_property_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -2216,7 +2450,7 @@ async fn revert_set_property_restores_prior_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "importance".into(),
         Some("low".into()),
         None,
@@ -2230,7 +2464,9 @@ async fn revert_set_property_restores_prior_value() {
     mat.flush_background().await.unwrap();
 
     // Verify it's "low"
-    let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props_before = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let p_before = props_before.iter().find(|p| p.key == "importance").unwrap();
     assert_eq!(
         p_before.value_text.as_deref(),
@@ -2259,7 +2495,9 @@ async fn revert_set_property_restores_prior_value() {
     .unwrap();
 
     // Verify it's back to "high"
-    let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props_after = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let p_after = props_after.iter().find(|p| p.key == "importance").unwrap();
     assert_eq!(
         p_after.value_text.as_deref(),
@@ -2291,7 +2529,7 @@ async fn revert_set_property_first_produces_delete() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "color".into(),
         Some("red".into()),
         None,
@@ -2324,7 +2562,9 @@ async fn revert_set_property_first_produces_delete() {
     .unwrap();
 
     // Verify the property row no longer exists
-    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props.iter().all(|p| p.key != "color"),
         "property 'color' should be deleted after reverting first set"
@@ -2354,7 +2594,7 @@ async fn revert_delete_property_restores_value() {
         &pool,
         DEV,
         &mat,
-        block.id.clone().into(),
+        block.id.as_str().into(),
         "due".into(),
         None,
         None,
@@ -2368,13 +2608,15 @@ async fn revert_delete_property_restores_value() {
     mat.flush_background().await.unwrap();
 
     // Delete the property
-    delete_property_inner(&pool, DEV, &mat, block.id.clone().into(), "due".into())
+    delete_property_inner(&pool, DEV, &mat, block.id.as_str().into(), "due".into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify property is gone
-    let props_before = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props_before = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props_before.iter().all(|p| p.key != "due"),
         "property 'due' should be deleted"
@@ -2400,7 +2642,9 @@ async fn revert_delete_property_restores_value() {
     .unwrap();
 
     // Verify the property is restored with value_date="2025-06-15"
-    let props_after = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let props_after = get_properties_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     let due = props_after
         .iter()
         .find(|p| p.key == "due")
@@ -2456,7 +2700,7 @@ async fn revert_add_attachment_soft_deletes() {
         DEV,
         OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
-            block_id: BlockId::from_trusted(&block.id),
+            block_id: block.id.clone(),
             mime_type: "image/png".into(),
             filename: "photo.png".into(),
             size_bytes: 1024,
@@ -2579,9 +2823,15 @@ async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "edited".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.clone().into_string(),
+        "edited".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Create another block, delete it, purge it (non-reversible)
@@ -2598,12 +2848,12 @@ async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, doomed.id.clone())
+    delete_block_inner(&pool, DEV, &mat, doomed.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    purge_block_inner(&pool, DEV, &mat, doomed.id.clone())
+    purge_block_inner(&pool, DEV, &mat, doomed.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2642,7 +2892,7 @@ async fn revert_ops_mixed_reversible_non_reversible_rejects_all() {
     );
 
     // Verify the edit was NOT reversed (block content unchanged)
-    let after = get_block_inner(&pool, block.id).await.unwrap();
+    let after = get_block_inner(&pool, block.id.to_string()).await.unwrap();
     assert_eq!(
         after.content,
         Some("edited".into()),
@@ -2687,7 +2937,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2700,7 +2950,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
         &mat,
         "content".into(),
         "grandchild".into(),
-        Some(child.id.clone()),
+        Some(child.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2713,7 +2963,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
         &mat,
         "content".into(),
         "great-grandchild".into(),
-        Some(grandchild.id.clone()),
+        Some(grandchild.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2721,14 +2971,20 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
     mat.flush_background().await.unwrap();
 
     // Edit each to add more ops
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "child-edited".into())
-        .await
-        .unwrap();
     edit_block_inner(
         &pool,
         DEV,
         &mat,
-        grandchild.id.clone(),
+        child.id.clone().into_string(),
+        "child-edited".into(),
+    )
+    .await
+    .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        grandchild.id.clone().into_string(),
         "grandchild-edited".into(),
     )
     .await
@@ -2737,7 +2993,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
         &pool,
         DEV,
         &mat,
-        great_grandchild.id.clone(),
+        great_grandchild.id.clone().into_string(),
         "gg-edited".into(),
     )
     .await
@@ -2745,7 +3001,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
 
     let result = list_page_history_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         &SpaceScope::Global,
         None,
@@ -2772,7 +3028,7 @@ async fn list_page_history_deep_nesting_includes_grandchildren() {
         let payload: serde_json::Value = serde_json::from_str(&entry.payload).unwrap();
         let block_id = payload["block_id"].as_str().unwrap();
         assert!(
-            valid_ids.contains(&block_id.to_string()),
+            valid_ids.iter().any(|id| id == block_id),
             "op should be for a block in the page tree, got: {block_id}"
         );
     }
@@ -2803,7 +3059,7 @@ async fn list_page_history_includes_ops_for_deleted_blocks() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2811,20 +3067,26 @@ async fn list_page_history_includes_ops_for_deleted_blocks() {
     mat.flush_background().await.unwrap();
 
     // Edit child
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited-child".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "edited-child".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Delete child
-    delete_block_inner(&pool, DEV, &mat, child.id.clone())
+    delete_block_inner(&pool, DEV, &mat, child.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     let result = list_page_history_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         &SpaceScope::Global,
         None,
@@ -2875,7 +3137,7 @@ async fn list_page_history_empty_page_returns_only_create() {
 
     let result = list_page_history_inner(
         &pool,
-        page.id.clone(),
+        page.id.clone().into_string(),
         None,
         &SpaceScope::Global,
         None,
@@ -2922,7 +3184,7 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -2930,21 +3192,35 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
     mat.flush_background().await.unwrap();
 
     // Edit to "v1", then "v2"
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "v1".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "v1".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "v2".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "v2".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // 1) undo(depth=0) → reverses edit "v2" → content="v1"
-    let undo1 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let undo1 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
-    let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after.content,
         Some("v1".into()),
@@ -2954,10 +3230,12 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
     // 2) undo(depth=2) → reverses edit "v1"
     //    History after step 1: [undo_edit(seq5), edit_v2(seq4), edit_v1(seq3), ...]
     //    depth=2 picks seq3 (edit "v1"), whose prior text is "original"
-    let undo2 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 2)
+    let undo2 = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 2)
         .await
         .unwrap();
-    let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after.content,
         Some("original".into()),
@@ -2974,7 +3252,9 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
     )
     .await
     .unwrap();
-    let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after.content,
         Some("v1".into()),
@@ -2991,7 +3271,9 @@ async fn undo_redo_undo_redo_full_cycle_multiple_edits() {
     )
     .await
     .unwrap();
-    let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         after.content,
         Some("v2".into()),
@@ -3023,7 +3305,7 @@ async fn revert_ops_from_different_devices() {
     // from DEV (whose created_at is now_rfc3339()). The reverse lookup
     // needs to find the create op *before* this edit in temporal order.
     let edit_payload = OpPayload::EditBlock(EditBlockPayload {
-        block_id: BlockId::from_trusted(&block.id),
+        block_id: block.id.clone(),
         to_text: "from-device-B".into(),
         prev_edit: None,
     });
@@ -3045,7 +3327,9 @@ async fn revert_ops_from_different_devices() {
         .unwrap();
 
     // Verify content is "from-device-B"
-    let before = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let before = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         before.content,
         Some("from-device-B".into()),
@@ -3085,7 +3369,9 @@ async fn revert_ops_from_different_devices() {
 
     // After reverting device-B's edit: content should be "original"
     // After reverting DEV's create: block should be soft-deleted
-    let after = get_block_inner(&pool, block.id.clone()).await.unwrap();
+    let after = get_block_inner(&pool, block.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         after.deleted_at.is_some(),
         "block should be soft-deleted after reverting create"
@@ -3134,7 +3420,7 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
         &mat,
         "content".into(),
         "child text".into(),
-        Some(page_a.id.clone()),
+        Some(page_a.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3142,9 +3428,15 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
     mat.flush_background().await.unwrap();
 
     // Edit child while under page A
-    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "edited child".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        "edited child".into(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Move child to page B
@@ -3152,8 +3444,8 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
         &pool,
         DEV,
         &mat,
-        child.id.clone(),
-        Some(page_b.id.clone()),
+        child.id.clone().into_string(),
+        Some(page_b.id.clone().into_string()),
         1,
     )
     .await
@@ -3163,7 +3455,7 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
     // Query page A history — child is no longer under A
     let history_a = list_page_history_inner(
         &pool,
-        page_a.id.clone(),
+        page_a.id.clone().into_string(),
         None,
         &SpaceScope::Global,
         None,
@@ -3175,7 +3467,7 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
     // Query page B history — child is now under B
     let history_b = list_page_history_inner(
         &pool,
-        page_b.id.clone(),
+        page_b.id.clone().into_string(),
         None,
         &SpaceScope::Global,
         None,
@@ -3190,7 +3482,7 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
         .iter()
         .filter(|e| {
             let payload: serde_json::Value = serde_json::from_str(&e.payload).unwrap_or_default();
-            payload.get("block_id").and_then(|v| v.as_str()) == Some(&child.id)
+            payload.get("block_id").and_then(|v| v.as_str()) == Some(child.id.as_str())
         })
         .collect();
 
@@ -3207,7 +3499,7 @@ async fn list_page_history_includes_ops_after_block_moved_to_different_page() {
         .iter()
         .filter(|e| {
             let payload: serde_json::Value = serde_json::from_str(&e.payload).unwrap_or_default();
-            payload.get("block_id").and_then(|v| v.as_str()) == Some(&child.id)
+            payload.get("block_id").and_then(|v| v.as_str()) == Some(child.id.as_str())
         })
         .collect();
     assert!(
@@ -3240,7 +3532,7 @@ async fn undo_page_op_reverses_delete_block() {
         &mat,
         "content".into(),
         "child content".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3248,17 +3540,19 @@ async fn undo_page_op_reverses_delete_block() {
     mat.flush_background().await.unwrap();
 
     // Delete the child
-    delete_block_inner(&pool, DEV, &mat, child.id.clone())
+    delete_block_inner(&pool, DEV, &mat, child.id.clone().into_string())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify deleted
-    let deleted = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let deleted = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(deleted.deleted_at.is_some(), "child should be deleted");
 
     // Undo the delete (depth=0)
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -3269,7 +3563,9 @@ async fn undo_page_op_reverses_delete_block() {
     );
 
     // Verify restored
-    let restored = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let restored = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         restored.deleted_at.is_none(),
         "child should be restored after undo"
@@ -3300,7 +3596,7 @@ async fn undo_page_op_reverses_move_block() {
         &mat,
         "content".into(),
         "Parent A".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3313,7 +3609,7 @@ async fn undo_page_op_reverses_move_block() {
         &mat,
         "content".into(),
         "Parent B".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -3326,7 +3622,7 @@ async fn undo_page_op_reverses_move_block() {
         &mat,
         "content".into(),
         "moveable".into(),
-        Some(parent_a.id.clone()),
+        Some(parent_a.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3338,8 +3634,8 @@ async fn undo_page_op_reverses_move_block() {
         &pool,
         DEV,
         &mat,
-        child.id.clone(),
-        Some(parent_b.id.clone()),
+        child.id.clone().into_string(),
+        Some(parent_b.id.clone().into_string()),
         5,
     )
     .await
@@ -3347,15 +3643,17 @@ async fn undo_page_op_reverses_move_block() {
     mat.flush_background().await.unwrap();
 
     // Verify moved
-    let moved = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let moved = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
-        moved.parent_id.as_deref(),
+        moved.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(parent_b.id.as_str()),
         "block should be under parent_b after move"
     );
 
     // Undo the move (depth=0)
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -3366,9 +3664,14 @@ async fn undo_page_op_reverses_move_block() {
     );
 
     // Verify moved back
-    let restored = get_block_inner(&pool, child.id.clone()).await.unwrap();
+    let restored = get_block_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
-        restored.parent_id.as_deref(),
+        restored
+            .parent_id
+            .as_ref()
+            .map(crate::ulid::BlockId::as_str),
         Some(parent_a.id.as_str()),
         "child should be back under parent A"
     );
@@ -3411,7 +3714,7 @@ async fn undo_page_op_reverses_add_tag() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3419,9 +3722,15 @@ async fn undo_page_op_reverses_add_tag() {
     mat.flush_background().await.unwrap();
 
     // Add tag to child
-    add_tag_inner(&pool, DEV, &mat, child.id.clone(), tag.id.clone())
-        .await
-        .unwrap();
+    add_tag_inner(
+        &pool,
+        DEV,
+        &mat,
+        child.id.clone().into_string(),
+        tag.id.clone().into_string(),
+    )
+    .await
+    .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify tag exists
@@ -3435,7 +3744,7 @@ async fn undo_page_op_reverses_add_tag() {
     assert_eq!(count_before, 1, "tag should be applied before undo");
 
     // Undo the add_tag (depth=0)
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -3480,7 +3789,7 @@ async fn undo_page_op_reverses_set_property() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3492,7 +3801,7 @@ async fn undo_page_op_reverses_set_property() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into(),
+        child.id.as_str().into(),
         "importance".into(),
         Some("high".into()),
         None,
@@ -3506,7 +3815,9 @@ async fn undo_page_op_reverses_set_property() {
     mat.flush_background().await.unwrap();
 
     // Verify property exists
-    let props = get_properties_inner(&pool, child.id.clone()).await.unwrap();
+    let props = get_properties_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         props
             .iter()
@@ -3515,7 +3826,7 @@ async fn undo_page_op_reverses_set_property() {
     );
 
     // Undo the set_property (depth=0) — should produce delete_property since it was the first set
-    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone(), 0)
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -3526,7 +3837,9 @@ async fn undo_page_op_reverses_set_property() {
     );
 
     // Verify property removed
-    let props_after = get_properties_inner(&pool, child.id.clone()).await.unwrap();
+    let props_after = get_properties_inner(&pool, child.id.clone().into_string())
+        .await
+        .unwrap();
     assert!(
         !props_after.iter().any(|p| p.key == "importance"),
         "property should be removed after undo"
@@ -3561,7 +3874,7 @@ async fn sequential_undo_from_multiple_devices() {
         &mat,
         "content".into(),
         "Block from device-A".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(1),
     )
     .await
@@ -3574,7 +3887,7 @@ async fn sequential_undo_from_multiple_devices() {
         &mat,
         "content".into(),
         "Block from device-B".into(),
-        Some(page.id.clone()),
+        Some(page.id.clone().into_string()),
         Some(2),
     )
     .await
@@ -3586,7 +3899,7 @@ async fn sequential_undo_from_multiple_devices() {
         &pool,
         "device-A",
         &mat,
-        child_a.id.clone(),
+        child_a.id.clone().into_string(),
         "A-edited".into(),
     )
     .await
@@ -3597,7 +3910,7 @@ async fn sequential_undo_from_multiple_devices() {
         &pool,
         "device-B",
         &mat,
-        child_b.id.clone(),
+        child_b.id.clone().into_string(),
         "B-edited".into(),
     )
     .await
@@ -3605,8 +3918,12 @@ async fn sequential_undo_from_multiple_devices() {
     mat.flush_background().await.unwrap();
 
     // Verify pre-undo state
-    let a_before = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
-    let b_before = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
+    let a_before = get_block_inner(&pool, child_a.id.clone().into_string())
+        .await
+        .unwrap();
+    let b_before = get_block_inner(&pool, child_b.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         a_before.content,
         Some("A-edited".into()),
@@ -3622,7 +3939,7 @@ async fn sequential_undo_from_multiple_devices() {
     // Page op history (newest first): edit_b(0), edit_a(1), create_b(2), create_a(3)
     //
     // First undo at depth=0 reverses edit_b.
-    let result_b = undo_page_op_inner(&pool, "device-B", &mat, page.id.clone(), 0)
+    let result_b = undo_page_op_inner(&pool, "device-B", &mat, page.id.clone().into_string(), 0)
         .await
         .expect("undo edit_b should succeed");
     assert!(
@@ -3633,7 +3950,7 @@ async fn sequential_undo_from_multiple_devices() {
     // After first undo, history (newest first):
     //   reverse_edit_b(0), edit_b(1), edit_a(2), create_b(3), create_a(4)
     // Second undo at depth=2 targets edit_a.
-    let result_a = undo_page_op_inner(&pool, "device-A", &mat, page.id.clone(), 2)
+    let result_a = undo_page_op_inner(&pool, "device-A", &mat, page.id.clone().into_string(), 2)
         .await
         .expect("undo edit_a should succeed");
     assert!(
@@ -3648,8 +3965,12 @@ async fn sequential_undo_from_multiple_devices() {
     );
 
     // Verify both blocks reverted to pre-edit state
-    let a_after = get_block_inner(&pool, child_a.id.clone()).await.unwrap();
-    let b_after = get_block_inner(&pool, child_b.id.clone()).await.unwrap();
+    let a_after = get_block_inner(&pool, child_a.id.clone().into_string())
+        .await
+        .unwrap();
+    let b_after = get_block_inner(&pool, child_b.id.clone().into_string())
+        .await
+        .unwrap();
     assert_eq!(
         a_after.content,
         Some("Block from device-A".into()),
@@ -3807,8 +4128,8 @@ async fn pend18_list_page_history_scope_parity() {
     .await
     .unwrap();
     settle(&mat).await;
-    assign_to_space(&pool, &page_a.id, TEST_SPACE_ID).await;
-    assign_to_space(&pool, &page_b.id, TEST_SPACE_B_ID).await;
+    assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
 
     let global = list_page_history_inner(
         &pool,
