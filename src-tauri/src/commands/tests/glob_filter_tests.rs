@@ -46,10 +46,14 @@ async fn seed_page_with_block(
         .bind(page_id)
         .execute(pool).await.unwrap();
     // Page cache.
-    sqlx::query("INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, '2024-01-01T00:00:00Z')")
-        .bind(page_id)
-        .bind(page_title)
-        .execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO pages_cache (page_id, title, updated_at) VALUES (?, ?, 1704067200000)",
+    )
+    .bind(page_id)
+    .bind(page_title)
+    .execute(pool)
+    .await
+    .unwrap();
     // FTS rows — content block must be findable via FTS5.
     sqlx::query("INSERT INTO fts_blocks (block_id, stripped) VALUES (?, ?)")
         .bind(content_block_id)

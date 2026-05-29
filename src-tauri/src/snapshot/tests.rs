@@ -2727,7 +2727,7 @@ async fn apply_snapshot_rebuilds_caches() {
     .unwrap();
     sqlx::query(
         "INSERT INTO pages_cache (page_id, title, updated_at) \
-         VALUES ('stale-page', 'Stale Page', '2025-01-01T00:00:00Z')",
+         VALUES ('stale-page', 'Stale Page', 1735689600000)",
     )
     .execute(&pool)
     .await

@@ -28,7 +28,7 @@ use crate::error::AppError;
 /// updates).
 async fn apply_sort_merge_rebuild(
     write_conn: &mut sqlx::SqliteConnection,
-    now: &str,
+    now: i64,
 ) -> Result<u64, AppError> {
     let upsert = sqlx::query(
         "INSERT INTO pages_cache (page_id, title, updated_at) \
@@ -78,13 +78,13 @@ pub async fn rebuild_pages_cache(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     // Single write connection — the rebuild is now two SQL statements
     // that read `blocks` and write `pages_cache` on the same
     // transaction. No separate reader connections are needed.
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_rebuild").await?;
 
-    let changed = apply_sort_merge_rebuild(&mut tx, &now).await?;
+    let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
 
     if changed == 0 {
         // No changes — transaction is rolled back on drop.
@@ -125,7 +125,7 @@ async fn rebuild_pages_cache_split_impl(
     write_pool: &SqlitePool,
     _read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     // The rebuild is two SQL statements (UPSERT from `blocks` +
     // delete-orphans) executed on a single write transaction. SQLite
     // is one file regardless of pool split, so the write connection
@@ -134,7 +134,7 @@ async fn rebuild_pages_cache_split_impl(
     // `rebuild_pages_cache_split` are stable.
     let mut tx = crate::db::begin_immediate_logged(write_pool, "cache_pages_rebuild_write").await?;
 
-    let changed = apply_sort_merge_rebuild(&mut tx, &now).await?;
+    let changed = apply_sort_merge_rebuild(&mut tx, now).await?;
 
     if changed == 0 {
         return Ok(0);
@@ -288,8 +288,8 @@ mod tests {
         assert_eq!(snapshot(&pool).await.len(), 50);
     }
 
-    async fn snapshot_with_ts(pool: &SqlitePool) -> Vec<(String, String, String)> {
-        sqlx::query_as::<_, (String, String, String)>(
+    async fn snapshot_with_ts(pool: &SqlitePool) -> Vec<(String, String, i64)> {
+        sqlx::query_as::<_, (String, String, i64)>(
             "SELECT page_id, title, updated_at FROM pages_cache ORDER BY page_id",
         )
         .fetch_all(pool)
@@ -332,11 +332,11 @@ mod tests {
         // Capture the baseline timestamps so we can diff post-rebuild.
         let baseline_rows = snapshot_with_ts(&pool).await;
         assert_eq!(baseline_rows.len(), 4);
-        let ts_for = |id: &str| -> String {
+        let ts_for = |id: &str| -> i64 {
             baseline_rows
                 .iter()
                 .find(|(p, _, _)| p == id)
-                .map(|(_, _, t)| t.clone())
+                .map(|(_, _, t)| *t)
                 .unwrap_or_else(|| panic!("missing baseline row for {id}"))
         };
         let ts_changed_before = ts_for("PAGEAAAA");
@@ -377,11 +377,11 @@ mod tests {
 
         // (b) updated_at semantics: refreshed ONLY for the title-changed row.
         let after = snapshot_with_ts(&pool).await;
-        let ts_after_for = |id: &str| -> String {
+        let ts_after_for = |id: &str| -> i64 {
             after
                 .iter()
                 .find(|(p, _, _)| p == id)
-                .map(|(_, _, t)| t.clone())
+                .map(|(_, _, t)| *t)
                 .unwrap_or_else(|| panic!("missing post-rebuild row for {id}"))
         };
 
