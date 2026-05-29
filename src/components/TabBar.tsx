@@ -279,6 +279,7 @@ export function TabBar(): React.ReactElement | null {
             sideOffset={4}
             className="p-1"
             role="menu"
+            tabIndex={-1}
             aria-label={t('tabs.tabList')}
             onKeyDown={handleDropdownKeyDown}
           >

@@ -129,6 +129,7 @@ export function JournalControls(): React.ReactElement {
               role="tab"
               aria-selected={mode === m}
               aria-label={ariaLabels[m]}
+              tabIndex={mode === m ? 0 : -1}
               onClick={() => setMode(m)}
             >
               {/* PEND: compact labels under ~480px so the four tabs don't

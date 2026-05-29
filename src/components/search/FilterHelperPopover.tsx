@@ -228,35 +228,35 @@ export function FilterHelperPopover({
             {/* UX-A6 — a role="menu" must contain only menuitem children
                 (axe aria-required-children); the tip sits OUTSIDE it. */}
             <div role="menu" aria-label={t('search.addFilter')}>
-              <PopoverMenuItem role="menuitem" onClick={openTagMode}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={openTagMode}>
                 <span className="font-medium">{t('search.filterCategory.tag')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">tag:#name</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('pathInclude')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('pathInclude')}>
                 <span className="font-medium">{t('search.filterCategory.pathInclude')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">path:Journal/*</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('pathExclude')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('pathExclude')}>
                 <span className="font-medium">{t('search.filterCategory.pathExclude')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">not-path:Archive/**</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('state')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('state')}>
                 <span className="font-medium">{t('search.filterCategory.state')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">state:TODO</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('priority')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('priority')}>
                 <span className="font-medium">{t('search.filterCategory.priority')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">priority:1</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('due')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('due')}>
                 <span className="font-medium">{t('search.filterCategory.due')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">due:today</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('scheduled')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('scheduled')}>
                 <span className="font-medium">{t('search.filterCategory.scheduled')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">scheduled:next-week</span>
               </PopoverMenuItem>
-              <PopoverMenuItem role="menuitem" onClick={() => setMode('prop')}>
+              <PopoverMenuItem role="menuitem" tabIndex={0} onClick={() => setMode('prop')}>
                 <span className="font-medium">{t('search.filterCategory.prop')}</span>
                 <span className="ml-2 text-xs text-muted-foreground">prop:key=value</span>
               </PopoverMenuItem>
@@ -274,6 +274,11 @@ export function FilterHelperPopover({
               placeholder={t('search.searchTags')}
               aria-label={t('search.searchTags')}
               role="combobox"
+              // The input is the actual text-entry field, so it must stay in
+              // the tab order (`tabIndex={0}`); `interactive-supports-focus`
+              // can't infer focusability from the native <input> once an
+              // explicit `role` is present.
+              tabIndex={0}
               aria-autocomplete="list"
               // The `<ul role="listbox">` is always mounted in tag mode (it
               // renders a loading row / "No tags found" row), so the combobox

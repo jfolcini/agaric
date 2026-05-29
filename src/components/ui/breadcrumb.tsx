@@ -277,6 +277,7 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
             data-slot="breadcrumb-overflow-list"
             className="flex flex-col gap-0.5"
             role="menu"
+            tabIndex={-1}
             onClick={handleListClick}
           >
             {items.map((item) => (
@@ -383,6 +384,7 @@ export function Breadcrumb({
         role="toolbar"
         aria-orientation="horizontal"
         aria-label={ariaLabel}
+        tabIndex={-1}
         onKeyDown={handleKeyDown}
         className={cn(
           'flex min-h-6 items-center gap-1 px-2 py-1 text-xs text-muted-foreground',

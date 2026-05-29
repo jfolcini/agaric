@@ -27,7 +27,7 @@
     "react-hooks/exhaustive-deps": "warn",
     "jsx-a11y/control-has-associated-label": "error",
     "jsx-a11y/no-autofocus": "warn",
-    "jsx-a11y/interactive-supports-focus": "warn",
+    "jsx-a11y/interactive-supports-focus": "error",
     "eslint/no-unsafe-optional-chaining": "error",
     "jsx-a11y/no-noninteractive-element-interactions": "warn",
     "unicorn/no-new-array": "error",
