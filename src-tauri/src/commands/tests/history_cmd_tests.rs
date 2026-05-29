@@ -22,15 +22,9 @@ async fn get_block_history_returns_ops_for_block() {
     .await
     .unwrap();
 
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "updated".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "updated".into())
+        .await
+        .unwrap();
 
     let resp = get_block_history_inner(&pool, created.id.into_string(), None, None, None)
         .await
@@ -75,7 +69,7 @@ async fn test_compute_edit_diff_inner_happy_path() {
         &pool,
         DEV,
         &mat,
-        created.id.clone().into_string(),
+        created.id.clone(),
         "hello universe".into(),
     )
     .await
@@ -132,15 +126,9 @@ async fn test_compute_edit_diff_inner_same_text_produces_equal_spans() {
     .unwrap();
 
     // Edit the block once — the prior text comes from create_block
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        created.id.clone().into_string(),
-        "initial text".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "initial text".into())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
     // Grab the edit_block op
@@ -228,7 +216,7 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
         &pool,
         DEV,
         &mat,
-        created.id.clone().into_string(),
+        created.id.clone(),
         "hello universe".into(),
     )
     .await
@@ -237,7 +225,7 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
         &pool,
         DEV,
         &mat,
-        created.id.clone().into_string(),
+        created.id.clone(),
         "goodbye universe".into(),
     )
     .await
@@ -345,7 +333,7 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
     )
     .await
     .unwrap();
-    delete_block_inner(&pool, DEV, &mat, created.id.as_str().to_string())
+    delete_block_inner(&pool, DEV, &mat, created.id.as_str().into())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -506,7 +494,7 @@ async fn seed_page_with_ops(
         mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await

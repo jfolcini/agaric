@@ -1813,7 +1813,7 @@ async fn list_projected_agenda_excludes_blocks_under_template_page() {
         &mat,
         "content".into(),
         "Recurring template task".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
     )
     .await
@@ -1943,7 +1943,7 @@ async fn list_projected_agenda_includes_block_after_template_property_removed() 
         &mat,
         "content".into(),
         "Now a real task".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
     )
     .await
@@ -2061,7 +2061,7 @@ async fn list_undated_tasks_returns_tasks_without_dates() {
         &mat,
         "content".into(),
         "undated task".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
     )
     .await
@@ -2169,7 +2169,7 @@ async fn list_undated_tasks_excludes_deleted() {
     )
     .await
     .unwrap();
-    delete_block_inner(&pool, DEV, &mat, task.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, task.id.clone())
         .await
         .unwrap();
 

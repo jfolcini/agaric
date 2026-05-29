@@ -30,7 +30,7 @@ async fn undo_page_op_reverses_edit() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -38,15 +38,9 @@ async fn undo_page_op_reverses_edit() {
     settle(&mat).await;
 
     // Edit child to "modified"
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "modified".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     // Undo the most recent op on the page
@@ -66,9 +60,7 @@ async fn undo_page_op_reverses_edit() {
     assert!(!result.is_redo, "undo must not be flagged as redo");
 
     // Content should be back to "original"
-    let fetched = get_block_inner(&pool, child.id.into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, child.id).await.unwrap();
     assert_eq!(
         fetched.content,
         Some("original".into()),
@@ -102,7 +94,7 @@ async fn undo_then_redo_restores_edit() {
         &mat,
         "content".into(),
         "original".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -110,15 +102,9 @@ async fn undo_then_redo_restores_edit() {
     settle(&mat).await;
 
     // Edit to "modified"
-    edit_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        "modified".into(),
-    )
-    .await
-    .unwrap();
+    edit_block_inner(&pool, DEV, &mat, child.id.clone(), "modified".into())
+        .await
+        .unwrap();
     settle(&mat).await;
 
     // Undo
@@ -128,9 +114,7 @@ async fn undo_then_redo_restores_edit() {
     settle(&mat).await;
 
     // Content should be "original" after undo
-    let fetched = get_block_inner(&pool, child.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         fetched.content,
         Some("original".into()),
@@ -156,9 +140,7 @@ async fn undo_then_redo_restores_edit() {
     );
 
     // Content should be back to "modified"
-    let fetched = get_block_inner(&pool, child.id.into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, child.id).await.unwrap();
     assert_eq!(
         fetched.content,
         Some("modified".into()),
@@ -192,7 +174,7 @@ async fn undo_property_change_restores_prior_value() {
         &mat,
         "content".into(),
         "task".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -316,7 +298,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         &mat,
         "content".into(),
         "leaf".into(),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         Some(1),
     )
     .await
@@ -337,8 +319,8 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         &pool,
         DEV,
         &mat,
-        leaf.id.clone().into_string(),
-        Some(page_b.id.clone().into_string()),
+        leaf.id.clone(),
+        Some(page_b.id.clone()),
         1,
     )
     .await
@@ -387,9 +369,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     );
 
     // Sanity: leaf is now parented to page_a again.
-    let leaf_row = get_block_inner(&pool, leaf.id.clone().into_string())
-        .await
-        .unwrap();
+    let leaf_row = get_block_inner(&pool, leaf.id.clone()).await.unwrap();
     assert_eq!(
         leaf_row
             .parent_id

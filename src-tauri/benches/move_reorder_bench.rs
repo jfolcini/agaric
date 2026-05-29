@@ -88,15 +88,22 @@ fn bench_move_block(c: &mut Criterion) {
                         &pool,
                         "dev-bench",
                         &mat,
-                        child.clone(),
+                        child.clone().into(),
                         Some("PARENT_B".into()),
                         1,
                     )
                     .await
                     .unwrap();
-                    move_block_inner(&pool, "dev-bench", &mat, child, Some("PARENT_A".into()), 1)
-                        .await
-                        .unwrap();
+                    move_block_inner(
+                        &pool,
+                        "dev-bench",
+                        &mat,
+                        child.into(),
+                        Some("PARENT_A".into()),
+                        1,
+                    )
+                    .await
+                    .unwrap();
                 }
             });
         });

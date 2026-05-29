@@ -1105,7 +1105,7 @@ async fn export_page_markdown_inner_with_soft_deleted_page_returns_not_found() {
         &mat,
         "content".into(),
         "child block".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         Some(1),
     )
     .await
@@ -1114,7 +1114,7 @@ async fn export_page_markdown_inner_with_soft_deleted_page_returns_not_found() {
 
     // Soft-delete the page (sets `deleted_at IS NOT NULL` on the page
     // row and cascades to the child).
-    delete_block_inner(&pool, DEV, &mat, page.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, page.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -1799,7 +1799,7 @@ async fn list_page_links_returns_edges_between_pages() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -1866,7 +1866,7 @@ async fn list_page_links_excludes_deleted_pages() {
         &mat,
         "content".into(),
         format!("link [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -1882,7 +1882,7 @@ async fn list_page_links_excludes_deleted_pages() {
         .unwrap();
 
     // Delete p2
-    delete_block_inner(&pool, DEV, &mat, p2.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, p2.id.clone())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -1921,7 +1921,7 @@ async fn list_page_links_excludes_self_links() {
         &mat,
         "content".into(),
         format!("self [[{}]]", p1.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -1995,7 +1995,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         &mat,
         "content".into(),
         format!("first [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -2008,7 +2008,7 @@ async fn list_page_links_deduplicates_multiple_content_links() {
         &mat,
         "content".into(),
         format!("second [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(2),
     )
     .await
@@ -2091,7 +2091,7 @@ async fn list_page_links_single_link_has_ref_count_one() {
         &mat,
         "content".into(),
         format!("link [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -2158,7 +2158,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
         &mat,
         "content".into(),
         format!("link [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -2183,7 +2183,7 @@ async fn list_page_links_excludes_links_with_deleted_parent_page() {
     assert!(has_link, "link should exist before deleting source page");
 
     // Soft-delete the SOURCE page (p1)
-    delete_block_inner(&pool, DEV, &mat, p1.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, p1.id.clone())
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
@@ -2281,7 +2281,7 @@ async fn list_page_links_optimized_matches_oracle() {
         &mat,
         "content".into(),
         format!("link to beta [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(1),
     )
     .await
@@ -2294,7 +2294,7 @@ async fn list_page_links_optimized_matches_oracle() {
         &mat,
         "content".into(),
         format!("link to gamma [[{}]]", p3.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(2),
     )
     .await
@@ -2308,7 +2308,7 @@ async fn list_page_links_optimized_matches_oracle() {
         &mat,
         "content".into(),
         format!("cross link [[{}]]", p3.id),
-        Some(p2.id.clone().into_string()),
+        Some(p2.id.clone()),
         Some(1),
     )
     .await
@@ -2322,7 +2322,7 @@ async fn list_page_links_optimized_matches_oracle() {
         &mat,
         "content".into(),
         format!("self [[{}]]", p1.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(3),
     )
     .await
@@ -2336,7 +2336,7 @@ async fn list_page_links_optimized_matches_oracle() {
         &mat,
         "content".into(),
         format!("also beta [[{}]]", p2.id),
-        Some(p1.id.clone().into_string()),
+        Some(p1.id.clone()),
         Some(4),
     )
     .await
@@ -2545,7 +2545,7 @@ async fn list_page_links_filters_by_tag_ids() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p_a.id),
-        Some(p_src.id.clone().into_string()),
+        Some(p_src.id.clone()),
         Some(1),
     )
     .await
@@ -2556,7 +2556,7 @@ async fn list_page_links_filters_by_tag_ids() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p_b.id),
-        Some(p_src.id.clone().into_string()),
+        Some(p_src.id.clone()),
         Some(2),
     )
     .await
@@ -2648,7 +2648,7 @@ async fn list_page_links_no_tag_filter_returns_all() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p_a.id),
-        Some(p_src.id.clone().into_string()),
+        Some(p_src.id.clone()),
         Some(1),
     )
     .await
@@ -2659,7 +2659,7 @@ async fn list_page_links_no_tag_filter_returns_all() {
         &mat,
         "content".into(),
         format!("see [[{}]]", p_b.id),
-        Some(p_src.id.clone().into_string()),
+        Some(p_src.id.clone()),
         Some(2),
     )
     .await
@@ -2734,9 +2734,7 @@ async fn create_block_sets_page_id_self_for_page() {
     );
 
     // Verify via direct DB read
-    let fetched = get_block_inner(&pool, page.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(
         fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(page.id.as_str())
@@ -2767,7 +2765,7 @@ async fn create_block_sets_page_id_for_content_block() {
         &mat,
         "content".into(),
         "child block".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
     )
     .await
@@ -2799,7 +2797,7 @@ async fn move_block_updates_page_id() {
         &mat,
         "content".into(),
         "movable".into(),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         None,
     )
     .await
@@ -2815,16 +2813,14 @@ async fn move_block_updates_page_id() {
         &pool,
         DEV,
         &mat,
-        child.id.clone().into_string(),
-        Some(page_b.id.clone().into_string()),
+        child.id.clone(),
+        Some(page_b.id.clone()),
         1,
     )
     .await
     .unwrap();
 
-    let fetched = get_block_inner(&pool, child.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(page_b.id.as_str()),
@@ -2851,7 +2847,7 @@ async fn move_block_updates_descendants_page_id() {
         &mat,
         "content".into(),
         "parent".into(),
-        Some(page_a.id.clone().into_string()),
+        Some(page_a.id.clone()),
         None,
     )
     .await
@@ -2862,7 +2858,7 @@ async fn move_block_updates_descendants_page_id() {
         &mat,
         "content".into(),
         "grandchild".into(),
-        Some(parent.id.clone().into_string()),
+        Some(parent.id.clone()),
         None,
     )
     .await
@@ -2881,16 +2877,14 @@ async fn move_block_updates_descendants_page_id() {
         &pool,
         DEV,
         &mat,
-        parent.id.clone().into_string(),
-        Some(page_b.id.clone().into_string()),
+        parent.id.clone(),
+        Some(page_b.id.clone()),
         1,
     )
     .await
     .unwrap();
 
-    let fetched_grandchild = get_block_inner(&pool, grandchild.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched_grandchild = get_block_inner(&pool, grandchild.id.clone()).await.unwrap();
     assert_eq!(
         fetched_grandchild
             .page_id
@@ -2925,7 +2919,7 @@ async fn rebuild_page_ids_restores_correct_values() {
         &mat,
         "content".into(),
         "child".into(),
-        Some(page.id.clone().into_string()),
+        Some(page.id.clone()),
         None,
     )
     .await
@@ -2940,9 +2934,7 @@ async fn rebuild_page_ids_restores_correct_values() {
     // Run rebuild
     crate::cache::rebuild_page_ids(&pool).await.unwrap();
 
-    let fetched_page = get_block_inner(&pool, page.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched_page = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(
         fetched_page
             .page_id
@@ -2951,9 +2943,7 @@ async fn rebuild_page_ids_restores_correct_values() {
         Some(page.id.as_str())
     );
 
-    let fetched_child = get_block_inner(&pool, child.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched_child = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         fetched_child
             .page_id

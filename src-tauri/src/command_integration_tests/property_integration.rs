@@ -492,7 +492,7 @@ async fn delete_property_on_deleted_block_returns_not_found() {
     .unwrap();
     settle(&mat).await;
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
     settle(&mat).await;
@@ -1334,9 +1334,7 @@ async fn delete_property_clears_reserved_key_column() {
     settle(&mat).await;
 
     // Verify it's set
-    let fetched = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         fetched.priority.as_deref(),
         Some("2"),
@@ -1356,9 +1354,7 @@ async fn delete_property_clears_reserved_key_column() {
     settle(&mat).await;
 
     // Verify column IS cleared
-    let fetched = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         fetched.priority.is_none(),
         "priority should be NULL after delete, got: {:?}",
@@ -1515,9 +1511,7 @@ async fn thin_commands_survive_delete_property_cycle() {
     settle(&mat).await;
 
     // Verify it's set
-    let fetched = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         fetched.todo_state.as_deref(),
         Some("TODO"),
@@ -1537,9 +1531,7 @@ async fn thin_commands_survive_delete_property_cycle() {
     settle(&mat).await;
 
     // Verify todo_state is cleared
-    let fetched = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         fetched.todo_state.is_none(),
         "todo_state should be NULL after delete, got: {:?}",

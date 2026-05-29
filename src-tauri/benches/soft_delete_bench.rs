@@ -129,7 +129,7 @@ fn bench_purge_block(c: &mut Criterion) {
                             &pool,
                             "dev-bench",
                             &materializer,
-                            ROOT_ID.to_string(),
+                            ROOT_ID.into(),
                         ));
                         // Shut down the per-iteration materializer so its
                         // background task doesn't outlive this routine.

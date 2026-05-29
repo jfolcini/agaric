@@ -98,7 +98,7 @@ async fn create_content(
         mat,
         TYPE_CONTENT.into(),
         content.into(),
-        parent_id,
+        parent_id.map(Into::into),
         position,
     )
     .await
@@ -138,18 +138,24 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
     let created = create_content(&pool, &mat, "hello world", None, Some(1)).await;
     let block_id = created.id.to_string();
 
-    edit_block_inner(&pool, DEV, &mat, block_id.clone(), "updated text".into())
-        .await
-        .unwrap();
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        block_id.clone().into(),
+        "updated text".into(),
+    )
+    .await
+    .unwrap();
     settle_bg_tasks(&mat).await;
 
-    let deleted = delete_block_inner(&pool, DEV, &mat, block_id.clone())
+    let deleted = delete_block_inner(&pool, DEV, &mat, block_id.clone().into())
         .await
         .unwrap();
     let deleted_at = deleted.deleted_at.clone();
     settle_bg_tasks(&mat).await;
 
-    restore_block_inner(&pool, DEV, &mat, block_id.clone(), deleted_at)
+    restore_block_inner(&pool, DEV, &mat, block_id.clone().into(), deleted_at)
         .await
         .unwrap();
 
@@ -206,7 +212,7 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
     }
 
     // Block state: alive with edited content after restore
-    let block = get_block_inner(&pool, block_id).await.unwrap();
+    let block = get_block_inner(&pool, block_id.into()).await.unwrap();
     assert!(
         block.deleted_at.is_none(),
         "block should be alive after restore"
@@ -290,12 +296,12 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
     let b1 = create_content(&pool, &mat, "content 1", None, Some(2)).await;
     let b2 = create_content(&pool, &mat, "content 2", None, Some(3)).await;
 
-    edit_block_inner(&pool, DEV, &mat, b0.id.to_string(), "edited 0".into())
+    edit_block_inner(&pool, DEV, &mat, b0.id.clone(), "edited 0".into())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
 
-    delete_block_inner(&pool, DEV, &mat, b2.id.to_string())
+    delete_block_inner(&pool, DEV, &mat, b2.id.clone())
         .await
         .unwrap();
 
@@ -313,7 +319,7 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
     assert_eq!(deletes, 1, "should have 1 delete op");
 
     // Block state matches operations
-    let fetched_b0 = get_block_inner(&pool, b0.id.to_string()).await.unwrap();
+    let fetched_b0 = get_block_inner(&pool, b0.id.clone()).await.unwrap();
     assert_eq!(
         fetched_b0.content,
         Some("edited 0".into()),
@@ -321,14 +327,14 @@ async fn mixed_operations_produce_consistent_op_log_and_block_state() {
     );
     assert!(fetched_b0.deleted_at.is_none(), "b0 should be alive");
 
-    let fetched_b1 = get_block_inner(&pool, b1.id.to_string()).await.unwrap();
+    let fetched_b1 = get_block_inner(&pool, b1.id).await.unwrap();
     assert_eq!(
         fetched_b1.content,
         Some("content 1".into()),
         "b1 should be untouched"
     );
 
-    let fetched_b2 = get_block_inner(&pool, b2.id.to_string()).await.unwrap();
+    let fetched_b2 = get_block_inner(&pool, b2.id.clone()).await.unwrap();
     assert!(fetched_b2.deleted_at.is_some(), "b2 should be soft-deleted");
 }
 
@@ -496,7 +502,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
 
     // Create a block and edit it to establish prior edit history
     let block = create_content(&pool, &mat, "version 1", None, Some(1)).await;
-    edit_block_inner(&pool, DEV, &mat, block.id.to_string(), "version 2".into())
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "version 2".into())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
@@ -568,16 +574,14 @@ async fn cascade_delete_marks_three_levels_with_same_timestamp() {
     )
     .await;
 
-    let del = delete_block_inner(&pool, DEV, &mat, parent.id.to_string())
+    let del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
     let cascade_ts = del.deleted_at.clone();
 
-    let p = get_block_inner(&pool, parent.id.to_string()).await.unwrap();
-    let c = get_block_inner(&pool, child.id.to_string()).await.unwrap();
-    let g = get_block_inner(&pool, grandchild.id.to_string())
-        .await
-        .unwrap();
+    let p = get_block_inner(&pool, parent.id.clone()).await.unwrap();
+    let c = get_block_inner(&pool, child.id).await.unwrap();
+    let g = get_block_inner(&pool, grandchild.id).await.unwrap();
 
     assert_eq!(p.deleted_at, Some(cascade_ts.clone()), "parent deleted");
     assert_eq!(
@@ -601,21 +605,21 @@ async fn restore_after_cascade_preserves_independently_deleted_child() {
     let child2 = create_content(&pool, &mat, "child2", Some(parent.id.to_string()), Some(2)).await;
 
     // Delete child1 independently
-    let child1_del = delete_block_inner(&pool, DEV, &mat, child1.id.to_string())
+    let child1_del = delete_block_inner(&pool, DEV, &mat, child1.id.clone())
         .await
         .unwrap();
     let child1_ts = child1_del.deleted_at.clone();
     settle_bg_tasks(&mat).await;
 
     // Delete parent (cascades to child2 only; child1 already deleted)
-    let parent_del = delete_block_inner(&pool, DEV, &mat, parent.id.to_string())
+    let parent_del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
     let cascade_ts = parent_del.deleted_at.clone();
     settle_bg_tasks(&mat).await;
 
     // child1 keeps its own timestamp
-    let c1 = get_block_inner(&pool, child1.id.to_string()).await.unwrap();
+    let c1 = get_block_inner(&pool, child1.id.clone()).await.unwrap();
     assert_eq!(
         c1.deleted_at,
         Some(child1_ts.clone()),
@@ -623,20 +627,20 @@ async fn restore_after_cascade_preserves_independently_deleted_child() {
     );
 
     // Restore parent using cascade timestamp
-    restore_block_inner(&pool, DEV, &mat, parent.id.to_string(), cascade_ts)
+    restore_block_inner(&pool, DEV, &mat, parent.id.clone(), cascade_ts)
         .await
         .unwrap();
 
-    let p = get_block_inner(&pool, parent.id.to_string()).await.unwrap();
+    let p = get_block_inner(&pool, parent.id.clone()).await.unwrap();
     assert!(p.deleted_at.is_none(), "parent restored");
 
-    let c2 = get_block_inner(&pool, child2.id.to_string()).await.unwrap();
+    let c2 = get_block_inner(&pool, child2.id).await.unwrap();
     assert!(
         c2.deleted_at.is_none(),
         "child2 restored (shared cascade timestamp)"
     );
 
-    let c1_after = get_block_inner(&pool, child1.id.to_string()).await.unwrap();
+    let c1_after = get_block_inner(&pool, child1.id.clone()).await.unwrap();
     assert_eq!(
         c1_after.deleted_at,
         Some(child1_ts),
@@ -723,13 +727,13 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     assert_eq!(count_atts, 1, "attachment exists before purge");
 
     // Soft-delete (required before purge)
-    delete_block_inner(&pool, DEV, &mat, bid.clone())
+    delete_block_inner(&pool, DEV, &mat, bid.clone().into())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
 
     // Purge
-    let purge = purge_block_inner(&pool, DEV, &mat, bid.clone())
+    let purge = purge_block_inner(&pool, DEV, &mat, bid.clone().into())
         .await
         .unwrap();
     assert_eq!(purge.purged_count, 1, "one block purged");
@@ -785,13 +789,13 @@ async fn purge_after_cascade_removes_entire_subtree() {
     let child = create_content(&pool, &mat, "child", Some(parent.id.to_string()), Some(1)).await;
 
     // Cascade soft-delete
-    delete_block_inner(&pool, DEV, &mat, parent.id.to_string())
+    delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
 
     // Purge parent (recursive CTE removes child too)
-    let purge = purge_block_inner(&pool, DEV, &mat, parent.id.to_string())
+    let purge = purge_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
     assert_eq!(purge.purged_count, 2, "parent + child physically purged");
@@ -869,11 +873,11 @@ async fn list_excludes_soft_deleted_blocks_and_trash_shows_only_deleted() {
         );
     }
 
-    delete_block_inner(&pool, DEV, &mat, ids[0].to_string())
+    delete_block_inner(&pool, DEV, &mat, ids[0].clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
-    delete_block_inner(&pool, DEV, &mat, ids[1].to_string())
+    delete_block_inner(&pool, DEV, &mat, ids[1].clone())
         .await
         .unwrap();
     // Without this drain the trash assertion at the bottom races the
@@ -1143,7 +1147,7 @@ async fn children_listed_in_position_order() {
     assign_all_to_test_space(&pool).await;
     let children = list_blocks_inner(
         &pool,
-        Some(parent.id.to_string()),
+        Some(parent.id),
         None,
         None,
         None,
@@ -1187,14 +1191,14 @@ async fn edit_content_preserves_position() {
     let block = create_content(&pool, &mat, "original", None, Some(5)).await;
     assert_eq!(block.position, Some(5), "initial position");
 
-    let edited = edit_block_inner(&pool, DEV, &mat, block.id.to_string(), "updated".into())
+    let edited = edit_block_inner(&pool, DEV, &mat, block.id.clone(), "updated".into())
         .await
         .unwrap();
 
     assert_eq!(edited.position, Some(5), "position must not change on edit");
     assert_eq!(edited.content, Some("updated".into()));
 
-    let fetched = get_block_inner(&pool, block.id.to_string()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(fetched.position, Some(5), "DB position must be unchanged");
 }
 
@@ -1248,7 +1252,7 @@ async fn materializer_processes_background_tasks_after_edit() {
     mat.flush_background().await.unwrap();
     let bg_before = mat.metrics().bg_processed.load(Ordering::Relaxed);
 
-    edit_block_inner(&pool, DEV, &mat, block.id.to_string(), "edited".into())
+    edit_block_inner(&pool, DEV, &mat, block.id, "edited".into())
         .await
         .unwrap();
 
@@ -1275,16 +1279,16 @@ async fn edit_then_delete_preserves_edited_content_in_trash() {
 
     let block = create_content(&pool, &mat, "version 1", None, Some(1)).await;
 
-    edit_block_inner(&pool, DEV, &mat, block.id.to_string(), "version 2".into())
+    edit_block_inner(&pool, DEV, &mat, block.id.clone(), "version 2".into())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
 
-    delete_block_inner(&pool, DEV, &mat, block.id.to_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
-    let fetched = get_block_inner(&pool, block.id.to_string()).await.unwrap();
+    let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(fetched.deleted_at.is_some(), "block should be soft-deleted");
     assert_eq!(
         fetched.content,
@@ -1428,7 +1432,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         "snapshot must contain 5 blocks (page + 2 content + 2 tags)"
     );
 
-    let page_after = get_block_inner(&pool, page.id.to_string()).await.unwrap();
+    let page_after = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(
         page_after.content,
         Some("My Page".into()),
@@ -1439,9 +1443,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         "page block_type must survive"
     );
 
-    let a_after = get_block_inner(&pool, block_a.id.to_string())
-        .await
-        .unwrap();
+    let a_after = get_block_inner(&pool, block_a.id.clone()).await.unwrap();
     assert_eq!(
         a_after.content,
         Some("block alpha".into()),
@@ -1453,9 +1455,7 @@ async fn snapshot_round_trip_preserves_tags_properties_and_links() {
         "block_a parent_id must survive"
     );
 
-    let b_after = get_block_inner(&pool, block_b.id.to_string())
-        .await
-        .unwrap();
+    let b_after = get_block_inner(&pool, block_b.id.clone()).await.unwrap();
     assert_eq!(
         b_after.content,
         Some("block beta".into()),
@@ -1593,7 +1593,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
         &pool,
         DEV,
         &mat,
-        block.id.to_string(),
+        block.id.clone(),
         "classical mechanics overview".into(),
     )
     .await
@@ -1638,7 +1638,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
     );
     assert_eq!(
         new_results.items[0].id.as_str(),
-        block.id.as_str(),
+        block.id.clone().as_str(),
         "FTS result for new term must be the same block"
     );
 
@@ -1823,14 +1823,14 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
         &pool,
         DEV,
         &mat,
-        block.id.to_string(),
+        block.id.clone(),
         "edited property test block".into(),
     )
     .await
     .unwrap();
     settle_bg_tasks(&mat).await;
 
-    let props_after_edit = get_properties_inner(&pool, block.id.to_string())
+    let props_after_edit = get_properties_inner(&pool, block.id.clone().to_string())
         .await
         .unwrap();
     assert_eq!(
@@ -1895,12 +1895,12 @@ async fn property_lifecycle_set_get_edit_delete_cascade() {
     );
 
     // 7. Delete the block — properties must cascade away
-    delete_block_inner(&pool, DEV, &mat, block.id.to_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
 
-    purge_block_inner(&pool, DEV, &mat, block.id.to_string())
+    purge_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
@@ -2162,7 +2162,7 @@ async fn page_id_space_drift_audit_per_block() {
         &mat,
         TYPE_CONTENT.into(),
         "personal child".into(),
-        Some(p1.as_str().to_owned()),
+        Some(p1.as_str().into()),
         None,
     )
     .await
@@ -2173,7 +2173,7 @@ async fn page_id_space_drift_audit_per_block() {
         &mat,
         TYPE_CONTENT.into(),
         "personal grandchild".into(),
-        Some(c_p.id.to_string()),
+        Some(c_p.id.clone()),
         None,
     )
     .await
@@ -2186,7 +2186,7 @@ async fn page_id_space_drift_audit_per_block() {
         &mat,
         TYPE_CONTENT.into(),
         "work child".into(),
-        Some(w1.as_str().to_owned()),
+        Some(w1.as_str().into()),
         None,
     )
     .await
@@ -2198,8 +2198,8 @@ async fn page_id_space_drift_audit_per_block() {
         &pool,
         DEV,
         &mat,
-        c_p.id.to_string(),
-        Some(w1.as_str().to_owned()),
+        c_p.id.clone(),
+        Some(w1.as_str().into()),
         1_i64,
     )
     .await
@@ -2256,7 +2256,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         &mat,
         TYPE_CONTENT.into(),
         "personal child 1".into(),
-        Some(p1.as_str().to_owned()),
+        Some(p1.as_str().into()),
         None,
     )
     .await
@@ -2267,7 +2267,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         &mat,
         TYPE_CONTENT.into(),
         "personal child 2".into(),
-        Some(p1.as_str().to_owned()),
+        Some(p1.as_str().into()),
         None,
     )
     .await
@@ -2278,7 +2278,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
         &mat,
         TYPE_CONTENT.into(),
         "work child".into(),
-        Some(w1.as_str().to_owned()),
+        Some(w1.as_str().into()),
         None,
     )
     .await
@@ -2289,7 +2289,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
 
     // 1. DeleteBlock (soft delete) — c_p2 is filtered out of the
     //    audit; the rest of the fixture stays consistent.
-    let del = delete_block_inner(&pool, DEV, &mat, c_p2.id.to_string())
+    let del = delete_block_inner(&pool, DEV, &mat, c_p2.id.clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
@@ -2297,7 +2297,7 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
 
     // 2. RestoreBlock — c_p2 reappears in the audit; nothing else
     //    should have shifted.
-    restore_block_inner(&pool, DEV, &mat, c_p2.id.to_string(), del.deleted_at)
+    restore_block_inner(&pool, DEV, &mat, c_p2.id.clone(), del.deleted_at)
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
@@ -2306,11 +2306,11 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
     // 3. PurgeBlock — soft-delete then hard-purge c_p1; the row is
     //    physically gone from `blocks` and the audit must remain
     //    clean.
-    delete_block_inner(&pool, DEV, &mat, c_p1.id.to_string())
+    delete_block_inner(&pool, DEV, &mat, c_p1.id.clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;
-    purge_block_inner(&pool, DEV, &mat, c_p1.id.to_string())
+    purge_block_inner(&pool, DEV, &mat, c_p1.id.clone())
         .await
         .unwrap();
     settle_bg_tasks(&mat).await;

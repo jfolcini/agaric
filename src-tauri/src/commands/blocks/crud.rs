@@ -293,10 +293,11 @@ pub async fn create_block_inner(
     materializer: &Materializer,
     block_type: String,
     content: String,
-    parent_id: Option<String>,
+    parent_id: Option<BlockId>,
     position: Option<i64>,
 ) -> Result<BlockRow, AppError> {
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
+    let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
     let (block, op_record) =
         create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
@@ -349,7 +350,7 @@ pub async fn create_block_inner_with_space(
     materializer: &Materializer,
     block_type: String,
     content: String,
-    parent_id: Option<String>,
+    parent_id: Option<BlockId>,
     position: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<BlockRow, AppError> {
@@ -381,7 +382,7 @@ pub async fn create_block_inner_with_space(
             pool,
             device_id,
             materializer,
-            parent_id,
+            parent_id.map(BlockId::into_string),
             content,
             sid.as_str().to_owned(),
         )
@@ -397,7 +398,7 @@ pub async fn create_block_inner_with_space(
         // a future bug that leaves a page tombstoned at creation time
         // will surface here as `NotFound` rather than silently
         // returning a row with `deleted_at` set.
-        return get_active_block_inner(pool, new_page_id.into_string()).await;
+        return get_active_block_inner(pool, new_page_id).await;
     }
 
     // Non-page block types ignore `scope` and follow the legacy path —
@@ -429,16 +430,14 @@ pub async fn edit_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: BlockId,
     to_text: String,
 ) -> Result<BlockRow, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
-    let block_id = block_id.to_ascii_uppercase();
+    // #107: BlockId newtype already normalises to canonical uppercase on
+    // construction (AGENTS.md invariant #8 — ULID uppercase for blake3 hash
+    // determinism). Re-derive the owned String form the rest of this body
+    // binds for sqlx/format!.
+    let block_id = block_id.into_string();
 
     // F02: Begin IMMEDIATE transaction for atomic validation + op_log + blocks write.
     // All reads (block existence, prev_edit lookup) happen inside the tx
@@ -564,15 +563,11 @@ pub async fn delete_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<DeleteResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
-    let block_id = block_id.to_ascii_uppercase();
+    // #107: BlockId normalises to uppercase on construction. Re-derive the
+    // owned String form for sqlx binds / format! below.
+    let block_id = block_id.into_string();
 
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
@@ -752,7 +747,7 @@ pub async fn delete_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<i64, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::Validation(
@@ -767,12 +762,9 @@ pub async fn delete_blocks_by_ids_inner(
         )));
     }
 
-    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — uppercase normalisation
-    // before the SQL membership probe.
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
+    // #107: BlockId already normalises to uppercase on construction; re-derive
+    // owned String form for the SQL membership probe below.
+    let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
     let mut tx = CommandTx::begin_immediate(pool, "delete_blocks_by_ids").await?;
@@ -927,7 +919,7 @@ pub async fn delete_blocks_by_ids(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<i64, AppError> {
     delete_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
         .await
@@ -973,7 +965,7 @@ pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
     space_id: String,
 ) -> Result<i64, AppError> {
     use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
@@ -990,12 +982,10 @@ pub async fn move_blocks_to_space_inner(
         )));
     }
 
-    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — uppercase-normalise every
-    // id (block ids + space id) before any SQL touch.
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form. `space_id` (SpaceId, separate type) is still a String arg
+    // and needs explicit normalisation.
+    let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let space_id = space_id.to_ascii_uppercase();
 
     // One IMMEDIATE tx covers space validation + every per-block move.
@@ -1074,7 +1064,7 @@ pub async fn move_blocks_to_space(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
     space_id: String,
 ) -> Result<i64, AppError> {
     move_blocks_to_space_inner(
@@ -1104,16 +1094,12 @@ pub async fn restore_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: BlockId,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
-    let block_id = block_id.to_ascii_uppercase();
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form for sqlx binds / format! below.
+    let block_id = block_id.into_string();
 
     // Single IMMEDIATE transaction: validation + op_log + restore.
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
@@ -1309,15 +1295,11 @@ pub async fn purge_block_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<PurgeResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
-    let block_id = block_id.to_ascii_uppercase();
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form for sqlx binds / format! below.
+    let block_id = block_id.into_string();
 
     // F03: Single IMMEDIATE transaction for validation + op_log + physical purge.
     // Previously the op_log write and the physical purge were split across two
@@ -1960,7 +1942,7 @@ pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::Validation(
@@ -1975,13 +1957,9 @@ pub async fn restore_blocks_by_ids_inner(
         )));
     }
 
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. ULIDs are
-    // stored uppercase; SQLite text comparison is byte-exact, so a
-    // lowercase caller would silently get zero matches.
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form for the JSON membership probe below.
+    let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
@@ -2110,7 +2088,7 @@ pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     if block_ids.is_empty() {
         return Err(AppError::Validation(
@@ -2125,10 +2103,9 @@ pub async fn purge_blocks_by_ids_inner(
         )));
     }
 
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
+    // #107: BlockId normalises to uppercase on construction; re-derive owned
+    // String form for the JSON membership probe below.
+    let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
@@ -2841,7 +2818,7 @@ pub async fn create_block(
     materializer: State<'_, Materializer>,
     block_type: String,
     content: String,
-    parent_id: Option<String>,
+    parent_id: Option<BlockId>,
     position: Option<i64>,
     scope: SpaceScope,
 ) -> Result<BlockRow, AppError> {
@@ -2867,7 +2844,7 @@ pub async fn edit_block(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     to_text: String,
 ) -> Result<BlockRow, AppError> {
     edit_block_inner(
@@ -2889,7 +2866,7 @@ pub async fn delete_block(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<DeleteResponse, AppError> {
     delete_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
         .await
@@ -2904,7 +2881,7 @@ pub async fn restore_block(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
     deleted_at_ref: String,
 ) -> Result<RestoreResponse, AppError> {
     restore_block_inner(
@@ -2926,7 +2903,7 @@ pub async fn purge_block(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<PurgeResponse, AppError> {
     purge_block_inner(&pool.0, device_id.as_str(), &materializer, block_id)
         .await
@@ -2970,7 +2947,7 @@ pub async fn restore_blocks_by_ids(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     restore_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
         .await
@@ -2986,7 +2963,7 @@ pub async fn purge_blocks_by_ids(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
+    block_ids: Vec<BlockId>,
 ) -> Result<BulkTrashResponse, AppError> {
     purge_blocks_by_ids_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
         .await
@@ -3021,7 +2998,7 @@ pub struct CreateBlockSpec {
     /// to a live (non-deleted, non-conflict) block — including parents
     /// created EARLIER in the same batch. When `None`, the new block is
     /// top-level.
-    pub parent_id: Option<String>,
+    pub parent_id: Option<BlockId>,
     /// Optional 1-based position. When `None`, the backend appends after
     /// the last sibling (same convention as `create_block_inner`).
     pub position: Option<i64>,
@@ -3099,7 +3076,7 @@ pub async fn create_blocks_batch_inner(
             device_id,
             spec.block_type,
             spec.content,
-            spec.parent_id,
+            spec.parent_id.map(BlockId::into_string),
             spec.position,
         )
         .await?;

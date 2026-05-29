@@ -3658,7 +3658,11 @@ async fn get_blocks_rejects_empty_oversize() {
     let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
         .map(|i| format!("ID{i}"))
         .collect();
-    let big = get_blocks_inner(&pool, oversize).await;
+    let big = get_blocks_inner(
+        &pool,
+        oversize.into_iter().map(Into::into).collect::<Vec<_>>(),
+    )
+    .await;
     assert!(
         matches!(big, Err(crate::error::AppError::Validation(_))),
         "oversize input must reject with Validation"

@@ -25,9 +25,9 @@ export const commands = {
 	 */
 	createBlocksBatch: (specs: CreateBlockSpec[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("create_blocks_batch", { specs })),
 	/**  Tauri command: edit a block's content. Delegates to [`edit_block_inner`]. */
-	editBlock: (blockId: string, toText: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
+	editBlock: (blockId: BlockId, toText: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("edit_block", { blockId, toText })),
 	/**  Tauri command: soft-delete a block and descendants. Delegates to [`delete_block_inner`]. */
-	deleteBlock: (blockId: string) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
+	deleteBlock: (blockId: BlockId) => typedError<DeleteResponse, AppError>(__TAURI_INVOKE("delete_block", { blockId })),
 	/**
 	 *  Tauri command: batch-delete blocks by ids (PEND-35 Tier 2.1).
 	 *
@@ -37,27 +37,27 @@ export const commands = {
 	 *  one writer-lock window. Returns the number of blocks soft-deleted
 	 *  (roots + descendants combined).
 	 */
-	deleteBlocksByIds: (blockIds: string[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
+	deleteBlocksByIds: (blockIds: BlockId[]) => typedError<number, AppError>(__TAURI_INVOKE("delete_blocks_by_ids", { blockIds })),
 	/**
 	 *  Tauri command: move N blocks to a target space (#81 / PEND-57).
 	 *  Delegates to [`move_blocks_to_space_inner`]. Returns the number of
 	 *  blocks actually moved.
 	 */
-	moveBlocksToSpace: (blockIds: string[], spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
+	moveBlocksToSpace: (blockIds: BlockId[], spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
 	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
-	restoreBlock: (blockId: string, deletedAtRef: string) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
+	restoreBlock: (blockId: BlockId, deletedAtRef: string) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
-	purgeBlock: (blockId: string) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
+	purgeBlock: (blockId: BlockId) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
 	/**
 	 *  PEND-35 Tier 2.2 — restore a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`restore_blocks_by_ids_inner`].
 	 */
-	restoreBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
+	restoreBlocksByIds: (blockIds: BlockId[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("restore_blocks_by_ids", { blockIds })),
 	/**
 	 *  PEND-35 Tier 2.2 — permanently purge a list of soft-deleted blocks in one IPC.
 	 *  Delegates to [`purge_blocks_by_ids_inner`].
 	 */
-	purgeBlocksByIds: (blockIds: string[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
+	purgeBlocksByIds: (blockIds: BlockId[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
 	/**  Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`]. */
 	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
 	/**
@@ -91,7 +91,7 @@ export const commands = {
 	 *  soft-deleted block returns `NotFound` to the IPC caller instead of an
 	 *  apparently-live row with `deleted_at` set.
 	 */
-	getBlock: (blockId: string) => typedError<BlockRow, AppError>(__TAURI_INVOKE("get_block", { blockId })),
+	getBlock: (blockId: BlockId) => typedError<BlockRow, AppError>(__TAURI_INVOKE("get_block", { blockId })),
 	/**
 	 *  Tauri command: batch-resolve block metadata. Delegates to [`batch_resolve_inner`].
 	 *
@@ -99,7 +99,7 @@ export const commands = {
 	 *  surface foreign-space titles. The frontend always knows the current
 	 *  space and threads it through `useResolveStore.preload(spaceId)`.
 	 */
-	batchResolve: (ids: string[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
+	batchResolve: (ids: BlockId[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
 	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
 	addTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	/**
@@ -527,12 +527,12 @@ export const commands = {
 	 *  Tauri command: batch-fetch the first child per parent block. Delegates
 	 *  to [`first_child_for_blocks_inner`].
 	 */
-	firstChildForBlocks: (blockIds: string[]) => typedError<{ [key in string]: BlockRow }, AppError>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
+	firstChildForBlocks: (blockIds: BlockId[]) => typedError<{ [key in string]: BlockRow }, AppError>(__TAURI_INVOKE("first_child_for_blocks", { blockIds })),
 	/**
 	 *  Tauri command: batch-fetch full block rows by id. Delegates to
 	 *  [`get_blocks_inner`].
 	 */
-	getBlocks: (ids: string[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("get_blocks", { ids })),
+	getBlocks: (ids: BlockId[]) => typedError<BlockRow[], AppError>(__TAURI_INVOKE("get_blocks", { ids })),
 	/**
 	 *  Tauri command: fetch (or refresh) link metadata for a URL. Cache
 	 *  hits return immediately; stale or missing entries trigger an HTTP
@@ -1034,7 +1034,7 @@ export type CreateBlockSpec = {
 	 *  created EARLIER in the same batch. When `None`, the new block is
 	 *  top-level.
 	 */
-	parentId: string | null,
+	parentId: BlockId | null,
 	/**
 	 *  Optional 1-based position. When `None`, the backend appends after
 	 *  the last sibling (same convention as `create_block_inner`).

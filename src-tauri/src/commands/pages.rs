@@ -309,7 +309,7 @@ pub async fn export_page_markdown_inner(
     // as `# Title\n\n` with no descendants. The descendant walk
     // below already filters `deleted_at IS NULL`, so prior to this
     // fix the page row itself was the only row that could leak.
-    let page = get_active_block_inner(pool, page_id.to_string()).await?;
+    let page = get_active_block_inner(pool, page_id.into()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation("not a page".into()));
     }
@@ -913,7 +913,7 @@ pub async fn get_page_inner(
     // frontend / MCP. A tombstoned page now surfaces as
     // `AppError::NotFound`, matching the unknown-id case the
     // frontend's deep-link / journal-nav already handles.
-    let page = get_active_block_inner(pool, page_id.to_string()).await?;
+    let page = get_active_block_inner(pool, page_id.into()).await?;
     if page.block_type != "page" {
         return Err(AppError::Validation(format!(
             "block '{page_id}' has block_type '{}', expected 'page'",
@@ -1085,7 +1085,7 @@ pub async fn get_page_unscoped_inner(
         // discover tombstoned pages via this surface; the only
         // legitimate path to soft-deleted rows is the (frontend-only)
         // trash UI.
-        get_active_block_inner(pool, page_id.to_string()).await?;
+        get_active_block_inner(pool, page_id.into()).await?;
         return Err(AppError::Validation(format!(
             "page '{page_id}' has no space property"
         )));

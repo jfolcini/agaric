@@ -314,7 +314,7 @@ async fn set_property_on_deleted_block_fails() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
@@ -549,9 +549,7 @@ async fn delete_property_clears_reserved_column_key() {
     mat.flush_background().await.unwrap();
 
     // Verify it's set
-    let b = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(b.due_date.as_deref(), Some("2026-06-01"));
 
     // Delete the reserved property via delete_property_inner
@@ -567,9 +565,7 @@ async fn delete_property_clears_reserved_column_key() {
     mat.flush_background().await.unwrap();
 
     // Verify the column is NULLed
-    let b = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let b = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(
         b.due_date.is_none(),
         "due_date should be NULL after delete, got: {:?}",
@@ -2061,7 +2057,7 @@ async fn set_todo_state_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
@@ -2103,7 +2099,7 @@ async fn set_priority_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
@@ -2139,7 +2135,7 @@ async fn set_due_date_deleted_block_returns_not_found() {
 
     mat.flush_background().await.unwrap();
 
-    delete_block_inner(&pool, DEV, &mat, block.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, block.id.clone())
         .await
         .unwrap();
 
@@ -2827,9 +2823,7 @@ async fn recurrence_daily_creates_next_occurrence() {
     mat.flush_background().await.unwrap();
 
     // Original block should be DONE
-    let original = get_block_inner(&pool, block.id.clone().into_string())
-        .await
-        .unwrap();
+    let original = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert_eq!(
         original.todo_state.as_deref(),
         Some("DONE"),
@@ -5662,7 +5656,7 @@ async fn set_todo_state_batch_skips_missing_and_deleted() {
     .await
     .unwrap();
     settle(&mat).await;
-    delete_block_inner(&pool, DEV, &mat, deleted.id.clone().into_string())
+    delete_block_inner(&pool, DEV, &mat, deleted.id.clone())
         .await
         .unwrap();
     settle(&mat).await;

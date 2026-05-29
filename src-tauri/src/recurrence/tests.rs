@@ -724,7 +724,7 @@ async fn handle_recurrence_daily_creates_sibling_with_shifted_due_date() {
     );
 
     // Original should be DONE
-    let original = get_block_inner(&pool, block.id.to_string()).await.unwrap();
+    let original = get_block_inner(&pool, block.id).await.unwrap();
     assert_eq!(
         original.todo_state.as_deref(),
         Some("DONE"),
@@ -1105,7 +1105,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "recurring task".into(),
-        Some(parent.id.to_string()),
+        Some(parent.id.clone()),
         Some(1),
     )
     .await
@@ -1119,7 +1119,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "neighbor A".into(),
-        Some(parent.id.to_string()),
+        Some(parent.id.clone()),
         Some(2),
     )
     .await
@@ -1133,7 +1133,7 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
         &mat,
         "content".into(),
         "neighbor B".into(),
-        Some(parent.id.to_string()),
+        Some(parent.id.clone()),
         Some(3),
     )
     .await

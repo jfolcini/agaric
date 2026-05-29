@@ -832,7 +832,7 @@ async fn handle_get_block(pool: &SqlitePool, args: Value) -> Result<Value, AppEr
     // M-98 — `get_active_block_inner` (not `get_block_inner`) so an
     // agent cannot fetch tombstoned rows. The MCP read surface
     // mirrors the Tauri IPC `get_block` command's contract.
-    let resp = get_active_block_inner(pool, block_id).await?;
+    let resp = get_active_block_inner(pool, block_id.into()).await?;
     to_tool_result(&resp)
 }
 
