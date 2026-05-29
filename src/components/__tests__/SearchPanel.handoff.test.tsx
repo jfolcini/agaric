@@ -113,7 +113,7 @@ describe('SearchPanel — pendingViewQuery handoff (E2E-A5)', () => {
     await waitFor(() => {
       const searchCall = mockedInvoke.mock.calls.find(([cmd]) => cmd === 'search_blocks')
       expect(searchCall).toBeDefined()
-      expect((searchCall?.[1] as { query: string }).query).toBe('hello')
+      expect((searchCall?.[1] as { query: string } | undefined)?.query).toBe('hello')
     })
 
     // (c) the transient slot is consumed exactly once.

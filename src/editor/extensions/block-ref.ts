@@ -72,14 +72,14 @@ export const BlockRef = Node.create<BlockRefOptions>({
   },
 
   addNodeView() {
-    const extension = this
+    const { options } = this
     return ({ node }) => {
       const dom = document.createElement('span')
       let currentId = node.attrs['id'] as string
 
       function render(blockId: string) {
         currentId = blockId
-        const content = extension.options.resolveContent(blockId)
+        const content = options.resolveContent(blockId)
 
         dom.textContent = content
         dom.className = 'block-ref-chip cursor-pointer'
@@ -94,7 +94,7 @@ export const BlockRef = Node.create<BlockRefOptions>({
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        extension.options.onNavigate?.(currentId)
+        options.onNavigate?.(currentId)
       }
       dom.addEventListener('click', clickHandler)
 

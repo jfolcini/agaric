@@ -91,13 +91,21 @@ function SortableBlockWrapperInner({
   // Focused block is never virtualized — always render fully
   if (!isFocused && viewport.isOffscreen(block.id)) {
     return (
-      // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- aria-level is valid on listitem per WAI-ARIA spec
       <li
         ref={observeRef}
         data-block-id={block.id}
         aria-level={block.depth + 1}
         aria-setsize={siblingSetsize}
         aria-posinset={siblingPosinset}
+        // The operable expand/collapse control with aria-expanded is the
+        // chevron <button> inside <SortableBlock> (BlockInlineControls). This
+        // row mirrors that state for assistive tech that walks the outline
+        // structure. listitem doesn't formally support aria-expanded, and we
+        // can't promote it to treeitem without making the parent <ul> a
+        // role="tree" (owned by BlockListRenderer, out of scope) — an isolated
+        // treeitem under a plain list is itself an a11y violation. axe accepts
+        // aria-expanded on listitem; only oxlint's static rule rejects it.
+        // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
         aria-expanded={hasChildren ? !isCollapsed : undefined}
         className="block-placeholder list-none m-0 p-0"
         style={{ minHeight: viewport.getHeight(block.id) }}
@@ -106,13 +114,16 @@ function SortableBlockWrapperInner({
   }
 
   return (
-    // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- aria-level is valid on listitem per WAI-ARIA spec
     <li
       ref={observeRef}
       data-block-id={block.id}
       aria-level={block.depth + 1}
       aria-setsize={siblingSetsize}
       aria-posinset={siblingPosinset}
+      // See the placeholder branch above: aria-expanded mirrors the chevron
+      // button's state for the outline structure; the canonical control is in
+      // BlockInlineControls.
+      // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
       aria-expanded={hasChildren ? !isCollapsed : undefined}
       className={cn('list-none m-0 p-0', isAnimating && 'block-children-enter')}
     >
