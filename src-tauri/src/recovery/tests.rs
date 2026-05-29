@@ -1809,7 +1809,7 @@ async fn read_cursor(pool: &SqlitePool) -> i64 {
 
 /// Force-set the cursor to a specific value (test-only helper).
 async fn set_cursor(pool: &SqlitePool, seq: i64) {
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     sqlx::query!(
         "UPDATE materializer_apply_cursor SET materialized_through_seq = ?, updated_at = ? WHERE id = 1",
         seq,

@@ -424,7 +424,7 @@ async fn dispatch_delete_descendants(
 /// always targets `id = 1`. The MAX semantics guarantee that
 /// re-applying an already-applied op is a no-op for the cursor.
 async fn advance_apply_cursor(conn: &mut sqlx::SqliteConnection, seq: i64) -> Result<(), AppError> {
-    let updated_at = crate::now_rfc3339();
+    let updated_at = crate::db::now_ms();
     sqlx::query!(
         "UPDATE materializer_apply_cursor \
          SET materialized_through_seq = MAX(materialized_through_seq, ?), \

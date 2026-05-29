@@ -107,7 +107,7 @@ async fn read_apply_cursor(pool: &SqlitePool) -> Result<i64, AppError> {
             "replay: materializer_apply_cursor exceeds MAX(op_log.seq) — \
              impossible-state corruption; resetting cursor to MAX(op_log.seq)"
         );
-        let updated_at = crate::now_rfc3339();
+        let updated_at = crate::db::now_ms();
         sqlx::query!(
             "UPDATE materializer_apply_cursor \
              SET materialized_through_seq = ?, \
@@ -209,7 +209,7 @@ pub(super) async fn heal_orphaned_apply_cursor(pool: &SqlitePool) -> Result<bool
          (missing or stale snapshot) — rewinding the cursor so replay \
          rebuilds the behind engines from the op-log"
     );
-    let updated_at = crate::now_rfc3339();
+    let updated_at = crate::db::now_ms();
     sqlx::query!(
         "UPDATE materializer_apply_cursor \
          SET materialized_through_seq = ?, \
@@ -372,7 +372,7 @@ mod tests {
         sqlx::query(
             "UPDATE materializer_apply_cursor \
              SET materialized_through_seq = ?, \
-                 updated_at = '2026-01-01T00:00:00.000Z' \
+                 updated_at = 1767225600000 \
              WHERE id = 1",
         )
         .bind(9999i64)
@@ -434,7 +434,7 @@ mod tests {
         sqlx::query(
             "UPDATE materializer_apply_cursor \
              SET materialized_through_seq = 3, \
-                 updated_at = '2026-01-01T00:00:00.000Z' \
+                 updated_at = 1767225600000 \
              WHERE id = 1",
         )
         .execute(&pool)
@@ -495,7 +495,7 @@ mod tests {
         sqlx::query(
             "UPDATE materializer_apply_cursor \
              SET materialized_through_seq = 2, \
-                 updated_at = '2026-01-01T00:00:00.000Z' \
+                 updated_at = 1767225600000 \
              WHERE id = 1",
         )
         .execute(&pool)
@@ -556,7 +556,7 @@ mod tests {
         sqlx::query(
             "UPDATE materializer_apply_cursor \
              SET materialized_through_seq = 3, \
-                 updated_at = '2026-01-01T00:00:00.000Z' \
+                 updated_at = 1767225600000 \
              WHERE id = 1",
         )
         .execute(&pool)
