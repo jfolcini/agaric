@@ -16,7 +16,7 @@ export async function axe(
     ...options,
     rules: {
       'aria-hidden-focus': { enabled: false },
-      ...(options?.rules ?? {}),
+      ...options?.rules,
     },
   })
 }
