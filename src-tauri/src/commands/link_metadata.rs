@@ -24,7 +24,7 @@ pub async fn fetch_link_metadata_inner(
     // Check cache first — return if fresh (< 7 days). Read-only path:
     // never touches the write pool on a cache hit.
     if let Some(cached) = link_metadata::get_cached(read_pool, &url).await? {
-        if !is_stale(&cached.fetched_at, 7) {
+        if !is_stale(cached.fetched_at, 7) {
             return Ok(cached);
         }
     }
@@ -43,14 +43,15 @@ pub async fn get_link_metadata_inner(
     link_metadata::get_cached(pool, &url).await
 }
 
-/// Check if a `fetched_at` timestamp (RFC 3339) is older than `max_days`.
-fn is_stale(fetched_at: &str, max_days: u32) -> bool {
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(fetched_at) else {
-        // If we can't parse it, treat as stale
-        return true;
-    };
-    let age = chrono::Utc::now() - parsed.with_timezone(&chrono::Utc);
-    age.num_days() > i64::from(max_days)
+/// Check if a `fetched_at` timestamp (epoch milliseconds, #109 Phase 2) is
+/// older than `max_days`. Comparison is at whole-day resolution to preserve
+/// the pre-migration `num_days() > max_days` semantics: an age of exactly
+/// `max_days` is fresh, `max_days + 1` whole days is stale. A future
+/// timestamp (negative age) is never stale.
+fn is_stale(fetched_at: i64, max_days: u32) -> bool {
+    const MS_PER_DAY: i64 = 86_400_000;
+    let age_ms = (crate::db::now_ms() - fetched_at).max(0);
+    age_ms / MS_PER_DAY > i64::from(max_days)
 }
 
 // ---------------------------------------------------------------------------
@@ -127,13 +128,13 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Insert fresh metadata (fetched "now") directly into the DB.
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let meta = LinkMetadata {
             url: "https://example.com/cached".to_string(),
             title: Some("Cached Title".to_string()),
             favicon_url: Some("https://example.com/favicon.ico".to_string()),
             description: Some("Cached description".to_string()),
-            fetched_at: now.clone(),
+            fetched_at: now,
             auth_required: false,
             not_found: false,
         };
@@ -167,13 +168,13 @@ mod tests {
     async fn cache_hit_preserves_auth_required_flag() {
         let (pool, _dir) = test_pool().await;
 
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let meta = LinkMetadata {
             url: "https://private.example.com".to_string(),
             title: None,
             favicon_url: None,
             description: None,
-            fetched_at: now.clone(),
+            fetched_at: now,
             auth_required: true,
             not_found: false,
         };
@@ -217,8 +218,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         // Insert metadata that is 8 days old (stale by the 7-day threshold).
-        let eight_days_ago = (chrono::Utc::now() - chrono::Duration::days(8))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let eight_days_ago = crate::db::now_ms() - 8 * 86_400_000;
         let meta = LinkMetadata {
             url: "http://127.0.0.1:1/stale-entry".to_string(),
             title: Some("Stale Title".to_string()),
@@ -246,13 +246,13 @@ mod tests {
     async fn cache_hit_with_all_none_fields() {
         let (pool, _dir) = test_pool().await;
 
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let meta = LinkMetadata {
             url: "https://minimal.example.com".to_string(),
             title: None,
             favicon_url: None,
             description: None,
-            fetched_at: now.clone(),
+            fetched_at: now,
             auth_required: false,
             not_found: false,
         };
@@ -286,13 +286,13 @@ mod tests {
         // hit path the call will fail with a "PoolClosed" error.
         let (pools, _dir) = test_pools_split().await;
 
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let meta = LinkMetadata {
             url: "https://example.com/split-cache-hit".to_string(),
             title: Some("Split-Pool Cached".to_string()),
             favicon_url: None,
             description: None,
-            fetched_at: now.clone(),
+            fetched_at: now,
             auth_required: false,
             not_found: false,
         };
@@ -322,13 +322,13 @@ mod tests {
         // confirms the lookup succeeds against the (read-only) read pool.
         let (pools, _dir) = test_pools_split().await;
 
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::db::now_ms();
         let meta = LinkMetadata {
             url: "https://example.com/query-only-lookup".to_string(),
             title: Some("Read-only Lookup".to_string()),
             favicon_url: None,
             description: None,
-            fetched_at: now.clone(),
+            fetched_at: now,
             auth_required: false,
             not_found: false,
         };
@@ -405,7 +405,7 @@ mod tests {
             title: Some("Cached".to_string()),
             favicon_url: Some("https://cached.example.com/icon.png".to_string()),
             description: Some("A cached page".to_string()),
-            fetched_at: "2025-06-01T10:00:00.000Z".to_string(),
+            fetched_at: 1_748_772_000_000, // 2025-06-01T10:00:00Z in epoch ms
             auth_required: false,
             not_found: false,
         };
@@ -425,39 +425,40 @@ mod tests {
     // is_stale tests (existing)
     // ==================================================================
 
+    const MS_PER_DAY: i64 = 86_400_000;
+
     #[test]
     fn is_stale_fresh_entry() {
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        assert!(!is_stale(&now, 7));
+        assert!(!is_stale(crate::db::now_ms(), 7));
     }
 
     #[test]
     fn is_stale_at_boundary() {
-        let exactly_seven = (chrono::Utc::now() - chrono::Duration::days(7))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        // Exactly 7 whole days old: `age / MS_PER_DAY == 7`, which is not
+        // `> 7`, so still fresh — matches the pre-migration day-resolution
+        // semantics.
+        let exactly_seven = crate::db::now_ms() - 7 * MS_PER_DAY;
         assert!(
-            !is_stale(&exactly_seven, 7),
+            !is_stale(exactly_seven, 7),
             "exactly 7 days should NOT be stale"
         );
     }
 
     #[test]
     fn is_stale_after_boundary() {
-        let eight_days = (chrono::Utc::now() - chrono::Duration::days(8))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        assert!(is_stale(&eight_days, 7), "8 days should be stale");
+        let eight_days = crate::db::now_ms() - 8 * MS_PER_DAY;
+        assert!(is_stale(eight_days, 7), "8 days should be stale");
     }
 
     #[test]
-    fn is_stale_invalid_timestamp() {
-        assert!(is_stale("not-a-date", 7));
-        assert!(is_stale("", 7));
+    fn is_stale_zero_timestamp() {
+        // Epoch 0 (1970) is far older than any window — always stale.
+        assert!(is_stale(0, 7));
     }
 
     #[test]
     fn is_stale_future_timestamp() {
-        let future = (chrono::Utc::now() + chrono::Duration::days(1))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        assert!(!is_stale(&future, 7));
+        let future = crate::db::now_ms() + MS_PER_DAY;
+        assert!(!is_stale(future, 7), "a future timestamp is never stale");
     }
 }

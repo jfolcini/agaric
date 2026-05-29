@@ -2086,7 +2086,8 @@ export interface LinkMetadata {
   title: string | null
   favicon_url: string | null
   description: string | null
-  fetched_at: string
+  /** Milliseconds since the UNIX epoch (UTC). #109 Phase 2: was an RFC 3339 string. */
+  fetched_at: number
   auth_required: boolean
   /**
    * MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent

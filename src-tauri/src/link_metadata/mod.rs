@@ -16,8 +16,8 @@ use serde::Serialize;
 use specta::Type;
 use sqlx::SqlitePool;
 
+use crate::db::now_ms;
 use crate::error::AppError;
-use crate::now_rfc3339;
 
 mod html_parser;
 
@@ -38,7 +38,10 @@ pub struct LinkMetadata {
     pub title: Option<String>,
     pub favicon_url: Option<String>,
     pub description: Option<String>,
-    pub fetched_at: String,
+    /// Milliseconds since the UNIX epoch (UTC) — see `crate::db::now_ms`.
+    /// Exposed to the frontend as a `number` (#109 Phase 2; was an RFC 3339
+    /// string before the INTEGER-ms timestamp migration).
+    pub fetched_at: i64,
     pub auth_required: bool,
     /// MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
     /// fetch saw a terminal "this resource is gone" status (HTTP 404 or
@@ -111,7 +114,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
             title: None,
             favicon_url: None,
             description: None,
-            fetched_at: now_rfc3339(),
+            fetched_at: now_ms(),
             auth_required: status == 401 || status == 403,
             not_found: status == 404 || status == 410,
         });
@@ -141,7 +144,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
             title: None,
             favicon_url: parse_favicon("", url),
             description: None,
-            fetched_at: now_rfc3339(),
+            fetched_at: now_ms(),
             auth_required: status == 401 || status == 403,
             not_found: status == 404 || status == 410,
         });
@@ -164,7 +167,7 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
         title,
         favicon_url,
         description,
-        fetched_at: now_rfc3339(),
+        fetched_at: now_ms(),
         auth_required,
         // 2xx by construction (non-2xx short-circuited above) — the
         // "soft 404" / login-page detection lives entirely in
@@ -247,7 +250,7 @@ pub async fn upsert(pool: &SqlitePool, meta: &LinkMetadata) -> Result<(), AppErr
     .bind(&meta.title)
     .bind(&meta.favicon_url)
     .bind(&meta.description)
-    .bind(&meta.fetched_at)
+    .bind(meta.fetched_at)
     .bind(auth_flag)
     .bind(not_found_flag)
     .execute(pool)
@@ -258,9 +261,9 @@ pub async fn upsert(pool: &SqlitePool, meta: &LinkMetadata) -> Result<(), AppErr
 
 /// Clear the `auth_required` flag for a URL and update `fetched_at` to now.
 pub async fn clear_auth_flag(pool: &SqlitePool, url: &str) -> Result<(), AppError> {
-    let now = now_rfc3339();
+    let now = now_ms();
     sqlx::query("UPDATE link_metadata SET auth_required = 0, fetched_at = ? WHERE url = ?")
-        .bind(&now)
+        .bind(now)
         .bind(url)
         .execute(pool)
         .await?;
@@ -271,12 +274,13 @@ pub async fn clear_auth_flag(pool: &SqlitePool, url: &str) -> Result<(), AppErro
 /// Delete stale non-auth entries older than `max_age_days`.
 /// Returns the number of rows deleted.
 pub async fn cleanup_stale(pool: &SqlitePool, max_age_days: u32) -> Result<u64, AppError> {
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(i64::from(max_age_days));
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // `fetched_at` is now epoch-ms (#109 Phase 2): subtract the window in ms
+    // from the current instant rather than formatting an RFC 3339 cutoff.
+    let cutoff_ms = now_ms() - i64::from(max_age_days) * 86_400_000;
 
     let result =
         sqlx::query("DELETE FROM link_metadata WHERE auth_required = 0 AND fetched_at < ?")
-            .bind(&cutoff_str)
+            .bind(cutoff_ms)
             .execute(pool)
             .await?;
 
@@ -293,7 +297,7 @@ struct LinkMetadataRow {
     title: Option<String>,
     favicon_url: Option<String>,
     description: Option<String>,
-    fetched_at: String,
+    fetched_at: i64,
     auth_required: i32,
     not_found: i32,
 }

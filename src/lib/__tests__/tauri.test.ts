@@ -3326,7 +3326,7 @@ describe('fetchLinkMetadata', () => {
       title: 'Example',
       favicon_url: 'https://example.com/favicon.ico',
       description: 'An example site',
-      fetched_at: '2025-01-15T00:00:00Z',
+      fetched_at: 1736899200000, // 2025-01-15T00:00:00Z
       auth_required: false,
       not_found: false,
     }
@@ -3353,7 +3353,7 @@ describe('getLinkMetadata', () => {
       title: 'Example',
       favicon_url: null,
       description: null,
-      fetched_at: '2025-01-15T00:00:00Z',
+      fetched_at: 1736899200000, // 2025-01-15T00:00:00Z
       auth_required: false,
       not_found: false,
     }

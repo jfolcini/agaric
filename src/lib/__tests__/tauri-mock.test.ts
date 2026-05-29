@@ -2418,7 +2418,7 @@ describe('LinkMetadata commands', () => {
       auth_required: false,
       not_found: false,
     })
-    expect(typeof result['fetched_at']).toBe('string')
+    expect(typeof result['fetched_at']).toBe('number')
   })
 
   it('get_link_metadata returns LinkMetadata shape with the given url', () => {
@@ -2434,7 +2434,7 @@ describe('LinkMetadata commands', () => {
       auth_required: false,
       not_found: false,
     })
-    expect(typeof result['fetched_at']).toBe('string')
+    expect(typeof result['fetched_at']).toBe('number')
   })
 })
 

@@ -550,7 +550,12 @@ export const commands = {
 	title: string | null,
 	favicon_url: string | null,
 	description: string | null,
-	fetched_at: string,
+	/**
+	 *  Milliseconds since the UNIX epoch (UTC) — see `crate::db::now_ms`.
+	 *  Exposed to the frontend as a `number` (#109 Phase 2; was an RFC 3339
+	 *  string before the INTEGER-ms timestamp migration).
+	 */
+	fetched_at: number,
 	auth_required: boolean,
 	/**
 	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
@@ -1351,7 +1356,12 @@ export type LinkMetadata = {
 	title: string | null,
 	favicon_url: string | null,
 	description: string | null,
-	fetched_at: string,
+	/**
+	 *  Milliseconds since the UNIX epoch (UTC) — see `crate::db::now_ms`.
+	 *  Exposed to the frontend as a `number` (#109 Phase 2; was an RFC 3339
+	 *  string before the INTEGER-ms timestamp migration).
+	 */
+	fetched_at: number,
 	auth_required: boolean,
 	/**
 	 *  MAINT-213 (PEND-24 M4 follow-up): `true` when the most recent
