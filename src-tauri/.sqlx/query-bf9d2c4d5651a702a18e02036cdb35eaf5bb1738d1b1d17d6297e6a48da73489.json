@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id,\n                b.due_date, b.scheduled_date,\n                bp.value_text AS repeat_rule,\n                bp_until.value_date AS repeat_until,\n                bp_count.value_num AS repeat_count,\n                bp_seq.value_num AS repeat_seq\n         FROM blocks b\n         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'\n         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'\n         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'\n         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'\n         WHERE b.deleted_at IS NULL\n           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')\n           AND bp.value_text IS NOT NULL\n           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)\n           AND NOT EXISTS (\n               SELECT 1 FROM block_properties tp\n               WHERE tp.block_id = b.page_id AND tp.key = 'template'\n           )",
+  "query": "SELECT b.id AS \"id: crate::ulid::BlockId\",\n                b.due_date, b.scheduled_date,\n                bp.value_text AS repeat_rule,\n                bp_until.value_date AS repeat_until,\n                bp_count.value_num AS repeat_count,\n                bp_seq.value_num AS repeat_seq\n         FROM blocks b\n         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'\n         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'\n         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'\n         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'\n         WHERE b.deleted_at IS NULL\n           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')\n           AND bp.value_text IS NOT NULL\n           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)\n           AND NOT EXISTS (\n               SELECT 1 FROM block_properties tp\n               WHERE tp.block_id = b.page_id AND tp.key = 'template'\n           )",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -94,5 +94,5 @@
       true
     ]
   },
-  "hash": "c1647c2e2266b520cdd853950aa5f66ab1e2983996f13a43f5195e0e1a161dc5"
+  "hash": "bf9d2c4d5651a702a18e02036cdb35eaf5bb1738d1b1d17d6297e6a48da73489"
 }

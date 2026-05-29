@@ -50,7 +50,7 @@ const CHUNK_SIZE: usize = 10_000;
 /// same struct so the shared compute helper sees identical inputs.
 #[derive(sqlx::FromRow)]
 struct CacheRepeatingRow {
-    id: String,
+    id: crate::ulid::BlockId,
     due_date: Option<String>,
     scheduled_date: Option<String>,
     repeat_rule: Option<String>,
@@ -130,7 +130,7 @@ async fn rebuild_projected_agenda_cache_impl(
     // root-page column (migration 0027).
     let rows: Vec<CacheRepeatingRow> = sqlx::query_as!(
         CacheRepeatingRow,
-        r#"SELECT b.id,
+        r#"SELECT b.id AS "id: crate::ulid::BlockId",
                 b.due_date, b.scheduled_date,
                 bp.value_text AS repeat_rule,
                 bp_until.value_date AS repeat_until,
@@ -306,7 +306,7 @@ fn project_block_into(
         horizon,
         |projected, source_name| {
             out.push((
-                block_id.clone(),
+                block_id.as_str().to_string(),
                 projected.format("%Y-%m-%d").to_string(),
                 source_name.to_string(),
             ));
