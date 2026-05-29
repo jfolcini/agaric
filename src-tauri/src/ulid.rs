@@ -382,6 +382,195 @@ pub async fn verify_active(pool: &SqlitePool, id: &BlockId) -> Result<ActiveBloc
 }
 
 // ---------------------------------------------------------------------------
+// PageId — MAINT-107
+// ---------------------------------------------------------------------------
+//
+// Lifts the "this id names a page (or a block's owning page)" role into
+// the type system. A `page_id` TEXT column read into a `PageId` documents
+// — and enforces at the Rust level — that the value is a page reference,
+// distinct from a generic [`BlockId`]. The maintainer decision on #107 is
+// to introduce a *distinct* newtype rather than a bare alias.
+//
+// `PageId` wraps [`BlockId`] (not `String`) because every page id is also
+// a valid block id — pages are blocks with `block_type = 'page'`, and the
+// `page_id` column stores the owning page's block id. Wrapping `BlockId`
+// inherits its uppercase-normalising `Deserialize` for free and makes the
+// `PageId → BlockId` widening conversion infallible and zero-cost.
+//
+// Wire format is identical to `BlockId` and `String`: both `serde` and
+// `sqlx` use the transparent encoding (delegating through the inner
+// `BlockId`, which is itself transparent over `String`). The JSON / SQLite
+// layer cannot distinguish the type — sync, IPC, and op-log payloads all
+// continue to see the underlying 26-character ULID string. The newtype is
+// purely a Rust-side type-safety tag.
+
+/// A block id in its role as a page reference.
+///
+/// Read a `page_id` TEXT column into this type when the value names a page
+/// (or the owning page of a block). It is a drop-in replacement for
+/// reading the column as [`BlockId`] / `String`.
+///
+/// **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
+/// `transparent` and `sqlx::Type` is `transparent` over the inner
+/// [`BlockId`] (itself transparent over `String`) — the encoded
+/// representation is byte-identical to the underlying ULID. Round-tripping
+/// through JSON / SQLite preserves the value exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, sqlx::Type, specta::Type)]
+#[serde(transparent)]
+#[sqlx(transparent)]
+pub struct PageId(BlockId);
+
+impl<'de> serde::Deserialize<'de> for PageId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Delegate to `BlockId::Deserialize`, which lenient-normalises to
+        // uppercase Crockford base32 without ULID validation. Keeps every
+        // normalisation path byte-stable (AGENTS.md invariant #8).
+        Ok(Self(BlockId::deserialize(deserializer)?))
+    }
+}
+
+impl PageId {
+    /// Get the inner string reference.
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// Borrow the underlying [`BlockId`]. Free — `PageId` is a strict
+    /// tag over `BlockId`.
+    pub fn as_block_id(&self) -> &BlockId {
+        &self.0
+    }
+
+    /// Consume and return the underlying [`BlockId`].
+    pub fn into_block_id(self) -> BlockId {
+        self.0
+    }
+
+    /// Consume and return the inner string.
+    pub fn into_string(self) -> String {
+        self.0.into_string()
+    }
+
+    /// Construct from a string already known to refer to a page. Skips
+    /// ULID validation but normalises to uppercase to match
+    /// [`BlockId::from_trusted`] and the `Deserialize` impl (AGENTS.md
+    /// invariant #8). Use at helper boundaries where the value was just
+    /// produced by a `page_id`-selecting query.
+    pub fn from_trusted(s: &str) -> Self {
+        Self(BlockId::from_trusted(s))
+    }
+
+    /// Test-only constructor that bypasses ULID validation but still
+    /// uppercases the input. Mirrors [`BlockId::test_id`].
+    #[cfg(test)]
+    pub fn test_id(s: &str) -> Self {
+        Self(BlockId::test_id(s))
+    }
+}
+
+/// `BlockId → PageId` — every block id can be tagged as a page reference
+/// (the type system does not re-check that it names a `block_type = 'page'`
+/// row; that is the caller's responsibility at the query boundary).
+impl From<BlockId> for PageId {
+    fn from(id: BlockId) -> Self {
+        Self(id)
+    }
+}
+
+/// `PageId → BlockId` — a page id is always a valid block id. Infallible
+/// and free.
+impl From<PageId> for BlockId {
+    fn from(id: PageId) -> Self {
+        id.0
+    }
+}
+
+/// `String → PageId` for test fixtures and trusted in-process conversions.
+/// Bypasses ULID validation but normalises to uppercase via the inner
+/// `BlockId` conversion. Mirror of [`BlockId`]'s implicit conversion.
+impl From<String> for PageId {
+    fn from(s: String) -> Self {
+        Self(BlockId::from(s))
+    }
+}
+
+/// `&str → PageId`. Same caveats as the `String` impl above.
+impl From<&str> for PageId {
+    fn from(s: &str) -> Self {
+        Self(BlockId::from(s))
+    }
+}
+
+impl From<PageId> for String {
+    fn from(id: PageId) -> Self {
+        id.0.into_string()
+    }
+}
+
+impl fmt::Display for PageId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for PageId {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl PartialEq<&str> for PageId {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == **other
+    }
+}
+
+impl PartialEq<str> for PageId {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for PageId {
+    fn eq(&self, other: &String) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<PageId> for String {
+    fn eq(&self, other: &PageId) -> bool {
+        other.0 == *self
+    }
+}
+
+impl PartialEq<PageId> for str {
+    fn eq(&self, other: &PageId) -> bool {
+        other.0 == *self
+    }
+}
+
+impl PartialEq<PageId> for &str {
+    fn eq(&self, other: &PageId) -> bool {
+        other.0 == **self
+    }
+}
+
+impl PartialEq<BlockId> for PageId {
+    fn eq(&self, other: &BlockId) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<PageId> for BlockId {
+    fn eq(&self, other: &PageId) -> bool {
+        *self == other.0
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 //

@@ -1486,6 +1486,21 @@ export type PageHeading = {
 };
 
 /**
+ *  A block id in its role as a page reference.
+ *
+ *  Read a `page_id` TEXT column into this type when the value names a page
+ *  (or the owning page of a block). It is a drop-in replacement for
+ *  reading the column as [`BlockId`] / `String`.
+ *
+ *  **Wire-format parity with [`BlockId`] / `String`:** `serde` uses
+ *  `transparent` and `sqlx::Type` is `transparent` over the inner
+ *  [`BlockId`] (itself transparent over `String`) — the encoded
+ *  representation is byte-identical to the underlying ULID. Round-tripping
+ *  through JSON / SQLite preserves the value exactly.
+ */
+export type PageId = BlockId;
+
+/**
  *  A link between two pages (for graph visualization).
  *
  *  Both endpoints are [`ActiveBlockId`] — `list_page_links_inner` filters
@@ -1592,7 +1607,7 @@ export type PageWithMetadataRow = {
 	priority: string | null,
 	dueDate: string | null,
 	scheduledDate: string | null,
-	pageId: BlockId | null,
+	pageId: PageId | null,
 	/**
 	 *  max(`op_log.created_at`) over the page itself. None if the
 	 *  page has no op-log entries (which should never happen — every
