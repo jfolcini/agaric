@@ -124,7 +124,7 @@ export function BlockHistoryItem({
   // / are loading / failed for this expansion". The cleanup also
   // resets `comparedLoading` so a collapse mid-fetch doesn't leave
   // the spinner stuck on subsequent re-expand.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above.
+  /* oxlint-disable react-hooks/exhaustive-deps -- comparedDiff/comparedLoading/comparedFailed are runtime guards, not re-run triggers — see comment above. */
   React.useEffect(() => {
     if (!isExpanded || !isRestorable) return
     if (comparedDiff != null || comparedLoading || comparedFailed) return
@@ -162,6 +162,7 @@ export function BlockHistoryItem({
       setComparedLoading(false)
     }
   }, [isExpanded, isRestorable, blockId, entry.seq, t])
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   const handleRowClick = (e: React.MouseEvent) => {
     if (!isRestorable) return

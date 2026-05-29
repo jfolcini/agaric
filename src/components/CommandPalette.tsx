@@ -477,14 +477,15 @@ export function PaletteBody({
   // `lastUserQueryRef.current` skips the user-typing path (which
   // routes through `handleInputChange` and manages its own
   // debounced schedule).
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `lastUserQueryRef`, `debounced` are stable refs/callbacks; including them would re-fire the effect spuriously.
   useEffect(() => {
     if (query === lastUserQueryRef.current) return
     lastUserQueryRef.current = query
     debounced.cancel()
     const trimmed = query.trim()
     setDebouncedQuery(trimmed.length === 0 || isCommandsModeInput(trimmed) ? '' : trimmed)
-  }, [query])
+    // `debounced` is a stable identity (useMemo([]) in useDebouncedCallback),
+    // so listing it cannot cause spurious re-runs; `query` remains the trigger.
+  }, [query, debounced])
 
   // PEND-73 Phase 4.M3 — race-discard via the shared `useGenerationGuard`
   // hook. Re-bumped on every keystroke; an in-flight response from an

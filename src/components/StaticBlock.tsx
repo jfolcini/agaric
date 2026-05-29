@@ -93,7 +93,6 @@ function StaticBlockInner({
   // are intentionally captured via refs — listing them would invalidate
   // the memo on every parent render and defeat the optimization.
   const resolveVersion = useResolveStore((s) => s.version)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
   const richContent = useMemo(
     () =>
       content
@@ -107,6 +106,7 @@ function StaticBlockInner({
             resolveTagStatus: (id) => resolveTagStatusRef.current?.(id) ?? 'active',
           })
         : null,
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolve* callbacks captured via refs (intentional perf optimization — see comment above); resolveVersion drives recomputation on cache updates
     [content, onNavigate, resolveVersion],
   )
 

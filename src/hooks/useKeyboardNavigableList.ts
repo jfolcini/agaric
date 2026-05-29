@@ -106,10 +106,12 @@ export function useKeyboardNavigableList<T extends HTMLElement = HTMLElement>(
   const { focusedIndex, setFocusedIndex, handleKeyDown } = useListKeyboardNavigation(navOptions)
 
   // Reset focusedIndex to 0 whenever the caller-provided resetKey changes.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentional reset on resetKey change
+  // `setFocusedIndex` is the stable useState setter (forwarded from
+  // useListKeyboardNavigation), so including it is safe and does not re-run
+  // the effect on its own — resetKey remains the sole trigger.
   useEffect(() => {
     setFocusedIndex(0)
-  }, [resetKey])
+  }, [resetKey, setFocusedIndex])
 
   // Scroll the focused item into view, but only when focus is actually inside
   // the list — avoids hijacking the page's scroll position when the user

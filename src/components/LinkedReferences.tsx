@@ -68,7 +68,10 @@ export function LinkedReferences({
   const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
     useBacklinkResolution(groups)
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- invalidationKey triggers refetch on property changes (F-39)
+  // invalidationKey is intentionally in the dep array even though the body
+  // doesn't read it: bumping it rebuilds `fetchGroups`, which the load effect
+  // depends on, forcing a refetch when block properties change (F-39).
+  /* oxlint-disable react-hooks/exhaustive-deps -- invalidationKey intentionally rebuilds fetchGroups to refetch on property changes (F-39); see comment above. */
   const fetchGroups = useCallback(
     async (cursor?: string) => {
       setLoading(true)
@@ -153,6 +156,7 @@ export function LinkedReferences({
       currentSpaceId,
     ],
   )
+  /* oxlint-enable react-hooks/exhaustive-deps */
 
   // Load tags on mount (PEND-29 B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid

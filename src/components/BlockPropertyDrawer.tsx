@@ -173,7 +173,7 @@ export function BlockPropertyDrawer({
         notify.error(t('property.saveFailed'))
       }
     },
-    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore.setState],
+    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore],
   )
 
   // Update a built-in date field
@@ -204,7 +204,7 @@ export function BlockPropertyDrawer({
         notify.error(t('property.saveFailed'))
       }
     },
-    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore.setState],
+    [blockId, setDueDateCmd, setScheduledDateCmd, t, pageStore],
   )
 
   const hasBuiltinDates = dueDate !== null || scheduledDate !== null

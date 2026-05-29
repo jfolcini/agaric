@@ -79,13 +79,13 @@ export function useHeaderLabel(): string {
 export function useTrashCount(): number {
   const currentView = useNavigationStore((s) => s.currentView)
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
   const queryFn = useCallback(
     () =>
       // `countTrash` pushes the count into SQL so the trash badge stays
       // accurate regardless of trash size. `?? ''` is the pre-bootstrap
       // no-match fallback (see `TrashView` / the `countTrash` wrapper).
       countTrash(currentSpaceId ?? ''),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
     [currentView, currentSpaceId],
   )
   return useItemCount(queryFn, 30_000)

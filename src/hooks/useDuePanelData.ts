@@ -341,7 +341,7 @@ export function useDuePanelData({
     return () => {
       stale = true
     }
-  }, [isToday, warningDays, invalidationKey, currentSpaceId])
+  }, [isToday, date, warningDays, invalidationKey, currentSpaceId])
 
   // Fetch blocks due on the given date.
   // PEND-27 P4 — `blocks` / `totalCount` / `pageTitles` are no longer in

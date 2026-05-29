@@ -206,7 +206,6 @@ function App() {
   // before we attempt `focus()`; if nothing registered, fall back to the
   // generic main-content container.
   const focusRegistry = usePrimaryFocusRegistry()
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- currentView IS the trigger — we focus when the view changes
   useEffect(() => {
     // Small delay to let the new view render before moving focus
     const id = requestAnimationFrame(() => {
@@ -216,6 +215,7 @@ function App() {
       }
     })
     return () => cancelAnimationFrame(id)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- currentView IS the trigger; focusRegistry is a provider-lifetime-stable ref-registry whose focus() reads live state, so omitting it cannot stale
   }, [currentView])
 
   // ── Op-level undo/redo shortcuts (Ctrl+Z / Ctrl+Y) ─────────────────

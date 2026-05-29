@@ -67,13 +67,13 @@ export function useLocalStoragePreference<T>(
   // `serialize` and `source` are intentionally excluded — they're stable
   // once provided, and including them re-runs the effect every render
   // when callers inline-construct the options object.
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- serialize/source intentionally omitted
   useEffect(() => {
     try {
       localStorage.setItem(key, serialize(value))
     } catch (err) {
       logger.warn(source, 'Failed to write localStorage preference', { key }, err)
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- serialize/source are intentionally omitted: they are stable once provided, and listing them would re-run this write effect every render when callers inline-construct the options object. source only affects the error-log label, never the persisted value.
   }, [key, value])
 
   const setPreference = useCallback((next: T | ((prev: T) => T)) => {

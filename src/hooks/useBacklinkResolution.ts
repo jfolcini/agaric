@@ -172,29 +172,29 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     }
   }, [groups, currentSpaceId])
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockTitle = useCallback(
     (id: string): string => {
       return (
         resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `[[${id.slice(0, 8)}...]]`
       )
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved titles
     [resolveVersion, currentSpaceId],
   )
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveBlockStatus = useCallback(
     (id: string): 'active' | 'deleted' => {
       return resolveCache.current.get(keyFor(currentSpaceId, id))?.deleted ? 'deleted' : 'active'
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved statuses
     [resolveVersion, currentSpaceId],
   )
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion forces re-creation so render picks up cache updates
   const resolveTagName = useCallback(
     (id: string): string => {
       return resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `#${id.slice(0, 8)}...`
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved tag names
     [resolveVersion, currentSpaceId],
   )
 

@@ -204,7 +204,7 @@ export function useBlockDatePicker({
   const tRef = useRef(t)
   tRef.current = t
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- pagesListRef is a stable ref; pageStore is a stable StoreApi; t accessed via ref (see FE-M-7 invariant above)
+  // `t` is read via `tRef` (FE-M-7 invariant above) so it is intentionally not listed. `pageStore` (a Zustand StoreApi) and `pagesListRef` (a ref object) are stable across renders, so listing them is safe and adds no extra runs — `handleDatePick` is only consumed as an event handler (BlockTree onSelect), never as another hook's dependency.
   const handleDatePick = useCallback(
     async (d: Date) => {
       setDatePickerOpen(false)
@@ -220,7 +220,7 @@ export function useBlockDatePicker({
       }
       await MODE_HANDLERS[datePickerMode](ctx)
     },
-    [datePickerMode, focusedBlockId, rootParentId],
+    [datePickerMode, focusedBlockId, rootParentId, pageStore, pagesListRef],
   )
 
   return {

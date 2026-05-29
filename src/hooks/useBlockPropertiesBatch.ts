@@ -75,7 +75,6 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
     return { idSignature: ids.join(' '), ids }
   }, [blocks])
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- `ids` is captured for use inside the effect; it is recomputed in the same memo as `idSignature` so it changes iff the signature changes — listing it would be redundant.
   useEffect(() => {
     if (ids.length === 0) {
       // Drop any prior payload when the visible set empties (e.g. page
@@ -143,6 +142,7 @@ export function useBlockPropertiesBatch(blocks: Array<{ id: string }>): BlockPro
     return () => {
       cancelled = true
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- ids/ids.length are read inside the effect; ids is recomputed in the same memo as idSignature (the listed dep) so it changes iff the signature changes. A fresh array identity each render would defeat the signature-keyed refetch.
   }, [idSignature])
 
   return blockProperties
