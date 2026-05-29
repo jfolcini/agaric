@@ -42,7 +42,7 @@ pub(super) async fn recover_single_draft(
     // missing/deleted block usually means the parent was soft-deleted
     // before the periodic `spawn_orphan_drafts_sweeper` (PEND-28a M1,
     // wired session 671) ran — worth a breadcrumb.
-    if !existing_block_ids.contains(&draft.block_id) {
+    if !existing_block_ids.contains(draft.block_id.as_str()) {
         tracing::warn!(block_id = %draft.block_id, "skipping draft for missing/deleted block");
         return Ok(false);
     }
@@ -74,9 +74,10 @@ pub(super) async fn recover_single_draft(
     // full table. block_id is populated on insert by append_local_op_in_tx
     // and insert_remote_op using OpPayload::block_id() / JSON extraction.
     debug_assert!(
-        !draft.block_id.is_empty()
+        !draft.block_id.as_str().is_empty()
             && draft
                 .block_id
+                .as_str()
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-'),
         "block_id must be alphanumeric (ULID format), got: '{}'",
@@ -84,7 +85,7 @@ pub(super) async fn recover_single_draft(
     );
     // Normalize to uppercase — BlockId serializes uppercase, but the draft
     // table stores the raw string that may differ in case.
-    let bid_upper = draft.block_id.to_ascii_uppercase();
+    let bid_upper = draft.block_id.as_str().to_ascii_uppercase();
     let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
          WHERE block_id = ? \
@@ -99,10 +100,10 @@ pub(super) async fn recover_single_draft(
 
     if matching_ops == 0 {
         // Draft was NOT flushed — recover it.
-        let prev_edit = find_prev_edit(pool, &draft.block_id, device_id).await?;
+        let prev_edit = find_prev_edit(pool, draft.block_id.as_str(), device_id).await?;
 
         let op = OpPayload::EditBlock(EditBlockPayload {
-            block_id: BlockId::from_trusted(&draft.block_id),
+            block_id: BlockId::from_trusted(draft.block_id.as_str()),
             to_text: draft.content.clone(),
             prev_edit,
         });

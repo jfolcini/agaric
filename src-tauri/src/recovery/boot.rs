@@ -201,20 +201,20 @@ pub async fn recover_at_boot(
     for draft in &drafts {
         match recover_single_draft(pool, device_id, draft, &existing_block_ids).await {
             Ok(true) => {
-                drafts_recovered.push(draft.block_id.clone());
+                drafts_recovered.push(draft.block_id.to_string());
             }
             Ok(false) => {
                 drafts_already_flushed += 1;
             }
             Err(e) => {
-                log_draft_error(&mut draft_errors, &draft.block_id, &e, "recovering");
+                log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "recovering");
             }
         }
 
         // Delete the draft row regardless of outcome. If this fails, we log
         // but still continue — the draft will be retried on next boot.
-        if let Err(e) = delete_draft(pool, &draft.block_id).await {
-            log_draft_error(&mut draft_errors, &draft.block_id, &e, "deleting");
+        if let Err(e) = delete_draft(pool, draft.block_id.as_str()).await {
+            log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "deleting");
         }
     }
 

@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, content, updated_at FROM block_drafts ORDER BY updated_at ASC",
+  "query": "SELECT block_id AS \"block_id: crate::ulid::BlockId\", content, updated_at FROM block_drafts ORDER BY updated_at ASC",
   "describe": {
     "columns": [
       {
-        "name": "block_id",
+        "name": "block_id: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -46,5 +46,5 @@
       false
     ]
   },
-  "hash": "3d7d86e45c31859d7b4541913dbbfda69d8eab96b5ae648235163f2a7ec82217"
+  "hash": "4ecaf8425d4ed04d84bb13e3fb712ce93e5a4a9579e88ea4f90a21fa9185f9c3"
 }
