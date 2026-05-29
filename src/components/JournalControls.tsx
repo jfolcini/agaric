@@ -19,7 +19,7 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -38,6 +38,11 @@ import {
 import { useJournalStore } from '../stores/journal'
 import { JournalCalendarDropdown } from './journal/JournalCalendarDropdown'
 
+// Shared by the roving-tabindex keyboard handler and the `.map` below so the
+// arrow-key navigation order always matches the rendered tab order.
+const JOURNAL_MODES = ['daily', 'weekly', 'monthly', 'agenda'] as const
+type JournalMode = (typeof JOURNAL_MODES)[number]
+
 export function JournalControls(): React.ReactElement {
   const { t } = useTranslation()
   const { mode, currentDate, setMode, setCurrentDate, navigateToDate, goToDateAndScroll } =
@@ -52,6 +57,7 @@ export function JournalControls(): React.ReactElement {
       })),
     )
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
   const { highlightedDays } = useCalendarPageDates(calendarRange)
 
@@ -65,6 +71,35 @@ export function JournalControls(): React.ReactElement {
     if (mode === 'daily') setCurrentDate(addDays(currentDate, 1))
     else if (mode === 'weekly') setCurrentDate(addWeeks(currentDate, 1))
     else setCurrentDate(addMonths(currentDate, 1))
+  }
+
+  // WAI-ARIA tabs: horizontal roving tabindex with automatic activation —
+  // arrow keys move focus AND switch mode (the tabs eagerly render their
+  // associated view). Wraparound on Arrow{Left,Right}; Home/End jump to ends.
+  function handleTablistKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const count = JOURNAL_MODES.length
+    const currentIndex = JOURNAL_MODES.indexOf(mode as JournalMode)
+    let nextIndex: number
+    switch (e.key) {
+      case 'ArrowRight':
+        nextIndex = (currentIndex + 1) % count
+        break
+      case 'ArrowLeft':
+        nextIndex = (currentIndex - 1 + count) % count
+        break
+      case 'Home':
+        nextIndex = 0
+        break
+      case 'End':
+        nextIndex = count - 1
+        break
+      default:
+        return
+    }
+    e.preventDefault()
+    const target = JOURNAL_MODES[nextIndex] as JournalMode
+    setMode(target)
+    tabRefs.current[target]?.focus()
   }
 
   const canGoPrev = isAfter(currentDate, MIN_JOURNAL_DATE)
@@ -107,8 +142,10 @@ export function JournalControls(): React.ReactElement {
         className="flex items-center gap-0.5"
         role="tablist"
         aria-label={t('journal.viewModeLabel')}
+        tabIndex={-1}
+        onKeyDown={handleTablistKeyDown}
       >
-        {(['daily', 'weekly', 'monthly', 'agenda'] as const).map((m) => {
+        {JOURNAL_MODES.map((m) => {
           const tabLabels: Record<string, string> = {
             daily: t('journal.dayTab'),
             weekly: t('journal.weekTab'),
@@ -124,6 +161,9 @@ export function JournalControls(): React.ReactElement {
           return (
             <Button
               key={m}
+              ref={(el) => {
+                tabRefs.current[m] = el
+              }}
               variant={mode === m ? 'secondary' : 'ghost'}
               size="xs"
               role="tab"

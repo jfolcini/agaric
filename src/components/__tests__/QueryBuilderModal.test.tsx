@@ -105,6 +105,102 @@ describe('QueryBuilderModal', () => {
     expect(screen.getByLabelText(/target page id/i)).toBeInTheDocument()
   })
 
+  // #205: roving keyboard navigation across the role="radiogroup" type
+  // selector. WAI-ARIA radiogroup with automatic activation: arrow keys move
+  // focus AND select. Radios are ordered tag, property, backlinks.
+  describe('roving keyboard navigation (radiogroup)', () => {
+    it('ArrowRight/ArrowDown select the next radio, move focus, and roll the roving tabindex', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      const tagRadio = screen.getByRole('radio', { name: /^Tag$/i })
+      tagRadio.focus()
+      await user.keyboard('{ArrowRight}')
+
+      const propertyRadio = screen.getByRole('radio', { name: /^Property$/i })
+      expect(propertyRadio).toHaveAttribute('aria-checked', 'true')
+      expect(propertyRadio).toHaveFocus()
+      expect(propertyRadio).toHaveAttribute('tabindex', '0')
+      expect(tagRadio).toHaveAttribute('tabindex', '-1')
+
+      await user.keyboard('{ArrowDown}')
+      const backlinksRadio = screen.getByRole('radio', { name: /^Backlinks$/i })
+      expect(backlinksRadio).toHaveAttribute('aria-checked', 'true')
+      expect(backlinksRadio).toHaveFocus()
+    })
+
+    it('ArrowLeft/ArrowUp select the previous radio and move focus', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      // Move to backlinks first.
+      await user.click(screen.getByRole('radio', { name: /^Backlinks$/i }))
+      screen.getByRole('radio', { name: /^Backlinks$/i }).focus()
+
+      await user.keyboard('{ArrowUp}')
+      const propertyRadio = screen.getByRole('radio', { name: /^Property$/i })
+      expect(propertyRadio).toHaveAttribute('aria-checked', 'true')
+      expect(propertyRadio).toHaveFocus()
+
+      await user.keyboard('{ArrowLeft}')
+      const tagRadio = screen.getByRole('radio', { name: /^Tag$/i })
+      expect(tagRadio).toHaveAttribute('aria-checked', 'true')
+      expect(tagRadio).toHaveFocus()
+    })
+
+    it('ArrowLeft from the first radio wraps to the last', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      screen.getByRole('radio', { name: /^Tag$/i }).focus()
+      await user.keyboard('{ArrowLeft}')
+
+      const backlinksRadio = screen.getByRole('radio', { name: /^Backlinks$/i })
+      expect(backlinksRadio).toHaveAttribute('aria-checked', 'true')
+      expect(backlinksRadio).toHaveFocus()
+    })
+
+    it('ArrowRight from the last radio wraps to the first', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      await user.click(screen.getByRole('radio', { name: /^Backlinks$/i }))
+      screen.getByRole('radio', { name: /^Backlinks$/i }).focus()
+
+      await user.keyboard('{ArrowRight}')
+      const tagRadio = screen.getByRole('radio', { name: /^Tag$/i })
+      expect(tagRadio).toHaveAttribute('aria-checked', 'true')
+      expect(tagRadio).toHaveFocus()
+    })
+
+    it('Home jumps to the first radio and End to the last', async () => {
+      const user = userEvent.setup()
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      screen.getByRole('radio', { name: /^Tag$/i }).focus()
+      await user.keyboard('{End}')
+      const backlinksRadio = screen.getByRole('radio', { name: /^Backlinks$/i })
+      expect(backlinksRadio).toHaveAttribute('aria-checked', 'true')
+      expect(backlinksRadio).toHaveFocus()
+
+      await user.keyboard('{Home}')
+      const tagRadio = screen.getByRole('radio', { name: /^Tag$/i })
+      expect(tagRadio).toHaveAttribute('aria-checked', 'true')
+      expect(tagRadio).toHaveFocus()
+    })
+
+    it('has no a11y violations after keyboard-driven selection', async () => {
+      const user = userEvent.setup()
+      const { container } = render(<QueryBuilderModal {...defaultProps} />)
+
+      screen.getByRole('radio', { name: /^Tag$/i }).focus()
+      await user.keyboard('{ArrowRight}')
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
   it('generates tag expression', async () => {
     const user = userEvent.setup()
     render(<QueryBuilderModal {...defaultProps} />)

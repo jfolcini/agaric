@@ -203,4 +203,81 @@ describe('JournalControls', () => {
       expect(results).toHaveNoViolations()
     })
   })
+
+  // #205: roving keyboard navigation across the role="tablist" mode switcher.
+  // WAI-ARIA tabs with automatic activation: arrow keys move focus AND switch
+  // mode. Tabs are ordered daily, weekly, monthly, agenda.
+  describe('roving keyboard navigation (tablist)', () => {
+    it('ArrowRight moves to the next tab, switches mode, and moves focus', async () => {
+      const user = userEvent.setup()
+      render(<JournalControls />)
+
+      const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+      dailyTab.focus()
+      await user.keyboard('{ArrowRight}')
+
+      expect(useJournalStore.getState().mode).toBe('weekly')
+      const weeklyTab = screen.getByRole('tab', { name: /weekly view/i })
+      expect(weeklyTab).toHaveAttribute('aria-selected', 'true')
+      expect(weeklyTab).toHaveFocus()
+      expect(weeklyTab).toHaveAttribute('tabindex', '0')
+      expect(dailyTab).toHaveAttribute('tabindex', '-1')
+    })
+
+    it('ArrowLeft moves to the previous tab and switches mode', async () => {
+      const user = userEvent.setup()
+      useJournalStore.setState({ mode: 'monthly', currentDate: new Date(2025, 5, 15) })
+      render(<JournalControls />)
+
+      const monthlyTab = screen.getByRole('tab', { name: /monthly view/i })
+      monthlyTab.focus()
+      await user.keyboard('{ArrowLeft}')
+
+      expect(useJournalStore.getState().mode).toBe('weekly')
+      expect(screen.getByRole('tab', { name: /weekly view/i })).toHaveFocus()
+    })
+
+    it('ArrowLeft from the first tab wraps to the last', async () => {
+      const user = userEvent.setup()
+      render(<JournalControls />)
+
+      const dailyTab = screen.getByRole('tab', { name: /daily view/i })
+      dailyTab.focus()
+      await user.keyboard('{ArrowLeft}')
+
+      expect(useJournalStore.getState().mode).toBe('agenda')
+      expect(screen.getByRole('tab', { name: /agenda view/i })).toHaveFocus()
+    })
+
+    it('ArrowRight from the last tab wraps to the first', async () => {
+      const user = userEvent.setup()
+      useJournalStore.setState({ mode: 'agenda', currentDate: new Date(2025, 5, 15) })
+      render(<JournalControls />)
+
+      const agendaTab = screen.getByRole('tab', { name: /agenda view/i })
+      agendaTab.focus()
+      await user.keyboard('{ArrowRight}')
+
+      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(screen.getByRole('tab', { name: /daily view/i })).toHaveFocus()
+    })
+
+    it('Home jumps to the first tab and End to the last', async () => {
+      const user = userEvent.setup()
+      useJournalStore.setState({ mode: 'weekly', currentDate: new Date(2025, 5, 15) })
+      render(<JournalControls />)
+
+      const weeklyTab = screen.getByRole('tab', { name: /weekly view/i })
+      weeklyTab.focus()
+      await user.keyboard('{End}')
+
+      expect(useJournalStore.getState().mode).toBe('agenda')
+      expect(screen.getByRole('tab', { name: /agenda view/i })).toHaveFocus()
+
+      await user.keyboard('{Home}')
+
+      expect(useJournalStore.getState().mode).toBe('daily')
+      expect(screen.getByRole('tab', { name: /daily view/i })).toHaveFocus()
+    })
+  })
 })
