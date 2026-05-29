@@ -415,6 +415,7 @@ export function UnlinkedReferences({
               <div
                 className="unlinked-references-loading flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
                 aria-busy="true"
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the loading indicator is discoverable via [role="status"]; <output> drops the explicit attribute relied on by callers/tests
                 role="status"
               >
                 <Spinner /> {t('unlinkedRefs.loading')}
@@ -434,6 +435,7 @@ export function UnlinkedReferences({
                 {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
                 <div
                   ref={listRef}
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable container implementing roving keyboard navigation over reference rows; <fieldset>/<optgroup> etc. add form/list semantics and break the layout
                   role="group"
                   // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container
                   tabIndex={0}

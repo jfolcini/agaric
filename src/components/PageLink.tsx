@@ -47,6 +47,7 @@ export function PageLink({
 
   return (
     <span
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentionally a <span> (see file header) so it can nest inside clickable button containers without invalid HTML; SPA nav has no href so <a> would gain nothing
       role="link"
       tabIndex={0}
       onClick={handleClick}

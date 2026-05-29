@@ -79,7 +79,13 @@ export function SearchStatusRegion({
     t,
   )
   return (
-    <div role="status" aria-live="polite" aria-atomic="true" data-testid="search-results-status">
+    <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level status wrapper region; <output> is inline-level and would change the block flow of the status text container
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="search-results-status"
+    >
       {statusText !== null && (
         <span className="text-xs text-muted-foreground" data-testid="search-results-count">
           {statusText}

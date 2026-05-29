@@ -268,6 +268,7 @@ export function UnfinishedTasks({
       <section
         aria-label={t('unfinished.loading')}
         aria-busy="true"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional <section> landmark wrapping a block skeleton; <output> is inline phrasing-only and would drop the region semantics and break layout
         role="status"
         data-testid="unfinished-tasks-loading"
       >

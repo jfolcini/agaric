@@ -152,6 +152,7 @@ export function AddFilterPopover({
         // FilterMenuItem; the Button base ring on the bucket/priority/Apply
         // controls). This keeps the markup honest — a non-menu container of
         // buttons should not advertise menu semantics it doesn't implement.
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- this is a Radix PopoverContent component, not an HTML element; a native <dialog> would lose Radix's focus-scope/positioning
         role="dialog"
         align="start"
         // The facet list can exceed the viewport on short windows (each menu

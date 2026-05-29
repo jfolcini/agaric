@@ -353,6 +353,7 @@ export function LinkedReferences({
               height="h-12"
               className="linked-references-loading"
               aria-busy="true"
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is a prop forwarded to the <LoadingSkeleton> component, not a DOM element; no native tag applies here
               role="status"
             />
           }
@@ -377,6 +378,7 @@ export function LinkedReferences({
               {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- focusable group implements roving keyboard navigation over reference rows; keydown delegation belongs on the container */}
               <div
                 ref={listRef}
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable container implementing roving keyboard navigation over reference rows; <fieldset>/<optgroup> etc. add form/list semantics and break the layout
                 role="group"
                 // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- keyboard nav requires focusable container
                 tabIndex={0}

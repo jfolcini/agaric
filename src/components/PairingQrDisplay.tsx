@@ -70,6 +70,7 @@ export function PairingQrDisplay({
       {/* #290: Use backend QR SVG instead of react-qr-code */}
       <div
         className="pairing-qr shrink-0 w-[200px] max-w-full rounded-lg border bg-white p-3 [&_svg]:w-full [&_svg]:h-auto"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a backend-generated QR SVG injected via dangerouslySetInnerHTML, not a real <img> source; role="img"+aria-label exposes it as a single graphic
         role="img"
         aria-label={t('pairing.qrCodeLabel')}
         data-testid="pairing-qr-code"

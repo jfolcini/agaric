@@ -97,6 +97,7 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
         <LoadingSkeleton
           count={2}
           height="h-8"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is a prop forwarded to the <LoadingSkeleton> component, not a DOM element; no native tag applies here
           role="status"
           aria-label={t('attachments.loading')}
         />

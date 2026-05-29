@@ -390,6 +390,7 @@ export function TagFilterPanel(): React.ReactElement {
               return (
                 <div
                   key={tag.tag_id}
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row inside an aria grid widget; a <tr> requires table ancestry and would break the flex layout
                   role="row"
                   aria-selected={isFocused}
                   data-matching-tag
@@ -400,10 +401,12 @@ export function TagFilterPanel(): React.ReactElement {
                   )}
                 >
                   {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- text-only gridcell, focus stays on the row */}
+                  {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell inside aria grid widget; <td> requires table ancestry and breaks the flex layout */}
                   <span role="gridcell">
                     <HighlightPrefix text={tag.name} prefix={prefix} /> ({tag.usage_count})
                   </span>
                   {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner Button */}
+                  {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell inside aria grid widget; <td> requires table ancestry and breaks the flex layout */}
                   <span role="gridcell">
                     <Button
                       variant="ghost"
@@ -467,6 +470,7 @@ export function TagFilterPanel(): React.ReactElement {
                 <div
                   key={block.id}
                   id={`tag-result-${block.id}`}
+                  // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row inside an aria grid widget; a <tr> requires table ancestry and would break the layout
                   role="row"
                   aria-selected={isFocused}
                   data-result-item
@@ -474,6 +478,7 @@ export function TagFilterPanel(): React.ReactElement {
                   className={cn(isFocused && 'ring-2 ring-inset ring-ring/50 rounded-lg')}
                 >
                   {/* oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- gridcell focus is delegated to inner ResultCard */}
+                  {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- gridcell in aria grid widget; <td> requires table ancestry and breaks the layout */}
                   <div role="gridcell">
                     <ResultCard
                       block={block}
@@ -498,6 +503,7 @@ export function TagFilterPanel(): React.ReactElement {
           {loading && (
             <div
               className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-center"
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- absolutely-positioned flex overlay; swapping to <output> would break the centering layout
               role="status"
               aria-live="polite"
               data-testid="tag-filter-results-loading"

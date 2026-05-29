@@ -289,6 +289,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
 
       {properties?.some((p) => p.key === 'repeat') && (
         <span
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- inline status chip rendered among sibling chips; native <output> carries an implicit "Output" semantic and is not a drop-in for this inline <span> badge
           role="status"
           className="repeat-indicator flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium leading-none select-none bg-indicator-repeat text-indicator-repeat-foreground max-sm:px-2.5 max-sm:py-1"
           aria-label={t('block.repeats', {

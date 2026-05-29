@@ -71,6 +71,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     return (
       <div
         className="flex items-center gap-2 rounded-md bg-muted px-3 py-4 text-sm text-muted-foreground"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- kept as role="status" so the loading state is discoverable via the explicit role attribute relied on by callers/tests; <output> drops it
         role="status"
         data-testid="mermaid-loading"
       >
@@ -102,6 +103,7 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
   return (
     <ScrollArea orientation="horizontal" className="rounded-md bg-muted">
       <div
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- container for a rendered SVG injected via dangerouslySetInnerHTML, not a real <img> source; role="img"+aria-label exposes it as a single graphic
         role="img"
         aria-label={t('mermaid.label')}
         className="p-3"

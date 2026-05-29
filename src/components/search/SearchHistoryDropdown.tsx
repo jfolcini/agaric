@@ -102,6 +102,7 @@ export function SearchHistoryDropdown({
       ) : null}
       {!isEmpty && (
         <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- custom combobox-popup listbox driven by aria-activedescendant; <datalist>/<select> can't host the clickable history rows
           role="listbox"
           id={listboxId}
           aria-label={listboxLabel}
@@ -128,6 +129,7 @@ export function SearchHistoryDropdown({
               // doesn't depend on the store's case-sensitive dedup.
               key={searchHistoryRowId(listboxId, idx)}
               id={searchHistoryRowId(listboxId, idx)}
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role="option" on the clickable history-row div; native <option> can't host the rich row content + click handling
               role="option"
               aria-selected={idx === activeIndex}
               tabIndex={-1}

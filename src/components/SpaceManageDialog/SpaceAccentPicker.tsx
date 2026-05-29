@@ -78,6 +78,7 @@ export function SpaceAccentPicker({ spaceId }: SpaceAccentPickerProps): React.JS
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs text-muted-foreground">{t('space.accentColorLabel')}:</span>
+      {/* oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- toolbar-like group of swatch buttons; <fieldset>/<optgroup> etc. break the flex layout and add unwanted form/list semantics */}
       <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('space.accentColorLabel')}>
         {ACCENT_SWATCHES.map((swatch) => (
           <button

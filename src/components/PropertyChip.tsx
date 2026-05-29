@@ -82,6 +82,7 @@ export function PropertyChip({
 
   return (
     <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- generic labelled grouping; the suggested tags (fieldset/details/hgroup/optgroup) carry unwanted semantics and would break the inline-flex chip layout
       role="group"
       aria-label={chipLabel}
       className={cn(

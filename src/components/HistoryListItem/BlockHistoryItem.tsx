@@ -208,6 +208,7 @@ export function BlockHistoryItem({
           render no role at all (just a static div). */}
       {isRestorable ? (
         <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- row contains nested interactive elements (Tooltip timestamp, Badge popover) via HistoryItemCore; a real <button> can't legally nest interactive content
           role="button"
           tabIndex={0}
           aria-expanded={isExpanded}

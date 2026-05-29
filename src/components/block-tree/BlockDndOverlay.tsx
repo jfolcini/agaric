@@ -26,11 +26,13 @@ export function BlockDndOverlay({
   return (
     <>
       {/* SR announcement for DnD projected drop position */}
-      {activeId && projected && (
-        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
-          {`Moving to depth ${projected.depth}`}
-        </div>
-      )}
+      {activeId &&
+        projected && (
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- intentional SR-only live region (aria-live/atomic); native <output> has implicit aria-live differences and an "Output" semantic role
+          <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {`Moving to depth ${projected.depth}`}
+          </div>
+        )}
       {/* Drag overlay: tiny pill follows the cursor. No content so the
           user can see the list reflow underneath as the drop projection
           changes. */}

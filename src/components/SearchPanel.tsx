@@ -607,6 +607,7 @@ export function SearchPanel(): React.ReactElement {
       {/* UX-4 — the 5000-item ceiling was hit silently; tell the user. */}
       {capped && (
         <div
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
           role="status"
           data-testid="search-capped-notice"
           className="rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"

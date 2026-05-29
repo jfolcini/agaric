@@ -196,6 +196,7 @@ export function AutocompletePopover({
           <CommandList label={label}>
             {items.length === 0 && loading ? (
               <div
+                // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level loading row inside the listbox popup; <output> is inline-level and would break the padded full-width row layout
                 role="status"
                 aria-live="polite"
                 className="px-3 py-2 text-sm text-muted-foreground"

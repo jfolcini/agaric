@@ -366,6 +366,7 @@ export function GoogleCalendarSettingsTab(): React.ReactElement {
         <CardContent className="space-y-6">
           <p
             className="rounded-md border border-alert-warning-border bg-alert-warning p-3 text-xs text-alert-warning-foreground"
+            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role lives on a <p> warning paragraph; swapping to <output> would lose the paragraph semantics and is not a valid p replacement
             role="status"
           >
             {t('gcal.experimentalWarning')}

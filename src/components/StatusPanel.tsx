@@ -322,12 +322,11 @@ export function StatusPanel(): React.ReactElement {
             ) : (
               <div className="sync-panel-details space-y-3">
                 <div className="flex items-center gap-2">
-                  <span
+                  <output
                     className={cn(
                       'sync-state-dot h-2 w-2 rounded-full',
                       syncStateDotClasses(syncState),
                     )}
-                    role="status"
                     aria-label={t('status.syncStateLabel', { state: syncStateLabel(syncState, t) })}
                   />
                   <SyncStateIcon state={syncState} />

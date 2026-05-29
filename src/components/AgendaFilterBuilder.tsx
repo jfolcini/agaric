@@ -173,6 +173,7 @@ function AddFilterPopover({
                 AgendaFilterBuilder's outer fieldset would be the wrong
                 form-grouping primitive here. */}
             <div
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a nested <fieldset> inside the outer form fieldset is the wrong grouping primitive (see comment above); role="group" carries the accessible name without that semantic
               role="group"
               className="flex flex-col gap-2"
               aria-label={t('agendaFilter.filterDimensions')}
@@ -352,6 +353,7 @@ export function AgendaFilterBuilder({
                     tone="secondary"
                     data-slot="filter-pill"
                     className="filter-pill shrink-0 gap-0 p-0 text-xs"
+                    // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- Badge is a styled inline pill; the suggested fieldset/details/optgroup tags would break its layout and are wrong grouping primitives for an edit-filter pill
                     role="group"
                     aria-label={t('agendaFilter.editFilter', { label: pillLabel })}
                   >

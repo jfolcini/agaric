@@ -82,6 +82,7 @@ describe('LoadingSkeleton', () => {
 
   it('forwards extra HTML attributes to wrapper', () => {
     const { container } = render(
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role is a prop forwarded to LoadingSkeleton and asserted via getAttribute('role')
       <LoadingSkeleton data-testid="test-skeleton" aria-busy="true" role="status" />,
     )
     const wrapper = container.firstElementChild as HTMLElement

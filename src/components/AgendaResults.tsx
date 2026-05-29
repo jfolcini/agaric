@@ -274,6 +274,7 @@ export function AgendaResults({
       <div
         className="agenda-results-loading flex items-center justify-center gap-2 py-8"
         aria-busy="true"
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> defaults to display:inline and would break this flex centering container; keep role="status" on the div
         role="status"
       >
         <LoadingSkeleton count={3} height="h-10" />
@@ -285,6 +286,7 @@ export function AgendaResults({
   if (blocks.length === 0) {
     if (hasActiveFilters) {
       return (
+        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> only permits phrasing content; this wraps the block-level <EmptyState>, so keep role="status" on the div
         <div role="status">
           <EmptyState
             message={t('agenda.noMatch')}
@@ -298,6 +300,7 @@ export function AgendaResults({
       )
     }
     return (
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- <output> only permits phrasing content; this wraps the block-level <EmptyState>, so keep role="status" on the div
       <div role="status">
         <EmptyState message={t('agenda.noTasks')} />
       </div>
@@ -370,11 +373,11 @@ export function AgendaResults({
         }}
       >
         {/* Screen-reader result count */}
-        <div role="status" className="sr-only">
+        <output className="sr-only">
           {blocks.length === 1
             ? t('agenda.resultOne')
             : t('agenda.resultCount', { count: blocks.length })}
-        </div>
+        </output>
 
         {/* Virtualized list (perf-review Tier 2 #6, 2026-05-14).
             Headers + items are interleaved as flat virtual rows so the

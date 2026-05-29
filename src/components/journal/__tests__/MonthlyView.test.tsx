@@ -49,7 +49,7 @@ vi.mock('../MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
     return (
-      // oxlint-disable-next-line jsx-a11y/interactive-supports-focus -- test mock
+      /* oxlint-disable jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role -- test mock; gridcell role mirrors MonthlyDayCell */
       <div
         role="gridcell"
         data-testid={`monthly-cell-${entry.dateStr}`}
@@ -61,6 +61,7 @@ vi.mock('../MonthlyDayCell', () => ({
       >
         {entry.date.getDate()}
       </div>
+      /* oxlint-enable jsx-a11y/interactive-supports-focus, jsx-a11y/prefer-tag-over-role */
     )
   },
 }))

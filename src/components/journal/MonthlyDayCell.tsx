@@ -47,6 +47,7 @@ export function MonthlyDayCell({
 
   return (
     <div
+      // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- ARIA grid cell on a CSS-grid div; a real <td> requires <table>/<tr> ancestry that would break the calendar grid layout
       role="gridcell"
       aria-label={fullDate}
       tabIndex={isCurrentMonth ? 0 : -1}

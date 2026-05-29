@@ -39,11 +39,11 @@ vi.mock('../PropertyChip', () => ({
     onClick?: () => void
     onKeyClick?: () => void
   }) => (
-    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- test fixture: onClick rides on the role="group" wrapper so `user.click(getByTestId('property-chip-…'))` exercises the value-edit path without a nested button
+    /* oxlint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/prefer-tag-over-role -- test fixture: onClick rides on the role="group" wrapper so `user.click(getByTestId('property-chip-…'))` exercises the value-edit path without a nested button; group role mirrors PropertyChip */
     <div
+      role="group"
       data-testid={`property-chip-${props.propKey}`}
       className="property-chip"
-      role="group"
       onClick={props.onClick}
       onKeyDown={(e: React.KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') props.onClick?.()
@@ -61,6 +61,7 @@ vi.mock('../PropertyChip', () => ({
       </button>
       <span>{props.value}</span>
     </div>
+    /* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/prefer-tag-over-role */
   ),
 }))
 

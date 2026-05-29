@@ -219,6 +219,7 @@ export function DataSettingsTab(): React.ReactElement {
             // Button above also points here.
             <p
               id={importHintId}
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- role lives on a <p> referenced by aria-describedby on the disabled Button; swapping to <output> would lose paragraph semantics and is not a valid p replacement
               role="status"
               aria-live="polite"
               className="text-xs text-muted-foreground mt-2"

@@ -101,10 +101,10 @@ describe('Spinner', () => {
 
   it('has no a11y violations', async () => {
     const { container } = render(
-      <div role="status" aria-busy="true">
+      <output aria-busy="true">
         <Spinner aria-hidden="true" />
         <span className="sr-only">Loading</span>
-      </div>,
+      </output>,
     )
     const results = await axe(container)
     expect(results).toHaveNoViolations()
