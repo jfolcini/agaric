@@ -80,7 +80,10 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
   // lets us highlight the contiguous run for the active hunk.
   const { hunkStarts, hunkOfSpan } = useMemo(() => {
     const starts: number[] = []
-    const ofSpan: (number | null)[] = new Array(visibleSpans.length).fill(null)
+    const ofSpan: (number | null)[] = Array.from(
+      { length: visibleSpans.length },
+      (): number | null => null,
+    )
     let inHunk = false
     let currentHunkIdx = -1
     for (let i = 0; i < visibleSpans.length; i++) {

@@ -11,7 +11,7 @@
   },
   "rules": {
     "eslint/no-unused-vars": [
-      "warn",
+      "error",
       { "args": "all", "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
     ],
     "typescript/no-non-null-assertion": "error",
@@ -30,10 +30,10 @@
     "jsx-a11y/interactive-supports-focus": "warn",
     "eslint/no-unsafe-optional-chaining": "warn",
     "jsx-a11y/no-noninteractive-element-interactions": "warn",
-    "unicorn/no-new-array": "warn",
+    "unicorn/no-new-array": "error",
     "typescript/no-this-alias": "warn",
     "jsx-a11y/role-supports-aria-props": "warn",
-    "unicorn/no-useless-fallback-in-spread": "warn",
+    "unicorn/no-useless-fallback-in-spread": "error",
     "unicorn/prefer-string-starts-ends-with": "warn",
     "jsx-a11y/no-static-element-interactions": "warn",
     "jsx-a11y/click-events-have-key-events": "warn",

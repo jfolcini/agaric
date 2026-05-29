@@ -64,7 +64,7 @@ const DOT_MODIFIERS = [
 
 /** Custom DayButton that renders real DOM dot indicators below the date number. */
 function CalendarDayButton({
-  day,
+  day: _day,
   modifiers,
   children,
   className,

@@ -248,7 +248,7 @@ export async function insertTemplateBlocks(
   //
   // Group entries by depth. Depth 0 = direct children of `templatePageId`
   // (their `resolveParentFromIndex` is `null`).
-  const depthByIndex: number[] = new Array(deferred.length).fill(0)
+  const depthByIndex: number[] = Array.from({ length: deferred.length }, () => 0)
   for (let i = 0; i < deferred.length; i += 1) {
     const parent = deferred[i]?.resolveParentFromIndex
     if (parent != null) {
@@ -258,7 +258,7 @@ export async function insertTemplateBlocks(
   let maxDepth = 0
   for (const d of depthByIndex) if (d > maxDepth) maxDepth = d
 
-  const ids: string[] = new Array(deferred.length)
+  const ids: string[] = Array.from<string>({ length: deferred.length })
   // batch-index → created id (filled level-by-level)
   for (let level = 0; level <= maxDepth; level += 1) {
     const indicesAtLevel: number[] = []
