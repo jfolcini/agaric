@@ -45,7 +45,7 @@ const SAMPLE_METADATA: LinkMetadata = {
   title: 'Example Site',
   favicon_url: 'https://example.com/favicon.ico',
   description: 'An example site',
-  fetched_at: '2024-01-01T00:00:00Z',
+  fetched_at: 1704067200000, // 2024-01-01T00:00:00Z
   auth_required: false,
   not_found: false,
 }

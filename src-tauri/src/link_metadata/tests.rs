@@ -9,7 +9,7 @@ use super::{
     LinkMetadata, MAX_BODY_SIZE,
 };
 use crate::db::init_pool;
-use crate::now_rfc3339;
+use crate::db::now_ms;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -507,7 +507,7 @@ async fn upsert_and_get_cached_round_trip() {
         title: Some("Example".to_string()),
         favicon_url: Some("https://example.com/favicon.ico".to_string()),
         description: Some("An example page".to_string()),
-        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
         auth_required: false,
         not_found: false,
     };
@@ -536,7 +536,7 @@ async fn upsert_and_get_cached_round_trip() {
         "description should match"
     );
     assert_eq!(
-        cached.fetched_at, "2025-01-15T12:00:00.000Z",
+        cached.fetched_at, 1_736_942_400_000,
         "fetched_at should match"
     );
     assert!(!cached.auth_required, "auth_required should be false");
@@ -563,7 +563,7 @@ async fn upsert_replaces_existing_entry() {
         title: Some("Old Title".to_string()),
         favicon_url: None,
         description: None,
-        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
         auth_required: false,
         not_found: false,
     };
@@ -574,7 +574,7 @@ async fn upsert_replaces_existing_entry() {
         title: Some("New Title".to_string()),
         favicon_url: Some("https://example.com/icon.png".to_string()),
         description: Some("Updated description".to_string()),
-        fetched_at: "2025-01-16T12:00:00.000Z".to_string(),
+        fetched_at: 1_737_028_800_000, // 2025-01-16T12:00:00Z
         auth_required: true,
         not_found: false,
     };
@@ -601,8 +601,7 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
     let (pool, _dir) = test_pool().await;
 
     // Insert an old entry (60 days ago)
-    let old_ts = (chrono::Utc::now() - chrono::Duration::days(60))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let old_ts = crate::db::now_ms() - 60 * 86_400_000;
     let old_meta = LinkMetadata {
         url: "https://old.example.com".to_string(),
         title: Some("Old".to_string()),
@@ -620,15 +619,14 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
         title: Some("Fresh".to_string()),
         favicon_url: None,
         description: None,
-        fetched_at: now_rfc3339(),
+        fetched_at: now_ms(),
         auth_required: false,
         not_found: false,
     };
     upsert(&pool, &fresh_meta).await.unwrap();
 
     // Insert an old auth entry (should NOT be cleaned up)
-    let old_auth_ts = (chrono::Utc::now() - chrono::Duration::days(60))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let old_auth_ts = crate::db::now_ms() - 60 * 86_400_000;
     let old_auth = LinkMetadata {
         url: "https://auth.example.com".to_string(),
         title: Some("Auth".to_string()),
@@ -665,7 +663,7 @@ async fn clear_auth_flag_resets_flag() {
         title: Some("Auth Page".to_string()),
         favicon_url: None,
         description: None,
-        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
         auth_required: true,
         not_found: false,
     };
@@ -685,7 +683,7 @@ async fn clear_auth_flag_resets_flag() {
         "auth_required should be false after clear"
     );
     assert_ne!(
-        cached.fetched_at, "2025-01-15T12:00:00.000Z",
+        cached.fetched_at, 1_736_942_400_000,
         "fetched_at should be updated after clearing auth flag"
     );
 }
@@ -699,7 +697,7 @@ async fn upsert_with_auth_required_true() {
         title: None,
         favicon_url: None,
         description: None,
-        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
         auth_required: true,
         not_found: false,
     };
@@ -1171,7 +1169,7 @@ async fn upsert_and_get_cached_round_trip_preserves_not_found() {
         title: None,
         favicon_url: None,
         description: None,
-        fetched_at: "2025-01-15T12:00:00.000Z".to_string(),
+        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
         auth_required: false,
         not_found: true,
     };

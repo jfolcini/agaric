@@ -31,7 +31,7 @@ describe('useLinkMetadata.fetch', () => {
       title: 'Example',
       favicon_url: 'https://example.com/favicon.ico',
       description: 'An example domain',
-      fetched_at: '2026-01-01T00:00:00Z',
+      fetched_at: 1767225600000, // 2026-01-01T00:00:00Z
       auth_required: false,
       not_found: false,
     }

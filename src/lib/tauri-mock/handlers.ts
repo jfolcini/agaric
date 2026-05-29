@@ -3031,7 +3031,7 @@ export const HANDLERS: Record<string, Handler> = {
       title: 'Mock Title',
       favicon_url: null,
       description: null,
-      fetched_at: new Date().toISOString(),
+      fetched_at: Date.now(),
       auth_required: false,
       not_found: false,
     }
@@ -3044,7 +3044,7 @@ export const HANDLERS: Record<string, Handler> = {
       title: 'Mock Title',
       favicon_url: null,
       description: null,
-      fetched_at: new Date().toISOString(),
+      fetched_at: Date.now(),
       auth_required: false,
       not_found: false,
     }
