@@ -22,7 +22,7 @@ use crate::ulid::BlockId;
 /// A single draft row from `block_drafts`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, specta::Type)]
 pub struct Draft {
-    pub block_id: String,
+    pub block_id: crate::ulid::BlockId,
     pub content: String,
     pub updated_at: String,
 }
@@ -94,7 +94,7 @@ pub async fn delete_draft_in_tx(
 pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft>, AppError> {
     let draft = sqlx::query_as!(
         Draft,
-        "SELECT block_id, content, updated_at FROM block_drafts WHERE block_id = ?",
+        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at FROM block_drafts WHERE block_id = ?"#,
         block_id,
     )
     .fetch_optional(pool)
@@ -106,7 +106,7 @@ pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
     let drafts = sqlx::query_as!(
         Draft,
-        "SELECT block_id, content, updated_at FROM block_drafts ORDER BY updated_at ASC",
+        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at FROM block_drafts ORDER BY updated_at ASC"#,
     )
     .fetch_all(pool)
     .await?;

@@ -1115,7 +1115,7 @@ export type DiffTag = "Equal" | "Delete" | "Insert";
 
 /**  A single draft row from `block_drafts`. */
 export type Draft = {
-	block_id: string,
+	block_id: BlockId,
 	content: string,
 	updated_at: string,
 };
