@@ -1070,6 +1070,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
     // M-26: open a BEGIN IMMEDIATE tx so the dependent-row check and
     // the DELETE are TOCTOU-safe. Dropping the tx without commit (early
     // returns below) rolls it back automatically.
+    // allow-raw-tx: deletes from property_definitions (schema metadata), no op_log (#110)
     let mut tx = crate::db::begin_immediate_logged(pool, "delete_property_def").await?;
 
     let dependent_count: i64 =

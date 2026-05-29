@@ -415,6 +415,29 @@ language = "system"
 pass_filenames = false
 files = "^src-tauri/src/commands/.*\\.rs$"
 
+# Rust: raw write-tx guard (#110 / MAINT-112). MAINT-112 replaced ad-hoc
+# `pool.begin_with("BEGIN IMMEDIATE")` write transactions on user-edit
+# paths with the `CommandTx` convention (open via
+# `crate::db::begin_immediate_logged`, couple the commit with post-commit
+# materializer dispatch). This hook stops the convention from silently
+# regressing: it flags any NEW raw write-tx opened outside the audited
+# allowlist (cache rebuilds, FTS/tag-inheritance derived indexes,
+# snapshot/recovery/sync system paths, external-integration internals)
+# or the per-site `// allow-raw-tx: <reason>` escape hatch. `#[cfg(test)]`
+# modules and whole test files are skipped — fixtures legitimately open
+# raw transactions. Runs at both pre-commit and pre-push so a raw site
+# can't slip in via either path. Allowlist + escape-hatch rules live in
+# scripts/check-raw-tx.py.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "check-raw-tx"
+name = "raw write-tx guard (#110 CommandTx convention)"
+entry = "python3 scripts/check-raw-tx.py"
+language = "system"
+files = '^src-tauri/src/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
 # Rust: cargo fmt
 [[repos]]
 repo = "local"

@@ -487,6 +487,7 @@ pub async fn append_merge_op(
     let payload_json = serialize_inner_payload(&op_payload)?;
     let created_at = crate::now_rfc3339();
 
+    // allow-raw-tx: pending op_log/dag CommandTx API refactor (#224)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     let row = sqlx::query!(
