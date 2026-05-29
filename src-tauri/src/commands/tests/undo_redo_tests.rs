@@ -2267,15 +2267,9 @@ async fn revert_add_tag_removes_association() {
     mat.flush_background().await.unwrap();
 
     // Add the tag
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        content.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify the tag is applied
@@ -2349,26 +2343,14 @@ async fn revert_remove_tag_restores_association() {
     mat.flush_background().await.unwrap();
 
     // Add tag, then remove tag
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        content.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
-    remove_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        content.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    remove_tag_inner(&pool, DEV, &mat, content.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify tag is removed
@@ -3722,15 +3704,9 @@ async fn undo_page_op_reverses_add_tag() {
     mat.flush_background().await.unwrap();
 
     // Add tag to child
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        child.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, child.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
     mat.flush_background().await.unwrap();
 
     // Verify tag exists

@@ -648,11 +648,11 @@ async fn add_tags_by_ids_tags_all_blocks_in_one_tx() {
     let mat = Materializer::new(pool.clone());
 
     insert_block(&pool, "ABI_TAG", "tag", "urgent", None, None).await;
-    let mut ids = Vec::new();
+    let mut ids: Vec<BlockId> = Vec::new();
     for i in 0..4 {
         let id = format!("ABI_BLK_{i}");
         insert_block(&pool, &id, "content", "blk", None, Some(i + 1)).await;
-        ids.push(id);
+        ids.push(BlockId::from(id));
     }
 
     let pre_max: i64 = sqlx::query_scalar!(
@@ -682,9 +682,10 @@ async fn add_tags_by_ids_tags_all_blocks_in_one_tx() {
     );
 
     for id in &ids {
+        let id_str = id.as_str();
         let row = sqlx::query!(
             r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
-            id,
+            id_str,
             "ABI_TAG"
         )
         .fetch_optional(&pool)
@@ -800,8 +801,8 @@ async fn add_tags_by_ids_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     insert_block(&pool, "ABI5_TAG", "tag", "urgent", None, None).await;
 
-    let oversize: Vec<String> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
-        .map(|i| format!("ABI5_{i:026}"))
+    let oversize: Vec<BlockId> = (0..(crate::commands::properties::MAX_BATCH_BLOCK_IDS + 1))
+        .map(|i| BlockId::from(format!("ABI5_{i:026}")))
         .collect();
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;
     assert!(

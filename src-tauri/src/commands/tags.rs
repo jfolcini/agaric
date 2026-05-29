@@ -36,18 +36,16 @@ pub async fn add_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
-    tag_id: String,
+    block_id: BlockId,
+    tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here. Both
-    // `block_id` and `tag_id` reference `blocks.id`.
-    let block_id = block_id.to_ascii_uppercase();
-    let tag_id = tag_id.to_ascii_uppercase();
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8: both ids reference
+    // `blocks.id` and are already canonical uppercase — the `BlockId`
+    // newtype normalises on construction (`Deserialize` / `from_trusted` /
+    // `From`), so no separate `to_ascii_uppercase()` pass is needed for
+    // the byte-exact ULID comparisons below.
+    let block_id_str = block_id.as_str();
+    let tag_id_str = tag_id.as_str();
 
     // L-34: defence-in-depth guard against pathological inputs (MCP tool, sync
     // replay, scripted import) where a block tries to tag itself. Reject up-front
@@ -61,8 +59,8 @@ pub async fn add_tag_inner(
 
     // 1. Build OpPayload
     let payload = OpPayload::AddTag(AddTagPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        tag_id: BlockId::from_trusted(&tag_id),
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
     });
 
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
@@ -75,7 +73,7 @@ pub async fn add_tag_inner(
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-        block_id
+        block_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -88,7 +86,7 @@ pub async fn add_tag_inner(
     // Validate tag_id refers to a block with block_type = 'tag' and is not deleted (TOCTOU-safe)
     let tag_row = sqlx::query!(
         "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        tag_id
+        tag_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -113,7 +111,7 @@ pub async fn add_tag_inner(
     //      `payload` is consumed inside the helper. A `None` result means the
     //      association already exists — the single-row path surfaces that as
     //      an explicit `InvalidOperation` error (the bulk path skips it).
-    let op_record = apply_tag_to_block_in_tx(&mut tx, device_id, &block_id, &tag_id, payload)
+    let op_record = apply_tag_to_block_in_tx(&mut tx, device_id, block_id_str, tag_id_str, payload)
         .await?
         .ok_or_else(|| AppError::InvalidOperation("tag already applied".into()))?;
 
@@ -122,7 +120,10 @@ pub async fn add_tag_inner(
     tx.commit_and_dispatch(materializer).await?;
 
     // 7. Return response
-    Ok(TagResponse { block_id, tag_id })
+    Ok(TagResponse {
+        block_id: block_id.into_string(),
+        tag_id: tag_id.into_string(),
+    })
 }
 
 /// Apply a single `tag_id → block_id` association inside an existing
@@ -256,23 +257,21 @@ pub async fn remove_tag_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_id: String,
-    tag_id: String,
+    block_id: BlockId,
+    tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here. Both
-    // `block_id` and `tag_id` reference `blocks.id`.
-    let block_id = block_id.to_ascii_uppercase();
-    let tag_id = tag_id.to_ascii_uppercase();
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8: both ids reference
+    // `blocks.id` and are already canonical uppercase — the `BlockId`
+    // newtype normalises on construction, so no separate
+    // `to_ascii_uppercase()` pass is needed for the byte-exact ULID
+    // comparisons below.
+    let block_id_str = block_id.as_str();
+    let tag_id_str = tag_id.as_str();
 
     // 1. Build OpPayload
     let payload = OpPayload::RemoveTag(RemoveTagPayload {
-        block_id: BlockId::from_trusted(&block_id),
-        tag_id: BlockId::from_trusted(&tag_id),
+        block_id: block_id.clone(),
+        tag_id: tag_id.clone(),
     });
 
     // 2. Single IMMEDIATE transaction: validation + op_log + block_tags write.
@@ -285,7 +284,7 @@ pub async fn remove_tag_inner(
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-        block_id
+        block_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -298,8 +297,8 @@ pub async fn remove_tag_inner(
     // Check association exists (TOCTOU-safe)
     let assoc = sqlx::query!(
         r#"SELECT 1 as "v: i32" FROM block_tags WHERE block_id = ? AND tag_id = ?"#,
-        block_id,
-        tag_id
+        block_id_str,
+        tag_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -313,20 +312,23 @@ pub async fn remove_tag_inner(
 
     // 4. Delete from block_tags within same transaction
     sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-        .bind(&block_id)
-        .bind(&tag_id)
+        .bind(block_id_str)
+        .bind(tag_id_str)
         .execute(&mut **tx)
         .await?;
 
     // P-4: Clean up inherited tag entries
-    crate::tag_inheritance::remove_inherited_tag(&mut tx, &block_id, &tag_id).await?;
+    crate::tag_inheritance::remove_inherited_tag(&mut tx, block_id_str, tag_id_str).await?;
 
     // 5. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
 
     // 6. Return response
-    Ok(TagResponse { block_id, tag_id })
+    Ok(TagResponse {
+        block_id: block_id.into_string(),
+        tag_id: tag_id.into_string(),
+    })
 }
 
 /// Query blocks by boolean tag expression.
@@ -474,16 +476,13 @@ pub async fn list_tags_inner(
 #[instrument(skip(pool), err)]
 pub async fn list_tags_for_block_inner(
     pool: &SqlitePool,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<String>, AppError> {
-    // I-CommandsCRUD-2: normalise to canonical uppercase form. AGENTS.md
-    // invariant #8 requires ULID uppercase for blake3 hash determinism;
-    // SQLite text comparison is byte-exact, so a lowercase caller would
-    // silently get NotFound. BlockId::from_trusted normalises on
-    // construction (op_log path), but raw String args from MCP tools /
-    // sync replay / scripted imports must be normalised here.
-    let block_id = block_id.to_ascii_uppercase();
-    tag_query::list_tags_for_block(pool, &block_id).await
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8: `block_id` references
+    // `blocks.id` and the `BlockId` newtype already normalises to canonical
+    // uppercase on construction, so the byte-exact ULID membership probe in
+    // `list_tags_for_block` matches regardless of caller casing.
+    tag_query::list_tags_for_block(pool, block_id.as_str()).await
 }
 
 /// Tauri command: add a tag to a block. Delegates to [`add_tag_inner`].
@@ -494,8 +493,8 @@ pub async fn add_tag(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
-    tag_id: String,
+    block_id: BlockId,
+    tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
     add_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
         .await
@@ -539,8 +538,8 @@ pub async fn add_tags_by_ids_inner(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    block_ids: Vec<String>,
-    tag_id: String,
+    block_ids: Vec<BlockId>,
+    tag_id: BlockId,
 ) -> Result<i64, AppError> {
     use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
 
@@ -556,14 +555,11 @@ pub async fn add_tags_by_ids_inner(
         )));
     }
 
-    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — normalise every id (block
-    // ids + tag id) to canonical uppercase before any SQL touch so the
-    // byte-exact ULID membership probes match regardless of caller casing.
-    let block_ids: Vec<String> = block_ids
-        .into_iter()
-        .map(|id| id.to_ascii_uppercase())
-        .collect();
-    let tag_id = tag_id.to_ascii_uppercase();
+    // I-CommandsCRUD-2 / AGENTS.md invariant #8 — every id (block ids + tag
+    // id) is a `BlockId`, already normalised to canonical uppercase on
+    // construction, so the byte-exact ULID membership probes match
+    // regardless of caller casing without an explicit normalise pass.
+    let tag_id_str = tag_id.as_str();
 
     // One IMMEDIATE tx covers the whole batch: tag validation + every
     // per-block op_log append + block_tags insert + inheritance propagation.
@@ -573,7 +569,7 @@ pub async fn add_tags_by_ids_inner(
     // inside the tx). Mirrors `add_tag_inner`.
     let tag_row = sqlx::query!(
         "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        tag_id
+        tag_id_str
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -601,11 +597,13 @@ pub async fn add_tags_by_ids_inner(
             continue;
         }
 
+        let block_id_str = block_id.as_str();
+
         // Probe existence inside the tx so a row deleted between FE selection
         // and this call cleanly skips rather than aborting the whole batch.
         let exists = sqlx::query_scalar!(
             r#"SELECT 1 AS "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
-            block_id
+            block_id_str
         )
         .fetch_optional(&mut **tx)
         .await?;
@@ -614,15 +612,15 @@ pub async fn add_tags_by_ids_inner(
         }
 
         let payload = OpPayload::AddTag(AddTagPayload {
-            block_id: BlockId::from_trusted(block_id),
-            tag_id: BlockId::from_trusted(&tag_id),
+            block_id: block_id.clone(),
+            tag_id: tag_id.clone(),
         });
 
         // Shared per-block logic: cross-space/orphan resolution, dup-check,
         // op append, block_tags insert, inheritance propagation. `None` means
         // the tag was already applied — silently skip (lenient batch).
         if let Some(op_record) =
-            apply_tag_to_block_in_tx(&mut tx, device_id, block_id, &tag_id, payload).await?
+            apply_tag_to_block_in_tx(&mut tx, device_id, block_id_str, tag_id_str, payload).await?
         {
             tx.enqueue_background(op_record);
             tagged += 1;
@@ -643,8 +641,8 @@ pub async fn add_tags_by_ids(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_ids: Vec<String>,
-    tag_id: String,
+    block_ids: Vec<BlockId>,
+    tag_id: BlockId,
 ) -> Result<i64, AppError> {
     add_tags_by_ids_inner(
         &pool.0,
@@ -665,8 +663,8 @@ pub async fn remove_tag(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
-    block_id: String,
-    tag_id: String,
+    block_id: BlockId,
+    tag_id: BlockId,
 ) -> Result<TagResponse, AppError> {
     remove_tag_inner(&pool.0, device_id.as_str(), &materializer, block_id, tag_id)
         .await
@@ -724,7 +722,7 @@ pub async fn list_tags_by_prefix(
 #[specta::specta]
 pub async fn list_tags_for_block(
     pool: State<'_, ReadPool>,
-    block_id: String,
+    block_id: BlockId,
 ) -> Result<Vec<String>, AppError> {
     list_tags_for_block_inner(&pool.0, block_id)
         .await

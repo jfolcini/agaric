@@ -101,14 +101,14 @@ export const commands = {
 	 */
 	batchResolve: (ids: string[], scope: SpaceScope) => typedError<ResolvedBlock[], AppError>(__TAURI_INVOKE("batch_resolve", { ids, scope })),
 	/**  Tauri command: add a tag to a block. Delegates to [`add_tag_inner`]. */
-	addTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
+	addTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("add_tag", { blockId, tagId })),
 	/**
 	 *  Tauri command: add ONE tag to N blocks (#81 / PEND-57). Delegates to
 	 *  [`add_tags_by_ids_inner`]. Returns the number of blocks newly tagged.
 	 */
-	addTagsByIds: (blockIds: string[], tagId: string) => typedError<number, AppError>(__TAURI_INVOKE("add_tags_by_ids", { blockIds, tagId })),
+	addTagsByIds: (blockIds: BlockId[], tagId: BlockId) => typedError<number, AppError>(__TAURI_INVOKE("add_tags_by_ids", { blockIds, tagId })),
 	/**  Tauri command: remove a tag from a block. Delegates to [`remove_tag_inner`]. */
-	removeTag: (blockId: string, tagId: string) => typedError<TagResponse, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
+	removeTag: (blockId: BlockId, tagId: BlockId) => typedError<TagResponse, AppError>(__TAURI_INVOKE("remove_tag", { blockId, tagId })),
 	/**  Tauri command: list backlinks for a block. Delegates to [`get_backlinks_inner`]. */
 	getBacklinks: (blockId: string, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<ActiveBlockRow>, AppError>(__TAURI_INVOKE("get_backlinks", { blockId, cursor, limit, scope })),
 	/**  Tauri command: list op-log history for a block. Delegates to [`get_block_history_inner`]. */
@@ -219,7 +219,7 @@ export const commands = {
 	 */
 	listAllTagsInSpace: (spaceId: string) => typedError<TagCacheRow[], AppError>(__TAURI_INVOKE("list_all_tags_in_space", { spaceId })),
 	/**  Tauri command: list tag IDs for a block. Delegates to [`list_tags_for_block_inner`]. */
-	listTagsForBlock: (blockId: string) => typedError<string[], AppError>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
+	listTagsForBlock: (blockId: BlockId) => typedError<string[], AppError>(__TAURI_INVOKE("list_tags_for_block", { blockId })),
 	/**
 	 *  Tauri command: set (upsert) a property on a block. Delegates to [`set_property_inner`].
 	 *
@@ -430,23 +430,23 @@ export const commands = {
 	 */
 	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
-	addAttachment: (blockId: string, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
+	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
 	 *  Tauri command: add an attachment from raw bytes. Delegates to
 	 *  [`add_attachment_with_bytes_inner`].
 	 */
-	addAttachmentWithBytes: (blockId: string, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
+	addAttachmentWithBytes: (blockId: BlockId, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
 	/**
 	 *  Tauri command: read an attachment's raw bytes. Delegates to
 	 *  [`read_attachment_inner`].
 	 */
-	readAttachment: (attachmentId: string) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
+	readAttachment: (attachmentId: BlockId) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
 	/**  Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`]. */
-	deleteAttachment: (attachmentId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
+	deleteAttachment: (attachmentId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
 	/**  Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`]. */
-	listAttachments: (blockId: string) => typedError<AttachmentRow[], AppError>(__TAURI_INVOKE("list_attachments", { blockId })),
+	listAttachments: (blockId: BlockId) => typedError<AttachmentRow[], AppError>(__TAURI_INVOKE("list_attachments", { blockId })),
 	/**  Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`]. */
-	listAttachmentsBatch: (blockIds: string[]) => typedError<{ [key in string]: AttachmentRow[] }, AppError>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
+	listAttachmentsBatch: (blockIds: BlockId[]) => typedError<{ [key in string]: AttachmentRow[] }, AppError>(__TAURI_INVOKE("list_attachments_batch", { blockIds })),
 	/**
 	 *  Tauri command: list all page-to-page links for graph visualization.
 	 *
@@ -457,12 +457,12 @@ export const commands = {
 	 */
 	listPageLinks: (scope: SpaceScope, tagIds: string[] | null) => typedError<PageLink[], AppError>(__TAURI_INVOKE("list_page_links", { scope, tagIds })),
 	/**  Tauri command: save a draft for a block. Delegates to [`draft::save_draft`]. */
-	saveDraft: (blockId: string, content: string) => typedError<null, AppError>(__TAURI_INVOKE("save_draft", { blockId, content })),
+	saveDraft: (blockId: BlockId, content: string) => typedError<null, AppError>(__TAURI_INVOKE("save_draft", { blockId, content })),
 	/**
 	 *  Tauri command: flush a draft (write edit_block op + delete draft row).
 	 *  Delegates to [`flush_draft_inner`].
 	 */
-	flushDraft: (blockId: string) => typedError<null, AppError>(__TAURI_INVOKE("flush_draft", { blockId })),
+	flushDraft: (blockId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("flush_draft", { blockId })),
 	/**
 	 *  Tauri command: flush every draft in a single `BEGIN IMMEDIATE` tx.
 	 *  Delegates to [`flush_all_drafts_inner`]. See that function's doc
@@ -470,7 +470,7 @@ export const commands = {
 	 */
 	flushAllDrafts: () => typedError<FlushAllDraftsResult, AppError>(__TAURI_INVOKE("flush_all_drafts")),
 	/**  Tauri command: delete a draft for a block. Delegates to [`draft::delete_draft`]. */
-	deleteDraft: (blockId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_draft", { blockId })),
+	deleteDraft: (blockId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("delete_draft", { blockId })),
 	/**  Tauri command: list all drafts. Delegates to [`draft::get_all_drafts`]. */
 	listDrafts: () => typedError<Draft[], AppError>(__TAURI_INVOKE("list_drafts")),
 	/**

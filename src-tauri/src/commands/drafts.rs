@@ -9,6 +9,7 @@ use crate::device::DeviceId;
 use crate::draft;
 use crate::error::AppError;
 use crate::materializer::Materializer;
+use crate::ulid::BlockId;
 
 use super::*;
 
@@ -31,15 +32,16 @@ use super::*;
 pub async fn flush_draft_inner(
     pool: &SqlitePool,
     device_id: &str,
-    block_id: String,
+    block_id: BlockId,
     materializer: &Materializer,
 ) -> Result<(), AppError> {
+    let block_id_str = block_id.as_str();
     let mut tx = CommandTx::begin_immediate(pool, "flush_draft").await?;
 
     // 1. Look up the stored draft content inside the tx. No row → no-op.
     let stored_content = sqlx::query_scalar!(
         "SELECT content FROM block_drafts WHERE block_id = ?",
-        block_id,
+        block_id_str,
     )
     .fetch_optional(&mut **tx)
     .await?;
@@ -65,14 +67,14 @@ pub async fn flush_draft_inner(
     //    If absent, drop the orphan draft inside the same tx and bail.
     let target_alive = sqlx::query!(
         "SELECT id FROM blocks WHERE id = ? AND deleted_at IS NULL",
-        block_id,
+        block_id_str,
     )
     .fetch_optional(&mut **tx)
     .await?
     .is_some();
     if !target_alive {
         sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
-            .bind(&block_id)
+            .bind(block_id_str)
             .execute(&mut **tx)
             .await?;
         // Orphan drop appends no op → nothing to dispatch.
@@ -87,13 +89,13 @@ pub async fn flush_draft_inner(
     // 4. prev_edit lookup (same logic as edit_block_inner) inside the tx.
     //    MAINT-147 (b): delegates to the shared helper in
     //    `commands::blocks::crud` so both call sites stay in lockstep.
-    let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
+    let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, block_id_str).await?;
 
     // 5. Append the edit_block op + delete the draft row, on the outer tx.
     //    `flush_draft_in_tx` returns the `OpRecord` so we can queue it for
     //    post-commit dispatch — coupling the flush to a cache rebuild.
     let record =
-        draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
+        draft::flush_draft_in_tx(&mut tx, device_id, block_id_str, &content, prev_edit).await?;
     tx.enqueue_background(record);
 
     tx.commit_and_dispatch(materializer).await?;
@@ -272,10 +274,10 @@ pub async fn flush_all_drafts_inner(
 #[specta::specta]
 pub async fn save_draft(
     pool: State<'_, WritePool>,
-    block_id: String,
+    block_id: BlockId,
     content: String,
 ) -> Result<(), AppError> {
-    draft::save_draft(&pool.0, &block_id, &content)
+    draft::save_draft(&pool.0, block_id.as_str(), &content)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -288,7 +290,7 @@ pub async fn save_draft(
 pub async fn flush_draft(
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
-    block_id: String,
+    block_id: BlockId,
     materializer: State<'_, Materializer>,
 ) -> Result<(), AppError> {
     flush_draft_inner(&pool.0, device_id.as_str(), block_id, &materializer)
@@ -316,8 +318,8 @@ pub async fn flush_all_drafts(
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_draft(pool: State<'_, WritePool>, block_id: String) -> Result<(), AppError> {
-    draft::delete_draft(&pool.0, &block_id)
+pub async fn delete_draft(pool: State<'_, WritePool>, block_id: BlockId) -> Result<(), AppError> {
+    draft::delete_draft(&pool.0, block_id.as_str())
         .await
         .map_err(sanitize_internal_error)
 }
@@ -429,7 +431,7 @@ mod tests_h12 {
             .unwrap();
         assert!(draft_exists(&pool, DEAD_BLOCK).await);
 
-        flush_draft_inner(&pool, DEVICE, DEAD_BLOCK.to_owned(), &mat)
+        flush_draft_inner(&pool, DEVICE, BlockId::test_id(DEAD_BLOCK), &mat)
             .await
             .expect("flush against a soft-deleted block must succeed silently");
 
@@ -467,7 +469,7 @@ mod tests_h12 {
         .await
         .unwrap();
 
-        let err = flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned(), &mat)
+        let err = flush_draft_inner(&pool, DEVICE, BlockId::test_id(LIVE_BLOCK), &mat)
             .await
             .expect_err("oversized draft must be rejected");
 
@@ -574,7 +576,7 @@ mod tests_h12 {
             .await
             .unwrap();
 
-        flush_draft_inner(&pool, DEVICE, LIVE_BLOCK.to_owned(), &mat)
+        flush_draft_inner(&pool, DEVICE, BlockId::test_id(LIVE_BLOCK), &mat)
             .await
             .expect("happy-path flush must succeed");
 

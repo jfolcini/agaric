@@ -2084,7 +2084,7 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
         "test-device",
         &mat,
         dir.path(),
-        "BLK_OK".to_string(),
+        "BLK_OK".into(),
         "evil.bin".to_string(),
         "application/octet-stream".to_string(),
         10,

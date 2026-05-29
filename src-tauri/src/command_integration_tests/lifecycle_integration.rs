@@ -527,15 +527,9 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     settle(&mat).await;
 
     // 2. Add tag
-    add_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    add_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
 
     // 3. Verify tag via list_by_tag
     assign_all_to_test_space(&pool).await;
@@ -573,15 +567,9 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
     assert_eq!(moved.position, Some(99), "position updated");
 
     // 5. Remove tag
-    remove_tag_inner(
-        &pool,
-        DEV,
-        &mat,
-        block.id.clone().into_string(),
-        tag.id.clone().into_string(),
-    )
-    .await
-    .unwrap();
+    remove_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
 
     let untagged = list_blocks_inner(
         &pool,
