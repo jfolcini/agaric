@@ -1,11 +1,11 @@
 //! Restore: `restore_block`.
 
-use std::sync::Arc;
-
 use sqlx::SqlitePool;
 
+use crate::db::CommandTx;
 use crate::error::AppError;
-use crate::materializer::{MaterializeTask, Materializer};
+use crate::materializer::Materializer;
+use crate::op_log::OpRecord;
 
 /// Restore a soft-deleted block and descendants sharing the same `deleted_at`
 /// timestamp.
@@ -20,9 +20,13 @@ use crate::materializer::{MaterializeTask, Materializer};
 /// SQL-review M-3: takes `materializer: &Materializer` so the cache-
 /// invalidation fan-out is enforced by the type system. Any caller of
 /// this primitive **must** hold a `&Materializer` and post-commit the
-/// fan-out fires automatically. The dispatched task set mirrors what
-/// `materializer::dispatch::invalidations_for_op` produces for a
-/// `restore_block` op (FULL_CACHE_REBUILD_TASKS + `UpdateFtsBlock`).
+/// fan-out fires automatically. The fan-out is routed through the
+/// canonical `restore_block` op-type dispatch (a synthesized minimal
+/// [`OpRecord`] enqueued on the [`CommandTx`]), so the dispatched task
+/// set is *exactly* what `materializer::dispatch::invalidations_for_op`
+/// produces for a `restore_block` op (FULL_CACHE_REBUILD_TASKS, incl.
+/// `RebuildPageLinkCache`, + `UpdateFtsBlock`) and can never drift from
+/// it. See [`synthesize_restore_op`].
 pub async fn restore_block(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -34,7 +38,12 @@ pub async fn restore_block(
     // (it also uses BEGIN IMMEDIATE). Acquiring the reserved lock up-front
     // serializes restore against cascade-soft-delete writers and prevents the
     // CTE from reading a half-cascaded subtree.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    //
+    // MAINT-112: `CommandTx::begin_immediate` inherits the slow-acquire
+    // tracing from `begin_immediate_logged` AND couples commit +
+    // post-commit cache dispatch (see the synthesized `restore_block`
+    // op enqueued below).
+    let mut tx = CommandTx::begin_immediate(pool, "soft_delete_restore_block").await?;
 
     let result = sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
@@ -50,7 +59,7 @@ pub async fn restore_block(
         block_id,
         deleted_at_ref,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so an
@@ -59,7 +68,7 @@ pub async fn restore_block(
     // detection + surfacing here. Standard-variant helper is invariant
     // to deleted_at state, so post-cascade it walks the now-restored
     // subtree and reports MAX depth correctly.
-    if crate::block_descendants::cascade_depth_saturated(&mut *tx, block_id).await? {
+    if crate::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
         tracing::warn!(
             block_id = %block_id,
             op = "restore_block",
@@ -68,7 +77,18 @@ pub async fn restore_block(
         );
     }
 
-    tx.commit().await?;
+    // SQL-review M-3 + MAINT-112: route the cache-rebuild fan-out through
+    // the canonical `restore_block` op-type dispatch. Enqueueing a
+    // synthesized minimal `OpRecord` on the `CommandTx` means
+    // `commit_and_dispatch` fires *exactly* the task set
+    // `invalidations_for_op` produces for a `restore_block` op
+    // (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`, +
+    // `UpdateFtsBlock`) — the set can never drift from the dispatch
+    // table. Dispatch is fire-and-forget; enqueue failures are
+    // warn-logged inside `commit_and_dispatch` because the SQL is
+    // already committed.
+    tx.enqueue_background(synthesize_restore_op(block_id));
+    tx.commit_and_dispatch(materializer).await?;
 
     // L-102: a wrong-token call (stale `deleted_at_ref` from a UI undo retry,
     // a typo in an MCP call, or a bug in the caller) is a silent no-op
@@ -84,48 +104,32 @@ pub async fn restore_block(
         );
     }
 
-    // SQL-review M-3: dispatch the same cache-rebuild fan-out that the
-    // `restore_block` op-type dispatch would produce (see
-    // `materializer::dispatch::invalidations_for_op`). Fire-and-forget;
-    // enqueue failures are warn-logged because the SQL is already
-    // committed.
-    dispatch_cache_rebuild_after_restore(materializer, block_id);
-
     Ok(rows)
 }
 
-/// Enqueue the cache-rebuild fan-out for a `restore_block`.
+/// Build a minimal `restore_block` [`OpRecord`] purely to drive the
+/// canonical cache-rebuild fan-out via
+/// [`crate::materializer::dispatch::invalidations_for_op`].
 ///
-/// Mirrors the `restore_block` arm of
-/// [`crate::materializer::dispatch::invalidations_for_op`]:
-/// FULL_CACHE_REBUILD_TASKS (RebuildTagsCache, RebuildPagesCache,
-/// RebuildAgendaCache, RebuildProjectedAgendaCache,
-/// RebuildTagInheritanceCache, RebuildPageIds, RebuildBlockTagRefsCache)
-/// followed by `UpdateFtsBlock { block_id }`.
-///
-/// Enqueue failures are logged at warn level — the SQL is already
-/// committed and the next mutation re-dispatches the same fan-out.
-fn dispatch_cache_rebuild_after_restore(materializer: &Materializer, block_id: &str) {
-    let tasks = [
-        MaterializeTask::RebuildTagsCache,
-        MaterializeTask::RebuildPagesCache,
-        MaterializeTask::RebuildAgendaCache,
-        MaterializeTask::RebuildProjectedAgendaCache,
-        MaterializeTask::RebuildTagInheritanceCache,
-        MaterializeTask::RebuildPageIds,
-        MaterializeTask::RebuildBlockTagRefsCache,
-        MaterializeTask::UpdateFtsBlock {
-            block_id: Arc::from(block_id),
-        },
-    ];
-    for task in tasks {
-        if let Err(e) = materializer.try_enqueue_background(task) {
-            tracing::warn!(
-                block_id = %block_id,
-                error = %e,
-                "restore_block: failed to enqueue background cache task",
-            );
-        }
+/// MAINT-112 / decision-b: this primitive is *not* a command — it does
+/// not append to `op_log`, so it has no real `OpRecord`. The
+/// `restore_block` arm of `invalidations_for_op` reads **only**
+/// `record.op_type` and `record.block_id` (it ignores `seq`, `hash`,
+/// `payload`, `device_id`, …), so every other field is a harmless
+/// placeholder. Routing through this synthesized record (rather than a
+/// hand-maintained task array) guarantees the dispatched set stays
+/// identical to the dispatch table — including `RebuildPageLinkCache`
+/// and any cache appended to `FULL_CACHE_REBUILD_TASKS` in the future.
+fn synthesize_restore_op(block_id: &str) -> OpRecord {
+    OpRecord {
+        device_id: String::new(),
+        seq: 0,
+        parent_seqs: None,
+        hash: String::new(),
+        op_type: "restore_block".to_owned(),
+        payload: String::new(),
+        created_at: String::new(),
+        block_id: Some(block_id.to_owned()),
     }
 }
 
@@ -147,6 +151,10 @@ mod tests {
     /// 4. `flush_background()` drains the dispatched fan-out.
     /// 5. Assert `pages_cache` now contains the restored page —
     ///    proving `restore_block` dispatched `RebuildPagesCache` itself.
+    /// 6. MAINT-112: assert a stale `page_link_cache` row was rebuilt
+    ///    away — proving `restore_block` also dispatched
+    ///    `RebuildPageLinkCache` (the 8th task in
+    ///    `FULL_CACHE_REBUILD_TASKS`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn restore_block_dispatches_materializer() {
         let dir = TempDir::new().unwrap();
@@ -154,6 +162,7 @@ mod tests {
         let mat = crate::materializer::Materializer::new(pool.clone());
 
         let page_id = "M3RPAGE01";
+        let other_id = "M3RPAGE02";
         let deleted_ts = "2025-01-01T00:00:00+00:00";
 
         // Seed a soft-deleted page (deleted_at set inline so we don't
@@ -164,6 +173,16 @@ mod tests {
         )
         .bind(page_id)
         .bind(deleted_ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A live second page so the stale `page_link_cache` row below has
+        // a valid `target_page_id` FK.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'restore link target', NULL, 2)",
+        )
+        .bind(other_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -181,6 +200,22 @@ mod tests {
             pre_count, 0,
             "baseline: pages_cache must NOT contain the soft-deleted page before restore"
         );
+
+        // MAINT-112: plant a stale `page_link_cache` edge with no backing
+        // `block_links` row. `RebuildPageLinkCache` does a full
+        // DELETE-all + re-INSERT-from-`block_links`, so after the fan-out
+        // drains this edge must be gone (there are no `block_links` to
+        // re-derive it from). If `RebuildPageLinkCache` is NOT dispatched,
+        // the stale edge survives and the assertion below fails.
+        sqlx::query(
+            "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+             VALUES (?, ?, 99)",
+        )
+        .bind(page_id)
+        .bind(other_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Restore. The primitive dispatches the cache-rebuild fan-out
         // itself (SQL-review M-3).
@@ -206,6 +241,23 @@ mod tests {
             "SQL-review M-3: pages_cache must reflect the restore after \
              flush_background — proving restore_block dispatched \
              RebuildPagesCache itself."
+        );
+
+        // MAINT-112: the stale page-link edge must be gone, proving
+        // `RebuildPageLinkCache` was in the dispatched fan-out.
+        let stale_links: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM page_link_cache WHERE source_page_id = ? AND target_page_id = ?",
+        )
+        .bind(page_id)
+        .bind(other_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            stale_links, 0,
+            "MAINT-112: page_link_cache must reflect the restore after \
+             flush_background — proving restore_block dispatched \
+             RebuildPageLinkCache (the 8th FULL_CACHE_REBUILD task)."
         );
     }
 }

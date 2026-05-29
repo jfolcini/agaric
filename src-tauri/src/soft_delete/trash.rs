@@ -1,11 +1,11 @@
 //! Soft-delete: `soft_delete_block`, `cascade_soft_delete`.
 
-use std::sync::Arc;
-
 use sqlx::SqlitePool;
 
+use crate::db::CommandTx;
 use crate::error::AppError;
-use crate::materializer::{MaterializeTask, Materializer};
+use crate::materializer::Materializer;
+use crate::op_log::OpRecord;
 
 /// Soft-delete a single block (no cascade).
 pub async fn soft_delete_block(
@@ -50,10 +50,13 @@ pub async fn soft_delete_block(
 /// fan-out fires automatically. The previous convention — callers
 /// dispatch on the primitive's behalf — was a hidden coupling: a future
 /// caller that forgot the dispatch would leave caches stale (pages_cache,
-/// agenda_cache, block_tag_refs, etc.) silently. The dispatched task
-/// set mirrors what `materializer::dispatch::invalidations_for_op`
-/// produces for a `delete_block` op (FULL_CACHE_REBUILD_TASKS +
-/// `RemoveFtsBlock`).
+/// agenda_cache, block_tag_refs, etc.) silently. The fan-out is routed
+/// through the canonical `delete_block` op-type dispatch (a synthesized
+/// minimal [`OpRecord`] enqueued on the [`CommandTx`]), so the dispatched
+/// task set is *exactly* what `materializer::dispatch::invalidations_for_op`
+/// produces for a `delete_block` op (FULL_CACHE_REBUILD_TASKS, incl.
+/// `RebuildPageLinkCache`, + `RemoveFtsBlock`) and can never drift from
+/// it. See [`synthesize_delete_op`].
 pub async fn cascade_soft_delete(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -62,7 +65,11 @@ pub async fn cascade_soft_delete(
 ) -> Result<(String, u64), AppError> {
     tracing::debug!(seed_block_id = %block_id, "cascade soft-delete starting");
     let now = crate::now_rfc3339();
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // MAINT-112: `CommandTx::begin_immediate` inherits the slow-acquire
+    // tracing from `begin_immediate_logged` AND couples commit +
+    // post-commit cache dispatch (see the synthesized `delete_block` op
+    // enqueued below).
+    let mut tx = CommandTx::begin_immediate(pool, "soft_delete_cascade").await?;
 
     let result = sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
@@ -78,7 +85,7 @@ pub async fn cascade_soft_delete(
         block_id,
         now,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // PEND-26 N2: warn when the cascade walk hit the depth-100 cap so an
@@ -86,7 +93,7 @@ pub async fn cascade_soft_delete(
     // the soft-delete. The cap (invariant #9) is preserved; we only ADD
     // detection + surfacing here. The standard-variant helper is
     // invariant to whether the cascade has run, so this works post-UPDATE.
-    if crate::block_descendants::cascade_depth_saturated(&mut *tx, block_id).await? {
+    if crate::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
         tracing::warn!(
             seed_block_id = %block_id,
             op = "cascade_soft_delete",
@@ -96,7 +103,19 @@ pub async fn cascade_soft_delete(
     }
 
     let count = result.rows_affected();
-    tx.commit().await?;
+
+    // SQL-review M-3 + MAINT-112: route the cache-rebuild fan-out through
+    // the canonical `delete_block` op-type dispatch. Enqueueing a
+    // synthesized minimal `OpRecord` on the `CommandTx` means
+    // `commit_and_dispatch` fires *exactly* the task set
+    // `invalidations_for_op` produces for a `delete_block` op
+    // (FULL_CACHE_REBUILD_TASKS, incl. `RebuildPageLinkCache`, +
+    // `RemoveFtsBlock`) — the set can never drift from the dispatch
+    // table. Dispatch is fire-and-forget; enqueue failures are
+    // warn-logged inside `commit_and_dispatch` because the SQL write has
+    // already been durably committed.
+    tx.enqueue_background(synthesize_delete_op(block_id));
+    tx.commit_and_dispatch(materializer).await?;
     tracing::info!(
         seed_block_id = %block_id,
         descendants_marked = count,
@@ -104,50 +123,32 @@ pub async fn cascade_soft_delete(
         "cascade soft-delete"
     );
 
-    // SQL-review M-3: dispatch the same cache-rebuild fan-out that the
-    // `delete_block` op-type dispatch would produce (see
-    // `materializer::dispatch::invalidations_for_op`). The fan-out is
-    // fire-and-forget; enqueue failures (queue full, queue closed) are
-    // logged at warn level because the SQL write has already been
-    // durably committed and the next mutation re-dispatches the same
-    // tasks.
-    dispatch_cache_rebuild_after_soft_delete(materializer, block_id);
-
     Ok((now, count))
 }
 
-/// Enqueue the cache-rebuild fan-out for a `cascade_soft_delete`.
+/// Build a minimal `delete_block` [`OpRecord`] purely to drive the
+/// canonical cache-rebuild fan-out via
+/// [`crate::materializer::dispatch::invalidations_for_op`].
 ///
-/// Mirrors the `delete_block` arm of
-/// [`crate::materializer::dispatch::invalidations_for_op`]:
-/// FULL_CACHE_REBUILD_TASKS (RebuildTagsCache, RebuildPagesCache,
-/// RebuildAgendaCache, RebuildProjectedAgendaCache,
-/// RebuildTagInheritanceCache, RebuildPageIds, RebuildBlockTagRefsCache)
-/// followed by `RemoveFtsBlock { block_id }`.
-///
-/// Enqueue failures are logged at warn level — the SQL is already
-/// committed and the next mutation re-dispatches the same fan-out.
-fn dispatch_cache_rebuild_after_soft_delete(materializer: &Materializer, block_id: &str) {
-    let tasks = [
-        MaterializeTask::RebuildTagsCache,
-        MaterializeTask::RebuildPagesCache,
-        MaterializeTask::RebuildAgendaCache,
-        MaterializeTask::RebuildProjectedAgendaCache,
-        MaterializeTask::RebuildTagInheritanceCache,
-        MaterializeTask::RebuildPageIds,
-        MaterializeTask::RebuildBlockTagRefsCache,
-        MaterializeTask::RemoveFtsBlock {
-            block_id: Arc::from(block_id),
-        },
-    ];
-    for task in tasks {
-        if let Err(e) = materializer.try_enqueue_background(task) {
-            tracing::warn!(
-                seed_block_id = %block_id,
-                error = %e,
-                "cascade_soft_delete: failed to enqueue background cache task",
-            );
-        }
+/// MAINT-112 / decision-b: this primitive is *not* a command — it does
+/// not append to `op_log`, so it has no real `OpRecord`. The
+/// `delete_block` arm of `invalidations_for_op` reads **only**
+/// `record.op_type` and `record.block_id` (it ignores `seq`, `hash`,
+/// `payload`, `device_id`, …), so every other field is a harmless
+/// placeholder. Routing through this synthesized record (rather than a
+/// hand-maintained task array) guarantees the dispatched set stays
+/// identical to the dispatch table — including `RebuildPageLinkCache`
+/// and any cache appended to `FULL_CACHE_REBUILD_TASKS` in the future.
+fn synthesize_delete_op(block_id: &str) -> OpRecord {
+    OpRecord {
+        device_id: String::new(),
+        seq: 0,
+        parent_seqs: None,
+        hash: String::new(),
+        op_type: "delete_block".to_owned(),
+        payload: String::new(),
+        created_at: String::new(),
+        block_id: Some(block_id.to_owned()),
     }
 }
 
@@ -178,6 +179,10 @@ mod tests {
     /// If a future contributor removes the dispatch from
     /// `cascade_soft_delete`, `pages_cache` will still contain the
     /// soft-deleted page and this assertion fails.
+    ///
+    /// MAINT-112: also asserts a stale `page_link_cache` row was rebuilt
+    /// away — proving `cascade_soft_delete` dispatched
+    /// `RebuildPageLinkCache` (the 8th task in `FULL_CACHE_REBUILD_TASKS`).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cascade_soft_delete_dispatches_materializer() {
         let dir = TempDir::new().unwrap();
@@ -186,11 +191,23 @@ mod tests {
 
         // Seed a page block.
         let page_id = "M3PAGE01";
+        let link_page_id = "M3PAGE02";
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
              VALUES (?, 'page', 'cascade dispatch test', NULL, 1)",
         )
         .bind(page_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A second live page so the stale `page_link_cache` row below has
+        // valid source/target FKs that survive the soft-delete (only
+        // `page_id` is deleted), isolating the assertion to the rebuild.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'cascade link page', NULL, 2)",
+        )
+        .bind(link_page_id)
         .execute(&pool)
         .await
         .unwrap();
@@ -208,6 +225,23 @@ mod tests {
             pre_count, 1,
             "baseline: pages_cache must contain the seeded page before soft-delete"
         );
+
+        // MAINT-112: plant a stale `page_link_cache` edge with no backing
+        // `block_links` row. `RebuildPageLinkCache` does a full
+        // DELETE-all + re-INSERT-from-`block_links`, so after the fan-out
+        // drains this edge must be gone (no `block_links` to re-derive
+        // it). If `RebuildPageLinkCache` is NOT dispatched, the stale
+        // edge survives and the assertion below fails. Source/target are
+        // the *second* live page so the FK rows aren't soft-deleted.
+        sqlx::query(
+            "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+             VALUES (?, ?, 99)",
+        )
+        .bind(link_page_id)
+        .bind(link_page_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Soft-delete via the primitive. The function dispatches the
         // cache-rebuild fan-out itself (SQL-review M-3).
@@ -235,6 +269,23 @@ mod tests {
             "SQL-review M-3: pages_cache must reflect the soft-delete after \
              flush_background — proving cascade_soft_delete dispatched \
              RebuildPagesCache itself (no caller dispatched on its behalf)."
+        );
+
+        // MAINT-112: the stale page-link edge must be gone, proving
+        // `RebuildPageLinkCache` was in the dispatched fan-out.
+        let stale_links: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM page_link_cache WHERE source_page_id = ? AND target_page_id = ?",
+        )
+        .bind(link_page_id)
+        .bind(link_page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            stale_links, 0,
+            "MAINT-112: page_link_cache must reflect the soft-delete after \
+             flush_background — proving cascade_soft_delete dispatched \
+             RebuildPageLinkCache (the 8th FULL_CACHE_REBUILD task)."
         );
     }
 }
