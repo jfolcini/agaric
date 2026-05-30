@@ -38,6 +38,7 @@ import {
   MapPin,
   Minus,
   Paperclip,
+  Parentheses,
   Quote,
   Repeat,
   Search,
@@ -103,6 +104,12 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'LINK — Insert page link',
     category: 'slashCommand.categories.references',
     icon: Link2,
+  },
+  {
+    id: 'block-ref',
+    label: 'BLOCK-REF — Insert block reference',
+    category: 'slashCommand.categories.references',
+    icon: Parentheses,
   },
   {
     id: 'tag',

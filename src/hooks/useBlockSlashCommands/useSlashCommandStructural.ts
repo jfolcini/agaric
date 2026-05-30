@@ -63,6 +63,11 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         link: (ctx) => {
           ctx.rovingEditor.editor?.chain().focus().insertContent('[[').run()
         },
+        'block-ref': (ctx) => {
+          // #213 PR 4 — insert the `((` trigger to open the BlockRefPicker
+          // (mirrors the `link` handler's `[[`).
+          ctx.rovingEditor.editor?.chain().focus().insertContent('((').run()
+        },
         tag: (ctx) => {
           ctx.rovingEditor.editor?.chain().focus().insertContent('@').run()
         },

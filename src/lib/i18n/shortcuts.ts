@@ -61,6 +61,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.heading6': 'Heading 6',
   'keyboard.tagPicker': 'Tag picker',
   'keyboard.blockLinkPicker': 'Block link picker',
+  'keyboard.blockRefPicker': 'Block reference picker',
   'keyboard.slashCommandMenu': 'Slash command menu',
   'keyboard.previousDayWeekMonth': 'Previous day / week / month',
   'keyboard.nextDayWeekMonth': 'Next day / week / month',
