@@ -10,12 +10,13 @@
  */
 
 import type { Editor } from '@tiptap/react'
-import { FileCode2, Heading } from 'lucide-react'
+import { FileCode2, Heading, Info } from 'lucide-react'
 import type React from 'react'
 
 import { LANG_SHORT, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
+import { CalloutTypeSelector } from '../CalloutTypeSelector'
 import { CodeLanguageSelector } from '../CodeLanguageSelector'
 import { HeadingLevelSelector } from '../HeadingLevelSelector'
 import { Button } from '../ui/button'
@@ -229,6 +230,86 @@ export function renderHeadingButton({
         <HeadingLevelSelector
           editor={editor}
           headingLevel={headingLevel}
+          onClose={() => {
+            setOpen(false)
+            if (mode === 'overflow') onOverflowClose()
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface CalloutButtonProps {
+  mode: RenderMode
+  t: (key: string) => string
+  open: boolean
+  setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+  onOverflowClose: () => void
+}
+
+/**
+ * Render the callout-type popover trigger (#215). Mirrors the code-block /
+ * heading popover triggers: the button opens a `CalloutTypeSelector` listing
+ * the five variants; selecting one dispatches `INSERT_CALLOUT` with the chosen
+ * `type`. Unlike those, it needs no editor — the selector dispatches an event
+ * that `useBlockTreeEventListeners` consumes.
+ */
+export function renderCalloutButton({
+  mode,
+  t,
+  open,
+  setOpen,
+  onOverflowClose,
+}: CalloutButtonProps): React.ReactElement {
+  if (mode === 'sentinel') {
+    return (
+      <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
+        <Info className="h-3.5 w-3.5" />
+      </Button>
+    )
+  }
+
+  const trigger =
+    mode === 'overflow' ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={t('toolbar.callout')}
+        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          setOpen((prev) => !prev)
+        }}
+      >
+        <Info className="h-3.5 w-3.5 mr-2" />
+        <span>{t('toolbar.callout')}</span>
+      </Button>
+    ) : (
+      <Tip label={t('toolbar.calloutTip')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('toolbar.callout')}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setOpen((prev) => !prev)
+          }}
+        >
+          <Info className="h-3.5 w-3.5" />
+        </Button>
+      </Tip>
+    )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>{trigger}</PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className="w-auto max-w-[calc(100vw-2rem)] p-1"
+        data-editor-portal
+      >
+        <CalloutTypeSelector
           onClose={() => {
             setOpen(false)
             if (mode === 'overflow') onOverflowClose()
