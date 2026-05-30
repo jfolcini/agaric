@@ -1434,7 +1434,7 @@ describe('BlockTree slash command wiring', () => {
 
     const results = await capturedSearchSlashCommands?.('')
 
-    expect(results).toHaveLength(28)
+    expect(results).toHaveLength(29)
     expect(results?.map((r) => r.id)).toEqual([
       'todo',
       'doing',
@@ -1460,6 +1460,7 @@ describe('BlockTree slash command wiring', () => {
       'quote',
       'callout',
       'table',
+      'table-no-header',
       'numbered-list',
       'divider',
       'query',
