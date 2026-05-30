@@ -46,24 +46,17 @@ test.describe('Structural toolbar inserts (#253)', () => {
     await expect(ol).toContainText('first item')
   })
 
-  test('Callout button converts the focused block into a blockquote (callout markdown)', async ({
-    page,
-  }) => {
+  test('Callout button opens the type picker and applies the chosen variant', async ({ page }) => {
     await openPage(page, 'Getting Started')
     const editor = await focusBlock(page)
     await page.keyboard.press('Control+a')
     await editor.type('heads up')
 
+    // #215 — the Callout button now opens a variant picker; pick "info".
+    // (Full per-variant + callout-block coverage lives in callout-picker.spec.ts.)
     await page.getByRole('button', { name: 'Callout' }).click()
+    await page.getByTestId('callout-type-info').click()
 
-    // The consumer fires and rewrites the block to `> [!INFO] heads up`, which
-    // the editor mounts as a blockquote. NOTE: the `[!INFO]` callout *type* is
-    // currently dropped on the editor round-trip (stock TipTap Blockquote has
-    // no `calloutType` attribute) — a pre-existing bug that affects the
-    // `/callout` slash command identically (tracked separately). This test
-    // therefore asserts the consumer fired (plain → blockquote), matching the
-    // slash command's current behaviour; upgrade to `callout-block` once the
-    // round-trip bug is fixed.
     const quote = editor.locator('blockquote')
     await expect(quote).toBeVisible()
     await expect(quote).toContainText('heads up')
