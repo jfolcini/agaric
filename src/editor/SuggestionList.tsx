@@ -52,6 +52,12 @@ export interface SuggestionListProps {
    * Used to pick a context-appropriate empty-state message (UX-312).
    */
   triggerChar?: string
+  /**
+   * The live query text. Used to distinguish a below-threshold empty result
+   * (block-ref search needs ≥2 chars — #213 PR 2) from a genuine "no match",
+   * so the empty-state can say *why* nothing is shown.
+   */
+  query?: string
   ref?: React.Ref<SuggestionListRef>
 }
 
@@ -65,6 +71,7 @@ export const SuggestionList = ({
   command,
   label,
   triggerChar,
+  query,
 }: SuggestionListProps) => {
   const { t } = useTranslation()
   const listRef = useRef<HTMLDivElement>(null)
@@ -129,11 +136,19 @@ export const SuggestionList = ({
   }, [items, hasCategories])
 
   if (items.length === 0) {
+    // #213 PR 2 — the block-ref search ('((') returns [] for queries under
+    // 2 chars (useBlockResolve `searchBlockRefs`), which reads as "broken"
+    // rather than "keep typing". Distinguish that below-threshold case from
+    // a genuine no-match and tell the user to keep going. Mirror the
+    // resolver's normalisation (strip trailing ')' + trim).
+    const blockRefBelowThreshold =
+      triggerChar === '((' && query != null && query.replace(/\)+$/, '').trim().length < 2
     // UX-312: pick a context-appropriate empty-state message based on the
     // trigger character. Falls back to the generic "No results" for triggers
     // without a tailored copy (e.g. '/', '::').
-    const emptyKey =
-      triggerChar === '[['
+    const emptyKey = blockRefBelowThreshold
+      ? 'suggestion.hint.minChars'
+      : triggerChar === '[['
         ? 'suggestion.noResults.blockLink'
         : triggerChar === '@'
           ? 'suggestion.noResults.atTag'

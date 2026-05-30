@@ -777,6 +777,32 @@ describe('SuggestionList', () => {
     )
   })
 
+  it('empty state for `((` below the 2-char threshold shows the keep-typing hint (#213 PR 2)', () => {
+    const command = vi.fn()
+    const { rerender } = render(
+      <SuggestionList items={[]} command={command} triggerChar="((" query="a" />,
+    )
+    expect(screen.getByRole('status')).toHaveTextContent('Type at least 2 characters to search')
+
+    // Mirrors the resolver's trailing-')' strip: "a))" normalises to "a".
+    rerender(<SuggestionList items={[]} command={command} triggerChar="((" query="a))" />)
+    expect(screen.getByRole('status')).toHaveTextContent('Type at least 2 characters to search')
+
+    // Empty / whitespace-only queries are also below threshold (picker just opened).
+    rerender(<SuggestionList items={[]} command={command} triggerChar="((" query="" />)
+    expect(screen.getByRole('status')).toHaveTextContent('Type at least 2 characters to search')
+    rerender(<SuggestionList items={[]} command={command} triggerChar="((" query="  " />)
+    expect(screen.getByRole('status')).toHaveTextContent('Type at least 2 characters to search')
+  })
+
+  it('empty state for `((` at/above the threshold shows the no-match message, not the hint (#213 PR 2)', () => {
+    const command = vi.fn()
+    render(<SuggestionList items={[]} command={command} triggerChar="((" query="abc" />)
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'No results — block references can only point at existing blocks',
+    )
+  })
+
   it('empty state for unmapped triggers (e.g. "/", "::") falls back to "No results" (UX-312)', () => {
     const command = vi.fn()
     const { rerender } = render(<SuggestionList items={[]} command={command} triggerChar="/" />)
