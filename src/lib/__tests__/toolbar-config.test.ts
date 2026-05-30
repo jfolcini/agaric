@@ -135,9 +135,9 @@ describe('createMarkToggles', () => {
 // ── createRefsAndBlocks ─────────────────────────────────────────────────
 
 describe('createRefsAndBlocks', () => {
-  it('returns 3 buttons', () => {
+  it('returns 4 buttons', () => {
     const buttons = createRefsAndBlocks(makeEditor())
-    expect(buttons).toHaveLength(3)
+    expect(buttons).toHaveLength(4)
   })
 
   it('each button has valid config shape', () => {
@@ -147,10 +147,43 @@ describe('createRefsAndBlocks', () => {
     }
   })
 
-  it('includes internalLink, insertTag, blockquote', () => {
+  it('includes internalLink, insertBlockRef, insertTag, blockquote', () => {
     const buttons = createRefsAndBlocks(makeEditor())
     const labels = buttons.map((b) => b.label)
-    expect(labels).toEqual(['toolbar.internalLink', 'toolbar.insertTag', 'toolbar.blockquote'])
+    expect(labels).toEqual([
+      'toolbar.internalLink',
+      'toolbar.insertBlockRef',
+      'toolbar.insertTag',
+      'toolbar.blockquote',
+    ])
+  })
+
+  // #213 PR 4 — block-ref creation parity (mirrors the page-link button).
+  describe('insertBlockRef button', () => {
+    it('inserts the "((" trigger when there is no selection', () => {
+      const editor = {
+        chain: mockChain,
+        state: { selection: { from: 3, to: 3 } },
+      } as never
+      const [, blockRef] = createRefsAndBlocks(editor)
+      blockRef?.action()
+      const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
+        insertContent: ReturnType<typeof vi.fn>
+      }
+      expect(focusResult.insertContent).toHaveBeenCalledWith('((')
+    })
+
+    it('resolves the selection into a block-ref when text is selected', () => {
+      const resolveBlockRefFromSelection = vi.fn()
+      const editor = {
+        chain: mockChain,
+        state: { selection: { from: 1, to: 5 } },
+        commands: { resolveBlockRefFromSelection },
+      } as never
+      const [, blockRef] = createRefsAndBlocks(editor)
+      blockRef?.action()
+      expect(resolveBlockRefFromSelection).toHaveBeenCalledTimes(1)
+    })
   })
 
   // Regression coverage for the "Insert tag" button: the AtTagPicker
@@ -174,7 +207,7 @@ describe('createRefsAndBlocks', () => {
 
     it('inserts a bare "@" when the cursor is at the start of the block', () => {
       const editor = makeTagEditor({ from: 0, prevChar: '' })
-      const [, insertTag] = createRefsAndBlocks(editor)
+      const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       // Find the most recent insertContent call
       const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
@@ -185,7 +218,7 @@ describe('createRefsAndBlocks', () => {
 
     it('inserts a bare "@" when the previous char is a space', () => {
       const editor = makeTagEditor({ from: 5, prevChar: ' ' })
-      const [, insertTag] = createRefsAndBlocks(editor)
+      const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
         insertContent: ReturnType<typeof vi.fn>
@@ -195,7 +228,7 @@ describe('createRefsAndBlocks', () => {
 
     it('inserts a bare "@" when the previous char is NBSP', () => {
       const editor = makeTagEditor({ from: 5, prevChar: '\u00A0' })
-      const [, insertTag] = createRefsAndBlocks(editor)
+      const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
         insertContent: ReturnType<typeof vi.fn>
@@ -205,7 +238,7 @@ describe('createRefsAndBlocks', () => {
 
     it('inserts a bare "@" when the previous char is a newline', () => {
       const editor = makeTagEditor({ from: 5, prevChar: '\n' })
-      const [, insertTag] = createRefsAndBlocks(editor)
+      const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
         insertContent: ReturnType<typeof vi.fn>
@@ -215,7 +248,7 @@ describe('createRefsAndBlocks', () => {
 
     it('prepends a space when the previous char is a letter (so the picker opens)', () => {
       const editor = makeTagEditor({ from: 5, prevChar: 'x' })
-      const [, insertTag] = createRefsAndBlocks(editor)
+      const [, , insertTag] = createRefsAndBlocks(editor)
       insertTag?.action()
       const focusResult = mockFocus.mock.results[mockFocus.mock.results.length - 1]?.value as {
         insertContent: ReturnType<typeof vi.fn>

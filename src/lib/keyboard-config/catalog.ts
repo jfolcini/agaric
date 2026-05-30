@@ -167,6 +167,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.inEditor',
   },
   {
+    id: 'blockRefPicker',
+    keys: '((',
+    category: 'keyboard.category.pickers',
+    description: 'keyboard.blockRefPicker',
+    condition: 'keyboard.condition.inEditor',
+  },
+  {
     id: 'slashCommand',
     keys: '/',
     category: 'keyboard.category.pickers',

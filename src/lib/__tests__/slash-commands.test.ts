@@ -17,7 +17,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import { _resetPropertyKeysCacheForTest } from '../property-keys-cache'
-import { searchPropertyKeys } from '../slash-commands'
+import { SLASH_COMMANDS, searchPropertyKeys } from '../slash-commands'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -70,5 +70,19 @@ describe('searchPropertyKeys (PEND-35 Tier 2.5)', () => {
     mockedInvoke.mockRejectedValueOnce(new Error('IPC failure'))
     const results = await searchPropertyKeys('x')
     expect(results).toEqual([])
+  })
+})
+
+describe('SLASH_COMMANDS catalog', () => {
+  it('registers the block-ref command in the references group (#213 PR 4)', () => {
+    const blockRef = SLASH_COMMANDS.find((c) => c.id === 'block-ref')
+    expect(blockRef).toBeDefined()
+    expect(blockRef?.category).toBe('slashCommand.categories.references')
+    expect(blockRef?.icon).toBeDefined()
+  })
+
+  it('has unique command ids', () => {
+    const ids = SLASH_COMMANDS.map((c) => c.id)
+    expect(new Set(ids).size).toBe(ids.length)
   })
 })

@@ -23,6 +23,7 @@ import {
   Italic,
   ListOrdered,
   Minus,
+  Parentheses,
   Quote,
   Redo2,
   Settings2,
@@ -154,6 +155,23 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
           editor.commands.resolveBlockLinkFromSelection()
         } else {
           editor.chain().focus().insertContent('[[').run()
+        }
+      },
+    },
+    {
+      // #213 PR 4 — block-ref creation parity. Mirrors the page-link button
+      // above: resolve a selection into a `((ref))`, or insert the `((`
+      // trigger to open the BlockRefPicker when there's no selection.
+      icon: Parentheses,
+      label: 'toolbar.insertBlockRef',
+      tip: 'toolbar.blockRefTip',
+      priority: 60,
+      action: () => {
+        const { from, to } = editor.state.selection
+        if (from !== to) {
+          editor.commands.resolveBlockRefFromSelection()
+        } else {
+          editor.chain().focus().insertContent('((').run()
         }
       },
     },
