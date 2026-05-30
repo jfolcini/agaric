@@ -460,8 +460,11 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.inlineCode',
   },
   {
+    // #211 P2-11 — rebound from the low-mnemonic `Ctrl+Shift+X` to
+    // `Ctrl+Shift+S`. The editor keeps `Ctrl+Shift+X` as a hardcoded legacy
+    // alias for one release (see `StrikeWithShortcut` in use-roving-editor).
     id: 'strikethrough',
-    keys: 'Ctrl + Shift + X',
+    keys: 'Ctrl + Shift + S',
     category: 'keyboard.category.editorFormatting',
     description: 'keyboard.strikethrough',
   },

@@ -854,7 +854,7 @@ describe('SuggestionList', () => {
 
     it('resolves a live `shortcutId` from the keyboard catalog', () => {
       const command = vi.fn()
-      // `strikethrough` defaults to Ctrl + Shift + X in the catalog.
+      // `strikethrough` defaults to Ctrl + Shift + S in the catalog (#211 P2-11).
       render(
         <SuggestionList
           items={[{ id: 'strike', label: 'STRIKE', shortcutId: 'strikethrough' }]}
@@ -864,7 +864,7 @@ describe('SuggestionList', () => {
       const chip = screen.getByTestId('suggestion-shortcut-strike')
       expect(chip).toHaveTextContent('⌃')
       expect(chip).toHaveTextContent('⇧')
-      expect(chip).toHaveTextContent('X')
+      expect(chip).toHaveTextContent('S')
     })
 
     it('prefers `shortcutId` over `keys` when both are set', () => {

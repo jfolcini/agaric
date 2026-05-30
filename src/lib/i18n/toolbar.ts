@@ -40,7 +40,7 @@ export const toolbar: Record<string, string> = {
   'toolbar.boldTip': 'Bold (Ctrl+B)',
   'toolbar.italicTip': 'Italic (Ctrl+I)',
   'toolbar.codeTip': 'Inline code (Ctrl+E)',
-  'toolbar.strikethroughTip': 'Strikethrough (Ctrl+Shift+X)',
+  'toolbar.strikethroughTip': 'Strikethrough (Ctrl+Shift+S)',
   'toolbar.highlightTip': 'Highlight (Ctrl+Shift+H)',
   'toolbar.underlineTip': 'Underline (Ctrl+U)',
   'toolbar.linkTip': 'External link (Ctrl+K)',
