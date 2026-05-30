@@ -653,21 +653,37 @@ types = ["toml"]
 # when each hook ran sequentially via prek).
 #
 # PREFERRED PUSH PATH: `scripts/push.sh` runs this verification BEFORE
-# `git push` opens any SSH connection, then pushes with
-# `SKIP_CI_VERIFY=1` so this hook short-circuits and the fresh
+# `git push` opens any SSH connection, then pushes with a
+# `SKIP_CI_VERIFY=<reason>` so this hook short-circuits and the fresh
 # connection is used immediately. Plain `git push` still auto-verifies
 # here, but holds the SSH connection open for the whole run — on a slow
 # verify GitHub closes the idle connection and the pack send fails
 # ("Connection closed by remote host"). Use `scripts/push.sh`.
 #
-# Escape hatch: `SKIP_CI_VERIFY=1 git push` short-circuits the
-# script. Use sparingly — for docs-only typo fixes that obviously
-# cannot affect CI behaviour. Anything that touches source code
-# should let the verifier run.
+# Escape hatch (CI-R16): `SKIP_CI_VERIFY='<reason>' git push` short-circuits
+# the script. The reason must be a descriptive string (≥8 chars) — a bare
+# `SKIP_CI_VERIFY=1` is REJECTED so the hatch stays a deliberate one-off
+# (docs-only typo fixes, etc.) rather than the default push path. Anything
+# that touches source code should let the verifier run.
 #
 # Release pre-flight (cargo tauri bundle build for the local OS) is
 # NOT here — too slow for daily push cadence. Run
 # `scripts/verify-release-build.sh` manually before tagging a release.
+
+# skip-ci-verify-guard (CI-R16): whenever the bypass guard or its caller
+# changes, re-run the guard's reject/accept smoke test so a regression
+# (e.g. accidentally re-allowing `SKIP_CI_VERIFY=1`) is caught at commit
+# time. Fast — only the guard's early-exit branches are exercised.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "skip-ci-verify-guard"
+name = "SKIP_CI_VERIFY bypass guard test"
+entry = "bash scripts/test-skip-ci-verify-guard.sh"
+language = "system"
+pass_filenames = false
+files = '^scripts/(verify-ci-equivalent|push|test-skip-ci-verify-guard)\.sh$'
+
 [[repos]]
 repo = "local"
 [[repos.hooks]]

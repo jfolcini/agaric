@@ -46,15 +46,42 @@
 #     before — run `scripts/verify-release-build.sh` manually for the
 #     bundle pre-flight.
 #
-# Skip override: `SKIP_CI_VERIFY=1 git push` short-circuits the hook.
-# Range override: `PRE_PUSH_RANGE=origin/main..HEAD git push` for branches
-# without a tracking upstream.
+# Skip override (CI-R16): set `SKIP_CI_VERIFY` to a short, descriptive
+# REASON to short-circuit the hook, e.g.
+#   SKIP_CI_VERIFY='docs typo, no source change' git push
+# A bare truthy flag (`SKIP_CI_VERIFY=1`) is REJECTED — the escape hatch
+# exists for genuine one-offs, and forcing a reason keeps it from quietly
+# becoming the default push path. Range override:
+# `PRE_PUSH_RANGE=origin/main..HEAD git push` for branches without a
+# tracking upstream.
 # ─────────────────────────────────────────────────────────────────────
 
 set -uo pipefail
 
-if [ "${SKIP_CI_VERIFY:-0}" = "1" ]; then
-    echo "→ SKIP_CI_VERIFY=1; pre-push verifier skipped."
+# ── Bypass guard (CI-R16) ──────────────────────────────────────────
+# Reject a bare truthy flag; require an explicit, self-documenting reason
+# of at least 8 characters. The reason is echoed so the skip leaves a
+# trace in the push output rather than being silent.
+SKIP_REASON="${SKIP_CI_VERIFY:-}"
+# Trim leading/trailing whitespace (internal spaces preserved) so a padded
+# truthy flag like "1   " can't slip past the truthy/length checks below.
+SKIP_REASON="${SKIP_REASON#"${SKIP_REASON%%[![:space:]]*}"}"
+SKIP_REASON="${SKIP_REASON%"${SKIP_REASON##*[![:space:]]}"}"
+if [ -n "$SKIP_REASON" ]; then
+    case "$(printf '%s' "$SKIP_REASON" | tr '[:upper:]' '[:lower:]')" in
+        1 | 0 | y | n | on | off | yes | no | true | false)
+            printf '✗ SKIP_CI_VERIFY=%s rejected: bypassing the verifier requires a REASON, not a truthy flag.\n' "$SKIP_REASON" >&2
+            printf "  Re-run with a short explanation, e.g.:\n" >&2
+            printf "    SKIP_CI_VERIFY='docs typo, no source change' git push\n" >&2
+            exit 1
+            ;;
+    esac
+    if [ "${#SKIP_REASON}" -lt 8 ]; then
+        printf '✗ SKIP_CI_VERIFY reason too short (%s chars, need ≥8): "%s"\n' "${#SKIP_REASON}" "$SKIP_REASON" >&2
+        printf "  Give a real reason, e.g. SKIP_CI_VERIFY='rebasing onto main, already verified' git push\n" >&2
+        exit 1
+    fi
+    echo "→ Pre-push verifier skipped. Reason: $SKIP_REASON"
     exit 0
 fi
 
@@ -115,7 +142,7 @@ echo "→ Phase A: prek run --all-files (pre-commit stage)"
 if ! SKIP="vitest,cargo-test" prek run --all-files --hook-stage pre-commit; then
     echo ""
     echo "✗ Pre-push verification FAILED at Phase A (prek --all-files)."
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY=1 git push"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
     exit 1
 fi
 echo "  ✓ prek --all-files"
@@ -143,7 +170,7 @@ if ! bash scripts/test-related-ts.sh --range "$RANGE"; then
     echo ""
     echo "✗ Pre-push verification FAILED at Phase C (vitest related)."
     echo "  Iterate: bash scripts/test-related-ts.sh --range $RANGE"
-    echo "  Bypass (use sparingly): SKIP_CI_VERIFY=1 git push"
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
     exit 1
 fi
 
@@ -156,7 +183,7 @@ if [ "$HAS_RS" = "1" ]; then
         echo ""
         echo "✗ Pre-push verification FAILED at Phase D (cargo nextest related)."
         echo "  Iterate: bash scripts/test-related-rust.sh --range $RANGE"
-        echo "  Bypass (use sparingly): SKIP_CI_VERIFY=1 git push"
+        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
         exit 1
     fi
 fi
