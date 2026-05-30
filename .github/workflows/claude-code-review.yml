@@ -54,6 +54,13 @@ jobs:
         with:
           app-id: ${{ secrets.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+          # Scope the minted token to the minimum the reviewer needs — read
+          # the diff and submit the approving / request-changes review —
+          # instead of inheriting all of the app's installation permissions
+          # (zizmor `github-app`: dangerous use of GitHub App tokens). The
+          # token is auto-scoped to this repository by default.
+          permission-contents: read
+          permission-pull-requests: write
 
       - name: Run Claude Code Review
         id: claude-review
