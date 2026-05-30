@@ -6,7 +6,6 @@
  * via addToHistory:false on content replacement transactions.
  */
 
-import Blockquote from '@tiptap/extension-blockquote'
 import Bold from '@tiptap/extension-bold'
 import Code from '@tiptap/extension-code'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
@@ -39,6 +38,7 @@ import { BlockLink } from './extensions/block-link'
 import { BlockLinkPicker, blockLinkPickerPluginKey } from './extensions/block-link-picker'
 import { BlockRef } from './extensions/block-ref'
 import { BlockRefPicker, blockRefPickerPluginKey } from './extensions/block-ref-picker'
+import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
 import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
@@ -304,7 +304,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       StrikeWithShortcut,
       HighlightWithShortcut,
       Underline,
-      Blockquote,
+      CalloutBlockquote,
       OrderedList,
 
       ListItem,
