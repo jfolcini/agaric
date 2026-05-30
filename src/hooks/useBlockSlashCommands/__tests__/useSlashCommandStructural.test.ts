@@ -145,7 +145,7 @@ describe('useSlashCommandStructural — list, divider', () => {
 })
 
 describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quote)', () => {
-  it.each(['link', 'tag', 'code', 'quote', 'query'] as const)(
+  it.each(['link', 'tag', 'code', 'quote'] as const)(
     'no-ops gracefully when ctx.rovingEditor.editor is null for /%s',
     (id) => {
       const { result } = renderHook(() => useSlashCommandStructural())
@@ -156,6 +156,13 @@ describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quot
       expect(() => result.current.exact[id]?.(ctx, { id, label: id })).not.toThrow()
     },
   )
+
+  it('/query opens the visual builder instead of inserting raw syntax (#215)', () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, openQueryBuilder } = makeSyntheticCtx()
+    result.current.exact['query']?.(ctx, { id: 'query', label: 'Query' })
+    expect(openQueryBuilder).toHaveBeenCalledOnce()
+  })
 })
 
 describe('useSlashCommandStructural — table', () => {

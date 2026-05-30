@@ -4517,7 +4517,7 @@ describe('BlockTree link/tag/code slash commands', () => {
     expect(mockToggleCodeBlock).toHaveBeenCalled()
   })
 
-  it('onSlashCommand for /query inserts query template via editor chain', async () => {
+  it('onSlashCommand for /query opens the visual builder instead of inserting raw syntax (#215)', async () => {
     useMockEditor = true
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
@@ -4538,7 +4538,12 @@ describe('BlockTree link/tag/code slash commands', () => {
       capturedOnSlashCommand?.({ id: 'query', label: 'QUERY — Insert embedded query block' })
     })
 
-    expect(mockInsertContent).toHaveBeenCalledWith('{{query type:tag expr:}}')
+    // #215 — the builder opens (deferred a tick); it no longer dumps raw
+    // `{{query …}}` into the editor. Full flow is covered in query-blocks.spec.ts.
+    await waitFor(() => {
+      expect(screen.getByText('Build Query')).toBeInTheDocument()
+    })
+    expect(mockInsertContent).not.toHaveBeenCalled()
   })
 })
 

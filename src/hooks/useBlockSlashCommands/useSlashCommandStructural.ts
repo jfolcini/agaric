@@ -79,9 +79,9 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         quote: (ctx) => {
           ctx.rovingEditor.editor?.chain().focus().toggleBlockquote().run()
         },
-        query: (ctx) => {
-          ctx.rovingEditor.editor?.chain().focus().insertContent('{{query type:tag expr:}}').run()
-        },
+        // #215 — open the visual builder pre-populated instead of dumping raw
+        // `{{query …}}` syntax; the builder inserts the generated expression.
+        query: (ctx) => ctx.openQueryBuilder(),
         callout: (ctx) => handleCallout(ctx, 'info'),
         'numbered-list': (ctx) => handleNumberedList(ctx),
         divider: (ctx) => handleDivider(ctx),

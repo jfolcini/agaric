@@ -42,7 +42,9 @@ test.describe('Query block creation', () => {
     await openPage(page, 'Getting Started')
   })
 
-  test('/query slash command inserts query template into editor', async ({ page }) => {
+  test('/query slash command opens the visual builder and inserts a query on save (#215)', async ({
+    page,
+  }) => {
     await focusBlock(page)
     const list = await typeSlashCommand(page, 'query')
 
@@ -51,13 +53,18 @@ test.describe('Query block creation', () => {
       list.locator('[data-testid="suggestion-item"]', { hasText: 'QUERY' }),
     ).toBeVisible()
 
-    // Select the query command
+    // Selecting it opens the visual builder (#215) instead of dumping raw syntax.
     await page.keyboard.press('Enter')
+    const tagInput = page.getByLabel('Tag prefix')
+    await expect(tagInput).toBeVisible()
 
-    // The editor should now contain the query template
-    const editor = page.locator('[data-testid="block-editor"] [contenteditable="true"]')
-    await expect(editor).toBeVisible()
-    await expect(editor).toContainText('{{query')
+    // Build a tag query and insert it.
+    await tagInput.fill('work')
+    await page.getByRole('button', { name: 'Insert Query' }).click()
+
+    // The block now renders as a QueryResult.
+    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
+    await expect(firstBlock.locator('[data-testid="query-result"]')).toBeVisible({ timeout: 5000 })
   })
 
   test('/query block renders QueryResult after save', async ({ page }) => {

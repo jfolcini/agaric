@@ -24,6 +24,8 @@ export interface UseBlockSlashCommandsParams {
   blocks: Array<{ id: string; parent_id: string | null; content: string | null }>
   load: () => Promise<void>
   t: TFn
+  /** Open the visual query builder for the focused block (#215). */
+  openQueryBuilder: () => void
 }
 
 export interface UseBlockSlashCommandsReturn {
