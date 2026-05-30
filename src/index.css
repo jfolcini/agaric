@@ -947,6 +947,47 @@
   @apply bg-muted rounded px-1 py-0.5 text-[0.85em] font-mono;
 }
 
+/* Table styles inside the editor (TipTap table extension). Without these,
+   edit-mode tables rendered with raw browser defaults — no borders, cramped
+   cells — while the view-mode table (RichContentRenderer/marks/table.tsx) is
+   bordered and padded. These rules mirror that look so a table reads the same
+   whether you're editing it or reading it. */
+.ProseMirror .tableWrapper {
+  @apply my-1 overflow-x-auto;
+}
+.ProseMirror table {
+  @apply w-auto border-collapse border border-border;
+}
+.ProseMirror th,
+.ProseMirror td {
+  @apply border border-border px-3 py-1.5 text-sm align-top;
+  min-width: 5rem;
+}
+.ProseMirror th {
+  @apply bg-muted/60 text-left font-medium;
+}
+/* Cells hold a single paragraph; drop its default margin so rows stay tight. */
+.ProseMirror th > p,
+.ProseMirror td > p {
+  margin: 0;
+}
+/* prosemirror-tables marks the active cell-selection range. */
+.ProseMirror .selectedCell {
+  @apply bg-primary/10;
+}
+
+/* Highlight mark inside the editor. TipTap's stock Highlight extension
+   renders a bare `<mark>` styled by the UA default (bright yellow, dark
+   text) — illegible in dark mode and mismatched against the view-mode
+   highlight (RichContentRenderer/marks/text.tsx, #211 P0-2, which uses
+   `bg-yellow-200 dark:bg-yellow-800/60`). Align the editor `<mark>` to that
+   same token so a highlight looks identical editing vs reading, and so dark
+   mode is legible. (The `--highlight` CSS var is a different token for
+   search/marker bands — not this inline mark.) */
+.ProseMirror mark {
+  @apply bg-yellow-200 dark:bg-yellow-800/60 rounded px-0.5;
+}
+
 /* Placeholder text (via TipTap Placeholder extension) */
 .ProseMirror p.is-editor-empty:first-child::before {
   @apply text-muted-foreground pointer-events-none float-left h-0;
