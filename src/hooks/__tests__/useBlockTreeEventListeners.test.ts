@@ -8,6 +8,7 @@
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { RovingEditorHandle } from '../../editor/use-roving-editor'
 import { dispatchBlockEvent } from '../../lib/block-events'
 import type { UseBlockTreeEventListenersOptions } from '../useBlockTreeEventListeners'
 import { useBlockTreeEventListeners } from '../useBlockTreeEventListeners'
@@ -22,7 +23,11 @@ function makeOptions(
     handleToggleTodo: vi.fn(),
     handleTogglePriority: vi.fn(),
     handleShowProperties: vi.fn(),
-    rovingEditor: { editor: null },
+    rovingEditor: {
+      editor: null,
+      mount: vi.fn(),
+      unmount: vi.fn(),
+    } as unknown as RovingEditorHandle,
     datePickerCursorPos: { current: undefined },
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
@@ -159,7 +164,16 @@ describe('useBlockTreeEventListeners', () => {
 
       // Re-render with a new rovingEditor object reference; all other props
       // (callbacks, refs, state) keep their identity so deps are stable.
-      rerender({ opts: { ...baseOpts, rovingEditor: { editor: null } } })
+      rerender({
+        opts: {
+          ...baseOpts,
+          rovingEditor: {
+            editor: null,
+            mount: vi.fn(),
+            unmount: vi.fn(),
+          } as unknown as RovingEditorHandle,
+        },
+      })
 
       const finalCount = addSpy.mock.calls.filter(([name]) => name === 'open-date-picker').length
 
@@ -251,6 +265,69 @@ describe('useBlockTreeEventListeners', () => {
       expect(opts.handleTogglePriority).not.toHaveBeenCalled()
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
       expect(opts.handleShowProperties).not.toHaveBeenCalled()
+    })
+  })
+
+  // #253 — these toolbar buttons previously dispatched events with no consumer.
+  describe('structural toolbar inserts (#253)', () => {
+    function structuralOpts(content: string) {
+      const blocksById = new Map([['BLOCK_1', { id: 'BLOCK_1', content }]])
+      const mount = vi.fn()
+      const opts = makeOptions({
+        rovingEditor: { editor: null, mount, unmount: vi.fn() } as unknown as RovingEditorHandle,
+        pageStore: {
+          setState: vi.fn(),
+          getState: () => ({ blocksById, blocks: [{ id: 'BLOCK_1', content }] }),
+          getInitialState: vi.fn(),
+          subscribe: vi.fn(),
+        } as unknown as UseBlockTreeEventListenersOptions['pageStore'],
+      })
+      return { opts, mount }
+    }
+
+    it.each([
+      ['INSERT_DIVIDER', '---'],
+      ['INSERT_ORDERED_LIST', '1. hello'],
+      ['INSERT_CALLOUT', '> [!INFO] hello'],
+    ] as const)('%s edits the focused block to "%s"', async (event, toText) => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockResolvedValue(undefined)
+      const { opts, mount } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent(event)
+
+      await vi.waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
+      )
+      // The block is re-mounted with the new content (matches the slash path).
+      await vi.waitFor(() => expect(mount).toHaveBeenCalledWith('BLOCK_1', toText))
+    })
+
+    it('no-ops when no block is focused', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockClear()
+      const { opts } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners({ ...opts, focusedBlockId: null }))
+
+      dispatchBlockEvent('INSERT_DIVIDER')
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    })
+
+    it('removes the structural listeners on unmount', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      const { opts } = structuralOpts('hello')
+      const { unmount } = renderHook(() => useBlockTreeEventListeners(opts))
+      unmount()
+      mockedInvoke.mockClear()
+
+      dispatchBlockEvent('INSERT_DIVIDER')
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
     })
   })
 })

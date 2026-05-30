@@ -13,6 +13,7 @@
  * - OPEN_BLOCK_PROPERTIES
  */
 
+import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
@@ -20,11 +21,14 @@ import type { StoreApi } from 'zustand'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
+import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import { setPriority as setPriorityCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 import type { DatePickerMode } from './useBlockDatePicker'
+import { applyContentEdit, readCurrentContent } from './useBlockSlashCommands/helpers'
+import type { SlashCommandContext } from './useBlockSlashCommands/types'
 
 export interface UseBlockTreeEventListenersOptions {
   focusedBlockId: string | null
@@ -33,9 +37,10 @@ export interface UseBlockTreeEventListenersOptions {
   handleToggleTodo: (id: string) => void
   handleTogglePriority: (id: string) => void
   handleShowProperties: (id: string) => void
-  rovingEditor: {
-    editor: { state: { selection: { $anchor: { pos: number } } } } | null
-  }
+  // Full handle (BlockTree passes the real `RovingEditorHandle`): the
+  // date-picker handlers read `editor.state.selection`, while the structural
+  // toolbar handlers (#253) need `editor.getJSON()` + `mount` to edit content.
+  rovingEditor: RovingEditorHandle
   datePickerCursorPos: RefObject<number | undefined>
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
@@ -172,4 +177,57 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     }
     return onBlockEvent(document, 'OPEN_BLOCK_PROPERTIES', handler)
   }, [focusedBlockId, handleShowProperties])
+
+  // ── Structural toolbar inserts: ordered-list / divider / callout (#253) ──
+  // These toolbar buttons dispatch DOM events but previously had NO consumer,
+  // so they were silent no-ops. Wire them to the SAME content-edit path the
+  // matching slash commands use (`useSlashCommandStructural`): build a minimal
+  // SlashCommandContext from the focused block and reuse the canonical
+  // `applyContentEdit` (which preserves the MAINT-116 undo contract + remount).
+  useEffect(() => {
+    if (!focusedBlockId) return
+
+    const buildCtx = (): SlashCommandContext => ({
+      blockId: focusedBlockId,
+      rootParentId,
+      rovingEditor: rovingEditorRef.current,
+      pageStore,
+      datePickerCursorPos,
+      setDatePickerMode,
+      setDatePickerOpen,
+      t: t as unknown as TFunction,
+      // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
+      // never open the template picker.
+      openTemplatePicker: async () => {},
+    })
+
+    const onOrderedList = () => {
+      const ctx = buildCtx()
+      void applyContentEdit(ctx, `1. ${readCurrentContent(ctx)}`, 'slash.numberedListFailed')
+    }
+    const onDivider = () => {
+      void applyContentEdit(buildCtx(), '---', 'slash.dividerFailed')
+    }
+    const onCallout = () => {
+      const ctx = buildCtx()
+      void applyContentEdit(ctx, `> [!INFO] ${readCurrentContent(ctx)}`, 'slash.calloutFailed')
+    }
+
+    const cleanups = [
+      onBlockEvent(document, 'INSERT_ORDERED_LIST', onOrderedList),
+      onBlockEvent(document, 'INSERT_DIVIDER', onDivider),
+      onBlockEvent(document, 'INSERT_CALLOUT', onCallout),
+    ]
+    return () => {
+      for (const cleanup of cleanups) cleanup()
+    }
+  }, [
+    focusedBlockId,
+    rootParentId,
+    pageStore,
+    datePickerCursorPos,
+    setDatePickerMode,
+    setDatePickerOpen,
+    t,
+  ])
 }
