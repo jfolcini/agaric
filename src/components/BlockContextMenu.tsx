@@ -404,8 +404,15 @@ export function BlockContextMenu({
 
   const copyUrlGroup = copyUrlItem ? [copyUrlItem] : []
 
-  // Filter out items without actions and empty groups
-  const groups = [copyUrlGroup, group1, group2, group3, group4, group5]
+  // Filter out items without actions and empty groups.
+  //
+  // #217 A1 — order for calm scannability and mis-click safety: contextual
+  // Copy-URL · Tasks (TODO/Priority) · Block ops (indent/move/merge) ·
+  // View (collapse/zoom) · History/Properties · Delete LAST. The destructive
+  // Delete previously sat at the very top (group1) — the easiest item to
+  // mis-click; it now lives at the bottom, visually separated by the
+  // existing inter-group divider and its `text-destructive` styling.
+  const groups = [copyUrlGroup, group4, group2, group3, group5, group1]
     .map((group) => group.filter((item) => item.action !== undefined))
     .filter((group) => group.length > 0)
 
