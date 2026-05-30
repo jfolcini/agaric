@@ -314,11 +314,23 @@ describe('BlockContextMenu', () => {
     const user = userEvent.setup()
     const { props } = renderMenu()
 
-    // First item (Delete) should be focused after mount
+    // #217 A1 — the first item is now the Tasks group (TODO cycle), not the
+    // destructive Delete (which moved to the bottom). Enter activates the
+    // focused (first) item.
     await user.keyboard('{Enter}')
 
-    expect(props.onDelete).toHaveBeenCalledWith('BLOCK_01')
+    expect(props.onToggleTodo).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
+  })
+
+  it('#217 A1 — destructive Delete is the last item, never the first', () => {
+    renderMenu()
+    const items = screen.getAllByRole('menuitem')
+    expect(items.length).toBeGreaterThan(1)
+    // Delete sits at the bottom so it can't be mis-clicked / Enter-activated
+    // on open; the first item is a non-destructive action.
+    expect(items[items.length - 1]).toHaveTextContent(t('contextMenu.delete'))
+    expect(items[0]).not.toHaveTextContent(t('contextMenu.delete'))
   })
 
   // ── Shortcut hints ──────────────────────────────────────────────
@@ -629,8 +641,8 @@ describe('BlockContextMenu', () => {
 
     await user.keyboard('{Enter}')
 
-    // Second item is Indent
-    expect(props.onIndent).toHaveBeenCalledWith('BLOCK_01')
+    // #217 A1 — Tasks group is first now: item[0]=TODO cycle, item[1]=Priority.
+    expect(props.onTogglePriority).toHaveBeenCalledWith('BLOCK_01')
     expect(props.onClose).toHaveBeenCalled()
   })
 
@@ -906,11 +918,12 @@ describe('BlockContextMenu', () => {
     })
 
     it('refocuses the new first item when linkUrl appears (Copy URL becomes first)', async () => {
-      // No linkUrl initially → Delete is the first item.
+      // No linkUrl initially → Copy URL is absent and the Tasks group leads
+      // (#217 A1); the first item is some non-Copy-URL action with focus.
       const { rerender, props } = renderMenu()
 
       const initialItems = screen.getAllByRole('menuitem')
-      expect(initialItems[0]).toHaveTextContent(t('contextMenu.delete'))
+      expect(initialItems[0]).not.toHaveTextContent(t('contextMenu.copyUrl'))
       expect(initialItems[0]).toHaveFocus()
       const initialCount = initialItems.length
 
