@@ -18,7 +18,7 @@ Type, paste, or use the toolbar:
 | Bold | `Ctrl+B` |
 | Italic | `Ctrl+I` |
 | Inline code | `Ctrl+E` |
-| Strikethrough | `Ctrl+Shift+X` |
+| Strikethrough | `Ctrl+Shift+S` |
 | Highlight | `Ctrl+Shift+H` |
 | Underline | `Ctrl+U` (stored as `<u>…</u>`) |
 | Heading levels | Toolbar → Heading popover, or slash menu (`/h1` … `/h6`) |

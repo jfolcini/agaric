@@ -36,8 +36,9 @@ The five **picker triggers** — `[[`, `@`, `((`, `/`, `::` — are part of the 
 | `Ctrl+B` | Bold |
 | `Ctrl+I` | Italic |
 | `Ctrl+E` | Inline code |
-| `Ctrl+Shift+X` | Strikethrough |
+| `Ctrl+Shift+S` | Strikethrough (legacy `Ctrl+Shift+X` still works for one release) |
 | `Ctrl+Shift+H` | Highlight |
+| `Ctrl+U` | Underline |
 | `Ctrl+Shift+C` | Code block (convert current block) |
 | `Ctrl+K` | Add / edit external link on the selection |
 
