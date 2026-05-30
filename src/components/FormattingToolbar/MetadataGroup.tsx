@@ -31,6 +31,18 @@ interface CyclePriorityButtonProps {
 }
 
 /** Render the cycle-priority button (a custom inline button). */
+/**
+ * The priority indicator dot. #217 — when no priority is set, render a hollow
+ * outline dot (not nothing) so the control reads as an interactive "no
+ * priority" state rather than a disabled-looking bare "P".
+ */
+function priorityDot(currentPriority: string | null | undefined): React.ReactElement {
+  if (currentPriority === '1') return <span className="h-2 w-2 rounded-full bg-priority-urgent" />
+  if (currentPriority === '2') return <span className="h-2 w-2 rounded-full bg-priority-high" />
+  if (currentPriority === '3') return <span className="h-2 w-2 rounded-full bg-priority-normal" />
+  return <span className="h-2 w-2 rounded-full border border-muted-foreground/50" />
+}
+
 export function renderCyclePriority({
   mode,
   t,
@@ -56,9 +68,7 @@ export function renderCyclePriority({
         }}
       >
         <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none mr-2">
-          {currentPriority === '1' && <span className="h-2 w-2 rounded-full bg-priority-urgent" />}
-          {currentPriority === '2' && <span className="h-2 w-2 rounded-full bg-priority-high" />}
-          {currentPriority === '3' && <span className="h-2 w-2 rounded-full bg-priority-normal" />}
+          {priorityDot(currentPriority)}
           {currentPriority ? `P${currentPriority}` : 'P'}
         </span>
         <span>{t('toolbar.cyclePriority')}</span>
@@ -79,9 +89,7 @@ export function renderCyclePriority({
         }}
       >
         <span className="inline-flex items-center gap-1 text-xs font-semibold leading-none text-muted-foreground">
-          {currentPriority === '1' && <span className="h-2 w-2 rounded-full bg-priority-urgent" />}
-          {currentPriority === '2' && <span className="h-2 w-2 rounded-full bg-priority-high" />}
-          {currentPriority === '3' && <span className="h-2 w-2 rounded-full bg-priority-normal" />}
+          {priorityDot(currentPriority)}
           {currentPriority ? `P${currentPriority}` : 'P'}
         </span>
       </Button>
