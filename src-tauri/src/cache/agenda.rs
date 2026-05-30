@@ -804,7 +804,7 @@ mod tests {
         // Drop every source-data row that contributes to agenda_cache.
         // Soft-delete is sufficient — the SQL filters on `deleted_at IS
         // NULL`. We use a fixed timestamp to avoid clock noise.
-        sqlx::query("UPDATE blocks SET deleted_at = '2025-12-31T00:00:00+00:00'")
+        sqlx::query("UPDATE blocks SET deleted_at = 1767139200000")
             .execute(&pool)
             .await
             .unwrap();

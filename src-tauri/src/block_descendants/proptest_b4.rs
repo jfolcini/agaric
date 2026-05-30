@@ -117,7 +117,7 @@ fn forest_strategy(
 }
 
 /// Fixed tombstone for soft-deleted blocks.
-const DELETED_AT: &str = "2020-01-01T00:00:00Z";
+const DELETED_AT: i64 = 1_577_836_800_000;
 
 /// A realised forest: block ids in creation order, the resolved parent
 /// map, the soft-deleted set, and each block's stored position.
@@ -168,7 +168,7 @@ async fn seed_forest(pool: &SqlitePool, sketches: &[NodeSketch]) -> Forest {
         }
         let pos = map_position(sketch.position_raw);
         position.insert(id.clone(), pos);
-        let deleted_at: Option<&str> = if sketch.deleted {
+        let deleted_at: Option<i64> = if sketch.deleted {
             deleted.insert(id.clone());
             Some(DELETED_AT)
         } else {

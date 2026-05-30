@@ -238,7 +238,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&b.content)
                 .bind(&b.parent_id)
                 .bind(b.position)
-                .bind(&b.deleted_at)
+                .bind(b.deleted_at)
                 .bind(&b.todo_state)
                 .bind(&b.priority)
                 .bind(&b.due_date)
@@ -297,7 +297,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&a.filename)
                 .bind(a.size_bytes)
                 .bind(&a.fs_path)
-                .bind(&a.created_at)
+                .bind(a.created_at)
                 .bind(&a.deleted_at)
         },
     );

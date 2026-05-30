@@ -128,7 +128,8 @@ pub struct BlockRow {
     pub content: Option<String>,
     pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
-    pub deleted_at: Option<String>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    pub deleted_at: Option<i64>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
@@ -178,7 +179,8 @@ pub struct ActiveBlockRow {
     pub content: Option<String>,
     pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
-    pub deleted_at: Option<String>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    pub deleted_at: Option<i64>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,
@@ -265,7 +267,8 @@ pub struct HistoryEntry {
     pub seq: i64,
     pub op_type: String,
     pub payload: String,
-    pub created_at: String,
+    /// Epoch-ms (op_log.created_at is INTEGER since migration 0079).
+    pub created_at: i64,
 }
 
 /// Internal cursor for keyset pagination.

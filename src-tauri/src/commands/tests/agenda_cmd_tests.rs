@@ -513,7 +513,7 @@ async fn count_agenda_batch_excludes_deleted_blocks() {
     insert_block(&pool, "AG_LIVE", "content", "live", None, None).await;
     insert_block(&pool, "AG_DEL", "content", "deleted", None, None).await;
     // Soft-delete AG_DEL
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
         .bind("AG_DEL")
         .execute(&pool)
         .await
@@ -622,7 +622,7 @@ async fn count_agenda_batch_by_source_excludes_deleted() {
     insert_block(&pool, "BSD_LIVE", "content", "live", None, None).await;
     insert_block(&pool, "BSD_DEL", "content", "deleted", None, None).await;
 
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'BSD_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'BSD_DEL'")
         .execute(&pool)
         .await
         .unwrap();

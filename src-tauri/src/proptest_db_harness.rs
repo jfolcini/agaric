@@ -339,7 +339,7 @@ impl ChainModel {
                 // the actual value is irrelevant to the chain model.
                 Some(OpPayload::RestoreBlock(RestoreBlockPayload {
                     block_id: BlockId::from_trusted(&target),
-                    deleted_at_ref: "restored-by-harness".into(),
+                    deleted_at_ref: 0,
                 }))
             }
             OpKind::Move {
@@ -472,15 +472,16 @@ impl AppliedChain {
 /// chain. Spaced one minute apart, rolling into hours, so `created_at`
 /// lex-ordering tracks chain order exactly (the invariant the reverse
 /// prior-state lookups depend on).
-fn ts_for(n: usize) -> String {
+fn ts_for(n: usize) -> i64 {
     let (base_h, base_m) = FIXED_BASE_HHMM;
-    let total = base_m as usize + n;
-    let h = base_h as usize + total / 60;
-    let m = total % 60;
+    let total_minutes = base_h as usize * 60 + base_m as usize + n;
+    let h = total_minutes / 60;
     // h stays < 24 for the chain lengths we generate (max ~64 ops); guard
     // anyway so a future longer chain doesn't silently wrap.
     assert!(h < 24, "harness chain too long for single-day timestamps");
-    format!("2025-01-15T{h:02}:{m:02}:00Z")
+    // #109 Phase 2: op_log.created_at is INTEGER epoch-ms.
+    // 2025-01-15T00:00:00Z = 1_736_899_200_000; one minute = 60_000 ms.
+    1_736_899_200_000 + (total_minutes as i64) * 60_000
 }
 
 /// Generate a fresh ULID pool, resolve the sketch chain into well-formed

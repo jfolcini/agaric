@@ -59,9 +59,10 @@ const TYPE_CONTENT: &str = "content";
 const TYPE_PAGE: &str = "page";
 const TYPE_TAG: &str = "tag";
 /// Far-future timestamp — ensures no existing op can match (used for draft simulation).
-const FAR_FUTURE_TS: &str = "2099-01-01T00:00:00Z";
+const FAR_FUTURE_TS: i64 = 4_070_908_800_000;
 /// Far-past timestamp — ensures any real op will be newer (used for already-flushed drafts).
-const PAST_TS: &str = "2000-01-01T00:00:00Z";
+// #109 Phase 2: `block_drafts.updated_at` is INTEGER epoch-ms. 2000-01-01T00:00:00Z.
+const PAST_TS: i64 = 946_684_800_000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -697,7 +698,7 @@ async fn purge_removes_block_tags_properties_and_attachments() {
     .bind("readme.txt")
     .bind(256_i64)
     .bind("attachments/readme.txt")
-    .bind("2024-01-01T00:00:00Z")
+    .bind(1_704_067_200_000_i64)
     .execute(&pool)
     .await
     .unwrap();

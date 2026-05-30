@@ -124,9 +124,9 @@ describe('usePageBrowserSort', () => {
     const pages = [
       // Metadata-row shape (camelCase) — only metadata rows expose
       // lastModifiedAt; BlockRow callers fall back to alphabetical.
-      makeMetaRow('P1', 'A', { lastModifiedAt: '2026-01-01T00:00:00Z' }),
-      makeMetaRow('P2', 'B', { lastModifiedAt: '2026-05-01T00:00:00Z' }),
-      makeMetaRow('P3', 'C', { lastModifiedAt: '2026-03-01T00:00:00Z' }),
+      makeMetaRow('P1', 'A', { lastModifiedAt: 1767225600000 }), // 2026-01-01
+      makeMetaRow('P2', 'B', { lastModifiedAt: 1777593600000 }), // 2026-05-01
+      makeMetaRow('P3', 'C', { lastModifiedAt: 1772323200000 }), // 2026-03-01
     ]
     const sorted = result.current.sortPages(pages)
     expect(sorted.map((p) => p.id)).toEqual(['P2', 'P3', 'P1'])
@@ -219,7 +219,7 @@ import type { PageWithMetadataRow } from '../../lib/tauri'
 function makeMetaRow(
   id: string,
   content: string,
-  meta: { lastModifiedAt?: string; inboundLinkCount?: number; childBlockCount?: number } = {},
+  meta: { lastModifiedAt?: number; inboundLinkCount?: number; childBlockCount?: number } = {},
 ): PageWithMetadataRow {
   return {
     id,
@@ -233,7 +233,7 @@ function makeMetaRow(
     dueDate: null,
     scheduledDate: null,
     pageId: id,
-    lastModifiedAt: meta.lastModifiedAt ?? '2026-01-01T00:00:00Z',
+    lastModifiedAt: meta.lastModifiedAt ?? 1767225600000, // 2026-01-01
     inboundLinkCount: meta.inboundLinkCount ?? 0,
     childBlockCount: meta.childBlockCount ?? 0,
     flags: { hasTags: false, hasTodo: false, hasScheduled: false, hasDue: false },

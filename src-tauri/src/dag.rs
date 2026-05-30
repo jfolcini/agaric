@@ -488,7 +488,7 @@ pub async fn append_merge_op(
     let parent_seqs_json = serde_json::to_string(&sorted_parents)?;
     let op_type = op_payload.op_type_str().to_owned();
     let payload_json = serialize_inner_payload(&op_payload)?;
-    let created_at = crate::now_rfc3339();
+    let created_at = crate::db::now_ms();
 
     // Test/bench-only convenience wrapper — production merge ingestion appends
     // within an outer transaction; this self-opened tx only ever serves unit

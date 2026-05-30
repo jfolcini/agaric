@@ -3346,7 +3346,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             position: Some(1),
             content: "compacted-state content".into(),
         }),
-        "2025-01-15T12:00:00Z".into(),
+        1_736_942_400_000,
     )
     .await
     .unwrap();
@@ -3371,7 +3371,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             position: Some(2),
             content: "initiator-origin op already mirrored on responder".into(),
         }),
-        "2025-01-15T12:00:01Z".into(),
+        1_736_942_401_000,
     )
     .await
     .unwrap();

@@ -18,7 +18,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 const DEV: &str = "test-device-mat";
-const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+const FIXED_TS: i64 = 1_735_689_600_000;
 const FAKE_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Empty GCal handle cell used by every existing materializer test
@@ -52,7 +52,7 @@ fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
         hash: FAKE_HASH.into(),
         op_type: op_type.into(),
         payload: payload.into(),
-        created_at: FIXED_TS.into(),
+        created_at: FIXED_TS,
         block_id,
     }
 }
@@ -614,7 +614,7 @@ async fn dispatch_op_delete_block() {
     mat.dispatch_op(&r).await.unwrap();
     mat.flush_foreground().await.unwrap();
     let row =
-        sqlx::query_as::<_, (Option<String>,)>("SELECT deleted_at FROM blocks WHERE id = 'BLK-3'")
+        sqlx::query_as::<_, (Option<i64>,)>("SELECT deleted_at FROM blocks WHERE id = 'BLK-3'")
             .fetch_one(&pool)
             .await
             .unwrap();
@@ -633,7 +633,7 @@ async fn dispatch_op_restore_block() {
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::test_id("blk-r"),
-            deleted_at_ref: FIXED_TS.into(),
+            deleted_at_ref: FIXED_TS,
         }),
     )
     .await;
@@ -845,7 +845,7 @@ async fn dispatch_op_delete_attachment() {
     // M-1: store the row with the canonical-uppercase id so it matches the
     // bind value the materializer derives from the auto-normalized
     // AttachmentId in the payload.
-    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, '2025-01-01T00:00:00Z')")
+    sqlx::query("INSERT INTO attachments (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) VALUES ('ATT-2', 'BLK-ATT-DEL', 'f.txt', '/tmp/f.txt', 'text/plain', 10, 1735689600000)")
         .execute(&pool).await.unwrap();
     let r = make_op_record(
         &pool,
@@ -2535,7 +2535,7 @@ async fn apply_op_delete() {
             .fetch_one(&pool)
             .await
             .unwrap()
-            .get::<Option<String>, _>("deleted_at")
+            .get::<Option<i64>, _>("deleted_at")
             .is_some(),
         "deleted_at should be set after apply_op delete"
     );
@@ -2551,7 +2551,7 @@ async fn apply_op_restore() {
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::test_id("APPLY_RESTORE_1"),
-            deleted_at_ref: FIXED_TS.into(),
+            deleted_at_ref: FIXED_TS,
         }),
     )
     .await;
@@ -2562,7 +2562,7 @@ async fn apply_op_restore() {
             .fetch_one(&pool)
             .await
             .unwrap()
-            .get::<Option<String>, _>("deleted_at")
+            .get::<Option<i64>, _>("deleted_at")
             .is_none(),
         "deleted_at should be cleared after apply_op restore"
     );
@@ -4657,7 +4657,7 @@ async fn dispatch_restore_block_enqueues_full_cache_rebuild_plus_fts_update() {
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::test_id("blk-m39-r"),
-            deleted_at_ref: FIXED_TS.into(),
+            deleted_at_ref: FIXED_TS,
         }),
     )
     .await;
@@ -5421,7 +5421,7 @@ async fn insert_attachment_row(
     .unwrap();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, 'application/octet-stream', 'f', 1, ?, '2025-01-01T00:00:00Z')",
+         VALUES (?, ?, 'application/octet-stream', 'f', 1, ?, 1735689600000)",
     )
     .bind(attachment_id)
     .bind(block_id)
@@ -6492,12 +6492,12 @@ mod pages_cache_count_parity {
         assert_eq!(child, 0, "child_block_count must drop to 0");
 
         // RestoreBlock — re-read deleted_at_ref from the row.
-        let deleted_at: String =
+        let deleted_at: i64 =
             sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'CHILD_D'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        let payload = format!(r#"{{"block_id":"CHILD_D","deleted_at_ref":"{deleted_at}"}}"#);
+        let payload = format!(r#"{{"block_id":"CHILD_D","deleted_at_ref":{deleted_at}}}"#);
         run_op(&pool, op_task("restore_block", &payload), &[]).await;
         assert_parity(&pool, "after restore CHILD_D").await;
         let (_, child) = cached_counts(&pool, "PAGE_D").await.unwrap();
@@ -6586,12 +6586,11 @@ mod pages_cache_count_parity {
         assert_parity(&pool, "after delete CB02").await;
 
         // Op 4: RestoreBlock the same block.
-        let deleted_at: String =
-            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'CB02'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        let payload = format!(r#"{{"block_id":"CB02","deleted_at_ref":"{deleted_at}"}}"#);
+        let deleted_at: i64 = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'CB02'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let payload = format!(r#"{{"block_id":"CB02","deleted_at_ref":{deleted_at}}}"#);
         run_op(&pool, op_task("restore_block", &payload), &[]).await;
         assert_parity(&pool, "after restore CB02").await;
 

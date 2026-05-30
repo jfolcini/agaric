@@ -60,7 +60,7 @@ function makeAttachment(overrides: Partial<AttachmentRow> = {}): AttachmentRow {
     mime_type: 'image/png',
     size_bytes: 1024,
     fs_path: '/tmp/photo.png',
-    created_at: '2024-01-01T00:00:00Z',
+    created_at: 1704067200000,
     ...overrides,
   }
 }

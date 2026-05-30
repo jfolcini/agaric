@@ -50,7 +50,7 @@
       {
         "name": "created_at",
         "ordinal": 4,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "op_log",

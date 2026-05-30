@@ -72,7 +72,7 @@ export function makeHistoryEntry(
   seq: number,
   opType: string,
   payload: unknown,
-  createdAt = '2025-01-15T12:00:00Z',
+  createdAt: number = 1736942400000,
   deviceId = 'DEVICE01',
 ): HistoryEntry {
   return {

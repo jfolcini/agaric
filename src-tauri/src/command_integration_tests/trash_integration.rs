@@ -91,8 +91,8 @@ async fn restore_all_deleted_handles_cascade_deleted_blocks() {
     // Verify both have same deleted_at
     let par_row = get_block_inner(&pool, "RA_PAR".into()).await.unwrap();
     let chd_row = get_block_inner(&pool, "RA_CHD".into()).await.unwrap();
-    assert_eq!(par_row.deleted_at.as_deref(), Some(ts.as_str()));
-    assert_eq!(chd_row.deleted_at.as_deref(), Some(ts.as_str()));
+    assert_eq!(par_row.deleted_at, Some(ts));
+    assert_eq!(chd_row.deleted_at, Some(ts));
 
     let resp = restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
     assert_eq!(resp.affected_count, 2, "both blocks should be restored");

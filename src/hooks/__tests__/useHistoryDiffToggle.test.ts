@@ -31,7 +31,7 @@ function makeEntry(overrides: Partial<HistoryEntry> = {}): HistoryEntry {
     seq: 1,
     op_type: 'edit_block',
     payload: JSON.stringify({ to_text: 'hello' }),
-    created_at: '2024-01-01T00:00:00Z',
+    created_at: 1704067200000,
     ...overrides,
   }
 }

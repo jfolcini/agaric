@@ -24,7 +24,8 @@ pub struct BlockSnapshot {
     pub content: Option<String>,
     pub parent_id: Option<crate::ulid::BlockId>,
     pub position: Option<i64>,
-    pub deleted_at: Option<String>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    pub deleted_at: Option<i64>,
     #[serde(default)]
     pub todo_state: Option<String>,
     #[serde(default)]
@@ -74,7 +75,9 @@ pub struct AttachmentSnapshot {
     pub filename: String,
     pub size_bytes: i64,
     pub fs_path: String,
-    pub created_at: String,
+    /// Epoch-ms (attachments.created_at is INTEGER since migration 0081).
+    pub created_at: i64,
+    /// STAYS TEXT — `attachments.deleted_at` is out of scope for #109 Phase 2.
     pub deleted_at: Option<String>,
 }
 

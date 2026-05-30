@@ -575,7 +575,8 @@ impl Projection for PagesProjection {
         //
         // **No-op-log ⇒ epoch rule (PEND-58d D7):** a page with no `op_log`
         // row has a NULL `MAX(created_at)`. All three variants COALESCE that
-        // NULL to a common epoch sentinel (`'1970-01-01T00:00:00Z'`) so the
+        // NULL to a common epoch sentinel (`0`, i.e. 1970-01-01 in the
+        // #109 Phase 2 INTEGER-epoch-ms scheme) so the
         // "no op-log ⇒ treated as edited at the epoch" rule is uniform:
         //   - Rolling{N}   — epoch is far in the past, so it is `< now-N`
         //                    and the page is EXCLUDED (it wasn't edited
@@ -592,50 +593,66 @@ impl Projection for PagesProjection {
         //
         // **End-of-day inclusivity (PEND-58e E3):** the Range `end` bound is
         // a *user-facing calendar window* — selecting `… AND 2026-03-01`
-        // means "up to and including all of March 1st". But `op_log.created_at`
-        // holds full RFC 3339 timestamps, so binding a bare `'2026-03-01'`
-        // verbatim into `<= ?` lexically excludes every same-day edit with a
-        // wall-clock component (`'2026-03-01T09:00:00.123Z' <= '2026-03-01'`
-        // is FALSE — `'T'` > end-of-string). We therefore extend a *bare*
-        // (`YYYY-MM-DD`, no `T`) end bound to the last instant of that day
-        // (`T23:59:59.999Z`) so the whole end day is included. A `start`
-        // bound needs no such treatment: a bare `'2026-02-01'` already sorts
-        // *before* any same-day timestamp, so `>= start` correctly admits
-        // the entire start day. An `end` that already carries a `T`
+        // means "up to and including all of March 1st". `op_log.created_at`
+        // is INTEGER epoch-ms (#109 Phase 2), so we convert each bound to an
+        // epoch-ms integer: a bare (`YYYY-MM-DD`, no `T`) `end` is extended
+        // to the last instant of that day (`T23:59:59.999Z`) before
+        // conversion so the whole end day is included. A `start` bound needs
+        // no such treatment: a bare `'2026-02-01'` converts to midnight,
+        // already at/before any same-day edit, so `>= start_ms` correctly
+        // admits the entire start day. An `end` that already carries a `T`
         // (full RFC 3339, also accepted by `validate_last_edited_date`) is
-        // bound verbatim — the caller asked for an exact instant.
-        const EPOCH: &str = "'1970-01-01T00:00:00Z'";
+        // converted verbatim — the caller asked for an exact instant.
+        //
+        // The "now − N days" boundary is computed in SQLite as epoch-ms:
+        // `CAST(strftime('%s','now',?) AS INTEGER) * 1000` (the `?` is the
+        // `-N days` modifier), matching the column's units.
+        const EPOCH: &str = "0"; // 1970-01-01T00:00:00Z in epoch-ms
+                                 // Parse an RFC 3339 timestamp to epoch-ms. Bounds are pre-validated
+                                 // by `validate_last_edited_date`; the fallback to `0` keeps a
+                                 // malformed value from panicking (it would simply match nothing).
+        fn to_ms(ts: &str) -> i64 {
+            chrono::DateTime::parse_from_rfc3339(ts)
+                .map(|d| d.timestamp_millis())
+                .unwrap_or(0)
+        }
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(
                 format!(
                     "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
-                     >= datetime('now', ?)"
+                     >= (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
                 ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::OlderThan { days } => WhereClause::new(
                 format!(
                     "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
-                     < datetime('now', ?)"
+                     < (CAST(strftime('%s', 'now', ?) AS INTEGER) * 1000)"
                 ),
                 vec![Bind::Text(format!("-{days} days"))],
             ),
             LastEditedSpec::Range { start, end } => {
                 // A bare-date `end` (no `T`) is extended to the end of that
                 // calendar day so daytime edits on the end day are INCLUDED
-                // (PEND-58e E3). A full RFC 3339 `end` is bound verbatim.
-                let end_inclusive = if end.contains('T') {
+                // (PEND-58e E3). A bare-date `start` is anchored at midnight.
+                // Both are then converted to epoch-ms to match the column.
+                let start_ms = to_ms(&if start.contains('T') {
+                    start.clone()
+                } else {
+                    format!("{start}T00:00:00Z")
+                });
+                let end_ms = to_ms(&if end.contains('T') {
                     end.clone()
                 } else {
                     format!("{end}T23:59:59.999Z")
-                };
+                });
                 WhereClause::new(
                     format!(
                         "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
                          >= ? AND COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), {EPOCH}) \
                          <= ?"
                     ),
-                    vec![Bind::Text(start.clone()), Bind::Text(end_inclusive)],
+                    vec![Bind::Int(start_ms), Bind::Int(end_ms)],
                 )
             }
         }
@@ -1197,10 +1214,10 @@ mod tests {
     #[test]
     fn last_edited_range_extends_bare_end_date_to_end_of_day() {
         // PEND-58e E3 — a bare `YYYY-MM-DD` `end` is extended to the last
-        // instant of that day so daytime edits on the end day are INCLUDED
-        // (the bound is compared against full RFC 3339 timestamps). The
-        // `start` is bound verbatim (a bare start already sorts before any
-        // same-day timestamp). The clause is `>= start AND <= end`.
+        // instant of that day so daytime edits on the end day are INCLUDED.
+        // #109 Phase 2: bounds are converted to INTEGER epoch-ms (matching
+        // `op_log.created_at`); a bare `start` is anchored at midnight. The
+        // clause is `>= start_ms AND <= end_ms`.
         let p = PagesProjection;
         let bare = p.compile(&FilterPrimitive::LastEdited {
             spec: LastEditedSpec::Range {
@@ -1216,14 +1233,14 @@ mod tests {
         assert_eq!(
             bare.binds,
             vec![
-                Bind::Text("2026-02-01".to_string()),
-                Bind::Text("2026-03-01T23:59:59.999Z".to_string()),
+                Bind::Int(1_769_904_000_000), // 2026-02-01T00:00:00Z (midnight)
+                Bind::Int(1_772_409_599_999), // 2026-03-01T23:59:59.999Z (end of day)
             ],
-            "a bare-date end must be extended to end-of-day; start bound verbatim"
+            "a bare-date end must be extended to end-of-day; bare start anchored at midnight"
         );
 
-        // A full RFC 3339 `end` is bound verbatim — the caller asked for an
-        // exact instant, no end-of-day extension.
+        // A full RFC 3339 `end` is converted verbatim — the caller asked for
+        // an exact instant, no end-of-day extension.
         let rfc = p.compile(&FilterPrimitive::LastEdited {
             spec: LastEditedSpec::Range {
                 start: "2026-02-01T00:00:00Z".into(),
@@ -1233,10 +1250,10 @@ mod tests {
         assert_eq!(
             rfc.binds,
             vec![
-                Bind::Text("2026-02-01T00:00:00Z".to_string()),
-                Bind::Text("2026-03-01T12:00:00Z".to_string()),
+                Bind::Int(1_769_904_000_000), // 2026-02-01T00:00:00Z
+                Bind::Int(1_772_366_400_000), // 2026-03-01T12:00:00Z
             ],
-            "an RFC 3339 end must be bound verbatim (no extension)"
+            "an RFC 3339 end must be converted verbatim (no extension)"
         );
     }
 
@@ -1248,7 +1265,8 @@ mod tests {
         // (excluded by Rolling/Range, included by OlderThan). Before the fix
         // Rolling/Range omitted the COALESCE (NULL → dropped) while OlderThan
         // used a `'0001-01-01'` sentinel — the asymmetry D7 closes.
-        const EPOCH: &str = "'1970-01-01T00:00:00Z'";
+        // #109 Phase 2: the sentinel is now the INTEGER epoch-ms `0`.
+        const EPOCH: &str = ", 0)"; // COALESCE(..., 0)
         let p = PagesProjection;
         for spec in [
             LastEditedSpec::Rolling { days: 7 },

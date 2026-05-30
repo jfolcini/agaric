@@ -40,7 +40,8 @@ pub struct OpTransfer {
     pub hash: String,
     pub op_type: String,
     pub payload: String,
-    pub created_at: String,
+    /// Epoch-ms (mirrors `op_log.created_at`, INTEGER since migration 0079).
+    pub created_at: i64,
 }
 
 // ---- Conversions ----------------------------------------------------------

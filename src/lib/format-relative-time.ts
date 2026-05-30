@@ -14,7 +14,7 @@ import type { TFunction } from 'i18next'
  * - Less than 24 hours:    t('sidebar.hoursAgo', { count })
  * - Otherwise:             t('sidebar.daysAgo', { count })
  */
-export function formatRelativeTime(isoString: string, t: TFunction): string {
+export function formatRelativeTime(isoString: string | number, t: TFunction): string {
   const now = Date.now()
   const then = new Date(isoString).getTime()
   const diffMs = now - then

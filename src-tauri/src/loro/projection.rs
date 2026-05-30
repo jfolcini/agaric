@@ -238,7 +238,7 @@ pub async fn project_purge_block_to_sql(
 pub async fn project_delete_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
-    deleted_at: &str,
+    deleted_at: i64,
 ) -> Result<(), AppError> {
     sqlx::query(concat!(
         crate::descendants_cte_active!(),
@@ -298,7 +298,7 @@ pub async fn project_move_block_to_sql(
 pub async fn project_restore_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
-    deleted_at_ref: &str,
+    deleted_at_ref: i64,
 ) -> Result<(), AppError> {
     sqlx::query(concat!(
         crate::descendants_cte_standard!(),
@@ -781,13 +781,19 @@ pub async fn reproject_block_deleted_at_from_engine(
             // Cascade soft-delete the seed + active descendants at the
             // engine's timestamp. Re-uses the local delete projection so
             // the inbound-sync and local paths share one cascade shape.
+            // #109 Phase 2: the engine seed carries `deleted_at` as a
+            // serialized String slot; parse to i64 epoch-ms for the
+            // INTEGER `blocks.deleted_at` column.
+            let ts = ts.parse::<i64>().map_err(|e| {
+                AppError::Validation(format!("engine deleted_at not an integer: {e}"))
+            })?;
             project_delete_block_to_sql(conn, block_id.as_str(), ts).await?;
         }
         None => {
             // The remote says this block is alive. Read SQL's current
             // soft-delete state: nothing to do if it is already alive or
             // absent.
-            let current: Option<Option<String>> =
+            let current: Option<Option<i64>> =
                 sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
                     .bind(block_id.as_str())
                     .fetch_optional(&mut *conn)
@@ -820,7 +826,7 @@ pub async fn reproject_block_deleted_at_from_engine(
 
             // Genuine seed restore: clear the cohort (seed + descendants
             // soft-deleted at the same timestamp).
-            project_restore_block_to_sql(conn, block_id.as_str(), &deleted_at_ref).await?;
+            project_restore_block_to_sql(conn, block_id.as_str(), deleted_at_ref).await?;
         }
     }
     Ok(())
@@ -953,7 +959,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO blocks \
                 (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES (?, 'content', 'original', NULL, 0, '2026-01-01T00:00:00Z')",
+             VALUES (?, 'content', 'original', NULL, 0, 1767225600000)",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -1145,19 +1151,19 @@ mod tests {
         .await
         .unwrap();
 
-        let deleted_at = "2026-05-10T12:00:00Z";
+        let deleted_at: i64 = 1_778_414_400_000;
         let mut conn = pool.acquire().await.expect("acquire");
         project_delete_block_to_sql(&mut conn, BLOCK_A, deleted_at)
             .await
             .expect("project delete");
         drop(conn);
 
-        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+        let row: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(BLOCK_A)
             .fetch_one(&pool)
             .await
             .expect("fetch row");
-        assert_eq!(row.0.as_deref(), Some(deleted_at));
+        assert_eq!(row.0, Some(deleted_at));
     }
 
     #[tokio::test]
@@ -1177,8 +1183,8 @@ mod tests {
         .await
         .unwrap();
 
-        let first_ts = "2026-05-10T12:00:00Z";
-        let second_ts = "2026-05-11T15:00:00Z";
+        let first_ts: i64 = 1_778_414_400_000;
+        let second_ts: i64 = 1_778_511_600_000;
         let mut conn = pool.acquire().await.expect("acquire");
         project_delete_block_to_sql(&mut conn, BLOCK_A, first_ts)
             .await
@@ -1188,13 +1194,13 @@ mod tests {
             .expect("second delete (should no-op)");
         drop(conn);
 
-        let row: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+        let row: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(BLOCK_A)
             .fetch_one(&pool)
             .await
             .expect("fetch row");
         assert_eq!(
-            row.0.as_deref(),
+            row.0,
             Some(first_ts),
             "WHERE deleted_at IS NULL filter must keep the first timestamp"
         );
@@ -1269,7 +1275,7 @@ mod tests {
         let (pool, _dir) = fresh_pool().await;
         const CHILD_1: &str = "01HZ00000000000000000000C1";
         const CHILD_2: &str = "01HZ00000000000000000000C2";
-        let cohort_ts = "2026-05-10T12:00:00Z";
+        let cohort_ts: i64 = 1_778_414_400_000;
 
         sqlx::query(
             "INSERT INTO blocks \
@@ -1302,12 +1308,11 @@ mod tests {
         drop(conn);
 
         for id in [BLOCK_A, CHILD_1, CHILD_2] {
-            let row: (Option<String>,) =
-                sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(id)
-                    .fetch_one(&pool)
-                    .await
-                    .expect("fetch row");
+            let row: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row");
             assert_eq!(row.0, None, "{id} must be restored");
         }
     }
@@ -1318,8 +1323,8 @@ mod tests {
         // restored — mirrors the cohort-identity invariant.
         let (pool, _dir) = fresh_pool().await;
         const CHILD_OTHER: &str = "01HZ00000000000000000000CX";
-        let cohort_ts = "2026-05-10T12:00:00Z";
-        let other_ts = "2025-01-01T00:00:00Z";
+        let cohort_ts: i64 = 1_778_414_400_000;
+        let other_ts: i64 = 1_735_689_600_000;
 
         sqlx::query(
             "INSERT INTO blocks \
@@ -1349,7 +1354,7 @@ mod tests {
             .expect("project restore");
         drop(conn);
 
-        let parent_row: (Option<String>,) =
+        let parent_row: (Option<i64>,) =
             sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
                 .bind(BLOCK_A)
                 .fetch_one(&pool)
@@ -1358,14 +1363,14 @@ mod tests {
         assert_eq!(parent_row.0, None);
 
         // CHILD_OTHER stays soft-deleted.
-        let child_row: (Option<String>,) =
+        let child_row: (Option<i64>,) =
             sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
                 .bind(CHILD_OTHER)
                 .fetch_one(&pool)
                 .await
                 .expect("fetch other child");
         assert_eq!(
-            child_row.0.as_deref(),
+            child_row.0,
             Some(other_ts),
             "child from other cohort must NOT be restored"
         );
@@ -1588,7 +1593,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO blocks \
                  (id, block_type, content, parent_id, position, deleted_at, todo_state) \
-             VALUES (?, 'content', 'original', NULL, 0, '2026-01-01T00:00:00Z', 'DOING')",
+             VALUES (?, 'content', 'original', NULL, 0, 1767225600000, 'DOING')",
         )
         .bind(BLOCK_A)
         .execute(&pool)
@@ -1639,15 +1644,15 @@ mod tests {
         assert_eq!(core.1, 7, "position must update");
 
         // Soft-delete + hot-path column preserved (REPLACE would NULL these).
-        let preserved: (Option<String>, Option<String>) =
+        let preserved: (Option<i64>, Option<String>) =
             sqlx::query_as("SELECT deleted_at, todo_state FROM blocks WHERE id = ?")
                 .bind(BLOCK_A)
                 .fetch_one(&pool)
                 .await
                 .expect("fetch preserved cols");
         assert_eq!(
-            preserved.0.as_deref(),
-            Some("2026-01-01T00:00:00Z"),
+            preserved.0,
+            Some(1_767_225_600_000),
             "deleted_at must survive the upsert (no resurrection)"
         );
         assert_eq!(
@@ -1682,7 +1687,7 @@ mod tests {
         // would resurrect the descendant (engine marks only the seed).
         let (pool, _dir) = fresh_pool().await;
         const CHILD: &str = "01HZ00000000000000000000C1";
-        let cohort_ts = "2026-05-10T12:00:00Z";
+        let cohort_ts: i64 = 1_778_414_400_000;
 
         sqlx::query(
             "INSERT INTO blocks \
@@ -1730,14 +1735,13 @@ mod tests {
         drop(conn);
 
         for id in [BLOCK_A, CHILD] {
-            let row: (Option<String>,) =
-                sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(id)
-                    .fetch_one(&pool)
-                    .await
-                    .expect("fetch deleted_at");
+            let row: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
             assert_eq!(
-                row.0.as_deref(),
+                row.0,
                 Some(cohort_ts),
                 "{id} must stay soft-deleted after re-projection"
             );

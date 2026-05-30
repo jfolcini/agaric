@@ -102,7 +102,7 @@ async fn get_status_total_ops_in_log_reflects_op_log_count() {
         .bind(format!("hash-{i}"))
         .bind("create_block")
         .bind(r#"{"block_id":"BLK_S","block_type":"content","content":""}"#)
-        .bind("2025-06-15T12:00:00Z")
+        .bind(1_749_988_800_000_i64)
         .execute(&pool)
         .await
         .unwrap();

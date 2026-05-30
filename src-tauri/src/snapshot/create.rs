@@ -302,9 +302,9 @@ pub async fn compact_op_log(
     let start = std::time::Instant::now();
 
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
-    // Use to_rfc3339_opts with millis + Z-suffix for consistent comparison
-    // with op_log.created_at timestamps (F03).
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // #109 Phase 2: op_log.created_at is INTEGER epoch-ms; compare against
+    // the cutoff as milliseconds (numeric, not lexicographic RFC3339).
+    let cutoff_ms = cutoff.timestamp_millis();
 
     // ── Phase 1: Read (DEFERRED read transaction, no write lock) ─────
     // A DEFERRED tx acquires a read-lock on the first SELECT and holds it
@@ -314,7 +314,7 @@ pub async fn compact_op_log(
     // Check if any ops exist before the cutoff
     let count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
+        cutoff_ms
     )
     .fetch_one(&mut *read_tx)
     .await?;
@@ -427,7 +427,7 @@ pub async fn compact_op_log(
         let res = sqlx::query(
             "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",
         )
-        .bind(&cutoff_str)
+        .bind(cutoff_ms)
         .bind(dev_id)
         .bind(max_seq)
         .execute(&mut *tx)
@@ -554,7 +554,7 @@ mod tests_m69 {
 
     /// Append a single op so `collect_frontier` has at least one row to
     /// fold into `up_to_seqs` (it errors out otherwise).
-    async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &str) {
+    async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: i64) {
         let op = OpPayload::CreateBlock(CreateBlockPayload {
             block_id: BlockId::test_id(block_id),
             block_type: "content".to_owned(),
@@ -562,9 +562,7 @@ mod tests_m69 {
             position: Some(0),
             content: "test".to_owned(),
         });
-        append_local_op_at(pool, device_id, op, ts.to_owned())
-            .await
-            .unwrap();
+        append_local_op_at(pool, device_id, op, ts).await.unwrap();
     }
 
     /// Happy-path atomicity: after a successful `create_snapshot`, the
@@ -579,7 +577,7 @@ mod tests_m69 {
         let device_id = "dev-1";
 
         insert_block(&pool, "block-1", "first").await;
-        insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
 
         // First call ---------------------------------------------------
         let snap1 = create_snapshot(&pool, device_id).await.unwrap();
@@ -634,7 +632,7 @@ mod tests_m69 {
         // Append a fresh op so the frontier query still finds something
         // (it does anyway — the original op is still in op_log — but
         // a second op makes the test resilient to future cleanup).
-        insert_op_at(&pool, device_id, "block-1", "2025-02-01T00:00:00Z").await;
+        insert_op_at(&pool, device_id, "block-1", 1_738_368_000_000).await;
 
         let snap2 = create_snapshot(&pool, device_id).await.unwrap();
         assert_ne!(
@@ -684,7 +682,7 @@ mod tests_m69 {
         let device_id = "dev-1";
 
         insert_block(&pool, "block-1", "first").await;
-        insert_op_at(&pool, device_id, "block-1", "2025-01-01T00:00:00Z").await;
+        insert_op_at(&pool, device_id, "block-1", 1_735_689_600_000).await;
 
         let pool_a = pool.clone();
         let pool_b = pool.clone();

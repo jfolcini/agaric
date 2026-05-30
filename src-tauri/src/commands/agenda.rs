@@ -241,7 +241,7 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
         Option<String>,
         Option<i64>,
-        Option<String>,
+        Option<i64>,
         Option<String>,
         Option<String>,
         Option<String>,

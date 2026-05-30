@@ -358,7 +358,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO op_log \
                  (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
             )
             .bind("test-device")
             .bind(seq)
@@ -418,7 +418,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO op_log \
                  (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
             )
             .bind("test-device")
             .bind(seq)
@@ -470,7 +470,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO op_log \
                  (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
             )
             .bind("test-device")
             .bind(seq)
@@ -533,7 +533,7 @@ mod tests {
             sqlx::query(
                 "INSERT INTO op_log \
                  (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, NULL, ?, 'create_block', '{}', '2026-01-01T00:00:00.000Z')",
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
             )
             .bind("test-device")
             .bind(seq)

@@ -720,7 +720,7 @@ async fn query_by_property_excludes_deleted_blocks() {
     insert_property(&pool, "QP_DEL", "todo", "TODO").await;
 
     // Soft-delete the block
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'QP_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'QP_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -1518,7 +1518,7 @@ async fn count_backlinks_batch_excludes_deleted_source_blocks() {
     insert_block(&pool, "BLD_DEL", "content", "deleted src", None, None).await;
 
     // Soft-delete BLD_DEL
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
         .bind("BLD_DEL")
         .execute(&pool)
         .await
@@ -3628,7 +3628,7 @@ async fn get_blocks_returns_full_rows_for_n_ids() {
     .unwrap();
     insert_block(&pool, "GB_TAG", "tag", "tag block", None, None).await;
     insert_block(&pool, "GB_GONE", "content", "deleted", None, None).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'GB_GONE'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = 'GB_GONE'")
         .execute(&pool)
         .await
         .unwrap();

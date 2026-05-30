@@ -138,7 +138,7 @@ struct Tree {
 /// Fixed tombstone for independently-pre-deleted blocks — distinct from
 /// any cascade timestamp (`crate::now_rfc3339()` is a 2026 value, so a
 /// 2020 literal can never collide).
-const PRE_DELETED_AT: &str = "2020-01-01T00:00:00Z";
+const PRE_DELETED_AT: i64 = 1_577_836_800_000;
 
 /// Resolve sketches into a concrete forest and insert every block into the
 /// `blocks` table. Pre-deleted nodes are inserted with `deleted_at` set.
@@ -160,7 +160,7 @@ async fn seed_tree(pool: &SqlitePool, sketches: &[NodeSketch]) -> Tree {
         if let Some(pid) = parent_id {
             parent.insert(id.clone(), pid.to_string());
         }
-        let deleted_at: Option<&str> = if sketch.pre_deleted {
+        let deleted_at: Option<i64> = if sketch.pre_deleted {
             pre_deleted.insert(id.clone());
             Some(PRE_DELETED_AT)
         } else {
@@ -230,10 +230,7 @@ impl Tree {
 /// Snapshot every block's `deleted_at` — the full observable soft-delete
 /// state, read directly from the `blocks` table (independent of any
 /// `soft_delete` helper).
-async fn snapshot_deleted_at(
-    pool: &SqlitePool,
-    ids: &[String],
-) -> BTreeMap<String, Option<String>> {
+async fn snapshot_deleted_at(pool: &SqlitePool, ids: &[String]) -> BTreeMap<String, Option<i64>> {
     let mut out = BTreeMap::new();
     for id in ids {
         let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", id)
@@ -329,7 +326,7 @@ proptest! {
                 "cascade count must equal the active-subtree size from the independent oracle"
             );
 
-            let restored = restore_block(&pool, &mat, &root, &ts).await.unwrap();
+            let restored = restore_block(&pool, &mat, &root, ts).await.unwrap();
             prop_assert_eq!(
                 restored as usize,
                 expected_marked.len(),
@@ -384,8 +381,8 @@ proptest! {
                     // (they were active pre-delete by construction of
                     // `active_subtree`, which excludes pre-deleted nodes).
                     prop_assert_eq!(
-                        after.as_deref(),
-                        Some(ts.as_str()),
+                        after,
+                        &Some(ts),
                         "active in-subtree block {} must be stamped with the cascade timestamp",
                         id
                     );

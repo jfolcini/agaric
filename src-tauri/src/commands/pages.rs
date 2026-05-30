@@ -1595,12 +1595,13 @@ pub struct PageWithMetadataRow {
     pub due_date: Option<String>,
     pub scheduled_date: Option<String>,
     pub page_id: Option<PageId>,
-    /// max(`op_log.created_at`) over the page itself. None if the
-    /// page has no op-log entries (which should never happen — every
-    /// active page has at least its own creation row — but the column
-    /// is `Option` to absorb edge cases like manually-imported rows
-    /// without a synthesised op-log entry).
-    pub last_modified_at: Option<String>,
+    /// max(`op_log.created_at`) over the page itself, as INTEGER
+    /// epoch-milliseconds (#109 Phase 2). None if the page has no op-log
+    /// entries (which should never happen — every active page has at
+    /// least its own creation row — but the column is `Option` to absorb
+    /// edge cases like manually-imported rows without a synthesised
+    /// op-log entry).
+    pub last_modified_at: Option<i64>,
     /// COUNT of `block_links` targeting this page or any of its
     /// descendants. Always emitted (zero for un-linked pages).
     pub inbound_link_count: i64,
@@ -1644,11 +1645,12 @@ fn validate_pages_metadata_cursor(cursor: &Cursor, sort: PageSort) -> Result<(),
 }
 
 /// Sentinel substituted for NULL `last_modified_at` in the
-/// `RecentlyModified` keyset (Review Round 1 HIGH #2 fix). A string
-/// that sorts BEFORE any plausible ISO timestamp in DESC order so the
-/// keyset comparison works uniformly for NULL and non-NULL rows;
-/// `'0001-...'` is the smallest, sorted last in DESC.
-const LAST_MOD_NULL_SENTINEL: &str = "0001-01-01T00:00:00Z";
+/// `RecentlyModified` keyset (Review Round 1 HIGH #2 fix). #109 Phase 2:
+/// `last_modified_at` is INTEGER epoch-ms, so the sentinel is `0` — it
+/// sorts BEFORE any plausible timestamp in DESC order, so the keyset
+/// comparison works uniformly for NULL and non-NULL rows (sorted last in
+/// DESC).
+const LAST_MOD_NULL_SENTINEL: i64 = 0;
 
 /// Heterogeneous bind value for the runtime-composed
 /// `list_pages_with_metadata_inner` query. The IPC composes the SQL
@@ -1740,8 +1742,9 @@ enum SortKeyset {
         /// block_id = b.id), ?{S})`. The composer substitutes `{S}`
         /// with the actual bind position.
         key_expr_template: &'static str,
-        /// String written to the sentinel slot at runtime.
-        null_sentinel: &'static str,
+        /// INTEGER epoch-ms written to the sentinel slot at runtime
+        /// (#109 Phase 2; `last_modified_at` is now INTEGER).
+        null_sentinel: i64,
     },
     /// `(key_expr, id) DESC` keyset over an i64-typed column. Cursor
     /// stashes the last row's count in the `seq` slot. Used by
@@ -1863,10 +1866,15 @@ impl SortKeyset {
                 },
                 Some(c),
             ) => {
+                // #109 Phase 2: the keyset value is INTEGER epoch-ms. The
+                // cursor stashes it in the `deleted_at` string slot (opaque
+                // wire format), so parse it back to i64, defaulting to the
+                // integer null sentinel for a NULL/legacy cursor value.
                 let last_key = c
                     .deleted_at
-                    .clone()
-                    .unwrap_or_else(|| null_sentinel.to_string());
+                    .as_deref()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(null_sentinel);
                 // Sentinel lives at p4; cursor binds are p1=last_key,
                 // p2=last_id, p3=limit. The template references the
                 // sentinel via `{S}` so we substitute the literal
@@ -1878,10 +1886,10 @@ impl SortKeyset {
                        ORDER BY {key_expr} DESC, b.id ASC \
                        LIMIT ?{p3}"
                 ));
-                binds.push(SqlBind::OwnedStr(last_key));
+                binds.push(SqlBind::I64(last_key));
                 binds.push(SqlBind::Str(c.id.as_str()));
                 binds.push(SqlBind::I64(limit_plus_one));
-                binds.push(SqlBind::Str(null_sentinel));
+                binds.push(SqlBind::I64(null_sentinel));
             }
             (
                 SortKeyset::StringDescNullCoalesced {
@@ -1893,7 +1901,7 @@ impl SortKeyset {
                 // Sentinel at p1; limit at p2.
                 let key_expr = key_expr_template.replace("{S}", &p1.to_string());
                 sql.push_str(&format!(" ORDER BY {key_expr} DESC, b.id ASC LIMIT ?{p2}"));
-                binds.push(SqlBind::Str(null_sentinel));
+                binds.push(SqlBind::I64(null_sentinel));
                 binds.push(SqlBind::I64(limit_plus_one));
             }
             // ── I64Desc: (key, id) DESC over an i64 column ────────
@@ -2313,13 +2321,16 @@ fn build_metadata_response(
                     id: last.id.clone().into_string(),
                     position: disc,
                     // RecentlyModified always stashes the COALESCE'd
-                    // value (real ISO timestamp OR `LAST_MOD_NULL_SENTINEL`)
+                    // value (real epoch-ms OR `LAST_MOD_NULL_SENTINEL`)
                     // so the keyset works uniformly for NULL and
-                    // non-NULL rows — Review Round 1 HIGH #2 fix.
+                    // non-NULL rows — Review Round 1 HIGH #2 fix. #109
+                    // Phase 2: the value is INTEGER epoch-ms, serialised
+                    // to the opaque `deleted_at` cursor slot as a decimal
+                    // string and parsed back to i64 in the keyset.
                     deleted_at: Some(
                         last.last_modified_at
-                            .clone()
-                            .unwrap_or_else(|| LAST_MOD_NULL_SENTINEL.to_string()),
+                            .unwrap_or(LAST_MOD_NULL_SENTINEL)
+                            .to_string(),
                     ),
                     seq: None,
                     rank: None,

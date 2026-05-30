@@ -630,7 +630,7 @@ mod tests {
         insert_block(&pool, &deleted, "content", &format!("#[{tag}]")).await;
 
         // Soft-delete one source.
-        let now = "2025-01-15T12:00:00+00:00";
+        let now: i64 = 1_736_942_400_000;
         sqlx::query!(
             "UPDATE blocks SET deleted_at = ? WHERE id = ?",
             now,

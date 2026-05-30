@@ -311,12 +311,12 @@ describe('restoreBlock', () => {
     const expected = { block_id: 'BLK001', restored_count: 2 }
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await restoreBlock('BLK001', '2025-01-15T00:00:00Z')
+    const result = await restoreBlock('BLK001', 1736899200000)
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
     expect(mockedInvoke).toHaveBeenCalledWith('restore_block', {
       blockId: 'BLK001',
-      deletedAtRef: '2025-01-15T00:00:00Z',
+      deletedAtRef: 1736899200000,
     })
     expect(result).toEqual(expected)
   })
@@ -3638,7 +3638,7 @@ describe('cross-cutting', () => {
     await createBlock({ blockType: 'content', content: '' })
     await editBlock('id', 'text')
     await deleteBlock('id')
-    await restoreBlock('id', 'ref')
+    await restoreBlock('id', 0)
     await purgeBlock('id')
     await listBlocks({ spaceId: 'TEST_SPACE_01' })
     await getBlock('id')

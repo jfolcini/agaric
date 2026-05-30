@@ -498,7 +498,7 @@ mod tests {
             hash: TEST_HASH.into(),
             op_type: op_type.into(),
             payload: payload.into(),
-            created_at: "2025-01-01T00:00:00Z".into(),
+            created_at: 1_735_689_600_000,
             block_id: block_id.map(str::to_owned),
         }
     }

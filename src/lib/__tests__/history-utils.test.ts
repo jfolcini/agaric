@@ -9,7 +9,7 @@ function makeEntry(payload: string, opType = 'edit_block'): HistoryEntry {
     seq: 1,
     op_type: opType,
     payload,
-    created_at: '2024-01-01T00:00:00Z',
+    created_at: 1704067200000,
   }
 }
 

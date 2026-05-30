@@ -32,7 +32,7 @@ async fn insert_tag_cache(pool: &SqlitePool, tag_id: &str, name: &str, usage_cou
         .bind(tag_id).bind(name).bind(usage_count).execute(pool).await.unwrap();
 }
 async fn soft_delete(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await

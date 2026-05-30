@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 // ── Test fixture constants ──────────────────────────────────────────
 
-const FIXED_TS: &str = "2025-01-15T12:00:00Z";
+const FIXED_TS: i64 = 1_736_942_400_000;
 const DEV_A: &str = "device-A";
 const DEV_B: &str = "device-B";
 
@@ -74,7 +74,7 @@ fn make_remote_record(
         hash,
         op_type: op_type.to_owned(),
         payload: payload.to_owned(),
-        created_at: FIXED_TS.to_owned(),
+        created_at: FIXED_TS,
         block_id,
     }
 }
@@ -309,7 +309,7 @@ async fn append_merge_op_creates_multi_parent_op() {
     let (pool, _dir) = test_pool().await;
 
     // Set up some prior ops so the local device has a seq
-    append_local_op_at(&pool, DEV_A, make_create("B1", "hello"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "hello"), FIXED_TS)
         .await
         .unwrap();
 
@@ -492,7 +492,7 @@ async fn find_lca_two_edits_diverge_from_create() {
     let (pool, _dir) = test_pool().await;
 
     // Device A: create B1
-    append_local_op_at(&pool, DEV_A, make_create("B1", "initial"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "initial"), FIXED_TS)
         .await
         .unwrap();
 
@@ -501,7 +501,7 @@ async fn find_lca_two_edits_diverge_from_create() {
         &pool,
         DEV_A,
         make_edit("B1", "edit-A", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -537,7 +537,7 @@ async fn find_lca_linear_chain() {
     let (pool, _dir) = test_pool().await;
 
     // create
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     // edit 1
@@ -545,7 +545,7 @@ async fn find_lca_linear_chain() {
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -554,7 +554,7 @@ async fn find_lca_linear_chain() {
         &pool,
         DEV_A,
         make_edit("B1", "v2", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -579,7 +579,7 @@ async fn find_lca_divergent_from_common_edit() {
     let (pool, _dir) = test_pool().await;
 
     // create
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     // edit 1
@@ -587,7 +587,7 @@ async fn find_lca_divergent_from_common_edit() {
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -596,7 +596,7 @@ async fn find_lca_divergent_from_common_edit() {
         &pool,
         DEV_A,
         make_edit("B1", "v2-A", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -617,14 +617,14 @@ async fn find_lca_divergent_from_common_edit() {
 async fn find_lca_same_op() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -641,7 +641,7 @@ async fn find_lca_same_op() {
 async fn find_lca_only_create_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -664,14 +664,14 @@ async fn find_lca_only_create_block() {
 async fn find_lca_op_a_is_create_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -691,14 +691,14 @@ async fn find_lca_op_a_is_create_block() {
 async fn find_lca_op_b_is_create_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -787,14 +787,9 @@ async fn find_lca_chain_exceeds_max_steps_returns_error() {
 async fn text_at_returns_content_from_create_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(
-        &pool,
-        DEV_A,
-        make_create("B1", "hello world"),
-        FIXED_TS.into(),
-    )
-    .await
-    .unwrap();
+    append_local_op_at(&pool, DEV_A, make_create("B1", "hello world"), FIXED_TS)
+        .await
+        .unwrap();
 
     let text = text_at(&pool, DEV_A, 1).await.unwrap();
     assert_eq!(text, "hello world");
@@ -804,14 +799,14 @@ async fn text_at_returns_content_from_create_block() {
 async fn text_at_returns_to_text_from_edit_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "updated text", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -824,7 +819,7 @@ async fn text_at_returns_to_text_from_edit_block() {
 async fn text_at_rejects_delete_block() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_delete("B1"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_delete("B1"), FIXED_TS)
         .await
         .unwrap();
 
@@ -859,7 +854,7 @@ async fn get_block_edit_heads_single_device() {
     let (pool, _dir) = test_pool().await;
 
     // create block
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     // two edits
@@ -867,7 +862,7 @@ async fn get_block_edit_heads_single_device() {
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -875,7 +870,7 @@ async fn get_block_edit_heads_single_device() {
         &pool,
         DEV_A,
         make_edit("B1", "v2", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -890,14 +885,14 @@ async fn get_block_edit_heads_multiple_devices() {
     let (pool, _dir) = test_pool().await;
 
     // Device A: create + edit
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1-A", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -919,7 +914,7 @@ async fn get_block_edit_heads_no_edits() {
     let (pool, _dir) = test_pool().await;
 
     // Only a create, no edits
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -932,27 +927,27 @@ async fn get_block_edit_heads_different_blocks_isolated() {
     let (pool, _dir) = test_pool().await;
 
     // Edits for B1
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
 
     // Edits for B2
-    append_local_op_at(&pool, DEV_A, make_create("B2", "other"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B2", "other"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B2", "other-v1", Some((DEV_A.into(), 3))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1005,7 +1000,7 @@ async fn find_lca_after_compaction_produces_not_found() {
             position: Some(0),
             content: "v1".to_owned(),
         }),
-        "2024-01-01T00:00:00Z".to_owned(),
+        1_704_067_200_000,
     )
     .await
     .unwrap();
@@ -1019,13 +1014,13 @@ async fn find_lca_after_compaction_produces_not_found() {
             prev_edit: Some((DEV_A.to_owned(), 1)),
             to_text: "v2".to_owned(),
         }),
-        "2024-01-01T00:01:00Z".to_owned(),
+        1_704_067_260_000,
     )
     .await
     .unwrap();
 
     // Recent edit (now) with prev_edit pointing to seq 2
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     let edit2 = append_local_op_at(
         &pool,
         DEV_A,
@@ -1074,7 +1069,7 @@ async fn find_lca_after_compaction_returns_clear_error() {
     let (pool, _dir) = test_pool().await;
 
     // Create block
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -1083,7 +1078,7 @@ async fn find_lca_after_compaction_returns_clear_error() {
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1148,7 +1143,7 @@ fn extract_prev_edit_unexpected_op_type_returns_error() {
         hash,
         op_type: "delete_block".to_owned(),
         payload: payload.to_owned(),
-        created_at: FIXED_TS.to_owned(),
+        created_at: FIXED_TS,
         block_id: Some("B1".to_owned()),
     };
 
@@ -1177,7 +1172,7 @@ fn extract_prev_edit_create_block_returns_none() {
         hash,
         op_type: "create_block".to_owned(),
         payload: payload.to_owned(),
-        created_at: FIXED_TS.to_owned(),
+        created_at: FIXED_TS,
         block_id: Some("B1".to_owned()),
     };
 
@@ -1197,7 +1192,7 @@ fn extract_prev_edit_edit_block_returns_prev_edit() {
         hash,
         op_type: "edit_block".to_owned(),
         payload: payload.to_owned(),
-        created_at: FIXED_TS.to_owned(),
+        created_at: FIXED_TS,
         block_id: Some("B1".to_owned()),
     };
 
@@ -1229,7 +1224,7 @@ async fn find_lca_detects_cycle_in_chain() {
     let (pool, _dir) = test_pool().await;
 
     // (A,1) create_block B1 — normal op
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -1308,7 +1303,7 @@ async fn find_lca_detects_self_loop() {
     let (pool, _dir) = test_pool().await;
 
     // (A,1) create_block B1
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -1365,7 +1360,7 @@ async fn find_lca_with_hashset_finds_correct_ancestor() {
     let (pool, _dir) = test_pool().await;
 
     // (A,1) create_block B1
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -1374,7 +1369,7 @@ async fn find_lca_with_hashset_finds_correct_ancestor() {
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1384,7 +1379,7 @@ async fn find_lca_with_hashset_finds_correct_ancestor() {
         &pool,
         DEV_A,
         make_edit("B1", "v2", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1442,14 +1437,14 @@ async fn assert_cte_matches_oracle(
 async fn cte_oracle_linear_chain() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1457,7 +1452,7 @@ async fn cte_oracle_linear_chain() {
         &pool,
         DEV_A,
         make_edit("B1", "v2", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1496,14 +1491,14 @@ async fn cte_oracle_linear_chain() {
 async fn cte_oracle_diverging_chains() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1511,7 +1506,7 @@ async fn cte_oracle_diverging_chains() {
         &pool,
         DEV_A,
         make_edit("B1", "v2-A", Some((DEV_A.into(), 2))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1548,7 +1543,7 @@ async fn cte_oracle_diverging_chains() {
 async fn cte_oracle_genesis_edit() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
 
@@ -1567,14 +1562,14 @@ async fn cte_oracle_genesis_edit() {
 async fn cte_oracle_two_op_chain_lca_is_genesis() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v0"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v1", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1606,14 +1601,14 @@ async fn cte_oracle_disjoint_chains_return_none() {
     let (pool, _dir) = test_pool().await;
 
     // Device A: create + edit.
-    append_local_op_at(&pool, DEV_A, make_create("B1", "v-A"), FIXED_TS.into())
+    append_local_op_at(&pool, DEV_A, make_create("B1", "v-A"), FIXED_TS)
         .await
         .unwrap();
     append_local_op_at(
         &pool,
         DEV_A,
         make_edit("B1", "v-A'", Some((DEV_A.into(), 1))),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();

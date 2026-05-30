@@ -18,7 +18,6 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::now_rfc3339;
 use crate::op::{is_reserved_property_key, DeletePropertyPayload, OpPayload, UndoResult};
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
@@ -513,7 +512,7 @@ pub struct ExtraQueryFilters {
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct DeleteResponse {
     pub block_id: String,
-    pub deleted_at: String,
+    pub deleted_at: i64,
     pub descendants_affected: u64,
 }
 
@@ -589,7 +588,8 @@ pub struct AttachmentRow {
     pub filename: String,
     pub size_bytes: i64,
     pub fs_path: String,
-    pub created_at: String,
+    /// Epoch-ms (attachments.created_at is INTEGER since migration 0081).
+    pub created_at: i64,
 }
 
 /// Check whether `mime` matches one of [`ALLOWED_MIME_PATTERNS`].
@@ -732,7 +732,7 @@ async fn delete_property_core(
         key: key.clone(),
     });
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 4. Materialize: delete/clear the property
     if is_reserved_property_key(&key) {
@@ -834,7 +834,8 @@ struct RepeatingBlockRow {
     content: Option<String>,
     parent_id: Option<String>,
     position: Option<i64>,
-    deleted_at: Option<String>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    deleted_at: Option<i64>,
     todo_state: Option<String>,
     priority: Option<String>,
     due_date: Option<String>,
@@ -863,7 +864,7 @@ impl RepeatingBlockRow {
                 .as_deref()
                 .map(crate::ulid::BlockId::from_trusted),
             position: self.position,
-            deleted_at: self.deleted_at.clone(),
+            deleted_at: self.deleted_at,
             todo_state: self.todo_state.clone(),
             priority: self.priority.clone(),
             due_date: self.due_date.clone(),

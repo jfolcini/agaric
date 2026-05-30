@@ -202,7 +202,9 @@ pub async fn tombstone_purge(
     materializer: &crate::materializer::Materializer,
 ) -> Result<(), AppError> {
     let cutoff = chrono::Utc::now() - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS);
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // #109 Phase 2: blocks.deleted_at is INTEGER epoch-ms; compare against the
+    // cutoff as ms, not an rfc3339 string.
+    let cutoff_ms = cutoff.timestamp_millis();
 
     let ids: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM blocks \
@@ -210,14 +212,14 @@ pub async fn tombstone_purge(
          ORDER BY deleted_at ASC \
          LIMIT ?",
     )
-    .bind(&cutoff_str)
+    .bind(cutoff_ms)
     .bind(TOMBSTONE_PURGE_BATCH_LIMIT)
     .fetch_all(pool)
     .await?;
 
     if ids.is_empty() {
         tracing::debug!(
-            cutoff = %cutoff_str,
+            cutoff = %cutoff_ms,
             "tombstone_purge: nothing eligible past the retention window"
         );
         return Ok(());
@@ -234,7 +236,7 @@ pub async fn tombstone_purge(
 
     tracing::info!(
         purged = count,
-        cutoff = %cutoff_str,
+        cutoff = %cutoff_ms,
         "tombstone_purge: hard-deleted soft-tombstones past the retention window"
     );
     Ok(())
@@ -539,8 +541,7 @@ mod tests {
             .unwrap();
         let mat = crate::materializer::Materializer::new(pool.clone());
 
-        let recent_deleted_at =
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let recent_deleted_at = chrono::Utc::now().timestamp_millis();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
              VALUES ('AAAA', 'content', 'alive', NULL, 1)",
@@ -583,9 +584,8 @@ mod tests {
 
         let aged_deleted_at = (chrono::Utc::now()
             - chrono::Duration::days(TOMBSTONE_RETENTION_DAYS + 5))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let recent_deleted_at =
-            chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        .timestamp_millis();
+        let recent_deleted_at = chrono::Utc::now().timestamp_millis();
 
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \

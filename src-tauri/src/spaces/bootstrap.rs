@@ -12,7 +12,6 @@ use crate::commands::set_property_in_tx;
 use crate::db::{CommandTx, MAX_SQL_PARAMS};
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::now_rfc3339;
 use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 use crate::op_log::{self, OpRecord};
 use crate::ulid::BlockId;
@@ -268,7 +267,7 @@ async fn ensure_space_block(
         position: Some(1),
         content: name.into(),
     });
-    let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    let record = op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
     records.push(record);
 
     // Materialize the block row immediately so downstream steps in this
@@ -453,7 +452,8 @@ async fn migrate_pages_to_personal_space_batched(
             value_ref: Some(SPACE_PERSONAL_ULID.to_owned()),
             value_bool: None,
         });
-        let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        let record =
+            op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
         records.push(record);
     }
 
@@ -804,7 +804,8 @@ pub async fn migrate_orphan_tags_to_space(
             value_ref: Some(target_space.to_owned()),
             value_bool: None,
         });
-        let record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+        let record =
+            op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
         records.push(record);
 
         // Materialize the property row immediately so downstream
@@ -1019,7 +1020,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::query!(
-            "UPDATE blocks SET deleted_at = '2020-01-01T00:00:00Z' WHERE id = ?",
+            "UPDATE blocks SET deleted_at = 1577836800000 WHERE id = ?",
             deleted_id,
         )
         .execute(&mut *tx)

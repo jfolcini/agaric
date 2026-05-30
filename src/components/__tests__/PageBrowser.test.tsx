@@ -3050,7 +3050,7 @@ describe('PageBrowser', () => {
     function makeMetaPage(overrides: {
       id: string
       content: string | null
-      lastModifiedAt?: string | null
+      lastModifiedAt?: number | null
       inboundLinkCount?: number
       childBlockCount?: number
       flags?: { hasTags: boolean; hasTodo: boolean; hasScheduled: boolean; hasDue: boolean }
@@ -3472,7 +3472,7 @@ describe('PageBrowser', () => {
     function makeMetaPage(overrides: {
       id: string
       content: string | null
-      lastModifiedAt?: string | null
+      lastModifiedAt?: number | null
       inboundLinkCount?: number
       childBlockCount?: number
     }) {
@@ -3575,23 +3575,23 @@ describe('PageBrowser', () => {
               makeMetaPage({
                 id: 'P1',
                 content: 'Apple',
-                lastModifiedAt: '2026-01-01T00:00:00Z',
+                lastModifiedAt: 1767225600000,
               }),
               makeMetaPage({
                 id: 'P2',
                 content: 'Banana',
-                lastModifiedAt: '2026-03-01T00:00:00Z',
+                lastModifiedAt: 1772323200000,
               }),
               // Same timestamp as Apple → alphabetical tiebreaker.
               makeMetaPage({
                 id: 'P3',
                 content: 'Cherry',
-                lastModifiedAt: '2026-01-01T00:00:00Z',
+                lastModifiedAt: 1767225600000,
               }),
               makeMetaPage({
                 id: 'P4',
                 content: 'Date',
-                lastModifiedAt: '2026-02-01T00:00:00Z',
+                lastModifiedAt: 1769904000000,
               }),
             ],
             next_cursor: null,

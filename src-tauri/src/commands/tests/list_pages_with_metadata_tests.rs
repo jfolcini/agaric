@@ -90,6 +90,16 @@ async fn refresh_page_cache_counts(pool: &SqlitePool, page_id: &str) {
 /// op_log immutability triggers guard UPDATE / DELETE only — INSERT is
 /// unguarded — so the bypass dance was both wrong and unnecessary.
 async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
+    // #109 Phase 2: `op_log.created_at` is now INTEGER epoch-ms (STRICT
+    // table). Tests still express timestamps as RFC 3339 strings (literals
+    // and `now_minus_days_iso` output), so parse to epoch-ms here. The
+    // conversion is exact and monotonic, preserving every ordering the
+    // callers rely on.
+    let created_at_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+        .unwrap_or_else(|e| {
+            panic!("seed_op_log created_at must be RFC 3339, got '{created_at}': {e}")
+        })
+        .timestamp_millis();
     sqlx::query(
         "INSERT INTO op_log (seq, device_id, op_type, payload, created_at, hash, block_id) \
          VALUES (\
@@ -102,7 +112,7 @@ async fn seed_op_log(pool: &SqlitePool, block_id: &str, created_at: &str) {
              ?\
          )",
     )
-    .bind(created_at)
+    .bind(created_at_ms)
     .bind(block_id)
     .execute(pool)
     .await
@@ -272,10 +282,9 @@ async fn list_pages_with_metadata_returns_pages_in_space_with_metadata_columns()
         .find(|p| p.id == "01PAGE000000000000000000A1")
         .unwrap();
     assert_eq!(alpha.content.as_deref(), Some("Alpha"));
-    assert_eq!(
-        alpha.last_modified_at.as_deref(),
-        Some("2026-01-01T00:00:00Z")
-    );
+    // #109 Phase 2: last_modified_at is INTEGER epoch-ms.
+    // 2026-01-01T00:00:00Z == 1_767_225_600_000.
+    assert_eq!(alpha.last_modified_at, Some(1_767_225_600_000));
     assert_eq!(alpha.inbound_link_count, 0);
     assert_eq!(alpha.child_block_count, 0);
     assert!(!alpha.flags.has_tags);
@@ -840,7 +849,7 @@ async fn soft_deleted_pages_excluded_from_results() {
     ensure_test_space(&pool).await;
     seed_page(&pool, "01PAGE000000000000000000A1", "Live").await;
     seed_page(&pool, "01PAGE000000000000000000B1", "Deleted").await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = ?")
         .bind("01PAGE000000000000000000B1")
         .execute(&pool)
         .await
@@ -1075,17 +1084,21 @@ async fn bulk_seed_op_log_depth(pool: &SqlitePool, page_ids: &[String], depth: u
         .await
         .unwrap();
     // 7 columns/row → cap chunk at 120 rows (840 params).
-    let mut batch: Vec<(i64, String, String)> = Vec::new(); // (seq, created_at, block_id)
+    let mut batch: Vec<(i64, i64, String)> = Vec::new(); // (seq, created_at_ms, block_id)
     for (i, pid) in page_ids.iter().enumerate() {
         for d in 0..depth {
             seq += 1;
             // Spread timestamps so the MAX picks a non-trivial latest row.
-            let created_at = format!(
+            // #109 Phase 2: op_log.created_at is INTEGER epoch-ms; convert the
+            // spread ISO timestamp to ms, preserving its ordering.
+            let created_at = chrono::DateTime::parse_from_rfc3339(&format!(
                 "2026-{:02}-{:02}T{:02}:00:00Z",
                 (d % 12) + 1,
                 (i % 28) + 1,
                 d % 24
-            );
+            ))
+            .unwrap()
+            .timestamp_millis();
             batch.push((seq, created_at, pid.clone()));
         }
     }
@@ -1906,7 +1919,7 @@ async fn filter_orphan_ignores_same_page_and_deleted_target_outbound_edges() {
     .await;
     // Soft-delete the target page so the outbound edge no longer reaches a
     // live block.
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = ?")
         .bind("01PAGE000000000000000GONE")
         .execute(&pool)
         .await

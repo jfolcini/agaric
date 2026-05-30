@@ -625,7 +625,7 @@ mod verify_active_db {
     /// Insert a block row directly. Bypasses the command layer because
     /// these tests need to set `deleted_at` to specific states that the
     /// regular create path doesn't expose.
-    async fn insert_block(pool: &SqlitePool, id: &str, deleted_at: Option<&str>) {
+    async fn insert_block(pool: &SqlitePool, id: &str, deleted_at: Option<i64>) {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
              VALUES (?, 'content', '', NULL, 1, ?)",
@@ -652,7 +652,7 @@ mod verify_active_db {
     #[tokio::test]
     async fn verify_active_rejects_soft_deleted_block() {
         let (pool, _dir) = test_pool().await;
-        insert_block(&pool, "DELBLK01", Some("2025-01-01T00:00:00+00:00")).await;
+        insert_block(&pool, "DELBLK01", Some(1_735_689_600_000)).await;
 
         let raw = BlockId::from_trusted("DELBLK01");
         let err = verify_active(&pool, &raw)

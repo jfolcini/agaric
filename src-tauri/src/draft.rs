@@ -9,9 +9,8 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::db::CommandTx;
+use crate::db::{now_ms, CommandTx};
 use crate::error::AppError;
-use crate::now_rfc3339;
 use crate::op::{EditBlockPayload, OpPayload};
 use crate::op_log::{append_local_op_in_tx, OpRecord};
 use crate::ulid::BlockId;
@@ -25,7 +24,8 @@ use crate::ulid::BlockId;
 pub struct Draft {
     pub block_id: crate::ulid::BlockId,
     pub content: String,
-    pub updated_at: String,
+    /// Epoch-ms (block_drafts.updated_at is INTEGER since migration 0082).
+    pub updated_at: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -36,13 +36,13 @@ pub struct Draft {
 ///
 /// Called by the frontend every ~2 s during active typing.
 pub async fn save_draft(pool: &SqlitePool, block_id: &str, content: &str) -> Result<(), AppError> {
-    let updated_at = crate::now_rfc3339();
+    let updated_at = now_ms();
     sqlx::query(
         "INSERT OR REPLACE INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)",
     )
     .bind(block_id)
     .bind(content)
-    .bind(&updated_at)
+    .bind(updated_at)
     .execute(pool)
     .await?;
     Ok(())
@@ -233,7 +233,7 @@ pub async fn flush_draft_in_tx(
         prev_edit,
     });
 
-    let record = append_local_op_in_tx(tx, device_id, op, now_rfc3339()).await?;
+    let record = append_local_op_in_tx(tx, device_id, op, now_ms()).await?;
     delete_draft_in_tx(tx, block_id).await?;
     Ok(record)
 }

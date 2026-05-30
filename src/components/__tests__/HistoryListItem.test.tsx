@@ -58,7 +58,7 @@ function makeEntry(
   seq: number,
   opType: string,
   payload: Record<string, unknown>,
-  createdAt = '2025-01-15T12:00:00Z',
+  createdAt = 1736942400000,
   deviceId = 'DEVICE01XXXXXXXX',
 ) {
   return {
@@ -186,7 +186,7 @@ describe('HistoryListItem', () => {
           1,
           'edit_block',
           { to_text: 'content' },
-          '2025-01-15T12:00:00Z',
+          1736942400000,
           'ABCDEF1234567890',
         ),
       }),
@@ -798,7 +798,7 @@ describe('BlockHistoryItem', () => {
     seq: number,
     opType: string,
     payload: Record<string, unknown>,
-    createdAt = '2025-01-15T12:00:00Z',
+    createdAt = 1736942400000,
     deviceId = 'DEVICE01XXXXXXXX',
   ) {
     return {

@@ -400,7 +400,7 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
     .bind(format!(
         r#"{{"block_id":"{block_id_upper}","to_text":"from dev1 (older)"}}"#
     ))
-    .bind("2100-01-01T00:00:00.100Z")
+    .bind(4_102_444_800_100_i64)
     .bind(&block_id_upper)
     .execute(&pool)
     .await
@@ -417,7 +417,7 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
     .bind(format!(
         r#"{{"block_id":"{block_id_upper}","to_text":"from dev2 (newer)"}}"#
     ))
-    .bind("2100-01-01T00:00:00.500Z")
+    .bind(4_102_444_800_500_i64)
     .bind(&block_id_upper)
     .execute(&pool)
     .await
@@ -511,17 +511,11 @@ async fn seed_page_with_ops(
             to_text: format!("edit-{i}"),
             prev_edit: None,
         });
-        // RFC3339 with millisecond precision and 'Z' suffix
-        // (lex-monotonic invariant L-98). Convert offset_ms to
-        // (seconds, ms-fragment).
+        // #109 Phase 2: op_log.created_at is INTEGER epoch-ms; pass the
+        // millisecond value directly (numeric ordering replaces the old
+        // lex-monotonic RFC3339 invariant L-98).
         let total_ms = base_secs * 1000 + offset_ms;
-        let secs = total_ms / 1000;
-        let ms = (total_ms % 1000) as i32;
-        let ms_u32 = u32::try_from(ms).expect("ms is in 0..1000 by construction");
-        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, ms_u32 * 1_000_000)
-            .expect("valid timestamp");
-        let ts = dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-        op_log::append_local_op_at(pool, device_id, payload, ts)
+        op_log::append_local_op_at(pool, device_id, payload, total_ms)
             .await
             .unwrap();
     }
@@ -738,7 +732,7 @@ async fn find_undo_group_skips_undo_and_redo_ops() {
     .bind("synthetic-hash")
     .bind("undo_edit_block")
     .bind(format!(r#"{{"block_id":"{child_id}","to_text":"x"}}"#))
-    .bind("2100-01-01T00:00:00.500Z") // newer than both user edits
+    .bind(4_102_444_800_500_i64) // newer than both user edits
     .bind(&child_id)
     .execute(&pool)
     .await

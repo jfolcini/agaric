@@ -244,7 +244,10 @@ struct FtsSearchRow {
     content: Option<String>,
     parent_id: Option<crate::ulid::BlockId>,
     position: Option<i64>,
-    deleted_at: Option<String>,
+    // #109 Phase 2 — blocks.deleted_at is INTEGER epoch-ms (migration 0080).
+    // The FTS SQL filters `deleted_at IS NULL`, so this is always None here,
+    // but the type tracks the column to stay consistent with the cluster.
+    deleted_at: Option<i64>,
     todo_state: Option<String>,
     priority: Option<String>,
     due_date: Option<String>,

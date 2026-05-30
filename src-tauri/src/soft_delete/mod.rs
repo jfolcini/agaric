@@ -46,7 +46,7 @@ mod tests {
     const PARENT: &str = "PAR001";
     const CHILD: &str = "CHD001";
     const GRANDCHILD: &str = "GCH001";
-    const FIXED_DELETED_AT: &str = "2025-01-01T00:00:00+00:00";
+    const FIXED_DELETED_AT: i64 = 1_735_689_600_000;
     /// Device id stamped on op log entries written by cascade soft-delete
     /// tests.
     const TEST_DEVICE: &str = "soft-delete-test-device";
@@ -81,7 +81,7 @@ mod tests {
         ).execute(pool).await.unwrap();
     }
 
-    async fn get_deleted_at(pool: &SqlitePool, id: &str) -> Option<String> {
+    async fn get_deleted_at(pool: &SqlitePool, id: &str) -> Option<i64> {
         sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", id)
             .fetch_optional(pool)
             .await
@@ -153,8 +153,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 3);
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts.clone()));
-        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts.clone()));
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts));
+        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts));
         assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, Some(ts));
     }
 
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(count, 11);
         for i in 0..=10 {
             let id = format!("L{i:02}");
-            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts.clone()));
+            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts));
         }
     }
 
@@ -251,10 +251,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 101);
-        assert_eq!(get_deleted_at(&pool, "WROOT").await, Some(ts.clone()));
+        assert_eq!(get_deleted_at(&pool, "WROOT").await, Some(ts));
         for i in 0..100 {
             let id = format!("WC{i:03}");
-            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts.clone()));
+            assert_eq!(get_deleted_at(&pool, &id).await, Some(ts));
         }
     }
 
@@ -309,7 +309,7 @@ mod tests {
         let (ts, _) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
-        let restored = restore_block(&pool, &mat, PARENT, &ts).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, ts).await.unwrap();
         assert_eq!(restored, 3);
         assert_eq!(get_deleted_at(&pool, PARENT).await, None);
         assert_eq!(get_deleted_at(&pool, CHILD).await, None);
@@ -341,13 +341,13 @@ mod tests {
         let (t2, _) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, PARENT)
             .await
             .unwrap();
-        let restored = restore_block(&pool, &mat, PARENT, &t2).await.unwrap();
+        let restored = restore_block(&pool, &mat, PARENT, t2).await.unwrap();
         assert_eq!(restored, 2);
         assert_eq!(get_deleted_at(&pool, PARENT).await, None);
         assert_eq!(get_deleted_at(&pool, CHILD).await, None);
         assert_eq!(
             get_deleted_at(&pool, GRANDCHILD).await,
-            Some(FIXED_DELETED_AT.to_string())
+            Some(FIXED_DELETED_AT)
         );
     }
 
@@ -387,10 +387,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 2);
-        let wrong_ts = "1999-01-01T00:00:00+00:00";
+        let wrong_ts: i64 = 915_148_800_000;
         let restored = restore_block(&pool, &mat, PARENT, wrong_ts).await.unwrap();
         assert_eq!(restored, 0);
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(real_ts.clone()));
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(real_ts));
         assert_eq!(get_deleted_at(&pool, CHILD).await, Some(real_ts));
     }
 
@@ -410,7 +410,7 @@ mod tests {
             .unwrap();
         assert_eq!(count, 2);
 
-        let wrong_ts = "1999-01-01T00:00:00+00:00";
+        let wrong_ts: i64 = 915_148_800_000;
         let restored = restore_block(&pool, &mat, PARENT, wrong_ts).await.unwrap();
 
         // Contract: wrong token is a silent no-op at the return-value level.
@@ -418,7 +418,7 @@ mod tests {
         // review, not captured here).
         assert_eq!(restored, 0);
         // And the original deletion is preserved.
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(real_ts.clone()));
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(real_ts));
         assert_eq!(get_deleted_at(&pool, CHILD).await, Some(real_ts));
     }
 
@@ -444,8 +444,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count2, 0);
-        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts1.clone()));
-        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts1.clone()));
+        assert_eq!(get_deleted_at(&pool, PARENT).await, Some(ts1));
+        assert_eq!(get_deleted_at(&pool, CHILD).await, Some(ts1));
         assert_eq!(get_deleted_at(&pool, GRANDCHILD).await, Some(ts1));
     }
 

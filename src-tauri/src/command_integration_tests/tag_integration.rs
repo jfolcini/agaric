@@ -85,7 +85,7 @@ async fn add_tag_deleted_block_returns_not_found() {
 
     insert_block(&pool, "ATDB_BLK", "content", "deleted", None, Some(1)).await;
     insert_block(&pool, "ATDB_TAG", "tag", "urgent", None, None).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'ATDB_BLK'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'ATDB_BLK'")
         .execute(&pool)
         .await
         .unwrap();
@@ -255,7 +255,7 @@ async fn remove_tag_deleted_block_returns_not_found() {
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'RTDB_BLK'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'RTDB_BLK'")
         .execute(&pool)
         .await
         .unwrap();

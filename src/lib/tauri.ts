@@ -302,7 +302,7 @@ export async function moveBlocksToSpace(blockIds: string[], spaceId: string): Pr
 /** Restore a soft-deleted block using its `deleted_at` timestamp as ref. */
 export async function restoreBlock(
   blockId: string,
-  deletedAtRef: string,
+  deletedAtRef: number,
 ): Promise<RestoreResponse> {
   return unwrap(await commands.restoreBlock(blockId, deletedAtRef))
 }
@@ -1879,7 +1879,8 @@ export interface AttachmentRow {
   mime_type: string
   size_bytes: number
   fs_path: string
-  created_at: string
+  /** Epoch-ms (attachments.created_at is INTEGER since migration 0081). */
+  created_at: number
 }
 
 /** List all attachments for a block. */
@@ -2059,7 +2060,8 @@ export async function getLogDir(): Promise<string> {
 
 export interface CompactionStatus {
   total_ops: number
-  oldest_op_date: string | null
+  /** Epoch-ms (max op_log.created_at, INTEGER since migration 0079). */
+  oldest_op_date: number | null
   eligible_ops: number
   retention_days: number
 }

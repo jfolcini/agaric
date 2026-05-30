@@ -43,12 +43,12 @@ async fn recover_at_boot_test(
 /// Far-past timestamp: any op created by `append_local_op` (which calls
 /// `now_rfc3339()`) will have `created_at > FAR_PAST`, so the draft is
 /// classified as "already flushed".
-const FAR_PAST: &str = "2000-01-01T00:00:00Z";
+const FAR_PAST: i64 = 946_684_800_000;
 
 /// Far-future timestamp: no op created by `append_local_op` will have
 /// `created_at > FAR_FUTURE`, so the draft is classified as "unflushed"
 /// and gets recovered.
-const FAR_FUTURE: &str = "2099-01-01T00:00:00Z";
+const FAR_FUTURE: i64 = 4_070_908_800_000;
 
 async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
@@ -821,7 +821,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
     let block_id = "block-soft-deleted";
 
     insert_test_block(&pool, block_id, "original").await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2024-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1704067200000 WHERE id = ?")
         .bind(block_id)
         .execute(&pool)
         .await
@@ -882,7 +882,7 @@ async fn draft_with_deleted_parent_is_skipped() {
     .unwrap();
 
     // Soft-delete the parent
-    sqlx::query("UPDATE blocks SET deleted_at = '2024-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1704067200000 WHERE id = ?")
         .bind("PARENT01")
         .execute(&pool)
         .await
@@ -1103,7 +1103,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             position: Some(0),
             content: "initial".to_owned(),
         }),
-        "2025-01-15T12:00:00Z".to_owned(),
+        1_736_942_400_000,
     )
     .await
     .unwrap();
@@ -1117,7 +1117,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             to_text: "edit from A".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
         }),
-        "2025-01-15T12:01:00Z".to_owned(),
+        1_736_942_460_000,
     )
     .await
     .unwrap();
@@ -1132,7 +1132,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             to_text: "edit from B".to_owned(),
             prev_edit: Some((dev_a.to_owned(), 1)),
         }),
-        "2025-01-15T12:02:00Z".to_owned(),
+        1_736_942_520_000,
     )
     .await
     .unwrap();
@@ -1556,7 +1556,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
             position: Some(1),
             content: "initial".into(),
         });
-        append_local_op_at(&pool, device_id, op, FAR_PAST.into())
+        append_local_op_at(&pool, device_id, op, FAR_PAST)
             .await
             .unwrap();
     }
@@ -1569,7 +1569,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
         to_text: "new".into(),
         prev_edit: None,
     });
-    append_local_op_at(&pool, device_id, recent_op, FAR_FUTURE.into())
+    append_local_op_at(&pool, device_id, recent_op, FAR_FUTURE)
         .await
         .unwrap();
 
@@ -1579,7 +1579,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind(target.as_str())
         .bind("recovered text")
-        .bind("2024-01-01T00:00:00Z")
+        .bind(1_704_067_200_000_i64)
         .execute(&pool)
         .await
         .unwrap();
@@ -1617,7 +1617,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind(target.as_str())
         .bind("scale recovery text")
-        .bind("2024-01-01T00:00:00Z")
+        .bind(1_704_067_200_000_i64)
         .execute(&pool)
         .await
         .unwrap();
@@ -1651,7 +1651,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
                 position: Some(1),
                 content: "n".into(),
             }),
-            FAR_PAST.into(),
+            FAR_PAST,
         )
         .await
         .unwrap();
@@ -1664,7 +1664,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
                     to_text: "n".into(),
                     prev_edit: None,
                 }),
-                FAR_PAST.into(),
+                FAR_PAST,
             )
             .await
             .unwrap();
@@ -1944,7 +1944,7 @@ async fn batch_apply_with_failure_does_not_advance_cursor_c2b() {
         hash: "0000000000000000000000000000000000000000000000000000000000000000".into(),
         op_type: "create_block".into(),
         payload: "{}".into(),
-        created_at: "2026-04-30T00:00:00Z".into(),
+        created_at: 1_777_507_200_000,
         block_id: None,
     };
 

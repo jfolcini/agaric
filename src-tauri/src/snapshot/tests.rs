@@ -74,7 +74,7 @@ fn sample_snapshot_data() -> SnapshotData {
                 filename: "photo.png".to_string(),
                 size_bytes: 1024,
                 fs_path: "attachments/photo.png".to_string(),
-                created_at: "2025-01-01T00:00:00Z".to_string(),
+                created_at: 1_735_689_600_000,
                 deleted_at: None,
             }],
             property_definitions: vec![],
@@ -97,7 +97,7 @@ async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
 }
 
 /// Helper: insert an op via append_local_op_at with an explicit timestamp.
-async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &str) {
+async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: i64) {
     let op = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::test_id(block_id),
         block_type: "content".to_owned(),
@@ -105,9 +105,7 @@ async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: &s
         position: Some(0),
         content: "test".to_owned(),
     });
-    append_local_op_at(pool, device_id, op, ts.to_owned())
-        .await
-        .unwrap();
+    append_local_op_at(pool, device_id, op, ts).await.unwrap();
 }
 
 // =======================================================================
@@ -325,7 +323,7 @@ async fn create_snapshot_and_read_back() {
 
     // Insert a block and an op so the frontier query succeeds
     insert_block(&pool, "BLOCK-1", "hello").await;
-    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", 1_735_689_600_000).await;
 
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
     assert!(!snapshot_id.is_empty(), "snapshot id should not be empty");
@@ -375,7 +373,7 @@ async fn create_snapshot_writes_pending_then_complete() {
 
     // Need at least one op for frontier
     insert_block(&pool, "BLOCK-1", "content").await;
-    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", 1_735_689_600_000).await;
 
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
 
@@ -416,7 +414,7 @@ async fn apply_snapshot_wipes_and_restores() {
 
     // Insert original data + op
     insert_block(&pool, "BLOCK-ORIG", "original").await;
-    insert_op_at(&pool, device_id, "BLOCK-ORIG", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", 1_735_689_600_000).await;
 
     // Create snapshot capturing original state
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
@@ -433,7 +431,7 @@ async fn apply_snapshot_wipes_and_restores() {
 
     // Insert additional data that should be wiped by apply
     insert_block(&pool, "BLOCK-EXTRA", "extra").await;
-    insert_op_at(&pool, device_id, "BLOCK-EXTRA", "2025-06-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-EXTRA", 1_748_736_000_000).await;
 
     // Verify extra data exists
     let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
@@ -504,7 +502,7 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
 
     // Original op + snapshot.
     insert_block(&pool, "BLOCK-ORIG", "original").await;
-    insert_op_at(&pool, device_id, "BLOCK-ORIG", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-ORIG", 1_735_689_600_000).await;
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
     let snap_row = sqlx::query!(
         "SELECT id, data FROM log_snapshots WHERE id = ?",
@@ -536,9 +534,9 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     // the LIMIT 8 sample read works for non-trivial cases).
     sqlx::query(
         "INSERT INTO block_drafts (block_id, content, updated_at) VALUES \
-         ('draft-A', 'mid-edit text A', '2025-06-01T00:00:00Z'), \
-         ('draft-B', 'mid-edit text B', '2025-06-01T00:00:01Z'), \
-         ('draft-C', 'mid-edit text C', '2025-06-01T00:00:02Z')",
+         ('draft-A', 'mid-edit text A', 1748736000000), \
+         ('draft-B', 'mid-edit text B', 1748736001000), \
+         ('draft-C', 'mid-edit text C', 1748736002000)",
     )
     .execute(&pool)
     .await
@@ -665,8 +663,8 @@ async fn compact_noop_when_no_old_ops() {
 
     // Insert a recent op (now)
     insert_block(&pool, "BLOCK-1", "recent").await;
-    let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "BLOCK-1", &now).await;
+    let now = crate::db::now_ms();
+    insert_op_at(&pool, device_id, "BLOCK-1", now).await;
 
     // Compact with 90-day retention — all ops are recent
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -696,7 +694,7 @@ async fn compact_creates_snapshot_and_purges() {
 
     // Insert a block and an old op (200 days ago)
     insert_block(&pool, "BLOCK-OLD", "old content").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", 1_704_067_200_000).await;
 
     // Compact with 90-day retention
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -734,12 +732,12 @@ async fn compact_preserves_recent_ops() {
 
     // Insert a block with an old op
     insert_block(&pool, "BLOCK-OLD", "old").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", 1_704_067_200_000).await;
 
     // Insert a block with a recent op
     insert_block(&pool, "BLOCK-NEW", "new").await;
-    let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "BLOCK-NEW", &now).await;
+    let now = crate::db::now_ms();
+    insert_op_at(&pool, device_id, "BLOCK-NEW", now).await;
 
     // Compact with 90-day retention
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -758,13 +756,13 @@ async fn compact_preserves_recent_ops() {
     assert_eq!(op_count, 1, "recent op should be preserved");
 
     // Verify it's the recent one
-    let created_at: String = sqlx::query_scalar!("SELECT created_at FROM op_log")
+    let created_at: i64 = sqlx::query_scalar!("SELECT created_at FROM op_log")
         .fetch_one(&pool)
         .await
         .unwrap();
-    // The recent op's timestamp should NOT be the old one
+    // The recent op's timestamp should NOT be the old one (2024-01-01 = 1_704_067_200_000)
     assert!(
-        !created_at.starts_with("2024-01-01"),
+        created_at != 1_704_067_200_000,
         "remaining op should not have the old timestamp"
     );
 }
@@ -795,7 +793,7 @@ async fn get_latest_snapshot_returns_most_recent() {
 
     // Insert a block + op
     insert_block(&pool, "BLOCK-1", "v1").await;
-    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", 1_735_689_600_000).await;
 
     // Create first snapshot
     let snap1_id = create_snapshot(&pool, device_id).await.unwrap();
@@ -1093,15 +1091,15 @@ async fn compact_multi_device_ops() {
 
     // Device A: old op
     insert_block(&pool, "BLOCK-A", "from A").await;
-    insert_op_at(&pool, "device-A", "BLOCK-A", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, "device-A", "BLOCK-A", 1_704_067_200_000).await;
 
     // Device B: old op + recent op
     insert_block(&pool, "BLOCK-B1", "old from B").await;
-    insert_op_at(&pool, "device-B", "BLOCK-B1", "2024-01-15T00:00:00Z").await;
+    insert_op_at(&pool, "device-B", "BLOCK-B1", 1_705_276_800_000).await;
 
     insert_block(&pool, "BLOCK-B2", "recent from B").await;
-    let now = crate::now_rfc3339();
-    insert_op_at(&pool, "device-B", "BLOCK-B2", &now).await;
+    let now = crate::db::now_ms();
+    insert_op_at(&pool, "device-B", "BLOCK-B2", now).await;
 
     // Compact
     let result = compact_op_log(&pool, "device-A", DEFAULT_RETENTION_DAYS)
@@ -1201,7 +1199,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         content: Option<&'a str>,
         parent_id: Option<&'a str>,
         position: Option<i64>,
-        deleted_at: Option<&'a str>,
+        deleted_at: Option<i64>,
         // MAINT-133: keep this struct in lock-step with `BlockSnapshot`
         // so the encoded CBOR map covers every field the real decoder
         // expects.
@@ -1451,7 +1449,7 @@ async fn apply_snapshot_full_all_5_tables() {
                 filename: "notes.txt".to_string(),
                 size_bytes: 256,
                 fs_path: "attachments/notes.txt".to_string(),
-                created_at: "2025-01-01T00:00:00Z".to_string(),
+                created_at: 1_735_689_600_000,
                 deleted_at: None,
             }],
             property_definitions: vec![],
@@ -1565,7 +1563,7 @@ async fn double_compaction() {
 
     // Insert an old op (200 days ago)
     insert_block(&pool, "BLOCK-OLD", "old").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", 1_704_067_200_000).await;
 
     // First compaction — should create snapshot and purge
     let first = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1622,7 +1620,7 @@ async fn compact_op_log_timestamp_format_consistency() {
     // (`...:00Z`). Lex comparison must still treat the older instant
     // as older despite the precision mismatch.
     insert_block(&pool, "BLOCK-OLD", "old").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD", "2024-01-15T12:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD", 1_705_320_000_000).await;
 
     // Compact with 90-day retention — the old op should be purged
     let result = compact_op_log(&pool, device_id, DEFAULT_RETENTION_DAYS)
@@ -1653,7 +1651,7 @@ async fn old_snapshots_accumulate() {
 
     // Need block + op for snapshots
     insert_block(&pool, "BLOCK-1", "content").await;
-    insert_op_at(&pool, device_id, "BLOCK-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-1", 1_735_689_600_000).await;
 
     // Create 3 snapshots
     let _snap1 = create_snapshot(&pool, device_id).await.unwrap();
@@ -1943,14 +1941,14 @@ async fn create_snapshot_captures_all_related_tables() {
     // 5. Insert attachments
     sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES ('ATT-1', 'BLK-1', 'image/png', 'photo.png', 1024, 'attachments/photo.png', '2025-01-01T00:00:00Z')",
+             VALUES ('ATT-1', 'BLK-1', 'image/png', 'photo.png', 1024, 'attachments/photo.png', 1735689600000)",
         )
         .execute(&pool)
         .await
         .unwrap();
 
     // 6. Insert an op so the frontier query succeeds
-    insert_op_at(&pool, device_id, "BLK-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-1", 1_735_689_600_000).await;
 
     // 7. Create snapshot and decode
     let snapshot_id = create_snapshot(&pool, device_id).await.unwrap();
@@ -2047,7 +2045,7 @@ async fn cleanup_old_snapshots_keeps_n_most_recent() {
             &pool,
             dev,
             &format!("blk-c{i}"),
-            &format!("2025-01-0{}T00:00:00Z", i + 1),
+            1_735_689_600_000 + (i as i64) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2082,7 +2080,7 @@ async fn cleanup_old_snapshots_noop_when_fewer_than_keep() {
 
     // Insert a block and one op so we can create a snapshot
     insert_block(&pool, "BLK-NOOP", "noop test").await;
-    insert_op_at(&pool, dev, "BLK-NOOP1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&pool, dev, "BLK-NOOP1", 1_735_689_600_000).await;
     create_snapshot(&pool, dev).await.unwrap();
 
     let deleted = cleanup_old_snapshots(&pool, 5).await.unwrap();
@@ -2101,7 +2099,7 @@ async fn cleanup_old_snapshots_deletes_pending_snapshots() {
             &pool,
             dev,
             &format!("blk-p{i}"),
-            &format!("2025-01-0{}T00:00:00Z", i + 1),
+            1_735_689_600_000 + (i as i64) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2165,7 +2163,7 @@ async fn cleanup_old_snapshots_mixed_pending_and_complete() {
             &pool,
             dev,
             &format!("blk-m{i}"),
-            &format!("2025-01-0{}T00:00:00Z", i + 1),
+            1_735_689_600_000 + (i as i64) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2246,7 +2244,7 @@ async fn cleanup_old_snapshots_with_zero_keep_is_noop() {
             &pool,
             dev,
             &format!("blk-z{i}"),
-            &format!("2025-01-0{}T00:00:00Z", i + 1),
+            1_735_689_600_000 + (i as i64) * 86_400_000,
         )
         .await;
         create_snapshot(&pool, dev).await.unwrap();
@@ -2305,7 +2303,7 @@ struct BlockSnapshotV1 {
     content: Option<String>,
     parent_id: Option<String>,
     position: Option<i64>,
-    deleted_at: Option<String>,
+    deleted_at: Option<i64>,
     archived_at: Option<String>,
     conflict_source: Option<String>,
 }
@@ -2492,16 +2490,16 @@ async fn compact_op_log_transaction_happy_path() {
 
     // Insert a block with an old op (> 90 days ago)
     insert_block(&pool, "BLOCK-OLD-1", "old content 1").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD-1", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD-1", 1_704_067_200_000).await;
 
     // Insert another block with an old op
     insert_block(&pool, "BLOCK-OLD-2", "old content 2").await;
-    insert_op_at(&pool, device_id, "BLOCK-OLD-2", "2024-02-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLOCK-OLD-2", 1_706_745_600_000).await;
 
     // Insert a block with a recent op (should survive compaction)
     insert_block(&pool, "BLOCK-RECENT", "recent content").await;
-    let now = crate::now_rfc3339();
-    insert_op_at(&pool, device_id, "BLOCK-RECENT", &now).await;
+    let now = crate::db::now_ms();
+    insert_op_at(&pool, device_id, "BLOCK-RECENT", now).await;
 
     // Verify starting state: 3 ops, 0 snapshots
     let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -2536,12 +2534,13 @@ async fn compact_op_log_transaction_happy_path() {
     assert_eq!(ops_after, 1, "only the recent op should survive compaction");
 
     // Verify it's the recent op
-    let remaining_ts: String = sqlx::query_scalar!("SELECT created_at FROM op_log")
+    let remaining_ts: i64 = sqlx::query_scalar!("SELECT created_at FROM op_log")
         .fetch_one(&pool)
         .await
         .unwrap();
+    // 2025-01-01 = 1_735_689_600_000; the old ops were all in 2024.
     assert!(
-        !remaining_ts.starts_with("2024-"),
+        remaining_ts >= 1_735_689_600_000,
         "remaining op should not have an old timestamp"
     );
 
@@ -3094,7 +3093,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 filename: "leak.txt".to_string(),
                 size_bytes: 10,
                 fs_path: "../../../etc/passwd".to_string(),
-                created_at: "2025-01-01T00:00:00Z".to_string(),
+                created_at: 1_735_689_600_000,
                 deleted_at: None,
             }],
             property_definitions: vec![],
@@ -3172,8 +3171,8 @@ async fn compact_read_phase_collects_data() {
     .await
     .unwrap();
 
-    insert_op_at(&pool, device_id, "BLK-R1", "2025-01-01T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "BLK-R2", "2025-01-02T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-R1", 1_735_689_600_000).await;
+    insert_op_at(&pool, device_id, "BLK-R2", 1_735_776_000_000).await;
 
     // Use a DEFERRED read transaction, same as compact_op_log Phase 1
     let mut read_tx = pool.begin().await.unwrap();
@@ -3224,14 +3223,14 @@ async fn compact_stale_read_safety() {
 
     // Insert an old op for device A
     insert_block(&pool, "BLK-OLD", "old").await;
-    insert_op_at(&pool, "dev-A", "BLK-OLD", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, "dev-A", "BLK-OLD", 1_704_067_200_000).await;
 
     // Insert a recent op for a different device (B) — this simulates an
     // op that arrives between Phase 1 read and Phase 3 write in a real
     // concurrent scenario.
     insert_block(&pool, "BLK-NEW", "new").await;
-    let now = crate::now_rfc3339();
-    insert_op_at(&pool, "dev-B", "BLK-NEW", &now).await;
+    let now = crate::db::now_ms();
+    insert_op_at(&pool, "dev-B", "BLK-NEW", now).await;
 
     // Run compaction — the frontier will include both devices, but the
     // time cutoff should only remove dev-A's old op.
@@ -3283,16 +3282,16 @@ async fn compact_stale_read_seq_guard() {
 
     // Insert 3 old ops for the same device (seq 1, 2, 3)
     insert_block(&pool, "BLK-S1", "s1").await;
-    insert_op_at(&pool, "dev-1", "BLK-S1", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, "dev-1", "BLK-S1", 1_704_067_200_000).await;
     insert_block(&pool, "BLK-S2", "s2").await;
-    insert_op_at(&pool, "dev-1", "BLK-S2", "2024-01-02T00:00:00Z").await;
+    insert_op_at(&pool, "dev-1", "BLK-S2", 1_704_153_600_000).await;
     insert_block(&pool, "BLK-S3", "s3").await;
-    insert_op_at(&pool, "dev-1", "BLK-S3", "2024-01-03T00:00:00Z").await;
+    insert_op_at(&pool, "dev-1", "BLK-S3", 1_704_240_000_000).await;
 
     // Simulate a "stale" frontier that only saw up to seq 2
     let stale_frontier: BTreeMap<String, i64> = [("dev-1".to_string(), 2)].into_iter().collect();
 
-    let cutoff_str = "2025-01-01T00:00:00.000Z"; // all ops are before this
+    let cutoff_str: i64 = 1_735_689_600_000; // all ops are before this
 
     // Execute the same per-device DELETE that compact_op_log Phase 3 uses.
     // H-13: enable the op_log mutation bypass for the duration of this tx,
@@ -3420,7 +3419,7 @@ mod proptest_tests {
                     filename,
                     size_bytes,
                     fs_path,
-                    created_at: "2025-01-01T00:00:00Z".into(),
+                    created_at: 1_735_689_600_000,
                     deleted_at: None,
                 }
             })
@@ -3791,7 +3790,7 @@ async fn compact_op_log_rolls_back_on_injected_delete_failure_l109() {
 
     // Insert a block with an old op so compaction has something to delete.
     insert_block(&pool, "BLK-L109", "content").await;
-    insert_op_at(&pool, device_id, "BLK-L109", "2024-01-01T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-L109", 1_704_067_200_000).await;
 
     // Snapshot pre-compaction state.
     let ops_before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
@@ -3925,9 +3924,9 @@ async fn compact_op_log_logs_warn_when_row_count_exceeds_threshold_l105() {
     //    `CreateBlock` body — so `payload_bytes` must be > 0.
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-l105";
-    insert_op_at(&pool, device_id, "BLK-L105-A", "2025-01-01T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "BLK-L105-B", "2025-01-02T00:00:00Z").await;
-    insert_op_at(&pool, device_id, "BLK-L105-C", "2025-01-03T00:00:00Z").await;
+    insert_op_at(&pool, device_id, "BLK-L105-A", 1_735_689_600_000).await;
+    insert_op_at(&pool, device_id, "BLK-L105-B", 1_735_776_000_000).await;
+    insert_op_at(&pool, device_id, "BLK-L105-C", 1_735_862_400_000).await;
 
     let mut conn = pool.acquire().await.unwrap();
     let (row_count, payload_bytes) = measure_op_log_size(&mut conn).await.unwrap();
@@ -4026,7 +4025,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     let (src_pool, _src_dir) = test_pool().await;
     let src_device = "dev-src";
     insert_block(&src_pool, "block-src-1", "snapshot content").await;
-    insert_op_at(&src_pool, src_device, "block-src-1", "2025-01-01T00:00:00Z").await;
+    insert_op_at(&src_pool, src_device, "block-src-1", 1_735_689_600_000).await;
     let snapshot_id = create_snapshot(&src_pool, src_device).await.unwrap();
 
     // Read back the snapshot blob + its `up_to_hash` (the chain anchor
@@ -4097,7 +4096,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
             parent_id: None,
             position: Some(0),
         }),
-        "2025-06-01T00:00:00Z".to_owned(),
+        1_748_736_000_000,
     )
     .await
     .expect("append_local_op_at must succeed on the post-restore pool");

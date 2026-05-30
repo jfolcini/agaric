@@ -1022,10 +1022,7 @@ async fn delete_block_cascades_to_children() {
         .unwrap();
 
     assert_eq!(resp.descendants_affected, 2, "parent + child = 2 affected");
-    assert!(
-        !resp.deleted_at.is_empty(),
-        "deleted_at timestamp should be set"
-    );
+    assert!(resp.deleted_at > 0, "deleted_at timestamp should be set");
 
     let op_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE device_id = ? AND op_type = 'delete_block'",
@@ -1165,7 +1162,7 @@ async fn restore_block_not_deleted_returns_invalid_operation() {
 
     insert_block(&pool, "ALIVE01", "content", "alive", None, Some(1)).await;
 
-    let result = restore_block_inner(&pool, DEV, &mat, "ALIVE01".into(), FIXED_TS.into()).await;
+    let result = restore_block_inner(&pool, DEV, &mat, "ALIVE01".into(), FIXED_TS).await;
 
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),
@@ -1178,7 +1175,7 @@ async fn restore_block_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let result = restore_block_inner(&pool, DEV, &mat, "GHOST".into(), FIXED_TS.into()).await;
+    let result = restore_block_inner(&pool, DEV, &mat, "GHOST".into(), FIXED_TS).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -1196,7 +1193,7 @@ async fn restore_block_mismatched_deleted_at_returns_invalid_operation() {
         .await
         .unwrap();
 
-    let wrong_ts = format!("{ts}_wrong");
+    let wrong_ts = ts + 1;
     let result = restore_block_inner(&pool, DEV, &mat, "MISMATCH1".into(), wrong_ts).await;
 
     let err = result.unwrap_err();
@@ -2150,7 +2147,7 @@ async fn get_block_inner_returns_soft_deleted_block() {
     );
     assert_eq!(
         block.deleted_at,
-        Some(FIXED_TS.into()),
+        Some(FIXED_TS),
         "get_block_inner should return deleted_at for soft-deleted blocks"
     );
 }
@@ -2768,7 +2765,7 @@ async fn add_attachment_creates_row() {
         !att.id.as_str().is_empty(),
         "attachment should have a generated ID"
     );
-    assert!(!att.created_at.is_empty(), "created_at should be set");
+    assert!(att.created_at > 0, "created_at should be set");
 
     // Verify persistence in DB via direct query
     let db_row = sqlx::query_as!(
@@ -3631,7 +3628,7 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
     .bind("ghost.png")
     .bind(42_i64)
     .bind("attachments/ghost.png")
-    .bind("2025-01-01T00:00:00Z")
+    .bind(1_735_689_600_000_i64)
     .bind("2025-01-02T00:00:00Z")
     .execute(&pool)
     .await
@@ -4207,7 +4204,7 @@ async fn flush_all_drafts_atomic_rollback_on_inner_failure() {
     let oversized = "x".repeat(crate::commands::MAX_CONTENT_LENGTH + 1);
     sqlx::query(
         "INSERT INTO block_drafts (block_id, content, updated_at) \
-         VALUES (?, ?, '2025-01-01T00:00:00Z')",
+         VALUES (?, ?, 1735689600000)",
     )
     .bind(oversized_id)
     .bind(&oversized)
@@ -4384,7 +4381,7 @@ async fn first_child_for_blocks_excludes_deleted() {
         Some(1),
     )
     .await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'FC_EX_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = 'FC_EX_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -4483,7 +4480,7 @@ async fn delete_blocks_by_ids_cascades_descendants() {
     );
 
     for id in [&parent.id, &child.id, &grandchild.id] {
-        let deleted_at: Option<String> =
+        let deleted_at: Option<i64> =
             sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
                 .bind(id)
                 .fetch_one(&pool)
@@ -4710,12 +4707,11 @@ async fn delete_blocks_by_ids_partial_miss_commits_live_subset() {
             .unwrap();
     assert_eq!(affected, 1, "the live root is soft-deleted; ghost ignored");
 
-    let deleted_at: Option<String> =
-        sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
-            .bind(&live.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let deleted_at: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(&live.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(deleted_at.is_some(), "live root must be soft-deleted");
 }
 

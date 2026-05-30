@@ -389,7 +389,7 @@ async fn purge_block_is_rejected_not_mis_reversed() {
             position: Some(1),
             content: "x".into(),
         }),
-        "2025-01-15T12:00:00Z".into(),
+        1_736_942_400_000,
     )
     .await
     .unwrap();
@@ -399,7 +399,7 @@ async fn purge_block_is_rejected_not_mis_reversed() {
         OpPayload::PurgeBlock(crate::op::PurgeBlockPayload {
             block_id: bid.clone(),
         }),
-        "2025-01-15T12:01:00Z".into(),
+        1_736_942_460_000,
     )
     .await
     .unwrap();
@@ -457,7 +457,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z".into(),
+        1_736_942_400_000,
     )
     .await
     .unwrap();
@@ -469,7 +469,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
             block_id: bid.clone(),
             key: key.into(),
         }),
-        "2025-01-15T12:01:00Z".into(),
+        1_736_942_460_000,
     )
     .await
     .unwrap();
@@ -486,7 +486,7 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:02:00Z".into(),
+        1_736_942_520_000,
     )
     .await
     .unwrap();

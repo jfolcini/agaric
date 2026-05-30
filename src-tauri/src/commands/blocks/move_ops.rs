@@ -156,7 +156,7 @@ pub async fn move_block_inner(
 
     // 4. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 5. Update blocks table within same transaction
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")

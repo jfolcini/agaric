@@ -60,7 +60,7 @@ async fn insert_block_with_null_content(pool: &SqlitePool, id: &str, block_type:
 }
 
 async fn soft_delete_block(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await

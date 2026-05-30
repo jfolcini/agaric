@@ -185,7 +185,7 @@ mod tests {
 
     async fn soft_delete(pool: &SqlitePool, id: &str) {
         sqlx::query!(
-            "UPDATE blocks SET deleted_at = '2025-12-31T00:00:00+00:00' WHERE id = ?",
+            "UPDATE blocks SET deleted_at = 1767139200000 WHERE id = ?",
             id,
         )
         .execute(pool)

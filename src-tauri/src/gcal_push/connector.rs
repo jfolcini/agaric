@@ -1376,9 +1376,9 @@ mod tests {
     /// Soft-delete a block — projected_agenda_cache row is removed by
     /// the materializer in production; we emulate that here.
     async fn soft_delete(pool: &SqlitePool, block_id: &str) {
-        let now = crate::now_rfc3339();
+        let now = crate::db::now_ms();
         sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-            .bind(&now)
+            .bind(now)
             .bind(block_id)
             .execute(pool)
             .await

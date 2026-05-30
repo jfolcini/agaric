@@ -452,7 +452,7 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
         });
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        append_local_op_in_tx(&mut tx, DEVICE, op, crate::now_rfc3339())
+        append_local_op_in_tx(&mut tx, DEVICE, op, crate::db::now_ms())
             .await
             .unwrap();
         delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
@@ -576,7 +576,7 @@ async fn sweep_orphan_drafts_deletes_drafts_for_missing_blocks() {
     let soft_deleted = "01HZ0000000000000000SOFTDEL";
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position, deleted_at) \
-         VALUES (?, 'content', ?, 0, '2024-01-01T00:00:00Z')",
+         VALUES (?, 'content', ?, 0, 1704067200000)",
     )
     .bind(soft_deleted)
     .bind("trashed")
@@ -647,7 +647,7 @@ async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
     let soft_deleted = "01HZ0000000000000000SOFTDEL";
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position, deleted_at) \
-         VALUES (?, 'content', ?, 0, '2024-01-01T00:00:00Z')",
+         VALUES (?, 'content', ?, 0, 1704067200000)",
     )
     .bind(soft_deleted)
     .bind("trashed")

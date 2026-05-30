@@ -88,8 +88,8 @@ describe('HistoryView', () => {
   it('renders history entries with correct badges, timestamps, previews', async () => {
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'create_block', { content: 'New block' }, '2025-01-14T10:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, 1736942400000),
+        makeHistoryEntry(2, 'create_block', { content: 'New block' }, 1736848800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -139,9 +139,9 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
-        makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, '2025-01-15T10:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
       ],
       next_cursor: null,
       has_more: false,
@@ -261,9 +261,9 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'oldest' }, '2025-01-13T10:00:00Z'),
-        makeHistoryEntry(2, 'edit_block', { to_text: 'middle' }, '2025-01-14T10:00:00Z'),
-        makeHistoryEntry(3, 'edit_block', { to_text: 'newest' }, '2025-01-15T10:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'oldest' }, 1736762400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'middle' }, 1736848800000),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'newest' }, 1736935200000),
       ],
       next_cursor: null,
       has_more: false,
@@ -442,8 +442,8 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -706,7 +706,7 @@ describe('HistoryView', () => {
     const page = {
       items: [
         makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
-        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, '2025-01-14T10:00:00Z'),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, 1736848800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -743,21 +743,15 @@ describe('HistoryView', () => {
   it('reloads history after successful revert', async () => {
     const user = userEvent.setup()
     const page1 = {
-      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, '2025-01-15T12:00:00Z')],
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, 1736942400000)],
       next_cursor: null,
       has_more: false,
       total_count: null,
     }
     const page2 = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(
-          2,
-          'edit_block',
-          { to_text: 'reverse op' },
-          '2025-01-15T13:00:00Z',
-          'DEVICE01',
-        ),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'reverse op' }, 1736946000000, 'DEVICE01'),
       ],
       next_cursor: null,
       has_more: false,
@@ -798,8 +792,8 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -845,8 +839,8 @@ describe('HistoryView', () => {
     const user = userEvent.setup()
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, '2025-01-14T10:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, 1736848800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -1018,18 +1012,12 @@ describe('HistoryView', () => {
   it('shows device_id for each entry', async () => {
     const page = {
       items: [
-        makeHistoryEntry(
-          1,
-          'edit_block',
-          { to_text: 'item 1' },
-          '2025-01-15T12:00:00Z',
-          'ABCDEF1234567890',
-        ),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000, 'ABCDEF1234567890'),
         makeHistoryEntry(
           2,
           'create_block',
           { content: 'item 2' },
-          '2025-01-14T10:00:00Z',
+          1736848800000,
           'XY987654AABBCCDD',
         ),
       ],
@@ -1052,7 +1040,7 @@ describe('HistoryView', () => {
     it('shows confirmation dialog when restore button is clicked', async () => {
       const user = userEvent.setup()
       const page = {
-        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
         next_cursor: null,
         has_more: false,
         total_count: null,
@@ -1075,13 +1063,7 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const page = {
         items: [
-          makeHistoryEntry(
-            1,
-            'edit_block',
-            { to_text: 'item 1' },
-            '2025-01-15T12:00:00Z',
-            'DEVICE01',
-          ),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000, 'DEVICE01'),
         ],
         next_cursor: null,
         has_more: false,
@@ -1115,7 +1097,7 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const mockedToastSuccess = vi.mocked(toast.success)
       const page = {
-        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
         next_cursor: null,
         has_more: false,
         total_count: null,
@@ -1141,7 +1123,7 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const mockedToastWarning = vi.mocked(toast.warning)
       const page = {
-        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
         next_cursor: null,
         has_more: false,
         total_count: null,
@@ -1167,7 +1149,7 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const mockedToastError = vi.mocked(toast.error)
       const page = {
-        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z')],
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
         next_cursor: null,
         has_more: false,
         total_count: null,
@@ -1198,9 +1180,9 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const page = {
         items: [
-          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
-          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, '2025-01-15T10:00:00Z'),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
         ],
         next_cursor: null,
         has_more: false,
@@ -1227,9 +1209,9 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const page = {
         items: [
-          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
-          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, '2025-01-15T10:00:00Z'),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
         ],
         next_cursor: null,
         has_more: false,
@@ -1254,7 +1236,7 @@ describe('HistoryView', () => {
           i + 1,
           'edit_block',
           { to_text: `item ${i + 1}` },
-          `2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`,
+          Date.parse(`2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`),
         ),
       )
       const page = {
@@ -1282,7 +1264,7 @@ describe('HistoryView', () => {
           i + 1,
           'edit_block',
           { to_text: `item ${i + 1}` },
-          `2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`,
+          Date.parse(`2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`),
         ),
       )
       const page = {
@@ -1443,8 +1425,8 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const page = {
         items: [
-          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
         ],
         next_cursor: null,
         has_more: false,
@@ -1470,8 +1452,8 @@ describe('HistoryView', () => {
       const user = userEvent.setup()
       const page = {
         items: [
-          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, '2025-01-15T12:00:00Z'),
-          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, '2025-01-15T11:00:00Z'),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
         ],
         next_cursor: null,
         has_more: false,

@@ -412,7 +412,7 @@ mod tests {
             hash,
             op_type: OP_CREATE.to_string(),
             payload: payload.to_string(),
-            created_at: "2025-01-01T00:00:00+00:00".to_string(),
+            created_at: 1_735_689_600_000,
             // L-13: hash tests don't care about the cached sidecar
             // (it is intentionally excluded from the hash preimage),
             // but the field is required for the struct literal.

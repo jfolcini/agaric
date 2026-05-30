@@ -31,7 +31,7 @@ pub async fn restore_block(
     pool: &SqlitePool,
     materializer: &Materializer,
     block_id: &str,
-    deleted_at_ref: &str,
+    deleted_at_ref: i64,
 ) -> Result<u64, AppError> {
     // L-107: IMMEDIATE is intentional. The recursive-CTE traversal walks the
     // same `blocks` rows that `cascade_soft_delete` may be writing concurrently
@@ -128,7 +128,7 @@ fn synthesize_restore_op(block_id: &str) -> OpRecord {
         hash: String::new(),
         op_type: "restore_block".to_owned(),
         payload: String::new(),
-        created_at: String::new(),
+        created_at: 0,
         block_id: Some(block_id.to_owned()),
     }
 }
@@ -163,7 +163,7 @@ mod tests {
 
         let page_id = "M3RPAGE01";
         let other_id = "M3RPAGE02";
-        let deleted_ts = "2025-01-01T00:00:00+00:00";
+        let deleted_ts: i64 = 1_735_689_600_000;
 
         // Seed a soft-deleted page (deleted_at set inline so we don't
         // depend on cascade_soft_delete's dispatch in this test).
