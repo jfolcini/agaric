@@ -901,6 +901,22 @@ describe('FormattingToolbar', () => {
       }
     })
 
+    it('#217 A2 — overflow popover renders dividers between groups', async () => {
+      // Very tight layout → most buttons overflow, spanning multiple toolbar
+      // groups, so at least one inter-group divider must render (the popover
+      // is no longer a flat ungrouped list).
+      const restore = withTightLayout(120)
+      try {
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
+        const dividers = overflowMenu.querySelectorAll('[data-testid="overflow-group-divider"]')
+        expect(dividers.length).toBeGreaterThan(0)
+      } finally {
+        restore()
+      }
+    })
+
     it('callout overflow row opens the type picker; selecting a variant dispatches the type (#215)', async () => {
       const restore = withTightLayout(120)
       try {
