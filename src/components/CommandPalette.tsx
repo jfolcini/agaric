@@ -54,6 +54,7 @@ import {
   CommandList,
   CommandSeparator,
 } from '@/components/ui/command'
+import { getActiveEditor } from '@/editor/active-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
@@ -171,21 +172,24 @@ function routePrefixToMode(query: string): { next: PaletteMode; q: string } | nu
 
 /**
  * Insert a `[[Page Title]]` link into the previously focused element,
- * if any. For `<input>` / `<textarea>` this uses native setRange APIs;
- * for `contenteditable` elements (the block editor's primary surface)
- * it falls back to `document.execCommand('insertText')` — the same
- * approach used by SlashCommand insertion in `slash-commands.ts` and
- * preserved here so undo/redo stacks stay intact.
+ * if any. Three branches (#82 / PEND-66):
+ *   - `<input>` / `<textarea>` — native `value` splice + `input` event.
+ *   - TipTap-managed contenteditable (a `.ProseMirror` descendant, the
+ *     block editor's primary surface) — `editor.chain().focus()
+ *     .insertContent(text).run()` via the active-editor registry. This
+ *     joins the undo history and replaces the deprecated
+ *     `document.execCommand('insertText')`.
+ *   - any other contenteditable — Selection / Range API fallback
+ *     (`range.insertNode`), which does NOT join the undo stack ("Path A"
+ *     trade-off); such surfaces are rare.
  *
  * PEND-73 Phase 3.U8 — when the palette opened, the store snapshotted
  * the live selection range BEFORE focus moved into the palette input.
- * For contenteditable surfaces, restoring that range before
- * `execCommand('insertText')` plants the `[[Page Title]]` at the
- * user's original caret position even if the surrounding focus
- * transition collapsed the selection. For native `<input>` /
- * `<textarea>`, the snapshot is not the right primitive (those
- * elements expose `selectionStart` / `selectionEnd` directly), so
- * the snapshot is intentionally ignored on that branch.
+ * The TipTap branch does not need it (ProseMirror restores its own
+ * selection on `.focus()`); the Range fallback restores the snapshot so
+ * the insert lands at the user's original caret. For native `<input>` /
+ * `<textarea>` the snapshot is not the right primitive (those elements
+ * expose `selectionStart` / `selectionEnd` directly), so it is ignored.
  */
 function insertPageLinkInto(
   target: HTMLElement | null,
@@ -208,11 +212,30 @@ function insertPageLinkInto(
     return true
   }
 
+  // #82 (PEND-66) — TipTap-managed block editor (the common case).
+  // Use the editor's own command so the insertion joins the undo history;
+  // `document.execCommand('insertText')` is deprecated. TipTap preserves
+  // its ProseMirror selection across the palette focus excursion, so
+  // `.focus()` restores the user's caret without the DOM snapshot range.
+  const editor = getActiveEditor()
+  if (editor != null && target.closest('.ProseMirror') != null) {
+    try {
+      editor.chain().focus().insertContent(text).run()
+      return true
+    } catch (err) {
+      logger.warn('CommandPalette', 'failed to insert page link via TipTap', { pageTitle }, err)
+      return false
+    }
+  }
+
+  // Fallback for any other contenteditable surface: Selection / Range
+  // API. This does NOT join the undo stack (the documented #82 "Path A"
+  // trade-off), but such surfaces are rare and forward-compatibility
+  // beats undo fidelity here.
   if (target.isContentEditable) {
-    // PEND-73 Phase 3.U8 — restore the snapshotted caret position
-    // before delegating to execCommand. The snapshot is only valid
-    // if its container is still in the live DOM (the user may have
-    // edited the document while the palette was open).
+    // PEND-73 Phase 3.U8 — restore the snapshotted caret position first,
+    // but only if its container is still in the live DOM (the user may
+    // have edited the document while the palette was open).
     if (snapshotRange != null) {
       try {
         const container = snapshotRange.startContainer
@@ -226,16 +249,23 @@ function insertPageLinkInto(
           sel?.addRange(snapshotRange)
         }
       } catch (err) {
-        // Restoring the range can throw if the DOM has shifted under
-        // us (e.g. a block was deleted while the palette was open).
-        // Fall through to the unguarded execCommand path; worst case
-        // is the insertion lands at the editor's current caret,
-        // matching pre-U8 behaviour.
+        // Restoring the range can throw if the DOM has shifted under us
+        // (e.g. a block was deleted while the palette was open).
         logger.warn('CommandPalette', 'snapshot range restoration failed', { pageTitle }, err)
       }
     }
     try {
-      document.execCommand('insertText', false, text)
+      const sel = document.getSelection()
+      if (sel == null || sel.rangeCount === 0) return false
+      const range = sel.getRangeAt(0)
+      range.deleteContents()
+      const node = document.createTextNode(text)
+      range.insertNode(node)
+      // Collapse the caret to just after the inserted text.
+      range.setStartAfter(node)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
       return true
     } catch (err) {
       logger.warn('CommandPalette', 'failed to insert page link', { pageTitle }, err)
@@ -376,9 +406,10 @@ export function PaletteBody({
   // selector when none of the watched fields changed.
   //
   // PEND-73 Phase 3.U8 — `previousSelectionRange` snapshotted at palette
-  // open time; restored before `execCommand('insertText')` on
-  // contenteditable targets so `[[page]]` insertion lands at the user's
-  // original caret.
+  // open time; restored before the Selection/Range fallback insert on
+  // non-TipTap contenteditable targets so `[[page]]` insertion lands at
+  // the user's original caret. (The TipTap branch doesn't need it —
+  // ProseMirror restores its own selection on `.focus()`.)
   const {
     query,
     setQuery: setQueryStore,

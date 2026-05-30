@@ -26,6 +26,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
+import { getActiveEditor, setActiveEditor } from '../editor/active-editor'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
@@ -248,6 +249,26 @@ export function BlockTree({
   })
 
   rovingEditorRef.current = rovingEditor
+
+  // #82 (PEND-66) — publish this BlockTree's roving editor to the module
+  // registry so app-level UI outside the tree (the command palette's
+  // `[[Page]]` insert) can run undo-preserving commands. Keyed on FOCUS,
+  // not mount: the journal week/month views mount several BlockTrees at
+  // once, so "the editor to insert into" is the one the caret was last
+  // in — not whichever mounted last. We do NOT clear on blur (opening the
+  // palette blurs the editor, yet that editor is still the target); the
+  // unmount clear is guarded so it can't clobber another live instance.
+  useEffect(() => {
+    const editor = rovingEditor.editor
+    if (editor == null) return
+    const publish = (): void => setActiveEditor(editor)
+    if (editor.isFocused) publish()
+    editor.on('focus', publish)
+    return () => {
+      editor.off('focus', publish)
+      if (getActiveEditor() === editor) setActiveEditor(null)
+    }
+  }, [rovingEditor.editor])
 
   const viewport = useViewportObserver()
 

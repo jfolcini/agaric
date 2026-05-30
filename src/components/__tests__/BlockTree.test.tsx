@@ -62,6 +62,12 @@ let useMockEditor = false
 const mockEditor = {
   chain: vi.fn(() => mockChain),
   state: { selection: { $anchor: { pos: 0 } } },
+  // #82 — BlockTree subscribes to the editor's `focus` event to publish
+  // it to the active-editor registry; mirror TipTap's event API + the
+  // isFocused getter so the effect doesn't throw under the mock.
+  isFocused: false,
+  on: vi.fn(),
+  off: vi.fn(),
 }
 /** Mutable activeBlockId exposed by the mock useRovingEditor. */
 let mockActiveBlockId: string | null = null
