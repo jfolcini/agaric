@@ -208,6 +208,41 @@ describe('RichContentRenderer', () => {
     expect(screen.getByTestId('horizontal-rule')).toBeInTheDocument()
   })
 
+  // -- Tables (#215 — view-mode rendering) ------------------------------------
+
+  it('renders a markdown table with header row and body cells', () => {
+    // Regression: before #215 `renderBlock` had no `table` case, so this
+    // returned an empty container — a table inserted in a block vanished
+    // the moment the block lost focus.
+    const md = '| Name | Age |\n| --- | --- |\n| Alice | 30 |\n| Bob | 25 |'
+    const { container } = render(renderRichContent(md, {}))
+    const table = container.querySelector('table')
+    expect(table).toBeInTheDocument()
+
+    const headers = container.querySelectorAll('thead th')
+    expect(headers).toHaveLength(2)
+    expect(headers[0]?.textContent).toBe('Name')
+    expect(headers[1]?.textContent).toBe('Age')
+
+    const bodyRows = container.querySelectorAll('tbody tr')
+    expect(bodyRows).toHaveLength(2)
+    const firstRowCells = bodyRows[0]?.querySelectorAll('td')
+    expect(firstRowCells?.[0]?.textContent).toBe('Alice')
+    expect(firstRowCells?.[1]?.textContent).toBe('30')
+  })
+
+  it('renders inline marks and tags inside table cells', () => {
+    const md = `| Col |\n| --- |\n| **bold** #[${TAG_ID}] |`
+    const { container } = render(
+      renderRichContent(md, {
+        resolveTagName: () => '#MyTag',
+      }),
+    )
+    const cell = container.querySelector('tbody td')
+    expect(cell?.querySelector('strong')?.textContent).toBe('bold')
+    expect(screen.getByTestId('tag-ref-chip')).toBeInTheDocument()
+  })
+
   // -- Inline tokens: tag_ref -------------------------------------------------
 
   it('renders tag_ref as chip', () => {
