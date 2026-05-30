@@ -3,5 +3,5 @@ source: src/op.rs
 expression: json
 ---
 block_id: 01ARZ3NDEKTSV4RRFFQ69G5FAV
-deleted_at_ref: ref-1
+deleted_at_ref: 1735689600000
 op_type: restore_block

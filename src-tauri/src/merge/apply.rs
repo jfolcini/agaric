@@ -148,7 +148,7 @@ pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
         &payload,
         &record.device_id,
         &space_id,
-        &record.created_at,
+        &record.created_at.to_string(),
         state,
     );
 }
@@ -380,7 +380,7 @@ mod engine_apply_unit_tests {
             block_id: BlockId::from_trusted(block_id),
             // `deleted_at_ref` is not consulted by the engine (LWW
             // happens at the LoroValue level); supply a placeholder.
-            deleted_at_ref: "2025-01-15T12:00:00Z".into(),
+            deleted_at_ref: 1_736_942_400_000,
         })
     }
 

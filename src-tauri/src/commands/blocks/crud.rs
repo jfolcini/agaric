@@ -219,7 +219,8 @@ pub(crate) async fn create_block_in_tx(
         content: content.clone(),
     });
 
-    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    let op_record =
+        op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
     // Compute page_id: if this block IS a page, page_id = self.
     // Otherwise, inherit from parent's page_id (or parent itself if parent is a page).
@@ -504,7 +505,7 @@ pub async fn edit_block_inner(
     });
 
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 4. Update blocks table within same transaction.
     // `AND deleted_at IS NULL` guard prevents overwriting content on a
@@ -643,10 +644,10 @@ pub async fn delete_block_inner(
 
     // Single timestamp for both op_log and blocks — reverse_delete_block uses
     // record.created_at as deleted_at_ref, so they must match exactly.
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
 
     // Append to op_log within transaction
-    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
 
     // Cascade soft-delete within same transaction.
     //
@@ -660,7 +661,7 @@ pub async fn delete_block_inner(
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
     ))
     .bind(&block_id)
-    .bind(&now)
+    .bind(now)
     .execute(&mut **tx)
     .await?;
 
@@ -827,7 +828,7 @@ pub async fn delete_blocks_by_ids_inner(
 
     // Single timestamp for op_log + cascade UPDATE so reverse_delete_block
     // can match `op_record.created_at` against `blocks.deleted_at`.
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
 
     // Append one `DeleteBlock` op per root (NOT per descendant — the
     // cascade is captured by the recursive UPDATE below). This mirrors
@@ -839,8 +840,7 @@ pub async fn delete_blocks_by_ids_inner(
         let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::from_trusted(root),
         });
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         let op_record = Arc::new(op_record);
         tx.enqueue_background(Arc::clone(&op_record));
     }
@@ -871,7 +871,7 @@ pub async fn delete_blocks_by_ids_inner(
          WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
     )
     .bind(&live_roots_json)
-    .bind(&now)
+    .bind(now)
     .execute(&mut **tx)
     .await?;
 
@@ -1095,7 +1095,7 @@ pub async fn restore_block_inner(
     device_id: &str,
     materializer: &Materializer,
     block_id: BlockId,
-    deleted_at_ref: String,
+    deleted_at_ref: i64,
 ) -> Result<RestoreResponse, AppError> {
     // #107: BlockId normalises to uppercase on construction; re-derive owned
     // String form for sqlx binds / format! below.
@@ -1150,12 +1150,12 @@ pub async fn restore_block_inner(
 
     let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
-        deleted_at_ref: deleted_at_ref.clone(),
+        deleted_at_ref,
     });
 
     // Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // Restore within same transaction.
     //
@@ -1168,7 +1168,7 @@ pub async fn restore_block_inner(
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(&block_id)
-    .bind(&deleted_at_ref)
+    .bind(deleted_at_ref)
     .execute(&mut **tx)
     .await?;
 
@@ -1352,7 +1352,7 @@ pub async fn purge_block_inner(
 
     // Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // --- Inline physical purge (previously soft_delete::purge_block) ---
     // Defer FK checks until commit — the entire subtree will be gone by then
@@ -1517,7 +1517,7 @@ pub async fn restore_all_deleted_inner(
         return Ok(BulkTrashResponse { affected_count: 0 });
     }
 
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
     // FEAT-5i — snapshot each root's pre-restore dates inside the tx
     // so the post-commit notifier can emit per-root `DirtyEvent`s.
     // A single root can contain a subtree of many blocks; the
@@ -1548,14 +1548,12 @@ pub async fn restore_all_deleted_inner(
     for root in &roots {
         let deleted_at_ref = root
             .deleted_at
-            .clone()
             .expect("query guarantees deleted_at IS NOT NULL");
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
         });
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         let op_record = Arc::new(op_record);
         tx.enqueue_background(Arc::clone(&op_record));
         op_records.push(op_record);
@@ -1712,13 +1710,12 @@ pub async fn purge_all_deleted_inner(
         return Ok(BulkTrashResponse { affected_count: 0 });
     }
 
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
     for root in &roots {
         let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
         });
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         tx.enqueue_background(op_record);
     }
 
@@ -1982,7 +1979,7 @@ pub async fn restore_blocks_by_ids_inner(
         return Ok(BulkTrashResponse { affected_count: 0 });
     }
 
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
 
     // FEAT-5i — snapshot each root's pre-restore dates inside the tx.
     let gcal_hook_active = materializer.is_gcal_hook_active();
@@ -2004,14 +2001,12 @@ pub async fn restore_blocks_by_ids_inner(
     for root in &roots {
         let deleted_at_ref = root
             .deleted_at
-            .clone()
             .expect("query guarantees deleted_at IS NOT NULL");
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
         });
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         let op_record = Arc::new(op_record);
         tx.enqueue_background(Arc::clone(&op_record));
         op_records.push(op_record);
@@ -2147,13 +2142,12 @@ pub async fn purge_blocks_by_ids_inner(
     }
 
     // Emit one PurgeBlock op per root.
-    let now = now_rfc3339();
+    let now = crate::db::now_ms();
     for root in &roots {
         let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
         });
-        let op_record =
-            op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+        let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         tx.enqueue_background(op_record);
     }
 
@@ -2596,7 +2590,8 @@ pub(crate) async fn set_property_in_tx(
 
     // 3. Append SetProperty op to the op_log
     let payload = OpPayload::SetProperty(prop_payload);
-    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    let op_record =
+        op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 4. Materialize: route reserved keys to blocks columns, others to block_properties
     if is_reserved_property_key(key) {
@@ -2743,7 +2738,7 @@ pub(crate) async fn delete_property_in_tx(
         key: key.to_owned(),
     });
     let op_record =
-        op_log::append_local_op_in_tx(&mut *tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut *tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 3. Materialize: clear the column for reserved keys, otherwise delete
     //    the `block_properties` row. Mirrors `delete_property_core`.
@@ -2882,7 +2877,7 @@ pub async fn restore_block(
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
     block_id: BlockId,
-    deleted_at_ref: String,
+    deleted_at_ref: i64,
 ) -> Result<RestoreResponse, AppError> {
     restore_block_inner(
         &pool.0,

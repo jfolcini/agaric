@@ -226,9 +226,9 @@ async fn fetch_prior_text_batch(
         );
         qb.push_bind(bid_upper);
         qb.push(" AND op_type IN ('edit_block','create_block') AND (created_at < ");
-        qb.push_bind(ops[op_idx].created_at.clone());
+        qb.push_bind(ops[op_idx].created_at);
         qb.push(" OR (created_at = ");
-        qb.push_bind(ops[op_idx].created_at.clone());
+        qb.push_bind(ops[op_idx].created_at);
         qb.push(" AND seq < ");
         qb.push_bind(ops[op_idx].seq);
         qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
@@ -271,9 +271,9 @@ async fn fetch_prior_position_batch(
         );
         qb.push_bind(bid_upper);
         qb.push(" AND op_type IN ('move_block','create_block') AND (created_at < ");
-        qb.push_bind(ops[op_idx].created_at.clone());
+        qb.push_bind(ops[op_idx].created_at);
         qb.push(" OR (created_at = ");
-        qb.push_bind(ops[op_idx].created_at.clone());
+        qb.push_bind(ops[op_idx].created_at);
         qb.push(" AND seq < ");
         qb.push_bind(ops[op_idx].seq);
         qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
@@ -327,9 +327,9 @@ async fn fetch_prior_property_batch(
         qb.push(" AND json_extract(payload, '$.key') = ");
         qb.push_bind(payload.key);
         qb.push(" AND op_type = 'set_property' AND (created_at < ");
-        qb.push_bind(record.created_at.clone());
+        qb.push_bind(record.created_at);
         qb.push(" OR (created_at = ");
-        qb.push_bind(record.created_at.clone());
+        qb.push_bind(record.created_at);
         qb.push(" AND seq < ");
         qb.push_bind(record.seq);
         qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
@@ -372,9 +372,9 @@ async fn fetch_prior_attachment_batch(
         qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND attachment_id = ");
         qb.push_bind(att_id);
         qb.push(" AND (created_at < ");
-        qb.push_bind(record.created_at.clone());
+        qb.push_bind(record.created_at);
         qb.push(" OR (created_at = ");
-        qb.push_bind(record.created_at.clone());
+        qb.push_bind(record.created_at);
         qb.push(" AND seq < ");
         qb.push_bind(record.seq);
         qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
@@ -558,7 +558,7 @@ pub async fn get_op_records_batch(
         String,
         String,
         String,
-        String,
+        i64,
         Option<String>,
     );
     let rows: Vec<Row> = qb.build_query_as().fetch_all(pool).await?;

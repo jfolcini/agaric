@@ -29,15 +29,20 @@ pub async fn list_trash(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     let fetch_limit = page.limit + 1;
 
-    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, &str, &str) = match page.after.as_ref()
-    {
+    // #109 Phase 2: `blocks.deleted_at` is INTEGER epoch-ms. The opaque
+    // `Cursor.deleted_at` slot still carries it as a String; parse it back
+    // to i64 here before binding against the INTEGER column.
+    let (cursor_flag, cursor_del, cursor_id): (Option<i64>, i64, &str) = match page.after.as_ref() {
         Some(c) => {
-            let del = c.deleted_at.as_deref().ok_or_else(|| {
+            let del_str = c.deleted_at.as_deref().ok_or_else(|| {
                 AppError::Validation("cursor missing deleted_at for trash query".into())
+            })?;
+            let del = del_str.parse::<i64>().map_err(|e| {
+                AppError::Validation(format!("cursor deleted_at not an integer: {e}"))
             })?;
             (Some(1), del, &c.id)
         }
-        None => (None, "", ""),
+        None => (None, 0, ""),
     };
 
     // FEAT-3 Phase 2 — ?5 (space_id) drives the shared space filter.
@@ -78,7 +83,10 @@ pub async fn list_trash(
     .await?;
 
     build_page_response(rows, page.limit, |last| {
-        Cursor::for_id_and_deleted_at(last.id.clone().into_string(), last.deleted_at.clone())
+        Cursor::for_id_and_deleted_at(
+            last.id.clone().into_string(),
+            last.deleted_at.map(|v| v.to_string()),
+        )
     })
 }
 

@@ -474,7 +474,7 @@ mod tests {
             hash: "test-hash".to_owned(),
             op_type: payload.op_type_str().to_owned(),
             payload: json,
-            created_at: "2026-04-22T12:00:00Z".to_owned(),
+            created_at: 1_776_859_200_000,
             block_id,
         }
     }
@@ -511,7 +511,7 @@ mod tests {
     fn restore_block() -> OpRecord {
         make_record(&OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: bid(),
-            deleted_at_ref: "2026-04-22T00:00:00Z".to_owned(),
+            deleted_at_ref: 1_776_816_000_000,
         }))
     }
 

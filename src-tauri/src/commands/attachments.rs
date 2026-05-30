@@ -8,11 +8,11 @@ use tracing::instrument;
 use tauri::Manager;
 use tauri::State;
 
+use crate::db::now_ms;
 use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::now_rfc3339;
 use crate::op::OpPayload;
 use crate::op_log;
 use crate::ulid::{AttachmentId, BlockId};
@@ -79,7 +79,7 @@ pub async fn add_attachment_inner(
 
     // Generate ULID for attachment_id
     let attachment_id = ulid::Ulid::new().to_string().to_uppercase();
-    let now = now_rfc3339();
+    let now = now_ms();
 
     // Build OpPayload. `attachment_id` is freshly generated via
     // `Ulid::new().to_string().to_uppercase()` above, so `from_trusted`
@@ -134,7 +134,7 @@ pub async fn add_attachment_inner(
     }
 
     // Append to op_log within transaction
-    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now.clone()).await?;
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
 
     // Insert into attachments table within same transaction
     sqlx::query(
@@ -147,7 +147,7 @@ pub async fn add_attachment_inner(
     .bind(&filename)
     .bind(size_bytes)
     .bind(&fs_path)
-    .bind(&now)
+    .bind(now)
     .execute(&mut **tx)
     .await?;
 
@@ -352,8 +352,7 @@ pub async fn delete_attachment_inner(
     });
 
     // Append to op_log within transaction
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_ms()).await?;
 
     // Delete from attachments table within same transaction
     sqlx::query("DELETE FROM attachments WHERE id = ?")

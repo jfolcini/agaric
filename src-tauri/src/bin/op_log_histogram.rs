@@ -569,7 +569,7 @@ mod tests {
     async fn insert_op(pool: &SqlitePool, device_id: &str, seq: i64, op_type: &str) {
         sqlx::query(
             "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-             VALUES (?, ?, NULL, ?, ?, ?, '2026-05-09T00:00:00Z')",
+             VALUES (?, ?, NULL, ?, ?, ?, 1778284800000)",
         )
         .bind(device_id)
         .bind(seq)
@@ -1003,7 +1003,7 @@ mod tests {
         //    read-only flag.
         let result = sqlx::query(
             "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-             VALUES (?, ?, NULL, ?, ?, ?, '2026-05-09T00:00:00Z')",
+             VALUES (?, ?, NULL, ?, ?, ?, 1778284800000)",
         )
         .bind("dev-readonly")
         .bind(1_i64)

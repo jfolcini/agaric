@@ -66,14 +66,14 @@ pub async fn apply_reverse_in_tx(
             // restore the M6/restore-path (`restore_block_inner` or
             // `OpPayload::RestoreBlock` below) picks them up. No
             // page_id work is needed here.
-            let now = now_rfc3339();
+            let now = crate::db::now_ms();
             sqlx::query(concat!(
                 crate::descendants_cte_active!(),
                 "UPDATE blocks SET deleted_at = ? \
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
             ))
             .bind(p.block_id.as_str())
-            .bind(&now)
+            .bind(now)
             .execute(&mut **tx)
             .await?;
         }
@@ -89,7 +89,7 @@ pub async fn apply_reverse_in_tx(
                  WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
             ))
             .bind(p.block_id.as_str())
-            .bind(&p.deleted_at_ref)
+            .bind(p.deleted_at_ref)
             .execute(&mut **tx)
             .await?;
 
@@ -298,13 +298,13 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::AddAttachment(p) => {
             // Preserve original created_at from the existing (soft-deleted) attachment record
-            let original_created_at: Option<String> =
+            let original_created_at: Option<i64> =
                 sqlx::query_scalar("SELECT created_at FROM attachments WHERE id = ?")
                     .bind(p.attachment_id.as_str())
                     .fetch_optional(&mut **tx)
                     .await?;
 
-            let created_at = original_created_at.unwrap_or_else(now_rfc3339);
+            let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
 
             sqlx::query(
                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
@@ -316,7 +316,7 @@ pub async fn apply_reverse_in_tx(
             .bind(&p.filename)
             .bind(p.size_bytes)
             .bind(&p.fs_path)
-            .bind(&created_at)
+            .bind(created_at)
             .execute(&mut **tx)
             .await?;
         }
@@ -397,13 +397,13 @@ pub async fn revert_ops_inner(
     // `restore_page_to_op_inner` for the wider rationale).
     let records = reverse::get_op_records_batch(pool, &ops).await?;
     let reverse_payloads = reverse::compute_reverse_batch(pool, &records).await?;
-    let mut reverses: Vec<(OpRef, OpPayload, String, String)> = Vec::with_capacity(ops.len());
+    let mut reverses: Vec<(OpRef, OpPayload, i64, String)> = Vec::with_capacity(ops.len());
     for ((op_ref, reverse_payload), record) in ops.iter().zip(reverse_payloads).zip(records.iter())
     {
         reverses.push((
             op_ref.clone(),
             reverse_payload,
-            record.created_at.clone(),
+            record.created_at,
             record.op_type.clone(),
         ));
     }
@@ -435,7 +435,7 @@ pub async fn revert_ops_inner(
             &mut tx,
             device_id,
             reverse_payload.clone(),
-            now_rfc3339(),
+            crate::db::now_ms(),
         )
         .await?;
 
@@ -661,9 +661,13 @@ pub async fn undo_page_op_inner(
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
 
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
-            .await?;
+    let op_record = op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        reverse_payload.clone(),
+        crate::db::now_ms(),
+    )
+    .await?;
 
     apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
@@ -720,9 +724,13 @@ pub async fn redo_page_op_inner(
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "redo_page_op").await?;
 
-    let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, reverse_payload.clone(), now_rfc3339())
-            .await?;
+    let op_record = op_log::append_local_op_in_tx(
+        &mut tx,
+        device_id,
+        reverse_payload.clone(),
+        crate::db::now_ms(),
+    )
+    .await?;
 
     apply_reverse_in_tx(&mut tx, &reverse_payload).await?;
 
@@ -805,9 +813,10 @@ pub async fn find_undo_group_inner(
     //   2. `ordered_ops` — undoable ops for those blocks, numbered newest-first.
     //   3. `walk` — recursive same-device + within-window walk seeded at row N+1.
     //
-    // SQLite stores `created_at` as RFC 3339 with `Z` suffix (lex-monotonic
-    // L-98 invariant). `julianday()` parses this format directly; the
-    // `* 86400000` conversion yields milliseconds for the window comparison.
+    // #109 Phase 2: `op_log.created_at` is INTEGER epoch-milliseconds, so the
+    // within-window gap is a direct integer subtraction (`w.created_at -
+    // o.created_at`) — no `julianday()` parse / `* 86400000` day-fraction
+    // conversion needed (and `julianday()` would mis-parse a bare integer).
     //
     // The walk's `count <= 1000` matches the `undo_depth` ceiling in
     // `undo_page_op_inner`, bounding worst-case recursion against a
@@ -838,7 +847,7 @@ pub async fn find_undo_group_inner(
              FROM walk w \
              JOIN ordered_ops o ON o.rn = w.rn + 1 \
              WHERE o.device_id = w.device_id \
-               AND (julianday(w.created_at) - julianday(o.created_at)) * 86400000.0 <= ?3 \
+               AND (w.created_at - o.created_at) <= ?3 \
                AND w.count_so_far < 1000 \
          ) \
          SELECT MAX(count_so_far) FROM walk",
@@ -1022,7 +1031,7 @@ pub async fn compute_edit_diff_inner(
         ))
     })?;
     let prior =
-        crate::reverse::find_prior_text(pool, payload.block_id.as_str(), &row.created_at, seq)
+        crate::reverse::find_prior_text(pool, payload.block_id.as_str(), row.created_at, seq)
             .await?;
 
     let old_text = prior.unwrap_or_default();
@@ -1195,7 +1204,7 @@ mod tests {
     use tempfile::TempDir;
 
     const DEV: &str = "L39-test-device";
-    const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+    const FIXED_TS: i64 = 1_735_689_600_000; // 2025-01-01T00:00:00Z
 
     async fn test_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().unwrap();
@@ -1216,7 +1225,7 @@ mod tests {
         op_type: &str,
         payload: &str,
         block_id: Option<&str>,
-        created_at: &str,
+        created_at: i64,
     ) {
         sqlx::query(
             "INSERT INTO op_log \
@@ -1273,7 +1282,7 @@ mod tests {
             position: Some(1),
             content: "hello".into(),
         });
-        let record = append_local_op_at(&pool, DEV, payload, FIXED_TS.into())
+        let record = append_local_op_at(&pool, DEV, payload, FIXED_TS)
             .await
             .unwrap();
 

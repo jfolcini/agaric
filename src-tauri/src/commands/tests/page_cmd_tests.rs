@@ -3024,7 +3024,7 @@ async fn list_all_pages_in_space_returns_every_page_in_scope() {
     assign_to_space(&pool, "LAPS_A2", TEST_SPACE_ID).await;
     assign_to_space(&pool, "LAPS_B1", TEST_SPACE_B_ID).await;
     assign_to_space(&pool, "LAPS_DEL", TEST_SPACE_ID).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = 'LAPS_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1778284800000 WHERE id = 'LAPS_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -3168,7 +3168,7 @@ async fn list_template_page_ids_in_space_returns_template_pages_only() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = 'TPL_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1778284800000 WHERE id = 'TPL_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -3240,10 +3240,12 @@ async fn load_page_subtree_returns_active_descendants_excluding_root() {
     )
     .await;
     assign_to_space(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2026-05-09T00:00:00Z' WHERE id = '01HZDEM000000000000000DEM0'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE blocks SET deleted_at = 1778284800000 WHERE id = '01HZDEM000000000000000DEM0'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     // `page_id` is materializer-maintained in production; backfill by
     // hand for the test fixture so the WHERE page_id = ? filter hits.
     crate::cache::rebuild_page_ids(&pool).await.unwrap();

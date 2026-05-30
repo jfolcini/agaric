@@ -17,7 +17,7 @@
       {
         "name": "deleted_at",
         "ordinal": 1,
-        "type_info": "Text",
+        "type_info": "Integer",
         "origin": {
           "Table": {
             "table": "blocks",

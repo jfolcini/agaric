@@ -116,8 +116,8 @@ describe('HistoryPanel', () => {
   it('renders history entries with op_type badge and timestamp', async () => {
     const page = {
       items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, '2025-01-15T12:00:00Z'),
-        makeHistoryEntry(2, 'create_block', { block_type: 'content' }, '2025-01-14T10:00:00Z'),
+        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, 1736942400000),
+        makeHistoryEntry(2, 'create_block', { block_type: 'content' }, 1736848800000),
       ],
       next_cursor: null,
       has_more: false,
@@ -437,7 +437,7 @@ describe('HistoryPanel', () => {
 
   it('shows device_id for each entry', async () => {
     const page = {
-      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'content' }, '2025-01-15T12:00:00Z')],
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'content' }, 1736942400000)],
       next_cursor: null,
       has_more: false,
       total_count: null,
@@ -468,9 +468,9 @@ describe('HistoryPanel', () => {
     // active. This test exercises the post-filter UX (only edit_block
     // rows visible) end-to-end through the new IPC contract.
     const allRows = [
-      makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
-      makeHistoryEntry(2, 'create_block', { block_type: 'content' }, '2025-01-14T10:00:00Z'),
-      makeHistoryEntry(3, 'edit_block', { to_text: 'another edit' }, '2025-01-13T10:00:00Z'),
+      makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, 1736942400000),
+      makeHistoryEntry(2, 'create_block', { block_type: 'content' }, 1736848800000),
+      makeHistoryEntry(3, 'edit_block', { to_text: 'another edit' }, 1736762400000),
     ]
     setupInvokeRouter({
       get_block_history: (args) => {
@@ -502,9 +502,7 @@ describe('HistoryPanel', () => {
     // PEND-35 Tier 1.3 — empty state now comes from the backend
     // returning an empty page (no JS post-filter), so the mock honours
     // the `opTypeFilter` arg.
-    const allRows = [
-      makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, '2025-01-15T12:00:00Z'),
-    ]
+    const allRows = [makeHistoryEntry(1, 'edit_block', { to_text: 'edited' }, 1736942400000)]
     setupInvokeRouter({
       get_block_history: (args) => {
         const a = args as Record<string, unknown>
@@ -568,7 +566,7 @@ describe('HistoryPanel', () => {
         50 - i,
         'edit_block',
         { to_text: `edit-${50 - i}` },
-        `2025-01-${String(50 - i).padStart(2, '0')}T00:00:00Z`,
+        Date.parse(`2025-01-${String(50 - i).padStart(2, '0')}T00:00:00Z`),
       ),
     )
     setupInvokeRouter({
@@ -594,9 +592,7 @@ describe('HistoryPanel', () => {
 
   it('renders content through renderRichContent for rich preview', async () => {
     const page = {
-      items: [
-        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, '2025-01-15T12:00:00Z'),
-      ],
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, 1736942400000)],
       next_cursor: null,
       has_more: false,
       total_count: null,
@@ -619,7 +615,7 @@ describe('HistoryPanel', () => {
           1,
           'set_property',
           { key: 'due_date', value: '2026-04-15' },
-          '2025-01-15T12:00:00Z',
+          1736942400000,
         ),
       ],
       next_cursor: null,
@@ -637,7 +633,7 @@ describe('HistoryPanel', () => {
 
   it('renders delete_property with formatted property name without value', async () => {
     const page = {
-      items: [makeHistoryEntry(1, 'delete_property', { key: 'due_date' }, '2025-01-15T12:00:00Z')],
+      items: [makeHistoryEntry(1, 'delete_property', { key: 'due_date' }, 1736942400000)],
       next_cursor: null,
       has_more: false,
       total_count: null,
@@ -754,9 +750,9 @@ describe('HistoryPanel', () => {
     function setupKeyboardFixture() {
       const page = {
         items: [
-          makeHistoryEntry(3, 'edit_block', { to_text: 'newest' }, '2025-01-17T12:00:00Z'),
-          makeHistoryEntry(2, 'edit_block', { to_text: 'middle' }, '2025-01-16T12:00:00Z'),
-          makeHistoryEntry(1, 'edit_block', { to_text: 'oldest' }, '2025-01-15T12:00:00Z'),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'newest' }, 1737115200000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'middle' }, 1737028800000),
+          makeHistoryEntry(1, 'edit_block', { to_text: 'oldest' }, 1736942400000),
         ],
         next_cursor: null,
         has_more: false,

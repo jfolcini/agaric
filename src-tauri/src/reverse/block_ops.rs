@@ -21,7 +21,7 @@ pub fn reverse_delete_block(_pool: &SqlitePool, record: &OpRecord) -> Result<OpP
     let payload: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: payload.block_id,
-        deleted_at_ref: record.created_at.clone(),
+        deleted_at_ref: record.created_at,
     }))
 }
 
@@ -33,7 +33,7 @@ pub async fn reverse_edit_block(
     let prior_text = find_prior_text(
         pool,
         payload.block_id.as_str(),
-        &record.created_at,
+        record.created_at,
         record.seq,
     )
     .await?
@@ -58,7 +58,7 @@ pub async fn reverse_move_block(
     let (old_parent, old_pos) = find_prior_position(
         pool,
         payload.block_id.as_str(),
-        &record.created_at,
+        record.created_at,
         record.seq,
     )
     .await?
@@ -107,7 +107,7 @@ pub fn reverse_restore_block(record: &OpRecord) -> Result<OpPayload, AppError> {
 pub async fn find_prior_text(
     pool: &SqlitePool,
     block_id: &str,
-    created_at: &str,
+    created_at: i64,
     seq: i64,
 ) -> Result<Option<String>, AppError> {
     // M-63: use the indexed `block_id` column (migration 0030) instead of
@@ -146,7 +146,7 @@ pub async fn find_prior_text(
 async fn find_prior_position(
     pool: &SqlitePool,
     block_id: &str,
-    created_at: &str,
+    created_at: i64,
     seq: i64,
 ) -> Result<Option<(Option<BlockId>, i64)>, AppError> {
     // M-63: see `find_prior_text` — use the indexed `block_id` column and
@@ -236,7 +236,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "A original".into(),
             }),
-            "2025-01-15T12:00:00Z".into(),
+            1_736_942_400_000,
         )
         .await
         .unwrap();
@@ -248,7 +248,7 @@ mod tests_m63 {
                 to_text: "A first edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:01:00Z".into(),
+            1_736_942_460_000,
         )
         .await
         .unwrap();
@@ -264,7 +264,7 @@ mod tests_m63 {
                 position: Some(2),
                 content: "B original".into(),
             }),
-            "2025-01-15T12:02:00Z".into(),
+            1_736_942_520_000,
         )
         .await
         .unwrap();
@@ -276,7 +276,7 @@ mod tests_m63 {
                 to_text: "B first edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:03:00Z".into(),
+            1_736_942_580_000,
         )
         .await
         .unwrap();
@@ -291,12 +291,12 @@ mod tests_m63 {
                 to_text: "A second edit".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:04:00Z".into(),
+            1_736_942_640_000,
         )
         .await
         .unwrap();
 
-        let prior = find_prior_text(&pool, "BLKA", &rec_a2.created_at, rec_a2.seq)
+        let prior = find_prior_text(&pool, "BLKA", rec_a2.created_at, rec_a2.seq)
             .await
             .unwrap();
         assert_eq!(prior, Some("A first edit".into()));
@@ -320,7 +320,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "A".into(),
             }),
-            "2025-01-15T12:00:00Z".into(),
+            1_736_942_400_000,
         )
         .await
         .unwrap();
@@ -332,7 +332,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P2")),
                 new_position: 3,
             }),
-            "2025-01-15T12:01:00Z".into(),
+            1_736_942_460_000,
         )
         .await
         .unwrap();
@@ -348,7 +348,7 @@ mod tests_m63 {
                 position: Some(9),
                 content: "B".into(),
             }),
-            "2025-01-15T12:02:00Z".into(),
+            1_736_942_520_000,
         )
         .await
         .unwrap();
@@ -360,7 +360,7 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P9X")),
                 new_position: 99,
             }),
-            "2025-01-15T12:03:00Z".into(),
+            1_736_942_580_000,
         )
         .await
         .unwrap();
@@ -374,12 +374,12 @@ mod tests_m63 {
                 new_parent_id: Some(BlockId::test_id("P3")),
                 new_position: 5,
             }),
-            "2025-01-15T12:04:00Z".into(),
+            1_736_942_640_000,
         )
         .await
         .unwrap();
 
-        let prior = find_prior_position(&pool, "BLKMA", &rec_a_move2.created_at, rec_a_move2.seq)
+        let prior = find_prior_position(&pool, "BLKMA", rec_a_move2.created_at, rec_a_move2.seq)
             .await
             .unwrap();
         assert_eq!(prior, Some((Some(BlockId::test_id("P2")), 3)));
@@ -403,7 +403,7 @@ mod tests_m63 {
                 position: Some(1),
                 content: "seed".into(),
             }),
-            "2025-01-15T12:00:00Z".into(),
+            1_736_942_400_000,
         )
         .await
         .unwrap();
@@ -415,15 +415,15 @@ mod tests_m63 {
                 to_text: "edited".into(),
                 prev_edit: None,
             }),
-            "2025-01-15T12:01:00Z".into(),
+            1_736_942_460_000,
         )
         .await
         .unwrap();
 
-        let upper_result = find_prior_text(&pool, "BLKLOWER", &rec.created_at, rec.seq)
+        let upper_result = find_prior_text(&pool, "BLKLOWER", rec.created_at, rec.seq)
             .await
             .unwrap();
-        let lower_result = find_prior_text(&pool, "blklower", &rec.created_at, rec.seq)
+        let lower_result = find_prior_text(&pool, "blklower", rec.created_at, rec.seq)
             .await
             .unwrap();
         assert_eq!(upper_result, Some("seed".into()));

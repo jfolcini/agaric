@@ -191,10 +191,12 @@ export function usePageBrowserSort(): UsePageBrowserSortReturn {
         // Falls back to alphabetical when rows don't carry metadata
         // (the flag-off path uses BlockRow which has no `lastModifiedAt`).
         sorted.sort((a, b) => {
-          const am = lookupMeta(a)?.lastModifiedAt ?? ''
-          const bm = lookupMeta(b)?.lastModifiedAt ?? ''
+          // #109 Phase 2: `lastModifiedAt` is INTEGER epoch-ms; sort numerically
+          // DESC (newest first), NULL → 0 sorts oldest.
+          const am = lookupMeta(a)?.lastModifiedAt ?? 0
+          const bm = lookupMeta(b)?.lastModifiedAt ?? 0
           if (am === bm) return tiebreak(a, b)
-          return bm.localeCompare(am)
+          return bm - am
         })
       } else if (sortOption === 'most-linked') {
         sorted.sort((a, b) => {

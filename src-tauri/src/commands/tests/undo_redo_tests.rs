@@ -1264,7 +1264,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
 
     // Add an attachment BEFORE the target point (so it's part of baseline)
     let att_id = "ATT_RESTORE_001";
-    let att_ts = now_rfc3339();
+    let att_ts = crate::db::now_ms();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1291,7 +1291,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
             size_bytes: 1024,
             fs_path: "/tmp/photo.png".into(),
         }),
-        att_ts.clone(),
+        att_ts,
     )
     .await
     .unwrap();
@@ -1303,7 +1303,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
     let target_seq = ops.last().unwrap().seq;
 
     // Now delete the attachment AFTER the target (non-reversible op)
-    let del_ts = now_rfc3339();
+    let del_ts = crate::db::now_ms();
     op_log::append_local_op_at(
         &pool,
         DEV,
@@ -1311,7 +1311,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
-        del_ts.clone(),
+        del_ts,
     )
     .await
     .unwrap();
@@ -1386,7 +1386,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
 
     // Add an attachment to the child block BEFORE the target point
     let att_id = "ATT_B59_001";
-    let att_ts = now_rfc3339();
+    let att_ts = crate::db::now_ms();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1413,7 +1413,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
             size_bytes: 1024,
             fs_path: "/tmp/photo.png".into(),
         }),
-        att_ts.clone(),
+        att_ts,
     )
     .await
     .unwrap();
@@ -1426,7 +1426,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
 
     // Delete the attachment AFTER the target point (soft-delete, keeping the
     // row so the attachments-based EXISTS subquery can still resolve it).
-    let del_ts = now_rfc3339();
+    let del_ts = crate::db::now_ms();
     op_log::append_local_op_at(
         &pool,
         DEV,
@@ -1434,7 +1434,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
-        del_ts.clone(),
+        del_ts,
     )
     .await
     .unwrap();
@@ -1634,7 +1634,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     // Use timestamps in the far future so they're strictly after the
     // page/child `create_block` ops (which use real `now_rfc3339()`),
     // ensuring undo's "most recent op" lookup finds the attachment ops.
-    let att_ts = "2099-01-15T12:00:00.000Z".to_string();
+    let att_ts: i64 = 4_072_161_600_000;
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -1661,7 +1661,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
             size_bytes: 1024,
             fs_path: "/tmp/photo.png".into(),
         }),
-        att_ts.clone(),
+        att_ts,
     )
     .await
     .unwrap();
@@ -1669,7 +1669,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     // 3. Delete the attachment (append delete_attachment op + soft-delete)
     // TEST-30: explicit timestamp strictly after `att_ts` for deterministic
     // ordering (see comment at the att_ts declaration above).
-    let del_ts = "2099-01-15T12:00:01.000Z".to_string();
+    let del_ts: i64 = 4_072_161_601_000;
     op_log::append_local_op_at(
         &pool,
         DEV,
@@ -1677,7 +1677,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
-        del_ts.clone(),
+        del_ts,
     )
     .await
     .unwrap();
@@ -2551,7 +2551,7 @@ async fn revert_add_attachment_soft_deletes() {
             size_bytes: 1024,
             fs_path: "/tmp/photo.png".into(),
         }),
-        FIXED_TS.to_string(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -3116,14 +3116,10 @@ async fn revert_ops_from_different_devices() {
         to_text: "from-device-B".into(),
         prev_edit: None,
     });
-    let device_b_op = op_log::append_local_op_at(
-        &pool,
-        "device-B",
-        edit_payload,
-        "2099-01-01T00:00:00Z".to_string(),
-    )
-    .await
-    .unwrap();
+    let device_b_op =
+        op_log::append_local_op_at(&pool, "device-B", edit_payload, 4_070_908_800_000)
+            .await
+            .unwrap();
 
     // Manually apply the edit to the blocks table (op_log doesn't do this)
     sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")

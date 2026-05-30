@@ -48,7 +48,7 @@ pub struct RestoreToOpResult {
 #[derive(Debug, Clone, Serialize, serde::Deserialize, specta::Type)]
 pub struct CompactionStatus {
     pub total_ops: i64,
-    pub oldest_op_date: Option<String>,
+    pub oldest_op_date: Option<i64>,
     pub eligible_ops: i64,
     pub retention_days: u64,
 }
@@ -67,7 +67,7 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
         .fetch_one(pool)
         .await?;
 
-    let oldest_op_date: Option<String> = sqlx::query_scalar!("SELECT MIN(created_at) FROM op_log")
+    let oldest_op_date: Option<i64> = sqlx::query_scalar!("SELECT MIN(created_at) FROM op_log")
         .fetch_one(pool)
         .await?;
 
@@ -78,11 +78,11 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
     // the cast is infallible.
     let cutoff = chrono::Utc::now()
         - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS.cast_signed());
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let cutoff_ms = cutoff.timestamp_millis();
 
     let eligible_ops: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
+        cutoff_ms
     )
     .fetch_one(pool)
     .await?;
@@ -144,12 +144,12 @@ pub async fn compact_op_log_cmd_inner(
     // cast is therefore safe for any retention window the UI will ever
     // produce.
     let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days.cast_signed());
-    let cutoff_str = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let cutoff_ms = cutoff.timestamp_millis();
 
     // Count eligible ops before compaction
     let eligible: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
+        cutoff_ms
     )
     .fetch_one(pool)
     .await?;
@@ -187,7 +187,7 @@ pub async fn compact_op_log_cmd_inner(
     // see comment above and L-42 / L-43 in REVIEW-LATER).
     let eligible_in_tx: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
-        cutoff_str
+        cutoff_ms
     )
     .fetch_one(&mut *tx)
     .await?;

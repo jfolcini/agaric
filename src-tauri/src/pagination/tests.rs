@@ -79,8 +79,14 @@ async fn insert_agenda_entry(pool: &SqlitePool, date: &str, block_id: &str, sour
 
 /// Soft-delete a block with a deterministic timestamp.
 async fn soft_delete_block(pool: &SqlitePool, id: &str, deleted_at: &str) {
+    // #109 Phase 2: blocks.deleted_at is now INTEGER epoch-ms. Callers pass
+    // ISO-8601 strings for readability; convert to ms here, preserving the
+    // exact monotonic ordering those strings encode.
+    let deleted_at_ms = chrono::DateTime::parse_from_rfc3339(deleted_at)
+        .unwrap()
+        .timestamp_millis();
     sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-        .bind(deleted_at)
+        .bind(deleted_at_ms)
         .bind(id)
         .execute(pool)
         .await
@@ -2260,6 +2266,12 @@ async fn insert_op_log_entry(
     payload: &str,
     created_at: &str,
 ) {
+    // #109 Phase 2: op_log.created_at is now INTEGER epoch-ms. Callers pass
+    // ISO-8601 strings for readability; convert to ms here, preserving the
+    // exact monotonic ordering those strings encode.
+    let created_at_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+        .unwrap()
+        .timestamp_millis();
     sqlx::query(
         "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, block_id) \
          VALUES (?, ?, ?, ?, ?, ?, json_extract(?, '$.block_id'))",
@@ -2269,7 +2281,7 @@ async fn insert_op_log_entry(
     .bind("test-hash-placeholder")
     .bind(op_type)
     .bind(payload)
-    .bind(created_at)
+    .bind(created_at_ms)
     .bind(payload)
     .execute(pool)
     .await
@@ -2864,7 +2876,7 @@ async fn test_list_block_history_uses_native_block_id_column() {
     .bind("test-hash-payload-only")
     .bind("edit_block")
     .bind(r#"{"block_id":"PEND20B2","to_text":"updated"}"#)
-    .bind("2025-01-01T01:00:00Z")
+    .bind(1_735_693_200_000_i64)
     .execute(&pool)
     .await
     .unwrap();
@@ -4660,7 +4672,7 @@ mod active_row_conversions {
             content: Some("hello".to_string()),
             parent_id: Some(BlockId::test_id("PAR_ABC")),
             position: Some(42),
-            deleted_at: Some("2024-01-01T00:00:00Z".to_string()),
+            deleted_at: Some(1_704_067_200_000),
             todo_state: Some("TODO".to_string()),
             priority: Some("A".to_string()),
             due_date: Some("2024-12-31".to_string()),

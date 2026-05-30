@@ -1183,7 +1183,7 @@ mod tests {
             hash: "0".repeat(64),
             op_type: op_type.to_string(),
             payload: "{}".to_string(),
-            created_at: "1970-01-01T00:00:00.000Z".to_string(),
+            created_at: 0,
             block_id: None,
         }
     }

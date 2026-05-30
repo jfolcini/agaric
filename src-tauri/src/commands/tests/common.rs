@@ -10,7 +10,7 @@ use tempfile::TempDir;
 // -- Deterministic test fixtures --
 
 pub const DEV: &str = "test-device-001";
-pub const FIXED_TS: &str = "2025-01-01T00:00:00Z";
+pub const FIXED_TS: i64 = 1_735_689_600_000; // 2025-01-01T00:00:00Z
 
 /// Synthetic space ULID for tests that need to satisfy the FEAT-3 Phase 7
 /// space-scoped query path (e.g. `batch_resolve_inner`, `get_page_inner`)

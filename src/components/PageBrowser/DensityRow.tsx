@@ -72,8 +72,8 @@ export interface DensityRowProps {
   deleting: boolean
 
   // ── Typed metadata primitives (PEND-56 Phase 1 IPC columns) ────────
-  /** ISO timestamp from `last_modified_at`. `null` renders "never". */
-  lastModifiedAt: string | null
+  /** Epoch-ms from `last_modified_at` (#109 Phase 2). `null` renders "never". */
+  lastModifiedAt: number | null
   /** Inbound link count. Zero suppresses the ↗ badge in `regular` /
    * `expanded`. */
   inboundLinkCount: number
@@ -133,9 +133,14 @@ const YEAR_MS = 365 * DAY_MS
  * Exported for the test file's deterministic assertions; callers should
  * not import it elsewhere.
  */
-export function formatRelativeShort(iso: string | null, now: number = Date.now()): string {
-  if (!iso) return ''
-  const t = Date.parse(iso)
+export function formatRelativeShort(
+  // #109 Phase 2: `lastModifiedAt` is INTEGER epoch-ms; still accept ISO
+  // strings for any other caller.
+  value: string | number | null,
+  now: number = Date.now(),
+): string {
+  if (!value) return ''
+  const t = typeof value === 'number' ? value : Date.parse(value)
   if (Number.isNaN(t)) return ''
   const diff = Math.max(0, now - t)
   if (diff < MINUTE_MS) return 'now'

@@ -38,7 +38,7 @@ function makeEntry(
   seq: number,
   opType: string,
   payload: Record<string, unknown>,
-  createdAt = '2025-01-15T12:00:00Z',
+  createdAt = 1736942400000,
   deviceId = 'DEVICE01XXXXXXXX',
 ) {
   return {

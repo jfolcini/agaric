@@ -106,19 +106,26 @@ pub async fn list_page_history(
     let fetch_limit = page.limit + 1;
 
     // Cursor: reuse `deleted_at` field for `created_at` and `seq` + `id` for device_id
+    // #109 Phase 2: `op_log.created_at` is INTEGER epoch-ms. The opaque
+    // `Cursor.deleted_at` slot still carries it as a String (see Cursor
+    // docs); parse it back to i64 here before binding against the
+    // INTEGER column.
     let (cursor_flag, cursor_created_at, cursor_seq, cursor_device_id): (
         Option<i64>,
-        &str,
+        i64,
         i64,
         &str,
     ) = match page.after.as_ref() {
         Some(c) => {
-            let created_at = c.deleted_at.as_deref().ok_or_else(|| {
+            let created_at_str = c.deleted_at.as_deref().ok_or_else(|| {
                 AppError::Validation("cursor missing created_at for page history query".into())
+            })?;
+            let created_at = created_at_str.parse::<i64>().map_err(|e| {
+                AppError::Validation(format!("cursor created_at not an integer: {e}"))
             })?;
             (Some(1), created_at, c.seq.unwrap_or(0), &c.id)
         }
-        None => (None, "", 0, ""),
+        None => (None, 0, 0, ""),
     };
 
     if page_id == "__all__" {
@@ -158,7 +165,11 @@ pub async fn list_page_history(
         .await?;
 
         return build_page_response(rows, page.limit, |last| {
-            Cursor::for_history_full(last.device_id.clone(), last.created_at.clone(), last.seq)
+            Cursor::for_history_full(
+                last.device_id.clone(),
+                last.created_at.to_string(),
+                last.seq,
+            )
         });
     }
 
@@ -195,6 +206,10 @@ pub async fn list_page_history(
 
     build_page_response(rows, page.limit, |last| {
         // reuse deleted_at slot for created_at — see Cursor docs
-        Cursor::for_history_full(last.device_id.clone(), last.created_at.clone(), last.seq)
+        Cursor::for_history_full(
+            last.device_id.clone(),
+            last.created_at.to_string(),
+            last.seq,
+        )
     })
 }

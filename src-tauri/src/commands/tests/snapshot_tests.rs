@@ -129,7 +129,7 @@ async fn snapshot_block_history_response() {
     .bind("snap-hash")
     .bind("create_block")
     .bind(r#"{"block_id":"SNAP_HIST","block_type":"content","content":"hi"}"#)
-    .bind("2025-06-15T12:00:00Z")
+    .bind(1_749_988_800_000_i64)
     .bind("SNAP_HIST")
     .execute(&pool)
     .await

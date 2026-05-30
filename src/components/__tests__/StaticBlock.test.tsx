@@ -824,7 +824,7 @@ describe('StaticBlock', () => {
         mime_type: 'image/png',
         size_bytes: 1024,
         fs_path: '/path/to/photo.png',
-        created_at: '2024-01-01T00:00:00Z',
+        created_at: 1704067200000,
         ...overrides,
       }
     }
@@ -974,7 +974,7 @@ describe('StaticBlock', () => {
         mime_type: 'image/png',
         size_bytes: 1024,
         fs_path: '/path/to/photo.png',
-        created_at: '2024-01-01T00:00:00Z',
+        created_at: 1704067200000,
         ...overrides,
       }
     }

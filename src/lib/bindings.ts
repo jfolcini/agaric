@@ -45,7 +45,7 @@ export const commands = {
 	 */
 	moveBlocksToSpace: (blockIds: BlockId[], spaceId: string) => typedError<number, AppError>(__TAURI_INVOKE("move_blocks_to_space", { blockIds, spaceId })),
 	/**  Tauri command: restore a soft-deleted block. Delegates to [`restore_block_inner`]. */
-	restoreBlock: (blockId: BlockId, deletedAtRef: string) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
+	restoreBlock: (blockId: BlockId, deletedAtRef: number) => typedError<RestoreResponse, AppError>(__TAURI_INVOKE("restore_block", { blockId, deletedAtRef })),
 	/**  Tauri command: permanently purge a soft-deleted block. Delegates to [`purge_block_inner`]. */
 	purgeBlock: (blockId: BlockId) => typedError<PurgeResponse, AppError>(__TAURI_INVOKE("purge_block", { blockId })),
 	/**
@@ -725,7 +725,8 @@ export const commands = {
 	content: string | null,
 	parent_id: BlockId | null,
 	position: number | null,
-	deleted_at: string | null,
+	/**  Epoch-ms (blocks.deleted_at is INTEGER since migration 0080). */
+	deleted_at: number | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -812,7 +813,8 @@ export type ActiveBlockRow = {
 	content: string | null,
 	parent_id: BlockId | null,
 	position: number | null,
-	deleted_at: string | null,
+	/**  Epoch-ms (blocks.deleted_at is INTEGER since migration 0080). */
+	deleted_at: number | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -880,7 +882,8 @@ export type AttachmentRow = {
 	filename: string,
 	size_bytes: number,
 	fs_path: string,
-	created_at: string,
+	/**  Epoch-ms (attachments.created_at is INTEGER since migration 0081). */
+	created_at: number,
 };
 
 /**
@@ -975,7 +978,8 @@ export type BlockRow = {
 	content: string | null,
 	parent_id: BlockId | null,
 	position: number | null,
-	deleted_at: string | null,
+	/**  Epoch-ms (blocks.deleted_at is INTEGER since migration 0080). */
+	deleted_at: number | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,
@@ -1009,7 +1013,7 @@ export type CompactionResult = {
 /**  Statistics about the op log, returned by [`get_compaction_status`]. */
 export type CompactionStatus = {
 	total_ops: number,
-	oldest_op_date: string | null,
+	oldest_op_date: number | null,
 	eligible_ops: number,
 	retention_days: number,
 };
@@ -1113,7 +1117,7 @@ export type DateRange = {
 
 export type DeleteResponse = {
 	block_id: string,
-	deleted_at: string,
+	deleted_at: number,
 	descendants_affected: number,
 };
 
@@ -1130,7 +1134,8 @@ export type DiffTag = "Equal" | "Delete" | "Insert";
 export type Draft = {
 	block_id: BlockId,
 	content: string,
-	updated_at: string,
+	/**  Epoch-ms (block_drafts.updated_at is INTEGER since migration 0082). */
+	updated_at: number,
 };
 
 /**
@@ -1303,7 +1308,8 @@ export type HistoryEntry = {
 	seq: number,
 	op_type: string,
 	payload: string,
-	created_at: string,
+	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
+	created_at: number,
 };
 
 /**  Result of parsing a markdown file. */
@@ -1627,13 +1633,14 @@ export type PageWithMetadataRow = {
 	scheduledDate: string | null,
 	pageId: PageId | null,
 	/**
-	 *  max(`op_log.created_at`) over the page itself. None if the
-	 *  page has no op-log entries (which should never happen — every
-	 *  active page has at least its own creation row — but the column
-	 *  is `Option` to absorb edge cases like manually-imported rows
-	 *  without a synthesised op-log entry).
+	 *  max(`op_log.created_at`) over the page itself, as INTEGER
+	 *  epoch-milliseconds (#109 Phase 2). None if the page has no op-log
+	 *  entries (which should never happen — every active page has at
+	 *  least its own creation row — but the column is `Option` to absorb
+	 *  edge cases like manually-imported rows without a synthesised
+	 *  op-log entry).
 	 */
-	lastModifiedAt: string | null,
+	lastModifiedAt: number | null,
 	/**
 	 *  COUNT of `block_links` targeting this page or any of its
 	 *  descendants. Always emitted (zero for un-linked pages).
@@ -1882,7 +1889,12 @@ export type SearchBlockRow = {
 	content: string | null,
 	parent_id: string | null,
 	position: number | null,
-	deleted_at: string | null,
+	/**
+	 *  Epoch-ms (blocks.deleted_at is INTEGER since migration 0080). Always
+	 *  `None` on search rows — the FTS SQL filters `deleted_at IS NULL` — but
+	 *  typed as `i64` to match the rest of the #109 cluster.
+	 */
+	deleted_at: number | null,
 	todo_state: string | null,
 	priority: string | null,
 	due_date: string | null,

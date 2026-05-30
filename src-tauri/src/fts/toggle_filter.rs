@@ -993,7 +993,9 @@ struct RegexScanRow {
     content: Option<String>,
     parent_id: Option<crate::ulid::BlockId>,
     position: Option<i64>,
-    deleted_at: Option<String>,
+    // #109 Phase 2 — blocks.deleted_at is INTEGER epoch-ms (migration 0080);
+    // the scan SQL filters `deleted_at IS NULL`, so always None here.
+    deleted_at: Option<i64>,
     todo_state: Option<String>,
     priority: Option<String>,
     due_date: Option<String>,

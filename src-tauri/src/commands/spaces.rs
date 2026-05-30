@@ -735,7 +735,7 @@ mod tests {
         // Soft-delete the Work space via direct SQL (bypassing the
         // command layer) to simulate the state we need to guard against.
         sqlx::query!(
-            "UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?",
+            "UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?",
             SPACE_WORK_ULID
         )
         .execute(&pool)

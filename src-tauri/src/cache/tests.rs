@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 // -- Deterministic test fixtures ------------------------------------------
 
-const FIXED_DELETED_AT: &str = "2025-01-15T12:00:00+00:00";
+const FIXED_DELETED_AT: i64 = 1_736_942_400_000;
 
 // -- Helpers --------------------------------------------------------------
 

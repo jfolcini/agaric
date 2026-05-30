@@ -85,7 +85,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
     let (pool, _dir) = test_pool().await;
 
     // Insert ops with old timestamps (> 90 days ago) directly into op_log
-    let old_ts = "2024-01-01T00:00:00.000Z";
+    let old_ts: i64 = 1_704_067_200_000;
     for i in 1..=5 {
         let block_id = format!("01HZ00000000000000000BLOCK{i:02}");
         // Insert a block so the op references a valid block
@@ -127,7 +127,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
         Some(6),
     )
     .await;
-    let recent_ts = crate::now_rfc3339();
+    let recent_ts = crate::db::now_ms();
     sqlx::query(
         "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
          VALUES (?, ?, 'create_block', ?, 'fakehash_recent', ?)",
@@ -238,7 +238,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
 
     // Pre-seed N=4 eligible (old) ops + 1 recent op so the recount,
     // the inner DELETE, and the actual table delta are all observable.
-    let old_ts = "2024-01-01T00:00:00.000Z";
+    let old_ts: i64 = 1_704_067_200_000;
     let n_old: i64 = 4;
     for i in 1..=n_old {
         let block_id = format!("01HZ00000000000000000BLK{i:03}");
@@ -280,7 +280,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
         Some(n_old + 1),
     )
     .await;
-    let recent_ts = crate::now_rfc3339();
+    let recent_ts = crate::db::now_ms();
     sqlx::query(
         "INSERT INTO op_log (device_id, seq, op_type, payload, hash, created_at) \
          VALUES (?, ?, 'create_block', ?, 'fakehash_recent', ?)",

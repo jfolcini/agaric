@@ -112,7 +112,7 @@ pub(super) async fn recover_single_draft(
         // synthetic op AND update blocks.content — same pattern as
         // commands::edit_block_inner.
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        append_local_op_in_tx(&mut tx, device_id, op, crate::now_rfc3339()).await?;
+        append_local_op_in_tx(&mut tx, device_id, op, crate::db::now_ms()).await?;
         sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
             .bind(&draft.content)
             .bind(&draft.block_id)

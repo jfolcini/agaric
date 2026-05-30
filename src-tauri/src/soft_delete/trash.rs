@@ -8,11 +8,8 @@ use crate::materializer::Materializer;
 use crate::op_log::OpRecord;
 
 /// Soft-delete a single block (no cascade).
-pub async fn soft_delete_block(
-    pool: &SqlitePool,
-    block_id: &str,
-) -> Result<Option<String>, AppError> {
-    let now = crate::now_rfc3339();
+pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Option<i64>, AppError> {
+    let now = crate::db::now_ms();
     let result = sqlx::query!(
         "UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
         now,
@@ -62,9 +59,9 @@ pub async fn cascade_soft_delete(
     materializer: &Materializer,
     _device_id: &str,
     block_id: &str,
-) -> Result<(String, u64), AppError> {
+) -> Result<(i64, u64), AppError> {
     tracing::debug!(seed_block_id = %block_id, "cascade soft-delete starting");
-    let now = crate::now_rfc3339();
+    let now = crate::db::now_ms();
     // MAINT-112: `CommandTx::begin_immediate` inherits the slow-acquire
     // tracing from `begin_immediate_logged` AND couples commit +
     // post-commit cache dispatch (see the synthesized `delete_block` op
@@ -147,7 +144,7 @@ fn synthesize_delete_op(block_id: &str) -> OpRecord {
         hash: String::new(),
         op_type: "delete_block".to_owned(),
         payload: String::new(),
-        created_at: String::new(),
+        created_at: 0,
         block_id: Some(block_id.to_owned()),
     }
 }

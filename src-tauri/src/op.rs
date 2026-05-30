@@ -142,7 +142,9 @@ pub struct DeleteBlockPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestoreBlockPayload {
     pub block_id: BlockId,
-    pub deleted_at_ref: String,
+    /// Epoch-ms guard matched against `blocks.deleted_at` (INTEGER since
+    /// migration 0080); sourced from the delete op's `created_at`.
+    pub deleted_at_ref: i64,
 }
 
 /// Payload for the `purge_block` op — physically deletes a soft-deleted block and all its descendants.
@@ -555,7 +557,7 @@ mod tests {
             }),
             OpPayload::RestoreBlock(RestoreBlockPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
-                deleted_at_ref: "ref-1".into(),
+                deleted_at_ref: 1_735_689_600_000, // 2025-01-01T00:00:00Z
             }),
             OpPayload::PurgeBlock(PurgeBlockPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),

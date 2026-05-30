@@ -404,7 +404,10 @@ pub struct SearchBlockRow {
     pub content: Option<String>,
     pub parent_id: Option<String>,
     pub position: Option<i64>,
-    pub deleted_at: Option<String>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080). Always
+    /// `None` on search rows — the FTS SQL filters `deleted_at IS NULL` — but
+    /// typed as `i64` to match the rest of the #109 cluster.
+    pub deleted_at: Option<i64>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,

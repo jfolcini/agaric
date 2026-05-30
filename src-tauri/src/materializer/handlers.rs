@@ -316,7 +316,7 @@ async fn dispatch_restore_descendants(
         // Build the typed payload directly (no JSON round-trip).
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(cohort_id),
-            deleted_at_ref: root_payload.deleted_at_ref.clone(),
+            deleted_at_ref: root_payload.deleted_at_ref,
         });
 
         let op_id = format!(
@@ -328,7 +328,7 @@ async fn dispatch_restore_descendants(
             &payload,
             &root_record.device_id,
             &space_id,
-            &root_record.created_at,
+            &root_record.created_at.to_string(),
             state,
         );
     }
@@ -410,7 +410,7 @@ async fn dispatch_delete_descendants(
             &payload,
             &root_record.device_id,
             space_id,
-            &root_record.created_at,
+            &root_record.created_at.to_string(),
             state,
         );
     }
@@ -1259,7 +1259,7 @@ async fn apply_op_tx(
                 crate::space::resolve_block_space(&mut *conn, &p.block_id).await?;
             // PEND-56b: feed the cohort into the count-refresh hook.
             pre_state.cohort = cohort.clone();
-            apply_delete_block_via_loro(conn, &record.device_id, &p, &record.created_at).await?;
+            apply_delete_block_via_loro(conn, &record.device_id, &p, record.created_at).await?;
             effects.deleted_cohort = cohort;
             effects.delete_space_id = delete_space_id;
         }
@@ -1331,7 +1331,7 @@ async fn apply_op_tx(
             // Attachments stay on the SQL-only path — they don't go
             // through Loro.
             let p: AddAttachmentPayload = serde_json::from_str(&record.payload)?;
-            apply_add_attachment_tx(conn, p, &record.created_at).await?;
+            apply_add_attachment_tx(conn, p, record.created_at).await?;
         }
         OpType::DeleteAttachment => {
             let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
@@ -1413,7 +1413,7 @@ async fn collect_restore_cohort(
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(p.block_id.as_str())
-    .bind(&p.deleted_at_ref)
+    .bind(p.deleted_at_ref)
     .fetch_all(&mut *conn)
     .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
@@ -1666,7 +1666,7 @@ async fn apply_delete_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     device_id: &str,
     p: &DeleteBlockPayload,
-    now: &str,
+    now: i64,
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
@@ -1680,7 +1680,9 @@ async fn apply_delete_block_via_loro(
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        engine.apply_delete_block(p.block_id.as_str(), now)?;
+        // #109 Phase 2: the engine seed carries `deleted_at` as a String
+        // slot (bridged to i64 at the SQL boundary); stringify here.
+        engine.apply_delete_block(p.block_id.as_str(), &now.to_string())?;
         drop(guard);
     }
 
@@ -1792,7 +1794,7 @@ async fn apply_restore_block_via_loro(
         drop(guard);
     }
 
-    projection::project_restore_block_to_sql(conn, p.block_id.as_str(), &p.deleted_at_ref).await?;
+    projection::project_restore_block_to_sql(conn, p.block_id.as_str(), p.deleted_at_ref).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
@@ -2150,7 +2152,7 @@ async fn apply_edit_block_sql_only(
 async fn apply_delete_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: DeleteBlockPayload,
-    now: &str,
+    now: i64,
 ) -> Result<(), AppError> {
     sqlx::query(concat!(
         crate::descendants_cte_active!(),
@@ -2176,7 +2178,7 @@ async fn apply_restore_block_sql_only(
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
     .bind(p.block_id.as_str())
-    .bind(&p.deleted_at_ref)
+    .bind(p.deleted_at_ref)
     .execute(&mut *conn)
     .await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
@@ -2350,7 +2352,7 @@ async fn apply_delete_property_sql_only(
 async fn apply_add_attachment_tx(
     conn: &mut sqlx::SqliteConnection,
     p: AddAttachmentPayload,
-    created_at: &str,
+    created_at: i64,
 ) -> Result<(), AppError> {
     sqlx::query(
         "INSERT OR IGNORE INTO attachments \
@@ -2887,7 +2889,7 @@ mod restore_cascade_tests {
     const CHILD_3: &str = "01HZ00000000000000000000C3";
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     const DEVICE_ID: &str = "device-restore-cascade";
-    const DELETED_AT: &str = "2025-01-01T00:00:00Z";
+    const DELETED_AT: i64 = 1_735_689_600_000;
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
         let dir = TempDir::new().expect("tempdir");
@@ -3046,7 +3048,7 @@ mod restore_cascade_tests {
         // matching `deleted_at = DELETED_AT`.
         let payload = OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
             block_id: BlockId::from_trusted(PAGE_ID),
-            deleted_at_ref: DELETED_AT.into(),
+            deleted_at_ref: DELETED_AT,
         });
         let record = std::sync::Arc::new(
             crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
@@ -3100,7 +3102,7 @@ mod restore_cascade_tests {
             hash: "0000".into(),
             op_type: "restore_block".into(),
             payload,
-            created_at: DELETED_AT.into(),
+            created_at: DELETED_AT,
             block_id: Some(PAGE_ID.into()),
         };
 
@@ -3342,7 +3344,7 @@ mod delete_cascade_tests {
              WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
         ))
         .bind(payload.block_id.as_str())
-        .bind("2026-01-01T00:00:00Z")
+        .bind(1_767_225_600_000_i64)
         .execute(&mut *tx)
         .await
         .expect("cascade UPDATE");
@@ -3709,7 +3711,7 @@ mod engine_path_tests {
         let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
             .expect("append");
-        let record_created_at = record.created_at.clone();
+        let record_created_at = record.created_at;
         let mut tx = pool.begin().await.expect("begin");
         super::apply_op_tx(&mut tx, &record)
             .await
@@ -3720,15 +3722,14 @@ mod engine_path_tests {
         // `deleted_at = record.created_at` — the CTE-driven cascade
         // mirrors `apply_delete_block_tx`.
         for id in [BLOCK_ID, CHILD_1, CHILD_2] {
-            let row: (Option<String>,) =
-                sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(id)
-                    .fetch_one(&pool)
-                    .await
-                    .expect("fetch row");
+            let row: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row");
             assert_eq!(
-                row.0.as_ref(),
-                Some(&record_created_at),
+                row.0,
+                Some(record_created_at),
                 "cascade must soft-delete {id}",
             );
         }
@@ -3833,7 +3834,7 @@ mod engine_path_tests {
         tx.commit().await.expect("commit1");
 
         // Sanity: SQL has deleted_at set, engine `read_deleted` is true.
-        let pre: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+        let pre: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(BLOCK_ID)
             .fetch_one(&pool)
             .await
@@ -3855,7 +3856,7 @@ mod engine_path_tests {
         tx.commit().await.expect("commit2");
 
         // SQL: deleted_at cleared.
-        let post: (Option<String>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
+        let post: (Option<i64>,) = sqlx::query_as("SELECT deleted_at FROM blocks WHERE id = ?")
             .bind(BLOCK_ID)
             .fetch_one(&pool)
             .await

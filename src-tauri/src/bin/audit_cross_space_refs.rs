@@ -853,7 +853,7 @@ mod tests {
         // BLOCK_PERSONAL is soft-deleted.
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, deleted_at) \
-             VALUES (?, 'content', 'x', ?, 1, ?, '2025-01-01T00:00:00Z')",
+             VALUES (?, 'content', 'x', ?, 1, ?, 1735689600000)",
         )
         .bind(BLOCK_PERSONAL)
         .bind(PAGE_PERSONAL)

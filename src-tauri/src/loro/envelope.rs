@@ -227,7 +227,7 @@ mod tests {
             hash: "deadbeef".to_string(),
             op_type: "edit_block".to_string(),
             payload: r#"{"op_type":"edit_block","block_id":"01HZ00000000000000000000AB","to_text":"updated","prev_edit":null}"#.to_string(),
-            created_at: "2026-05-09T00:00:00.000Z".to_string(),
+            created_at: 1_778_284_800_000,
             block_id: Some("01HZ00000000000000000000AB".to_string()),
         };
 
@@ -266,7 +266,7 @@ mod tests {
             hash: "deadbeef".to_string(),
             op_type: "create_block".to_string(),
             payload: "{not valid json".to_string(),
-            created_at: "2026-05-09T00:00:00.000Z".to_string(),
+            created_at: 1_778_284_800_000,
             block_id: None,
         };
 
@@ -487,7 +487,7 @@ mod tests {
             hash: "deadbeef".to_string(),
             op_type: original.op_type_str().to_string(),
             payload: payload_json,
-            created_at: "2026-05-09T00:00:00.000Z".to_string(),
+            created_at: 1_778_284_800_000,
             block_id: Some("01HZ00000000000000000000AB".to_string()),
         };
 

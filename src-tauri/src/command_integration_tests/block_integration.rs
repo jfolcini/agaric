@@ -583,10 +583,7 @@ async fn delete_block_marks_as_deleted() {
         .await
         .unwrap();
 
-    assert!(
-        !del.deleted_at.is_empty(),
-        "deleted_at timestamp must be set"
-    );
+    assert!(del.deleted_at > 0, "deleted_at timestamp must be set");
     assert_eq!(del.block_id, created.id, "block_id must match");
 
     let row = get_block_inner(&pool, created.id).await.unwrap();
@@ -940,14 +937,8 @@ async fn restore_nonexistent_block_returns_not_found() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let result = restore_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "GHOST_REST".into(),
-        "2025-01-01T00:00:00Z".into(),
-    )
-    .await;
+    let result =
+        restore_block_inner(&pool, DEV, &mat, "GHOST_REST".into(), 1_735_689_600_000).await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(_))),
@@ -962,14 +953,7 @@ async fn restore_non_deleted_block_returns_invalid_operation() {
 
     insert_block(&pool, "ALIVE01", "content", "alive", None, Some(1)).await;
 
-    let result = restore_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "ALIVE01".into(),
-        "2025-01-01T00:00:00Z".into(),
-    )
-    .await;
+    let result = restore_block_inner(&pool, DEV, &mat, "ALIVE01".into(), 1_735_689_600_000).await;
 
     assert!(
         matches!(result, Err(AppError::InvalidOperation(_))),
@@ -987,7 +971,7 @@ async fn restore_with_wrong_deleted_at_ref_returns_invalid_operation() {
         .await
         .unwrap();
 
-    let wrong_ts = format!("{ts}_WRONG");
+    let wrong_ts = ts + 1;
     let result = restore_block_inner(&pool, DEV, &mat, "MISMATCH01".into(), wrong_ts).await;
 
     let err = result.unwrap_err();
@@ -1573,11 +1557,11 @@ async fn list_blocks_show_deleted_returns_only_deleted() {
     insert_block(&pool, "LD_DEAD1", "content", "dead1", None, Some(2)).await;
     insert_block(&pool, "LD_DEAD2", "content", "dead2", None, Some(3)).await;
 
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-15T00:00:00+00:00' WHERE id = 'LD_DEAD1'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1736899200000 WHERE id = 'LD_DEAD1'")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-16T00:00:00+00:00' WHERE id = 'LD_DEAD2'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1736985600000 WHERE id = 'LD_DEAD2'")
         .execute(&pool)
         .await
         .unwrap();
@@ -1735,7 +1719,7 @@ async fn get_block_returns_deleted_blocks() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "GET_DEL", "content", "was alive", None, Some(1)).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'GET_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'GET_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -1873,7 +1857,7 @@ async fn move_deleted_block_returns_not_found() {
     let mat = test_materializer(&pool);
 
     insert_block(&pool, "MV_DEL", "content", "deleted", None, Some(1)).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'MV_DEL'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'MV_DEL'")
         .execute(&pool)
         .await
         .unwrap();
@@ -1944,7 +1928,7 @@ async fn move_block_to_deleted_parent_returns_not_found() {
 
     insert_block(&pool, "MV_DP_BLK", "content", "block", None, Some(1)).await;
     insert_block(&pool, "MV_DP_PAR", "page", "deleted parent", None, Some(2)).await;
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'MV_DP_PAR'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'MV_DP_PAR'")
         .execute(&pool)
         .await
         .unwrap();

@@ -662,7 +662,7 @@ mod tests {
         // Soft-deleted block tagged with TAG_X.
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, deleted_at) \
-             VALUES (?, 'content', 'soft-deleted', '2025-01-15T12:00:00+00:00')",
+             VALUES (?, 'content', 'soft-deleted', 1736942400000)",
         )
         .bind("BLK_DEL")
         .execute(&pool)

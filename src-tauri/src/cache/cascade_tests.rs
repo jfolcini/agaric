@@ -238,7 +238,7 @@ async fn cascade_attachments_block_id_on_hard_delete() {
     .bind("foo.png")
     .bind(100_i64)
     .bind("attachments/ATT07.png")
-    .bind("2025-01-01T00:00:00Z")
+    .bind(1_735_689_600_000_i64)
     .execute(&pool)
     .await
     .unwrap();
@@ -505,7 +505,7 @@ async fn hard_delete_block_cascades_to_all_child_tables() {
     .bind("foo.png")
     .bind(100_i64)
     .bind("attachments/ATTX.png")
-    .bind("2025-01-01T00:00:00Z")
+    .bind(1_735_689_600_000_i64)
     .execute(&pool)
     .await
     .unwrap();

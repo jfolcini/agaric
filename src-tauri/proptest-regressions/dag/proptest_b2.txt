@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 515d13d09fb05adc64c3276d8a2a78d44077a01d62e14937d48e22575311749c # shrinks to len = 1
+cc 34b754e56774cd9b2a61ef3a3a05aa2315e533a73c9a2f74f7289b4691225b75 # shrinks to graph = AdvGraph { nodes: [AdvNode { prev_target: None }] }
+cc dbb355bb49181751605c45078fd36bedbaa6655408e9bc849ccd07dbeebe89b2 # shrinks to graph = AdvGraph { nodes: [AdvNode { prev_target: None }] }

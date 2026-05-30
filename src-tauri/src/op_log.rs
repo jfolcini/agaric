@@ -12,30 +12,18 @@ use crate::op::OpPayload;
 
 /// A fully-materialised op log row, returned after a successful append.
 ///
-/// # Schema doc — `op_log.created_at` lex-monotonic invariant (L-98)
+/// # Schema doc — `op_log.created_at` monotonic invariant (L-98)
 ///
-/// `created_at` mirrors the `op_log.created_at` column declared in
-/// `migrations/0001_initial.sql` (`TEXT NOT NULL -- ISO 8601`). Beyond
-/// the migration's `-- ISO 8601` shape comment, the column carries a
-/// stricter, schema-level invariant that several reverse-op "find prior
-/// op" queries rely on but that cannot be expressed in SQL DDL:
-///
-/// **Every value stored in `op_log.created_at` MUST be the output of
-/// [`crate::now_rfc3339`] — i.e. a fixed-width
-/// `YYYY-MM-DDTHH:MM:SS.sssZ` UTC string with a literal `Z` suffix.**
-///
-/// Reverse-op lookups in `reverse::block_ops`, `reverse::property_ops`,
-/// and `reverse::attachment_ops` use lexicographic comparisons
-/// (`created_at < ?` and `ORDER BY created_at DESC`) to find the
-/// immediately-prior op for a given block/property/attachment. That is
-/// only correct because every row's `created_at` shares the same
-/// `Z`-suffixed shape; a `+00:00`-suffixed timestamp would sort wrong
-/// against `Z`-suffixed siblings even though both encode the same
-/// instant. See [`crate::now_rfc3339`] for the full invariant
-/// description; [`append_local_op_in_tx`] and [`append_local_op_at`]
-/// (the only two write paths into this column) carry `debug_assert!`s
-/// enforcing the `Z` suffix at write time so any future drift is
-/// caught in debug builds.
+/// `created_at` mirrors the `op_log.created_at` column, migrated to
+/// `INTEGER NOT NULL` epoch-milliseconds in migration `0079` (#109
+/// Phase 2). Reverse-op "find prior op" queries in `reverse::block_ops`,
+/// `reverse::property_ops`, and `reverse::attachment_ops` compare
+/// `created_at` (`created_at < ?` and `ORDER BY created_at DESC`) to
+/// find the immediately-prior op for a given block/property/attachment.
+/// With INTEGER epoch-ms this is a plain numeric comparison — the
+/// fixed-width/`Z`-suffix lex-monotonic shape the TEXT column relied on
+/// is now subsumed by integer ordering. Every value stored here MUST be
+/// the output of [`crate::db::now_ms`].
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct OpRecord {
     pub device_id: String,
@@ -44,7 +32,7 @@ pub struct OpRecord {
     pub hash: String,
     pub op_type: String,
     pub payload: String,
-    pub created_at: String,
+    pub created_at: i64,
     /// L-13: Rust-only sidecar caching the parsed `block_id` so callers
     /// on the materializer hot path (`dispatch::enqueue_background_tasks`)
     /// do not have to re-parse `payload` for the JSON `block_id` field.
@@ -100,7 +88,7 @@ pub async fn append_local_op(
     device_id: &str,
     op_payload: OpPayload,
 ) -> Result<OpRecord, AppError> {
-    append_local_op_at(pool, device_id, op_payload, crate::now_rfc3339()).await
+    append_local_op_at(pool, device_id, op_payload, crate::db::now_ms()).await
 }
 
 /// Append a local operation within an existing transaction.
@@ -135,20 +123,12 @@ pub async fn append_local_op_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
     mut op_payload: OpPayload,
-    created_at: String,
+    created_at: i64,
 ) -> Result<OpRecord, AppError> {
-    // L-98: enforce the lex-monotonic `Z`-suffix invariant on
-    // `op_log.created_at`. Several reverse-op "find prior op" queries
-    // compare `created_at` lexicographically and only round-trip
-    // correctly when every row uses the same `…Z` shape produced by
-    // `crate::now_rfc3339`. Release builds skip this check; debug
-    // builds catch any future ingest path that forgets the rule. See
-    // the doc-comment on `OpRecord` and on `crate::now_rfc3339` for
-    // the full invariant.
-    debug_assert!(
-        created_at.ends_with('Z'),
-        "op_log.created_at must be UTC-Z (lex-monotonic invariant)"
-    );
+    // L-98: `op_log.created_at` is INTEGER epoch-ms (migration 0079);
+    // reverse-op "find prior op" queries compare it numerically. No
+    // shape assertion is needed — integer ordering is intrinsically
+    // monotonic. See the doc-comment on `OpRecord`.
 
     // Validate SetProperty invariant: exactly one value field must be set.
     if let OpPayload::SetProperty(ref p) = op_payload {
@@ -297,18 +277,10 @@ pub async fn append_local_op_at(
     pool: &SqlitePool,
     device_id: &str,
     op_payload: OpPayload,
-    created_at: String,
+    created_at: i64,
 ) -> Result<OpRecord, AppError> {
-    // L-98: enforce the lex-monotonic `Z`-suffix invariant on
-    // `op_log.created_at` at every direct write entry-point. Mirrors the
-    // assertion in `append_local_op_in_tx` so external callers that
-    // construct timestamps without going through `crate::now_rfc3339`
-    // are caught in debug builds before the row hits the DB. See the
-    // doc-comment on `OpRecord` for the full invariant.
-    debug_assert!(
-        created_at.ends_with('Z'),
-        "op_log.created_at must be UTC-Z (lex-monotonic invariant)"
-    );
+    // L-98: `op_log.created_at` is INTEGER epoch-ms (migration 0079) —
+    // numeric ordering, no shape assertion needed. See `OpRecord`.
 
     // BEGIN IMMEDIATE eagerly acquires the write lock, preventing
     // SQLITE_BUSY_SNAPSHOT when a concurrent background cache rebuild
@@ -566,7 +538,8 @@ mod tests {
 
     // ── Test fixture constants ──────────────────────────────────────────
 
-    const FIXED_TS: &str = "2025-01-15T12:00:00Z";
+    // 2025-01-15T12:00:00Z in epoch-ms (op_log.created_at is INTEGER, #109).
+    const FIXED_TS: i64 = 1_736_942_400_000;
     const TEST_DEVICE: &str = "test-device";
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -621,7 +594,7 @@ mod tests {
                 "restore_block",
                 OpPayload::RestoreBlock(RestoreBlockPayload {
                     block_id: BlockId::test_id("BLK001"),
-                    deleted_at_ref: "2025-01-01T00:00:00Z".into(),
+                    deleted_at_ref: 1_735_689_600_000, // 2025-01-01T00:00:00Z
                 }),
             ),
             (
@@ -702,7 +675,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-FIRST"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -731,7 +704,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-PARENT"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -742,7 +715,7 @@ mod tests {
             to_text: "world".into(),
             prev_edit: None,
         });
-        let r2 = append_local_op_at(&pool, TEST_DEVICE, p2, FIXED_TS.into())
+        let r2 = append_local_op_at(&pool, TEST_DEVICE, p2, FIXED_TS)
             .await
             .unwrap();
 
@@ -757,22 +730,12 @@ mod tests {
     async fn separate_devices_have_independent_seqs() {
         let (pool, _dir) = test_pool().await;
 
-        let r1 = append_local_op_at(
-            &pool,
-            "device-A",
-            make_create_payload("BLK-A"),
-            FIXED_TS.into(),
-        )
-        .await
-        .unwrap();
-        let r2 = append_local_op_at(
-            &pool,
-            "device-B",
-            make_create_payload("BLK-B"),
-            FIXED_TS.into(),
-        )
-        .await
-        .unwrap();
+        let r1 = append_local_op_at(&pool, "device-A", make_create_payload("BLK-A"), FIXED_TS)
+            .await
+            .unwrap();
+        let r2 = append_local_op_at(&pool, "device-B", make_create_payload("BLK-B"), FIXED_TS)
+            .await
+            .unwrap();
 
         assert_eq!(r1.seq, 1, "device-A first op must be seq 1");
         assert_eq!(r2.seq, 1, "device-B first op must also be seq 1");
@@ -804,7 +767,7 @@ mod tests {
 
         for i in 1..=10_i64 {
             let payload = make_create_payload(&format!("BLK{i:04}"));
-            let rec = append_local_op_at(&pool, "seq-dev", payload, FIXED_TS.into())
+            let rec = append_local_op_at(&pool, "seq-dev", payload, FIXED_TS)
                 .await
                 .unwrap();
             assert_eq!(rec.seq, i, "expected seq {i}");
@@ -904,7 +867,7 @@ mod tests {
             &mut tx,
             TEST_DEVICE,
             make_create_payload("BLK-L5A"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .expect("append #1 must succeed inside a BEGIN IMMEDIATE tx");
@@ -912,7 +875,7 @@ mod tests {
             &mut tx,
             TEST_DEVICE,
             make_create_payload("BLK-L5B"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .expect("append #2 must succeed inside a BEGIN IMMEDIATE tx");
@@ -941,7 +904,7 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 loop {
                     let payload = make_create_payload(&format!("BLK-C{i:03}"));
-                    match append_local_op_at(&pool, "dev-conc", payload, FIXED_TS.into()).await {
+                    match append_local_op_at(&pool, "dev-conc", payload, FIXED_TS).await {
                         Ok(rec) => return rec,
                         // Issue #106 split `Database` and `PoolTimedOut`
                         // into distinct variants; either signals SQLite
@@ -1016,14 +979,9 @@ mod tests {
     async fn get_op_by_seq_returns_correct_record() {
         let (pool, _dir) = test_pool().await;
 
-        let appended = append_local_op_at(
-            &pool,
-            "dev-get",
-            make_create_payload("BLK-G"),
-            FIXED_TS.into(),
-        )
-        .await
-        .unwrap();
+        let appended = append_local_op_at(&pool, "dev-get", make_create_payload("BLK-G"), FIXED_TS)
+            .await
+            .unwrap();
 
         let fetched = get_op_by_seq(&ReadPool(pool.clone()), "dev-get", 1)
             .await
@@ -1068,7 +1026,7 @@ mod tests {
 
         for i in 0..5 {
             let payload = make_create_payload(&format!("BLK-LS{i}"));
-            append_local_op_at(&pool, "dev-ls", payload, FIXED_TS.into())
+            append_local_op_at(&pool, "dev-ls", payload, FIXED_TS)
                 .await
                 .unwrap();
         }
@@ -1084,7 +1042,7 @@ mod tests {
 
         for i in 0..10 {
             let payload = make_create_payload(&format!("BLK-S{i:02}"));
-            append_local_op_at(&pool, "dev-since", payload, FIXED_TS.into())
+            append_local_op_at(&pool, "dev-since", payload, FIXED_TS)
                 .await
                 .unwrap();
         }
@@ -1117,7 +1075,7 @@ mod tests {
 
         for i in 0..3 {
             let payload = make_create_payload(&format!("BLK-A{i}"));
-            append_local_op_at(&pool, "dev-A", payload, FIXED_TS.into())
+            append_local_op_at(&pool, "dev-A", payload, FIXED_TS)
                 .await
                 .unwrap();
         }
@@ -1136,15 +1094,11 @@ mod tests {
     async fn append_local_op_at_stores_exact_timestamp() {
         let (pool, _dir) = test_pool().await;
 
-        let fixed_ts = "2025-06-01T12:00:00Z".to_string();
-        let record = append_local_op_at(
-            &pool,
-            "dev-ts",
-            make_create_payload("BLK-TS"),
-            fixed_ts.clone(),
-        )
-        .await
-        .unwrap();
+        // 2025-06-01T12:00:00Z in epoch-ms.
+        let fixed_ts: i64 = 1_748_779_200_000;
+        let record = append_local_op_at(&pool, "dev-ts", make_create_payload("BLK-TS"), fixed_ts)
+            .await
+            .unwrap();
 
         assert_eq!(
             record.created_at, fixed_ts,
@@ -1168,14 +1122,9 @@ mod tests {
     async fn payload_column_excludes_op_type_tag() {
         let (pool, _dir) = test_pool().await;
 
-        let record = append_local_op_at(
-            &pool,
-            "dev-tag",
-            make_create_payload("BLK-TAG"),
-            FIXED_TS.into(),
-        )
-        .await
-        .unwrap();
+        let record = append_local_op_at(&pool, "dev-tag", make_create_payload("BLK-TAG"), FIXED_TS)
+            .await
+            .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(&record.payload).unwrap();
         assert!(
@@ -1211,7 +1160,7 @@ mod tests {
                 position: Some(1),
                 content: "test".into(),
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1244,7 +1193,7 @@ mod tests {
                 position: Some(1),
                 content: "test".into(),
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1259,7 +1208,7 @@ mod tests {
                 position: Some(1),
                 content: "test".into(),
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1356,7 +1305,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await;
 
@@ -1386,7 +1335,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await;
 
@@ -1410,7 +1359,7 @@ mod tests {
                 value_ref: None,
                 value_bool: None,
             }),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await;
 
@@ -1431,7 +1380,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-SNAP"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1449,7 +1398,7 @@ mod tests {
         // Append 3 ops
         for i in 1..=3 {
             let payload = make_create_payload(&format!("BLK-MS{i:02}"));
-            append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS.into())
+            append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS)
                 .await
                 .unwrap();
         }
@@ -1474,7 +1423,7 @@ mod tests {
             hash: "0".repeat(64),
             op_type: "create_block".into(),
             payload: "{}".into(),
-            created_at: FIXED_TS.into(),
+            created_at: FIXED_TS,
             block_id: None,
         }
     }
@@ -1625,7 +1574,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-IMMUT"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1699,7 +1648,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-COMPACT"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1772,7 +1721,7 @@ mod tests {
             &pool,
             TEST_DEVICE,
             make_create_payload("BLK-LEAK"),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -1979,7 +1928,7 @@ mod tests {
             ("B_C1", "PAGE_B", false),
         ] {
             let deleted_at = if deleted {
-                Some("2025-01-15T12:00:00Z")
+                Some(1_736_942_400_000_i64) // 2025-01-15T12:00:00Z
             } else {
                 None
             };
@@ -2345,9 +2294,9 @@ mod tests {
         // the hash preimage.
         let payload_a = make_create_payload("BLKHASH");
         let payload_b = make_create_payload("BLKHASH");
-        let ts = "2025-06-01T00:00:00Z".to_string();
+        let ts: i64 = 1_748_736_000_000; // 2025-06-01T00:00:00Z
 
-        let rec_a = append_local_op_at(&pool_a, TEST_DEVICE, payload_a, ts.clone())
+        let rec_a = append_local_op_at(&pool_a, TEST_DEVICE, payload_a, ts)
             .await
             .unwrap();
 
@@ -2449,7 +2398,7 @@ mod tests {
                     &mut tx,
                     TEST_DEVICE,
                     make_create_payload("BLKLAPPEND"),
-                    FIXED_TS.into(),
+                    FIXED_TS,
                 )
                 .await
                 .unwrap();
@@ -2666,7 +2615,7 @@ mod tests {
         let mut seq_so_far = 0;
         for (label, payload) in all_op_payloads() {
             let expected_block_id: Option<String> = payload.block_id().map(str::to_owned);
-            let record = append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS.into())
+            let record = append_local_op_at(&pool, TEST_DEVICE, payload, FIXED_TS)
                 .await
                 .unwrap_or_else(|e| {
                     panic!("append_local_op_at failed for {label}: {e}");
@@ -2702,14 +2651,10 @@ mod tests {
     async fn get_op_by_seq_populates_block_id_sidecar_l13() {
         let (pool, _dir) = test_pool().await;
 
-        let appended = append_local_op_at(
-            &pool,
-            TEST_DEVICE,
-            make_create_payload("BLK-L13"),
-            FIXED_TS.into(),
-        )
-        .await
-        .unwrap();
+        let appended =
+            append_local_op_at(&pool, TEST_DEVICE, make_create_payload("BLK-L13"), FIXED_TS)
+                .await
+                .unwrap();
         assert_eq!(
             appended.block_id.as_deref(),
             Some("BLK-L13"),
@@ -2743,7 +2688,7 @@ mod tests {
                 &pool,
                 TEST_DEVICE,
                 make_create_payload(&format!("BLK-L13-{i:02}")),
-                FIXED_TS.into(),
+                FIXED_TS,
             )
             .await
             .unwrap();

@@ -149,7 +149,7 @@ impl AdvGraph {
             let hash = format!("advhash_{seq:08}");
             sqlx::query(
                 "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-                 VALUES (?, ?, NULL, ?, ?, ?, '2025-01-15T12:00:00Z')",
+                 VALUES (?, ?, NULL, ?, ?, ?, 1736942400000)",
             )
             .bind(ADV_DEVICE)
             .bind(seq)
@@ -202,7 +202,7 @@ async fn insert_valid_linear_chain(pool: &SqlitePool, len: usize) {
         let hash = format!("linhash_{seq:08}");
         sqlx::query(
             "INSERT INTO op_log (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
-             VALUES (?, ?, NULL, ?, ?, ?, '2025-01-15T12:00:00Z')",
+             VALUES (?, ?, NULL, ?, ?, ?, 1736942400000)",
         )
         .bind(ADV_DEVICE)
         .bind(seq)

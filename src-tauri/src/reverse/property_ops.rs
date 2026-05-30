@@ -26,7 +26,7 @@ pub async fn reverse_set_property(
         pool,
         payload.block_id.as_str(),
         &payload.key,
-        &record.created_at,
+        record.created_at,
         record.seq,
     )
     .await?;
@@ -56,7 +56,7 @@ pub async fn reverse_delete_property(
         pool,
         payload.block_id.as_str(),
         &payload.key,
-        &record.created_at,
+        record.created_at,
         record.seq,
     )
     .await?
@@ -81,7 +81,7 @@ async fn find_prior_property(
     pool: &SqlitePool,
     block_id: &str,
     key: &str,
-    created_at: &str,
+    created_at: i64,
     seq: i64,
 ) -> Result<Option<PriorPropertyRow>, AppError> {
     // M-64: switch the block_id predicate from `json_extract(payload, '$.block_id')`
@@ -171,8 +171,8 @@ mod tests_m64 {
         (pool, dir)
     }
 
-    async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: &str) -> OpRecord {
-        append_local_op_at(pool, TEST_DEVICE, payload, ts.to_string())
+    async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> OpRecord {
+        append_local_op_at(pool, TEST_DEVICE, payload, ts)
             .await
             .unwrap()
     }
@@ -198,7 +198,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:00:00Z",
+            1_736_942_400_000,
         )
         .await;
 
@@ -217,7 +217,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:00:30Z",
+            1_736_942_430_000,
         )
         .await;
 
@@ -233,7 +233,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:01:00Z",
+            1_736_942_460_000,
         )
         .await;
 
@@ -269,7 +269,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:00:00Z",
+            1_736_942_400_000,
         )
         .await;
 
@@ -286,7 +286,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:00:30Z",
+            1_736_942_430_000,
         )
         .await;
 
@@ -297,7 +297,7 @@ mod tests_m64 {
                 block_id: BlockId::test_id("BLK_M64C"),
                 key: "color".into(),
             }),
-            "2025-01-15T12:01:00Z",
+            1_736_942_460_000,
         )
         .await;
 
@@ -339,7 +339,7 @@ mod tests_m64 {
                 value_ref: None,
                 value_bool: None,
             }),
-            "2025-01-15T12:00:00Z",
+            1_736_942_400_000,
         )
         .await;
 
@@ -348,7 +348,7 @@ mod tests_m64 {
             &pool,
             "BLK_M64E_NORM",
             "status",
-            "2025-01-15T12:01:00Z",
+            1_736_942_460_000,
             i64::MAX,
         )
         .await
@@ -361,7 +361,7 @@ mod tests_m64 {
             &pool,
             "blk_m64e_norm",
             "status",
-            "2025-01-15T12:01:00Z",
+            1_736_942_460_000,
             i64::MAX,
         )
         .await

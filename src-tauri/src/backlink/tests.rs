@@ -1802,7 +1802,7 @@ async fn deleted_backlinks_excluded() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
     // Soft-delete SRC_A
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = 'SRC_A'")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = 'SRC_A'")
         .execute(&pool)
         .await
         .unwrap();

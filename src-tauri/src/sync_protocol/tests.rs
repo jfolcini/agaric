@@ -10,7 +10,7 @@ use tempfile::TempDir;
 
 // ── Fixture constants ───────────────────────────────────────────────
 
-const FIXED_TS: &str = "2025-01-15T12:00:00Z";
+const FIXED_TS: i64 = 1_736_942_400_000;
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ async fn get_local_heads_single_device() {
             &pool,
             "device-A",
             test_create_payload(&format!("BLK{i}")),
-            FIXED_TS.into(),
+            FIXED_TS,
         )
         .await
         .unwrap();
@@ -69,30 +69,15 @@ async fn get_local_heads_single_device() {
 async fn get_local_heads_multiple_devices() {
     let (pool, _dir) = test_pool().await;
 
-    append_local_op_at(
-        &pool,
-        "device-A",
-        test_create_payload("BLK-A1"),
-        FIXED_TS.into(),
-    )
-    .await
-    .unwrap();
-    append_local_op_at(
-        &pool,
-        "device-B",
-        test_create_payload("BLK-B1"),
-        FIXED_TS.into(),
-    )
-    .await
-    .unwrap();
-    append_local_op_at(
-        &pool,
-        "device-A",
-        test_create_payload("BLK-A2"),
-        FIXED_TS.into(),
-    )
-    .await
-    .unwrap();
+    append_local_op_at(&pool, "device-A", test_create_payload("BLK-A1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&pool, "device-B", test_create_payload("BLK-B1"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(&pool, "device-A", test_create_payload("BLK-A2"), FIXED_TS)
+        .await
+        .unwrap();
 
     let heads = get_local_heads(&pool).await.unwrap();
     assert_eq!(heads.len(), 2, "should have two device heads");
@@ -279,7 +264,7 @@ async fn op_transfer_from_op_record_roundtrip() {
         &pool,
         "test-device",
         test_create_payload("BLK-RT"),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -352,7 +337,7 @@ fn op_transfer_and_op_record_remain_structurally_identical_i_sync_4() {
         hash: "f".repeat(64),
         op_type: "create_block".into(),
         payload: r#"{"block_id":"BLK_I_SYNC_4","block_type":"content","content":"hello","parent_id":null,"position":3}"#.into(),
-        created_at: "2025-03-14T09:26:53.589Z".into(),
+        created_at: 1_741_944_413_589,
         block_id: Some("BLK_I_SYNC_4".into()),
     };
 
@@ -393,7 +378,7 @@ fn op_transfer_from_leaves_block_id_unpopulated_l13() {
         hash: "0".repeat(64),
         op_type: "create_block".into(),
         payload: payload.into(),
-        created_at: FIXED_TS.into(),
+        created_at: FIXED_TS,
     };
 
     let record: OpRecord = transfer.into();
@@ -950,7 +935,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
         &pool,
         "local-dev",
         test_create_payload("SEED_BLK"),
-        FIXED_TS.into(),
+        FIXED_TS,
     )
     .await
     .unwrap();
@@ -1076,7 +1061,7 @@ fn serde_roundtrip_op_transfer() {
         hash: "fedcba987654".into(),
         op_type: "edit_block".into(),
         payload: r#"{"block_id":"BLK1","to_text":"hello"}"#.into(),
-        created_at: "2025-01-15T12:00:00Z".into(),
+        created_at: 1_736_942_400_000,
     };
     let json = serde_json::to_string(&transfer).expect("OpTransfer serialization must succeed");
     let deser: OpTransfer =
@@ -1093,7 +1078,7 @@ fn serde_roundtrip_op_transfer_null_parent_seqs() {
         hash: "0000000000".into(),
         op_type: "create_block".into(),
         payload: "{}".into(),
-        created_at: "2025-01-01T00:00:00Z".into(),
+        created_at: 1_735_689_600_000,
     };
     let json = serde_json::to_string(&transfer)
         .expect("OpTransfer with null parent_seqs serialization must succeed");

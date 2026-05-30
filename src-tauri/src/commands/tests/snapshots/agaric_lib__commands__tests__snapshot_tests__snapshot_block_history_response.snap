@@ -1,6 +1,5 @@
 ---
-source: src/commands.rs
-assertion_line: 2457
+source: src/commands/tests/snapshot_tests.rs
 expression: resp
 ---
 items:
@@ -8,7 +7,7 @@ items:
     seq: 1
     op_type: create_block
     payload: "{\"block_id\":\"SNAP_HIST\",\"block_type\":\"content\",\"content\":\"hi\"}"
-    created_at: "2025-06-15T12:00:00Z"
+    created_at: 1749988800000
 next_cursor: ~
 has_more: false
 total_count: ~

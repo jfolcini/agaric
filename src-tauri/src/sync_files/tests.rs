@@ -21,7 +21,7 @@ async fn find_missing_returns_ids_for_missing_files() {
     // Insert an attachment whose file does NOT exist on disk
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT1', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT1', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/att1.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -36,7 +36,7 @@ async fn find_missing_returns_ids_for_missing_files() {
 
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 15, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 15, 'attachments/att2.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -62,7 +62,7 @@ async fn find_missing_excludes_deleted_attachments() {
     // Deleted attachment — should NOT appear in missing list
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
-         VALUES ('ATT_DEL', 'BLK1', 'image/png', 'deleted.png', 100, 'attachments/deleted.png', '2025-01-15T12:00:00Z', '2025-01-16T00:00:00Z')",
+         VALUES ('ATT_DEL', 'BLK1', 'image/png', 'deleted.png', 100, 'attachments/deleted.png', 1736942400000, '2025-01-16T00:00:00Z')",
     )
     .execute(&pool)
     .await
@@ -114,7 +114,7 @@ async fn find_missing_classifies_non_not_found_io_error_as_missing() {
 
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT_ENOTDIR', 'BLK1', 'image/png', 'p.png', 1024, 'regular_file/under.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT_ENOTDIR', 'BLK1', 'image/png', 'p.png', 1024, 'regular_file/under.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -232,7 +232,7 @@ async fn get_fs_path_returns_path_for_existing_attachment() {
         .unwrap();
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT1', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT1', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/att1.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -320,7 +320,7 @@ async fn find_missing_returns_all_missing_attachments() {
     for i in 1..=3 {
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES (?, 'BLK1', 'image/png', ?, 100, ?, '2025-01-15T12:00:00Z')",
+             VALUES (?, 'BLK1', 'image/png', ?, 100, ?, 1736942400000)",
         )
         .bind(format!("ATT{i}"))
         .bind(format!("file{i}.png"))
@@ -356,7 +356,7 @@ async fn find_missing_attachments_treats_truncated_file_as_missing_m48() {
     // DB row claims size 1024 bytes...
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT_TRUNC', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/trunc.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT_TRUNC', 'BLK1', 'image/png', 'photo.png', 1024, 'attachments/trunc.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -528,7 +528,7 @@ async fn insert_test_attachment(pool: &SqlitePool, att_id: &str, fs_path: &str, 
     sqlx::query(
         "INSERT INTO attachments \
          (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES (?, ?, 'application/octet-stream', 'file.bin', ?, ?, datetime('now'))",
+         VALUES (?, ?, 'application/octet-stream', 'file.bin', ?, ?, unixepoch('now') * 1000)",
     )
     .bind(att_id)
     .bind(&blk_id)
@@ -1159,7 +1159,7 @@ async fn find_missing_attachments_all_files_present() {
 
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT1', 'BLK1', 'image/png', 'photo1.png', 12, 'attachments/att1.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT1', 'BLK1', 'image/png', 'photo1.png', 12, 'attachments/att1.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -1167,7 +1167,7 @@ async fn find_missing_attachments_all_files_present() {
 
     sqlx::query(
         "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-         VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 12, 'attachments/att2.png', '2025-01-15T12:00:00Z')",
+         VALUES ('ATT2', 'BLK1', 'image/png', 'photo2.png', 12, 'attachments/att2.png', 1736942400000)",
     )
     .execute(&pool)
     .await
@@ -1234,7 +1234,7 @@ async fn find_missing_attachments_concurrent_probe_set_equality() {
 
         sqlx::query(
             "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
-             VALUES (?, 'BLK1', 'application/octet-stream', ?, 24, ?, '2025-01-15T12:00:00Z')",
+             VALUES (?, 'BLK1', 'application/octet-stream', ?, 24, ?, 1736942400000)",
         )
         .bind(&id)
         .bind(format!("att{i:03}.bin"))

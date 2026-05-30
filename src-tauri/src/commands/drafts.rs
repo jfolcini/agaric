@@ -381,7 +381,7 @@ mod tests_h12 {
     async fn insert_soft_deleted_block(pool: &sqlx::SqlitePool, id: &str) {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-             VALUES (?, 'content', 'initial', NULL, 1, '2025-01-01T00:00:00Z')",
+             VALUES (?, 'content', 'initial', NULL, 1, 1735689600000)",
         )
         .bind(id)
         .execute(pool)
@@ -461,7 +461,7 @@ mod tests_h12 {
         let oversized = "x".repeat(super::super::MAX_CONTENT_LENGTH + 1);
         sqlx::query(
             "INSERT OR REPLACE INTO block_drafts (block_id, content, updated_at) \
-             VALUES (?, ?, '2025-01-01T00:00:00Z')",
+             VALUES (?, ?, 1735689600000)",
         )
         .bind(LIVE_BLOCK)
         .bind(&oversized)
@@ -550,7 +550,7 @@ mod tests_h12 {
         // any application-layer check; we are exercising the FK itself.
         let err = sqlx::query(
             "INSERT INTO block_drafts (block_id, content, updated_at) \
-             VALUES (?, 'orphan content', '2025-01-01T00:00:00Z')",
+             VALUES (?, 'orphan content', 1735689600000)",
         )
         .bind(MISSING_BLOCK)
         .execute(&pool)
@@ -620,17 +620,17 @@ mod tests_h12 {
             .await
             .unwrap();
 
-            // Format `updated_at` so lexicographic order matches insertion
-            // order — `block_drafts.updated_at` is TEXT (ISO-ish) and the
-            // SELECT does `ORDER BY updated_at ASC`.
-            let ts = format!("2025-01-01T00:00:{:09}Z", i);
+            // #109 Phase 2: `block_drafts.updated_at` is INTEGER epoch-ms and
+            // the SELECT does `ORDER BY updated_at ASC`; make each ts strictly
+            // increasing with `i` so numeric order matches insertion order.
+            let ts: i64 = 1_735_689_600_000 + i;
             sqlx::query(
                 "INSERT INTO block_drafts (block_id, content, updated_at) \
                  VALUES (?, ?, ?)",
             )
             .bind(&block_id)
             .bind(format!("draft-content-{i}"))
-            .bind(&ts)
+            .bind(ts)
             .execute(&pool)
             .await
             .unwrap();

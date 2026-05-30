@@ -696,7 +696,7 @@ mod m10_tests {
             hash: "deadbeef".into(),
             op_type: "create_block".into(),
             payload: "{}".into(),
-            created_at: "2025-01-15T12:00:00Z".into(),
+            created_at: 1_736_942_400_000,
             block_id: None,
         }
     }

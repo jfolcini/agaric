@@ -604,7 +604,7 @@ mod tests {
         // be NULLed (same authoritative-replace semantics as the `sql_only`
         // block_properties sweep below).
         sqlx::query(
-            "UPDATE blocks SET deleted_at = '2026-05-01T00:00:00Z', todo_state = 'DOING', \
+            "UPDATE blocks SET deleted_at = 1777593600000, todo_state = 'DOING', \
              page_id = ? \
              WHERE id = ?",
         )
@@ -773,7 +773,7 @@ mod tests {
                 .expect("c1");
             e.apply_create_block(BLOCK_C, "content", "c2", Some(BLOCK_B), 0)
                 .expect("c2");
-            e.apply_delete_block(BLOCK_A, "2026-05-25T10:00:00Z")
+            e.apply_delete_block(BLOCK_A, "1779703200000")
                 .expect("delete seed");
         }
         let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
@@ -787,15 +787,15 @@ mod tests {
 
         // Seed + both descendants are soft-deleted at the seed's timestamp.
         for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
-            let deleted_at: Option<String> =
+            let deleted_at: Option<i64> =
                 sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
                     .bind(id)
                     .fetch_one(&pool)
                     .await
                     .expect("fetch deleted_at");
             assert_eq!(
-                deleted_at.as_deref(),
-                Some("2026-05-25T10:00:00Z"),
+                deleted_at,
+                Some(1_779_703_200_000),
                 "block {id} must be soft-deleted at the seed's cohort timestamp"
             );
         }
@@ -817,7 +817,7 @@ mod tests {
         ] {
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
-                 VALUES (?, 'content', '', ?, 0, '2026-05-25T10:00:00Z')",
+                 VALUES (?, 'content', '', ?, 0, 1779703200000)",
             )
             .bind(id)
             .bind(parent)
@@ -849,7 +849,7 @@ mod tests {
             .expect("apply_remote");
 
         for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
-            let deleted_at: Option<String> =
+            let deleted_at: Option<i64> =
                 sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
                     .bind(id)
                     .fetch_one(&pool)
@@ -883,7 +883,7 @@ mod tests {
                 .expect("c1");
             e.apply_create_block(BLOCK_C, "content", "c2", Some(BLOCK_B), 0)
                 .expect("c2");
-            e.apply_delete_block(BLOCK_A, "2026-05-25T10:00:00Z")
+            e.apply_delete_block(BLOCK_A, "1779703200000")
                 .expect("delete seed");
         }
 
@@ -907,15 +907,15 @@ mod tests {
             .expect("apply 2");
 
         for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
-            let deleted_at: Option<String> =
+            let deleted_at: Option<i64> =
                 sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
                     .bind(id)
                     .fetch_one(&pool)
                     .await
                     .expect("fetch deleted_at");
             assert_eq!(
-                deleted_at.as_deref(),
-                Some("2026-05-25T10:00:00Z"),
+                deleted_at,
+                Some(1_779_703_200_000),
                 "block {id} must stay soft-deleted after re-import (no resurrection)"
             );
         }

@@ -493,7 +493,7 @@ mod tests {
     /// Insert a page belonging to `space_id` with the given soft-delete
     /// flag. Mirrors the audit binary's `insert_page` helper but exposes
     /// `deleted_at` so the soft-delete-filtering tests can flip it.
-    async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str, deleted_at: Option<&str>) {
+    async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str, deleted_at: Option<i64>) {
         sqlx::query(
             "INSERT INTO blocks \
                  (id, block_type, content, parent_id, position, page_id, deleted_at) \
@@ -613,7 +613,7 @@ mod tests {
             &pool,
             PAGE_A_ULID,
             SPACE_PERSONAL_ULID,
-            Some("2025-01-01T00:00:00Z"),
+            Some(1_735_689_600_000),
         )
         .await;
         seed_content_block(&pool, CONTENT_A_ULID, PAGE_A_ULID).await;

@@ -769,7 +769,7 @@ mod tests {
 
     /// Insert a soft-deleted page block at the top level. `page_id = id`
     /// per the §5.3 backfill in migration 0066.
-    async fn insert_deleted_page(pool: &SqlitePool, id: &str, deleted_at: &str) {
+    async fn insert_deleted_page(pool: &SqlitePool, id: &str, deleted_at: i64) {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at, page_id) \
              VALUES (?, 'page', 'trash', NULL, 1, ?, ?)",
@@ -789,7 +789,7 @@ mod tests {
 
         // 3 soft-deleted blocks in SPACE_A.
         for (i, id) in ["TRSH_A1", "TRSH_A2", "TRSH_A3"].iter().enumerate() {
-            insert_deleted_page(&pool, id, &format!("2025-02-{:02}T00:00:00+00:00", i + 1)).await;
+            insert_deleted_page(&pool, id, 1_738_368_000_000 + (i as i64) * 86_400_000).await;
             assign_to_space(&pool, id, SPACE_A_ID).await;
         }
 
@@ -815,13 +815,13 @@ mod tests {
 
         // 2 soft-deleted blocks in SPACE_A.
         for (i, id) in ["TRSH_A1", "TRSH_A2"].iter().enumerate() {
-            insert_deleted_page(&pool, id, &format!("2025-02-{:02}T00:00:00+00:00", i + 1)).await;
+            insert_deleted_page(&pool, id, 1_738_368_000_000 + (i as i64) * 86_400_000).await;
             assign_to_space(&pool, id, SPACE_A_ID).await;
         }
 
         // 3 soft-deleted blocks in SPACE_B — must not appear when counting SPACE_A.
         for (i, id) in ["TRSH_B1", "TRSH_B2", "TRSH_B3"].iter().enumerate() {
-            insert_deleted_page(&pool, id, &format!("2025-03-{:02}T00:00:00+00:00", i + 1)).await;
+            insert_deleted_page(&pool, id, 1_740_787_200_000 + (i as i64) * 86_400_000).await;
             assign_to_space(&pool, id, SPACE_B_ID).await;
         }
 

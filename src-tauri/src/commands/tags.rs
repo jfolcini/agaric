@@ -9,7 +9,6 @@ use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::now_rfc3339;
 use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload, SetPropertyPayload};
 use crate::op_log;
 use crate::pagination::ActiveBlockRow;
@@ -189,7 +188,8 @@ async fn apply_tag_to_block_in_tx(
                         value_ref: Some(space_ref.clone()),
                         value_bool: None,
                     });
-                    op_log::append_local_op_in_tx(tx, device_id, set_space, now_rfc3339()).await?;
+                    op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
+                        .await?;
                     // Materialise the property row inside the same tx so the
                     // downstream dup-check / projection see the adopted space.
                     sqlx::query!(
@@ -228,7 +228,8 @@ async fn apply_tag_to_block_in_tx(
     }
 
     // Append the AddTag op to the op_log (records the OpRef in LAST_APPEND).
-    let op_record = op_log::append_local_op_in_tx(tx, device_id, payload, now_rfc3339()).await?;
+    let op_record =
+        op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
 
     // Insert into block_tags within the same transaction.
     sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
@@ -308,7 +309,7 @@ pub async fn remove_tag_inner(
 
     // 3. Append to op_log within transaction
     let op_record =
-        op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_rfc3339()).await?;
+        op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
     // 4. Delete from block_tags within same transaction
     sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")

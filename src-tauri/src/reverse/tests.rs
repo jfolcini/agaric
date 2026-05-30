@@ -6,7 +6,7 @@ use crate::ulid::BlockId;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-const FIXED_TS: &str = "2025-01-15T12:00:00Z";
+const FIXED_TS: i64 = 1_736_942_400_000;
 const TEST_DEVICE: &str = "test-device";
 
 async fn test_pool() -> (SqlitePool, TempDir) {
@@ -16,8 +16,8 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: &str) -> crate::op_log::OpRecord {
-    append_local_op_at(pool, TEST_DEVICE, payload, ts.to_string())
+async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> crate::op_log::OpRecord {
+    append_local_op_at(pool, TEST_DEVICE, payload, ts)
         .await
         .unwrap()
 }
@@ -39,7 +39,7 @@ async fn reverse_create_block_produces_delete_block() {
 #[tokio::test]
 async fn reverse_delete_block_produces_restore_block_with_deleted_at() {
     let (pool, _dir) = test_pool().await;
-    let delete_ts = "2025-01-15T13:00:00Z";
+    let delete_ts: i64 = 1_736_946_000_000;
     let rec = append_op(
         &pool,
         OpPayload::DeleteBlock(DeleteBlockPayload {
@@ -69,7 +69,7 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
             position: Some(1),
             content: "original".into(),
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     append_op(
@@ -79,7 +79,7 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
             to_text: "first edit".into(),
             prev_edit: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let rec = append_op(
@@ -89,7 +89,7 @@ async fn reverse_edit_block_produces_edit_with_prior_text() {
             to_text: "second edit".into(),
             prev_edit: None,
         }),
-        "2025-01-15T12:02:00Z",
+        1_736_942_520_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -113,7 +113,7 @@ async fn reverse_edit_block_when_prior_is_create_uses_content() {
             position: Some(1),
             content: "from create".into(),
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -123,7 +123,7 @@ async fn reverse_edit_block_when_prior_is_create_uses_content() {
             to_text: "edited".into(),
             prev_edit: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -144,7 +144,7 @@ async fn reverse_move_block_produces_move_with_prior_position() {
             position: Some(1),
             content: "test".into(),
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     append_op(
@@ -154,7 +154,7 @@ async fn reverse_move_block_produces_move_with_prior_position() {
             new_parent_id: Some(BlockId::test_id("P2")),
             new_position: 3,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let rec = append_op(
@@ -164,7 +164,7 @@ async fn reverse_move_block_produces_move_with_prior_position() {
             new_parent_id: Some(BlockId::test_id("P3")),
             new_position: 5,
         }),
-        "2025-01-15T12:02:00Z",
+        1_736_942_520_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -188,7 +188,7 @@ async fn reverse_move_block_when_prior_is_create_uses_create_position() {
             position: Some(2),
             content: "test".into(),
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -198,7 +198,7 @@ async fn reverse_move_block_when_prior_is_create_uses_create_position() {
             new_parent_id: Some(BlockId::test_id("OTHER")),
             new_position: 7,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -228,7 +228,7 @@ async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible()
             position: None,
             content: "ancient".into(),
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -238,7 +238,7 @@ async fn reverse_move_block_when_prior_create_lacks_position_is_non_reversible()
             new_parent_id: Some(BlockId::test_id("OTHERNP")),
             new_position: 7,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let result = compute_reverse(&pool, TEST_DEVICE, rec.seq).await;
@@ -307,7 +307,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -321,7 +321,7 @@ async fn reverse_set_property_with_prior_produces_set_property() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -368,7 +368,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -377,7 +377,7 @@ async fn reverse_delete_property_produces_set_property_with_prior() {
             block_id: BlockId::test_id("BLK10"),
             key: "color".into(),
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
@@ -445,7 +445,7 @@ async fn reverse_restore_block_produces_delete_block() {
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::test_id("BLK14"),
-            deleted_at_ref: "2025-01-15T10:00:00Z".into(),
+            deleted_at_ref: 1_736_935_200_000,
         }),
         FIXED_TS,
     )
@@ -580,7 +580,7 @@ async fn undo_chain_edit_round_trip() {
             to_text: "modified".into(),
             prev_edit: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let rev1 = compute_reverse(&pool, TEST_DEVICE, edit.seq).await.unwrap();
@@ -588,7 +588,7 @@ async fn undo_chain_edit_round_trip() {
         OpPayload::EditBlock(p) => assert_eq!(p.to_text, "original"),
         other => panic!("Expected EditBlock, got {:?}", other),
     }
-    let undo_op = append_op(&pool, rev1, "2025-01-15T12:02:00Z").await;
+    let undo_op = append_op(&pool, rev1, 1_736_942_520_000).await;
     let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
         .await
         .unwrap();
@@ -619,7 +619,7 @@ async fn undo_chain_move_round_trip() {
             new_parent_id: Some(BlockId::test_id("PAGE2")),
             new_position: 5,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     let rev1 = compute_reverse(&pool, TEST_DEVICE, move_op.seq)
@@ -632,7 +632,7 @@ async fn undo_chain_move_round_trip() {
         }
         other => panic!("Expected MoveBlock, got {:?}", other),
     }
-    let undo_op = append_op(&pool, rev1, "2025-01-15T12:02:00Z").await;
+    let undo_op = append_op(&pool, rev1, 1_736_942_520_000).await;
     let rev2 = compute_reverse(&pool, TEST_DEVICE, undo_op.seq)
         .await
         .unwrap();
@@ -663,12 +663,12 @@ async fn undo_chain_create_delete_restore() {
         .await
         .unwrap();
     assert!(matches!(&rev1, OpPayload::DeleteBlock(p) if p.block_id == "BLK_UC3"));
-    let delete_op = append_op(&pool, rev1, "2025-01-15T12:01:00Z").await;
+    let delete_op = append_op(&pool, rev1, 1_736_942_460_000).await;
     let rev2 = compute_reverse(&pool, TEST_DEVICE, delete_op.seq)
         .await
         .unwrap();
     assert!(matches!(&rev2, OpPayload::RestoreBlock(p) if p.block_id == "BLK_UC3"));
-    let restore_op = append_op(&pool, rev2, "2025-01-15T12:02:00Z").await;
+    let restore_op = append_op(&pool, rev2, 1_736_942_520_000).await;
     let rev3 = compute_reverse(&pool, TEST_DEVICE, restore_op.seq)
         .await
         .unwrap();
@@ -706,7 +706,7 @@ async fn reverse_set_property_value_num() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
@@ -746,7 +746,7 @@ async fn reverse_set_property_value_date() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
@@ -790,7 +790,7 @@ async fn reverse_set_property_value_bool() {
             value_ref: None,
             value_bool: Some(false),
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, set2.seq).await.unwrap() {
@@ -830,7 +830,7 @@ async fn reverse_delete_property_restores_value_bool() {
             block_id: BlockId::test_id("BLK_PBD"),
             key: "flag".into(),
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap() {
@@ -853,7 +853,7 @@ async fn reverse_edit_same_timestamp_uses_seq_ordering() {
         FIXED_TS,
     )
     .await;
-    let same_ts = "2025-01-15T12:01:00Z";
+    let same_ts: i64 = 1_736_942_460_000;
     append_op(
         &pool,
         OpPayload::EditBlock(EditBlockPayload {
@@ -906,7 +906,7 @@ async fn reverse_edit_block_prev_edit_points_to_reversed_op_from_different_devic
             to_text: "edited by B".into(),
             prev_edit: Some((TEST_DEVICE.to_owned(), 1)),
         }),
-        "2025-01-15T12:01:00Z".to_owned(),
+        1_736_942_460_000,
     )
     .await
     .unwrap();
@@ -943,7 +943,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
             attachment_id: BlockId::test_id("ATT_001"),
             fs_path: "attachments/att_001.bin".into(),
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, del.seq).await.unwrap() {
@@ -991,7 +991,7 @@ async fn reverse_delete_attachment_roundtrip() {
         .await
         .unwrap();
     assert!(matches!(rev1, OpPayload::DeleteAttachment(ref p) if p.attachment_id == "ATT_RT"));
-    let del_rec = append_op(&pool, rev1, "2025-01-15T12:01:00Z").await;
+    let del_rec = append_op(&pool, rev1, 1_736_942_460_000).await;
     match compute_reverse(&pool, TEST_DEVICE, del_rec.seq)
         .await
         .unwrap()
@@ -1035,7 +1035,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -1049,7 +1049,7 @@ async fn reverse_set_reserved_property_todo_state_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
@@ -1071,7 +1071,7 @@ async fn reverse_delete_reserved_property_todo_state() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -1080,7 +1080,7 @@ async fn reverse_delete_reserved_property_todo_state() {
             block_id: BlockId::test_id("BLK_TS3"),
             key: "todo_state".into(),
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
@@ -1102,7 +1102,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -1116,7 +1116,7 @@ async fn reverse_set_reserved_property_priority_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
@@ -1138,7 +1138,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -1152,7 +1152,7 @@ async fn reverse_set_reserved_property_due_date_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
@@ -1174,7 +1174,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:00:00Z",
+        1_736_942_400_000,
     )
     .await;
     let rec = append_op(
@@ -1188,7 +1188,7 @@ async fn reverse_set_reserved_property_scheduled_date_with_prior() {
             value_ref: None,
             value_bool: None,
         }),
-        "2025-01-15T12:01:00Z",
+        1_736_942_460_000,
     )
     .await;
     match compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap() {
@@ -1223,7 +1223,7 @@ struct BlockRow {
     content: Option<String>,
     parent_id: Option<String>,
     position: Option<i64>,
-    deleted_at: Option<String>,
+    deleted_at: Option<i64>,
 }
 
 async fn snapshot_blocks(pool: &SqlitePool) -> Vec<BlockRow> {
@@ -1242,7 +1242,7 @@ async fn snapshot_blocks(pool: &SqlitePool) -> Vec<BlockRow> {
         content: r.get::<Option<String>, _>("content"),
         parent_id: r.get::<Option<String>, _>("parent_id"),
         position: r.get::<Option<i64>, _>("position"),
-        deleted_at: r.get::<Option<String>, _>("deleted_at"),
+        deleted_at: r.get::<Option<i64>, _>("deleted_at"),
     })
     .collect()
 }
@@ -1349,7 +1349,7 @@ async fn create_block_apply_then_reverse_round_trip_i_lifecycle_3() {
         position: Some(1),
         content: "round-trip create".into(),
     });
-    let create_rec = append_op(&pool, create_payload, "2025-01-15T12:00:00Z").await;
+    let create_rec = append_op(&pool, create_payload, 1_736_942_400_000).await;
     mat.dispatch_op(&create_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1359,7 +1359,7 @@ async fn create_block_apply_then_reverse_round_trip_i_lifecycle_3() {
     let reverse = compute_reverse(&pool, TEST_DEVICE, create_rec.seq)
         .await
         .unwrap();
-    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    let reverse_rec = append_op(&pool, reverse, 1_736_942_460_000).await;
     mat.dispatch_op(&reverse_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1406,7 +1406,7 @@ async fn add_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
         block_id: block_id.clone(),
         tag_id: tag_id.clone(),
     });
-    let add_rec = append_op(&pool, add_payload, "2025-01-15T12:00:00Z").await;
+    let add_rec = append_op(&pool, add_payload, 1_736_942_400_000).await;
     mat.dispatch_op(&add_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1420,7 +1420,7 @@ async fn add_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
     let reverse = compute_reverse(&pool, TEST_DEVICE, add_rec.seq)
         .await
         .unwrap();
-    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    let reverse_rec = append_op(&pool, reverse, 1_736_942_460_000).await;
     mat.dispatch_op(&reverse_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1470,7 +1470,7 @@ async fn remove_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
         block_id: block_id.clone(),
         tag_id: tag_id.clone(),
     });
-    let remove_rec = append_op(&pool, remove_payload, "2025-01-15T12:00:00Z").await;
+    let remove_rec = append_op(&pool, remove_payload, 1_736_942_400_000).await;
     mat.dispatch_op(&remove_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1483,7 +1483,7 @@ async fn remove_tag_apply_then_reverse_round_trip_i_lifecycle_3() {
     let reverse = compute_reverse(&pool, TEST_DEVICE, remove_rec.seq)
         .await
         .unwrap();
-    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    let reverse_rec = append_op(&pool, reverse, 1_736_942_460_000).await;
     mat.dispatch_op(&reverse_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1530,7 +1530,7 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
         size_bytes: 4096,
         fs_path: "attachments/rt.png".into(),
     });
-    let add_rec = append_op(&pool, add_payload, "2025-01-15T12:00:00Z").await;
+    let add_rec = append_op(&pool, add_payload, 1_736_942_400_000).await;
     mat.dispatch_op(&add_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1544,7 +1544,7 @@ async fn add_attachment_apply_then_reverse_round_trip_i_lifecycle_3() {
     let reverse = compute_reverse(&pool, TEST_DEVICE, add_rec.seq)
         .await
         .unwrap();
-    let reverse_rec = append_op(&pool, reverse, "2025-01-15T12:01:00Z").await;
+    let reverse_rec = append_op(&pool, reverse, 1_736_942_460_000).await;
     mat.dispatch_op(&reverse_rec).await.unwrap();
     mat.flush().await.unwrap();
 
@@ -1600,14 +1600,14 @@ async fn compute_reverse_restore_discards_deleted_at_ref_m71() {
     // Step 2: restore so the block is alive again, then append a
     // RestoreBlock op carrying `deleted_at_a` so we have a record to
     // feed into compute_reverse.
-    crate::soft_delete::restore_block(&pool, &mat, block_id, &deleted_at_a)
+    crate::soft_delete::restore_block(&pool, &mat, block_id, deleted_at_a)
         .await
         .unwrap();
     let restore_rec = append_op(
         &pool,
         OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::test_id(block_id),
-            deleted_at_ref: deleted_at_a.clone(),
+            deleted_at_ref: deleted_at_a,
         }),
         FIXED_TS,
     )
@@ -1870,10 +1870,10 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // attachment block carries an `add_attachment` whose paired
     // `delete_attachment` we will later target.
     let blocks: Vec<&str> = vec!["B3_BLK1", "B3_BLK2", "B3_BLK3", "B3_BLK4", "B3_BLK5"];
-    let mut ts = 0u64;
-    let next_ts = |ts: &mut u64| -> String {
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
         *ts += 1;
-        format!("2025-01-15T12:{:02}:00.000Z", *ts)
+        1_736_942_400_000 + *ts * 60_000
     };
 
     for bid in &blocks {
@@ -1886,7 +1886,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 position: Some(1),
                 content: format!("{bid} v0"),
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         append_op(
@@ -1900,7 +1900,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_ref: None,
                 value_bool: None,
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
     }
@@ -1923,7 +1923,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 to_text: format!("{bid} v1"),
                 prev_edit: None,
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         op_refs.push(crate::op::OpRef {
@@ -1939,7 +1939,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 new_parent_id: Some(BlockId::test_id("B3_NEW_PARENT")),
                 new_position: 9,
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         op_refs.push(crate::op::OpRef {
@@ -1959,7 +1959,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 value_ref: None,
                 value_bool: None,
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         op_refs.push(crate::op::OpRef {
@@ -1981,7 +1981,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 size_bytes: 1024,
                 fs_path: format!("/tmp/{att_id}.png"),
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         op_refs.push(crate::op::OpRef {
@@ -1997,7 +1997,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
                 attachment_id: BlockId::test_id(att_id),
                 fs_path: format!("/tmp/{att_id}.png"),
             }),
-            &next_ts(&mut ts),
+            next_ts(&mut ts),
         )
         .await;
         op_refs.push(crate::op::OpRef {

@@ -14,7 +14,7 @@ import { entryKey, useHistorySelection } from '../useHistorySelection'
 function makeEntry(
   seq: number,
   opType: string,
-  createdAt: string,
+  createdAt: number,
   deviceId = 'DEVICE01',
 ): HistoryEntry {
   return {
@@ -28,15 +28,15 @@ function makeEntry(
 
 describe('useHistorySelection', () => {
   it('starts with an empty selection', () => {
-    const e0 = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
     const { result } = renderHook(() => useHistorySelection([e0]))
     expect(result.current.selectedIds.size).toBe(0)
     expect(result.current.getSelectedEntries()).toEqual([])
   })
 
   it('toggleSelectedIndex selects then deselects the entry at the given row', () => {
-    const e0 = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
-    const e1 = makeEntry(2, 'create_block', '2025-01-15T11:00:00Z')
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
+    const e1 = makeEntry(2, 'create_block', 1736938800000)
     const { result } = renderHook(() => useHistorySelection([e0, e1]))
 
     act(() => {
@@ -51,10 +51,10 @@ describe('useHistorySelection', () => {
   })
 
   it('selectAll selects every reversible entry but skips non-reversible ones', () => {
-    const e0 = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
-    const e1 = makeEntry(2, 'purge_block', '2025-01-15T11:00:00Z')
-    const e2 = makeEntry(3, 'delete_attachment', '2025-01-15T10:00:00Z')
-    const e3 = makeEntry(4, 'create_block', '2025-01-15T09:00:00Z')
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
+    const e1 = makeEntry(2, 'purge_block', 1736938800000)
+    const e2 = makeEntry(3, 'delete_attachment', 1736935200000)
+    const e3 = makeEntry(4, 'create_block', 1736931600000)
     const { result } = renderHook(() => useHistorySelection([e0, e1, e2, e3]))
 
     act(() => {
@@ -69,9 +69,9 @@ describe('useHistorySelection', () => {
   })
 
   it('clearSelection empties the selection', () => {
-    const e0 = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
-    const e1 = makeEntry(2, 'create_block', '2025-01-15T11:00:00Z')
-    const e2 = makeEntry(3, 'edit_block', '2025-01-15T10:00:00Z')
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
+    const e1 = makeEntry(2, 'create_block', 1736938800000)
+    const e2 = makeEntry(3, 'edit_block', 1736935200000)
     const { result } = renderHook(() => useHistorySelection([e0, e1, e2]))
 
     act(() => {
@@ -86,9 +86,9 @@ describe('useHistorySelection', () => {
   })
 
   it('getSelectedEntries returns selected entries sorted newest-first', () => {
-    const newest = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
-    const middle = makeEntry(2, 'create_block', '2025-01-15T11:00:00Z')
-    const oldest = makeEntry(3, 'edit_block', '2025-01-15T10:00:00Z')
+    const newest = makeEntry(1, 'edit_block', 1736942400000)
+    const middle = makeEntry(2, 'create_block', 1736938800000)
+    const oldest = makeEntry(3, 'edit_block', 1736935200000)
     const { result } = renderHook(() => useHistorySelection([newest, middle, oldest]))
 
     act(() => {
@@ -105,9 +105,9 @@ describe('useHistorySelection', () => {
   })
 
   it('handleRowClick with shift extends the selection range, skipping non-reversible rows', () => {
-    const e0 = makeEntry(1, 'edit_block', '2025-01-15T12:00:00Z')
-    const e1 = makeEntry(2, 'purge_block', '2025-01-15T11:00:00Z') // skipped
-    const e2 = makeEntry(3, 'edit_block', '2025-01-15T10:00:00Z')
+    const e0 = makeEntry(1, 'edit_block', 1736942400000)
+    const e1 = makeEntry(2, 'purge_block', 1736938800000) // skipped
+    const e2 = makeEntry(3, 'edit_block', 1736935200000)
     const { result } = renderHook(() => useHistorySelection([e0, e1, e2]))
 
     act(() => {
@@ -128,8 +128,8 @@ describe('useHistorySelection', () => {
   })
 
   it('toggleSelectedIndex on a non-reversible row is a no-op', () => {
-    const e0 = makeEntry(1, 'purge_block', '2025-01-15T12:00:00Z')
-    const e1 = makeEntry(2, 'delete_attachment', '2025-01-15T11:00:00Z')
+    const e0 = makeEntry(1, 'purge_block', 1736942400000)
+    const e1 = makeEntry(2, 'delete_attachment', 1736938800000)
     const { result } = renderHook(() => useHistorySelection([e0, e1]))
 
     act(() => {
@@ -143,6 +143,6 @@ describe('useHistorySelection', () => {
 
 describe('entryKey', () => {
   it('encodes device_id and seq', () => {
-    expect(entryKey(makeEntry(42, 'edit_block', '2025-01-15T12:00:00Z', 'DEV2'))).toBe('DEV2:42')
+    expect(entryKey(makeEntry(42, 'edit_block', 1736942400000, 'DEV2'))).toBe('DEV2:42')
   })
 })

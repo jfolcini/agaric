@@ -580,8 +580,8 @@ async fn delete_block_happy_path() {
         .expect("happy path");
     assert_eq!(result["block_id"], block.id.as_str());
     assert!(
-        result["deleted_at"].is_string(),
-        "delete_block must return a deleted_at timestamp for the restore ref",
+        result["deleted_at"].is_i64(),
+        "delete_block must return a deleted_at timestamp (epoch-ms) for the restore ref",
     );
 }
 
@@ -647,9 +647,8 @@ async fn delete_block_is_reversible_via_restore() {
         .await
         .expect("delete");
     let deleted_at = deleted["deleted_at"]
-        .as_str()
-        .expect("deleted_at timestamp")
-        .to_string();
+        .as_i64()
+        .expect("deleted_at timestamp");
 
     let restore = restore_block_inner(&pool, DEV, &mat, block.id, deleted_at).await;
     assert!(

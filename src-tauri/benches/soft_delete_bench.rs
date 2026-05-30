@@ -167,7 +167,7 @@ fn bench_restore_block(c: &mut Criterion) {
                         (pool, dir, materializer, ts)
                     },
                     |(pool, _dir, materializer, ts)| {
-                        let result = rt.block_on(restore_block(&pool, &materializer, ROOT_ID, &ts));
+                        let result = rt.block_on(restore_block(&pool, &materializer, ROOT_ID, ts));
                         materializer.shutdown();
                         result
                     },

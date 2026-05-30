@@ -52,7 +52,7 @@ async fn get_inherited(pool: &SqlitePool) -> Vec<(String, String, String)> {
 }
 
 async fn soft_delete(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE blocks SET deleted_at = '2025-01-01T00:00:00Z' WHERE id = ?")
+    sqlx::query("UPDATE blocks SET deleted_at = 1735689600000 WHERE id = ?")
         .bind(id)
         .execute(pool)
         .await
