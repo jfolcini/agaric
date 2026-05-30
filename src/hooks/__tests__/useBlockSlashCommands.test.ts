@@ -81,6 +81,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
     load: vi.fn(async () => {}),
     t: vi.fn((key: string) => key) as unknown as TFunction,
+    openQueryBuilder: vi.fn(),
     ...overrides,
   }
 }

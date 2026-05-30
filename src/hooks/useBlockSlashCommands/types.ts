@@ -39,6 +39,8 @@ export interface SlashCommandContext {
   setDatePickerOpen: (open: boolean) => void
   t: TFn
   openTemplatePicker: () => Promise<void>
+  /** Open the visual query builder (#215) pre-populated for the focused block. */
+  openQueryBuilder: () => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

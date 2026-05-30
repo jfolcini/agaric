@@ -21,6 +21,7 @@ export interface SyntheticCtx {
   setDatePickerMode: ReturnType<typeof vi.fn>
   setDatePickerOpen: ReturnType<typeof vi.fn>
   openTemplatePicker: ReturnType<typeof vi.fn>
+  openQueryBuilder: ReturnType<typeof vi.fn>
   mount: ReturnType<typeof vi.fn>
   t: ReturnType<typeof vi.fn>
 }
@@ -42,6 +43,7 @@ export function makeSyntheticCtx(overrides?: {
   const setDatePickerMode = vi.fn()
   const setDatePickerOpen = vi.fn()
   const openTemplatePicker = vi.fn(async () => {})
+  const openQueryBuilder = vi.fn()
   const mount = vi.fn()
   const t = vi.fn((key: string, args?: Record<string, unknown>) =>
     args ? `${key}:${JSON.stringify(args)}` : key,
@@ -61,7 +63,17 @@ export function makeSyntheticCtx(overrides?: {
     setDatePickerOpen,
     t: t as unknown as TFunction,
     openTemplatePicker,
+    openQueryBuilder,
   }
 
-  return { ctx, pageStore, setDatePickerMode, setDatePickerOpen, openTemplatePicker, mount, t }
+  return {
+    ctx,
+    pageStore,
+    setDatePickerMode,
+    setDatePickerOpen,
+    openTemplatePicker,
+    openQueryBuilder,
+    mount,
+    t,
+  }
 }

@@ -119,6 +119,7 @@ export function useBlockSlashCommands({
   blocks,
   load,
   t,
+  openQueryBuilder,
 }: UseBlockSlashCommandsParams): UseBlockSlashCommandsReturn {
   const template = useSlashCommandTemplate({ focusedBlockId, rootParentId, blocks, load, t })
   const date = useSlashCommandDate()
@@ -152,6 +153,7 @@ export function useBlockSlashCommands({
     setDatePickerOpen,
     t,
     openTemplatePicker: template.openTemplatePicker,
+    openQueryBuilder,
     tables,
   })
   inputsRef.current = {
@@ -163,6 +165,7 @@ export function useBlockSlashCommands({
     setDatePickerOpen,
     t,
     openTemplatePicker: template.openTemplatePicker,
+    openQueryBuilder,
     tables,
   }
 

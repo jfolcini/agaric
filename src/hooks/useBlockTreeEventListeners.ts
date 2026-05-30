@@ -197,8 +197,9 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       setDatePickerOpen,
       t: t as unknown as TFunction,
       // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
-      // never open the template picker.
+      // never open the template picker or query builder.
       openTemplatePicker: async () => {},
+      openQueryBuilder: () => {},
     })
 
     const onOrderedList = () => {

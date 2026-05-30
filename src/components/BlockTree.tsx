@@ -54,7 +54,7 @@ import { useBlockZoom } from '../hooks/useBlockZoom'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
-import { deleteDraft, setProperty } from '../lib/tauri'
+import { deleteDraft, editBlock, setProperty } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
@@ -69,6 +69,7 @@ import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockListRenderer } from './BlockListRenderer'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
 import { BlockZoomBar } from './BlockZoomBar'
+import { QueryBuilderModal } from './QueryBuilderModal'
 import { Skeleton } from './ui/skeleton'
 
 export { processCheckboxSyntax } from '../lib/block-utils'
@@ -172,6 +173,11 @@ export function BlockTree({
 
   // ── Property drawer state ──────────────────────────────────────────
   const [propertyDrawerBlockId, setPropertyDrawerBlockId] = useState<string | null>(null)
+
+  // ── Query builder (#215): /query opens the visual builder; on save we
+  // write `{{query …}}` to the block it was launched from. ──────────────
+  const [queryBuilderOpen, setQueryBuilderOpen] = useState(false)
+  const [queryBuilderBlockId, setQueryBuilderBlockId] = useState<string | null>(null)
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -288,6 +294,29 @@ export function BlockTree({
     t,
   })
 
+  // ── Query builder (#215) — /query opens the modal for the focused block;
+  // on save, write the generated `{{query …}}` expression to that block. ──
+  const openQueryBuilder = () => {
+    setQueryBuilderBlockId(focusedBlockId)
+    // Defer mounting the focus-trapping dialog by a tick: opening it
+    // synchronously inside the slash-command handler blurs the editor while
+    // React is mid-render, and the editor's blur flush (`flushSync` in
+    // useEditorBlur) then warns "flushSync called from inside a lifecycle
+    // method". Letting the current commit settle first avoids that.
+    setTimeout(() => setQueryBuilderOpen(true), 0)
+  }
+  const handleQuerySave = async (expression: string) => {
+    if (!queryBuilderBlockId) return
+    try {
+      await editBlock(queryBuilderBlockId, `{{query ${expression}}}`)
+      setQueryBuilderOpen(false)
+      await load()
+    } catch (err) {
+      logger.error('BlockTree', 'Failed to insert query', { blockId: queryBuilderBlockId }, err)
+      notify.error(t('queryBuilder.saveFailed'))
+    }
+  }
+
   // ── Slash commands hook ────────────────────────────────────────────
   const {
     handleSlashCommand,
@@ -307,6 +336,7 @@ export function BlockTree({
     blocks,
     load,
     t,
+    openQueryBuilder,
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
@@ -713,6 +743,13 @@ export function BlockTree({
           onClose={() => setTemplatePickerOpen(false)}
         />
       )}
+
+      {/* Visual query builder for the /query slash command (#215) */}
+      <QueryBuilderModal
+        open={queryBuilderOpen}
+        onOpenChange={setQueryBuilderOpen}
+        onSave={handleQuerySave}
+      />
 
       {/* History side-sheet for per-block history */}
       <BlockHistorySheet
