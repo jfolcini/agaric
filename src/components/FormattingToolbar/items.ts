@@ -21,8 +21,22 @@ export interface ToolbarItemGroups {
   historyButtons: ToolbarButtonConfig[]
 }
 
-export function buildToolbarItems(groups: ToolbarItemGroups): ToolbarItem[] {
+export interface BuildToolbarItemsOptions {
+  /**
+   * #215 — when the selection is inside a table cell, append the table-ops
+   * popover trigger to the structure group. Driven by editor state, so the
+   * caller passes `editor.isActive('table')`; toggling it changes the item
+   * list, which re-triggers `useToolbarOverflow`'s measurement.
+   */
+  includeTableOps?: boolean
+}
+
+export function buildToolbarItems(
+  groups: ToolbarItemGroups,
+  options: BuildToolbarItemsOptions = {},
+): ToolbarItem[] {
   const { refsAndBlocks, structureButtons, metadataButtons, historyButtons } = groups
+  const { includeTableOps = false } = options
   const out: ToolbarItem[] = []
   const pushButton = (key: string, group: number, priority: number, isPopoverTrigger?: boolean) => {
     out.push(
@@ -40,6 +54,10 @@ export function buildToolbarItems(groups: ToolbarItemGroups): ToolbarItem[] {
 
   // Group 1 — structure
   for (const c of structureButtons) pushButton(c.label, 1, c.priority ?? 0)
+  // Table ops ride here too (structural), but only while in a table. High
+  // priority so it survives overflow collapse — it's contextual and the
+  // user is actively working in the table they'd want to edit.
+  if (includeTableOps) pushButton('toolbar.tableOps', 1, 95, true)
   out.push({ kind: 'separator', key: 'sep-1', group: 1, priority: 0 })
 
   // Group 2 — priority + metadata
