@@ -511,6 +511,7 @@ export interface InlineState {
   inCode: boolean
   inStrike: boolean
   inHighlight: boolean
+  inUnderline: boolean
   /** Position in source where the currently-open bold/italic delimiter started. */
   boldOpenPos: number
   italicOpenPos: number
@@ -520,6 +521,7 @@ export interface InlineState {
   codeOpenNodeLen: number
   strikeOpenNodeLen: number
   highlightOpenNodeLen: number
+  underlineOpenNodeLen: number
 }
 
 export function createInlineState(line: string, depth: number): InlineState {
@@ -533,6 +535,7 @@ export function createInlineState(line: string, depth: number): InlineState {
     inCode: false,
     inStrike: false,
     inHighlight: false,
+    inUnderline: false,
     boldOpenPos: -1,
     italicOpenPos: -1,
     boldOpenNodeLen: 0,
@@ -540,12 +543,14 @@ export function createInlineState(line: string, depth: number): InlineState {
     codeOpenNodeLen: 0,
     strikeOpenNodeLen: 0,
     highlightOpenNodeLen: 0,
+    underlineOpenNodeLen: 0,
   }
 }
 
 /** Compute the currently active text marks from open toggle flags. */
 function currentMarks(st: InlineState): PMMark[] {
   const m: PMMark[] = []
+  if (st.inUnderline) m.push({ type: 'underline' })
   if (st.inBold) m.push({ type: 'bold' })
   if (st.inItalic) m.push({ type: 'italic' })
   if (st.inStrike) m.push({ type: 'strike' })
@@ -605,7 +610,10 @@ function isEscapableChar(ch: string): boolean {
     ch === '[' ||
     ch === ']' ||
     ch === '~' ||
-    ch === '='
+    ch === '=' ||
+    // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
+    // round-trips as text instead of opening an underline mark (#211 P2-5).
+    ch === '<'
   )
 }
 
@@ -672,6 +680,37 @@ export function scanHighlight(st: InlineState): boolean {
   return true
 }
 
+/**
+ * Underline: paired HTML tags `<u>` … `</u>` (there is no idiomatic Markdown
+ * underline delimiter — #211 P2-5). Unlike the toggle marks, open and close
+ * are distinct tokens, so we only open when not already inside and only close
+ * when inside; a stray `<u>`/`</u>` falls through to literal text via
+ * `scanPlain` and is reverted at end-of-line by `revertUnclosedMarks`.
+ */
+export function scanUnderline(st: InlineState): boolean {
+  const s = st.scanner
+  if (
+    st.inUnderline &&
+    peek(s) === '<' &&
+    peek(s, 1) === '/' &&
+    peek(s, 2) === 'u' &&
+    peek(s, 3) === '>'
+  ) {
+    flushBuf(st, currentMarks(st))
+    st.inUnderline = false
+    s.pos += 4
+    return true
+  }
+  if (!st.inUnderline && peek(s) === '<' && peek(s, 1) === 'u' && peek(s, 2) === '>') {
+    flushBuf(st, currentMarks(st))
+    st.underlineOpenNodeLen = st.nodes.length
+    st.inUnderline = true
+    s.pos += 3
+    return true
+  }
+  return false
+}
+
 /** Italic toggle: `*` (single star, not already matched as bold `**`). */
 export function scanItalic(st: InlineState): boolean {
   if (peek(st.scanner) !== '*') return false
@@ -715,6 +754,12 @@ function revertUnclosedMarks(st: InlineState): void {
   if (st.inBold) {
     const reverted = st.nodes.splice(st.boldOpenNodeLen)
     st.buf = `**${reverted.map(nodeToPlainText).join('')}${st.buf}`
+  }
+  // Underline is the outermost mark (opened first) → reverted last so the
+  // inner reverts above have already folded their nodes back into `buf`.
+  if (st.inUnderline) {
+    const reverted = st.nodes.splice(st.underlineOpenNodeLen)
+    st.buf = `<u>${reverted.map(nodeToPlainText).join('')}${st.buf}`
   }
 }
 
@@ -769,6 +814,7 @@ function parseLine(line: string, depth = 0): InlineNode[] {
     if (scanBold(st)) continue
     if (scanStrike(st)) continue
     if (scanHighlight(st)) continue
+    if (scanUnderline(st)) continue
     if (scanItalic(st)) continue
     scanPlain(st)
   }

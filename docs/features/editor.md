@@ -7,7 +7,7 @@ The editor is a block-based outliner built on TipTap (ProseMirror). Only the foc
 
 Above the focused block sits the **FormattingToolbar** — always visible. It carries icon buttons grouped by purpose: refs+blocks, structure, metadata, history. Low-priority buttons collapse into a `MoreHorizontal` overflow popover when the container is narrow.
 
-When you select text inside a block, the **SelectionBubbleMenu** appears next to the selection. It hosts the five mark toggles (Bold / Italic / Code / Strike / Highlight) plus an External Link button. It only appears on non-empty selections so it doesn't get in the way of typing.
+When you select text inside a block, the **SelectionBubbleMenu** appears next to the selection. It hosts the six mark toggles (Bold / Italic / Code / Strike / Highlight / Underline) plus an External Link button. It only appears on non-empty selections so it doesn't get in the way of typing.
 
 ## Markdown surface
 
@@ -20,6 +20,7 @@ Type, paste, or use the toolbar:
 | Inline code | `Ctrl+E` |
 | Strikethrough | `Ctrl+Shift+X` |
 | Highlight | `Ctrl+Shift+H` |
+| Underline | `Ctrl+U` (stored as `<u>…</u>`) |
 | Heading levels | Toolbar → Heading popover, or slash menu (`/h1` … `/h6`) |
 | Blockquote | Toolbar, or slash menu (`/quote`) |
 | Code block | Toolbar (with language picker), or slash menu (`/code`) |

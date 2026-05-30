@@ -32,6 +32,7 @@ const mockFocus = vi.fn(() => ({
   toggleCode: vi.fn(() => ({ run: mockRun })),
   toggleStrike: vi.fn(() => ({ run: mockRun })),
   toggleHighlight: vi.fn(() => ({ run: mockRun })),
+  toggleUnderline: vi.fn(() => ({ run: mockRun })),
   toggleBlockquote: vi.fn(() => ({ run: mockRun })),
   insertContent: vi.fn(() => ({ run: mockRun })),
   undo: vi.fn(() => ({ run: mockRun })),
@@ -98,9 +99,9 @@ describe('LANG_SHORT', () => {
 // ── createMarkToggles ───────────────────────────────────────────────────
 
 describe('createMarkToggles', () => {
-  it('returns 5 buttons', () => {
+  it('returns 6 buttons', () => {
     const buttons = createMarkToggles(makeEditor())
-    expect(buttons).toHaveLength(5)
+    expect(buttons).toHaveLength(6)
   })
 
   it('each button has valid config shape', () => {
@@ -111,7 +112,7 @@ describe('createMarkToggles', () => {
     }
   })
 
-  it('includes bold, italic, code, strikethrough, highlight', () => {
+  it('includes bold, italic, code, strikethrough, highlight, underline', () => {
     const buttons = createMarkToggles(makeEditor())
     const labels = buttons.map((b) => b.label)
     expect(labels).toEqual([
@@ -120,6 +121,7 @@ describe('createMarkToggles', () => {
       'toolbar.code',
       'toolbar.strikethrough',
       'toolbar.highlight',
+      'toolbar.underline',
     ])
   })
 

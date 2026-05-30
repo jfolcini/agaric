@@ -846,6 +846,45 @@ describe('RichContentRenderer', () => {
     expect(mark?.className).toContain('bg-yellow-200')
   })
 
+  it('renders underline mark with <u> (#211 P2-5)', () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'under', marks: [{ type: 'underline' }] }],
+        },
+      ],
+    })
+    const { container } = render(renderRichContent('<u>under</u>', {}))
+    const u = container.querySelector('u')
+    expect(u).not.toBeNull()
+    expect(u?.textContent).toBe('under')
+  })
+
+  it('underline wraps bold (underline is outermost — #211 P2-5)', () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'both',
+              marks: [{ type: 'underline' }, { type: 'bold' }],
+            },
+          ],
+        },
+      ],
+    })
+    const { container } = render(renderRichContent('ignored', {}))
+    const u = container.querySelector('u')
+    expect(u).not.toBeNull()
+    expect(u?.querySelector('strong')).not.toBeNull()
+    expect(u?.querySelector('strong')?.textContent).toBe('both')
+  })
+
   // -- Combined marks ---------------------------------------------------------
 
   it('bold and italic combine into nested strong+em', () => {

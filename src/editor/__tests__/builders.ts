@@ -56,6 +56,10 @@ export function highlight(t: string): TextNode {
   return text(t, [{ type: 'highlight' }])
 }
 
+export function underline(t: string): TextNode {
+  return text(t, [{ type: 'underline' }])
+}
+
 export function boldItalic(t: string): TextNode {
   return text(t, [{ type: 'bold' }, { type: 'italic' }])
 }
