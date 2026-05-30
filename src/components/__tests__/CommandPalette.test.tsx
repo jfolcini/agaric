@@ -27,9 +27,11 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { Editor } from '@tiptap/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { setActiveEditor } from '../../editor/active-editor'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
@@ -161,6 +163,9 @@ beforeEach(() => {
 
 afterEach(() => {
   resetStore()
+  // #82 — the active-editor registry is a module singleton; clear it so
+  // a registered mock can't leak into an unrelated test.
+  setActiveEditor(null)
 })
 
 function openPalette(): void {
@@ -746,31 +751,7 @@ describe('CommandPalette — [[page]] autocomplete', () => {
     })
   })
 
-  it('inserts [[Page Title]] into the previously focused contenteditable on Enter', async () => {
-    // jsdom doesn't implement `document.execCommand`. Stub it before
-    // the store opens — the palette only checks
-    // `target.isContentEditable` and then calls
-    // `execCommand('insertText', ...)`. We capture the call so the
-    // assertion can verify the link payload.
-    const execCommandStub = vi
-      .fn()
-      .mockImplementation((_cmd: string, _ui?: boolean | undefined, value?: string) => {
-        host.textContent = `${host.textContent ?? ''}${value ?? ''}`
-        return true
-      })
-    // oxlint-disable-next-line typescript/no-explicit-any -- jsdom's Document prototype omits execCommand — assigning via `as any` is the cleanest test-only stub.
-    ;(document as any).execCommand = execCommandStub
-
-    // Set up a contenteditable host to act as the editor block.
-    const host = document.createElement('div')
-    host.contentEditable = 'true'
-    host.textContent = ''
-    document.body.appendChild(host)
-    host.focus()
-
-    // PEND-69 F1 — linkMode now uses the partitioned IPC with
-    // blockLimit=0; mock that one (the legacy page-only searchBlocks
-    // workaround was removed).
+  const mockPageA = () =>
     mockedSearchBlocksPartitioned.mockResolvedValue({
       pages: {
         items: [makePageRow('PAGE_A', 'Alpha')],
@@ -778,28 +759,108 @@ describe('CommandPalette — [[page]] autocomplete', () => {
         has_more: false,
         total_count: null,
       },
-      blocks: {
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      },
+      blocks: { items: [], next_cursor: null, has_more: false, total_count: null },
     })
 
-    // Capture focus before opening — the store snapshots
-    // `document.activeElement` on open$.
+  it('inserts [[Page Title]] into a TipTap block via the editor command (#82, undo-safe)', async () => {
+    // The block editor renders inside a `.ProseMirror` node. #82 routes
+    // that case through the active-editor registry + `insertContent` so
+    // the insert joins the undo history (replacing the deprecated
+    // `execCommand`). We register a fluent-chain mock and assert it is
+    // driven with the link payload.
+    const chainCalls = { focus: vi.fn(), insertContent: vi.fn(), run: vi.fn() }
+    // oxlint-disable-next-line typescript/no-explicit-any -- minimal fluent chain stub.
+    const chainObj: any = {
+      focus: (...a: unknown[]) => {
+        chainCalls.focus(...a)
+        return chainObj
+      },
+      insertContent: (...a: unknown[]) => {
+        chainCalls.insertContent(...a)
+        return chainObj
+      },
+      run: (...a: unknown[]) => {
+        chainCalls.run(...a)
+        return true
+      },
+    }
+    setActiveEditor({ chain: () => chainObj } as unknown as Editor)
+
+    // A `.ProseMirror` contenteditable host stands in for the focused block.
+    const pm = document.createElement('div')
+    pm.className = 'ProseMirror'
+    pm.contentEditable = 'true'
+    document.body.appendChild(pm)
+    pm.focus()
+
+    mockPageA()
     openPalette()
     render(<CommandPalette />)
-    const input = screen.getByTestId('command-palette-input')
-    fireEvent.change(input, { target: { value: '[[a' } })
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '[[a' } })
     await waitFor(() => {
       expect(screen.getByTestId('palette-page-header-PAGE_A')).toBeInTheDocument()
     })
     await userEvent.keyboard('{Enter}')
-    expect(execCommandStub).toHaveBeenCalledWith('insertText', false, '[[Alpha]]')
+
+    expect(chainCalls.focus).toHaveBeenCalled()
+    expect(chainCalls.insertContent).toHaveBeenCalledWith('[[Alpha]]')
+    expect(chainCalls.run).toHaveBeenCalled()
+
+    setActiveEditor(null)
+    pm.remove()
+  })
+
+  it('inserts into a non-TipTap contenteditable via the Selection/Range fallback (#82 Path A)', async () => {
+    // No active editor + not a `.ProseMirror` node → the forward-compatible
+    // Selection/Range fallback (undo loss accepted, documented in #82).
+    setActiveEditor(null)
+    const host = document.createElement('div')
+    host.contentEditable = 'true'
+    host.textContent = 'x'
+    document.body.appendChild(host)
+    host.focus()
+    // Plant a collapsed caret at the end so the store snapshots a range
+    // and the fallback has somewhere to insert.
+    const range = document.createRange()
+    range.selectNodeContents(host)
+    range.collapse(false)
+    const sel = document.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+
+    mockPageA()
+    openPalette()
+    render(<CommandPalette />)
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '[[a' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-page-header-PAGE_A')).toBeInTheDocument()
+    })
+    await userEvent.keyboard('{Enter}')
+
+    expect(host.textContent).toContain('[[Alpha]]')
     host.remove()
-    // oxlint-disable-next-line typescript/no-explicit-any -- restore the jsdom-default missing property.
-    ;(document as any).execCommand = undefined
+  })
+
+  it('inserts [[Page Title]] into a previously focused <input> (#82 native branch)', async () => {
+    setActiveEditor(null)
+    const field = document.createElement('input')
+    field.type = 'text'
+    field.value = 'pre '
+    document.body.appendChild(field)
+    field.focus()
+    field.setSelectionRange(field.value.length, field.value.length)
+
+    mockPageA()
+    openPalette()
+    render(<CommandPalette />)
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: '[[a' } })
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-page-header-PAGE_A')).toBeInTheDocument()
+    })
+    await userEvent.keyboard('{Enter}')
+
+    expect(field.value).toBe('pre [[Alpha]]')
+    field.remove()
   })
 })
 
