@@ -200,6 +200,8 @@ After pushing, open a PR against `main` (`gh pr create --base main --head <branc
 
 This pipelines batches against CI wall-clock: while batch N's CI runs, you build batch N+1; by the time N+1 is pushed, N's CI has finished and you merge it. The loop never blocks on a green checkmark.
 
+**When the brief's planned items are all PR'd and only CI-pending PRs remain, do NOT idle waiting for their checks — immediately pull the next issue from the backlog** (`gh issue list`, honoring the refactor-focus priorities in memory) and start a fresh batch in a disjoint domain (avoid files the in-flight PRs touch). The owner's standing directive is to keep working all day; an empty planned-list is a cue to refill it from the backlog, not to stop. Merge the pending PRs when their CI lands (you'll be notified) — that reconciliation interleaves with the new batch exactly as §8 describes.
+
 ---
 
 ## Principles
