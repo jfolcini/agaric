@@ -30,6 +30,9 @@ import type { DatePickerMode } from './useBlockDatePicker'
 import { applyContentEdit, readCurrentContent } from './useBlockSlashCommands/helpers'
 import type { SlashCommandContext } from './useBlockSlashCommands/types'
 
+/** Known callout variants (mirrors `CALLOUT_CONFIG` in RichContentRenderer). */
+const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])
+
 export interface UseBlockTreeEventListenersOptions {
   focusedBlockId: string | null
   rootParentId: string | null
@@ -208,9 +211,19 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
     const onDivider = () => {
       void applyContentEdit(buildCtx(), '---', 'slash.dividerFailed')
     }
-    const onCallout = () => {
+    const onCallout = (e: Event) => {
+      // #215 — the toolbar callout type picker dispatches the chosen variant in
+      // `detail.type`; fall back to `info` (slash `/callout` + the plain
+      // toolbar button send no detail). Validate against the known set so a
+      // stray payload can't inject arbitrary `[!TEXT]`.
+      const raw = (e as CustomEvent<{ type?: string }>).detail?.type
+      const type = raw && CALLOUT_TYPES.has(raw) ? raw : 'info'
       const ctx = buildCtx()
-      void applyContentEdit(ctx, `> [!INFO] ${readCurrentContent(ctx)}`, 'slash.calloutFailed')
+      void applyContentEdit(
+        ctx,
+        `> [!${type.toUpperCase()}] ${readCurrentContent(ctx)}`,
+        'slash.calloutFailed',
+      )
     }
 
     const cleanups = [

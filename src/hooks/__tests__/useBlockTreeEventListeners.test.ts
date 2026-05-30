@@ -305,6 +305,24 @@ describe('useBlockTreeEventListeners', () => {
       await vi.waitFor(() => expect(mount).toHaveBeenCalledWith('BLOCK_1', toText))
     })
 
+    it.each([
+      ['warning', '> [!WARNING] hello'],
+      ['tip', '> [!TIP] hello'],
+      ['bogus', '> [!INFO] hello'], // unknown type falls back to info (#215)
+    ] as const)('INSERT_CALLOUT { type: %s } → "%s"', async (type, toText) => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockResolvedValue(undefined)
+      const { opts } = structuralOpts('hello')
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('INSERT_CALLOUT', { type })
+
+      await vi.waitFor(() =>
+        expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'BLOCK_1', toText }),
+      )
+    })
+
     it('no-ops when no block is focused', async () => {
       const { invoke } = await import('@tauri-apps/api/core')
       const mockedInvoke = vi.mocked(invoke)

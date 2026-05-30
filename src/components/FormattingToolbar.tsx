@@ -40,7 +40,11 @@ import {
 
 import { buildConfigByKey, buildToolbarItems } from './FormattingToolbar/items'
 import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
-import { renderCodeBlockButton, renderHeadingButton } from './FormattingToolbar/RefsAndBlocksGroup'
+import {
+  renderCalloutButton,
+  renderCodeBlockButton,
+  renderHeadingButton,
+} from './FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton, Tip } from './FormattingToolbar/shared'
 import { Button } from './ui/button'
 import { MenuPopoverContent } from './ui/menu-popover-content'
@@ -71,6 +75,7 @@ export function FormattingToolbar({
   const { t } = useTranslation()
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
+  const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -140,6 +145,14 @@ export function FormattingToolbar({
           headingLevel: state.headingLevel,
           open: headingPopoverOpen,
           setOpen: setHeadingPopoverOpen,
+          onOverflowClose: closeOverflow,
+        })
+      case 'toolbar.callout':
+        return renderCalloutButton({
+          mode,
+          t,
+          open: calloutPopoverOpen,
+          setOpen: setCalloutPopoverOpen,
           onOverflowClose: closeOverflow,
         })
       case 'toolbar.cyclePriority':

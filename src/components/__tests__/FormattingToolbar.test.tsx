@@ -645,13 +645,19 @@ describe('FormattingToolbar', () => {
       document.removeEventListener('insert-divider', spy)
     })
 
-    it('dispatches insert-callout event on pointerdown', () => {
+    it('callout button opens a type picker; selecting a variant dispatches insert-callout with the type (#215)', () => {
       const spy = vi.fn()
-      document.addEventListener('insert-callout', spy)
+      document.addEventListener('insert-callout', spy as EventListener)
       render(<FormattingToolbar editor={makeEditor()} />)
+      // The button now opens a popover of the 5 variants (mock renders content
+      // inline); selecting one dispatches the chosen type.
       fireEvent.pointerDown(screen.getByRole('button', { name: t('toolbar.callout') }))
+      fireEvent.pointerDown(screen.getByTestId('callout-type-warning'))
       expect(spy).toHaveBeenCalledOnce()
-      document.removeEventListener('insert-callout', spy)
+      expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({
+        type: 'warning',
+      })
+      document.removeEventListener('insert-callout', spy as EventListener)
     })
 
     it('prevents default on pointerdown to preserve editor focus', () => {
@@ -870,19 +876,34 @@ describe('FormattingToolbar', () => {
       const restore = withTightLayout(120)
       try {
         const spy = vi.fn()
-        document.addEventListener('insert-callout', spy)
+        document.addEventListener('insert-divider', spy)
         render(<FormattingToolbar editor={makeEditor()} />)
         await screen.findByRole('button', { name: t('toolbar.more') })
         const overflowMenu = screen.getByTestId('toolbar-overflow-menu')
-        const calloutRow = Array.from(overflowMenu.querySelectorAll('button')).find(
-          (b) => b.getAttribute('aria-label') === t('toolbar.callout'),
+        const dividerRow = Array.from(overflowMenu.querySelectorAll('button')).find(
+          (b) => b.getAttribute('aria-label') === t('toolbar.divider'),
         ) as HTMLElement | undefined
-        expect(calloutRow).toBeDefined()
-        if (calloutRow) {
-          fireEvent.pointerDown(calloutRow)
+        expect(dividerRow).toBeDefined()
+        if (dividerRow) {
+          fireEvent.pointerDown(dividerRow)
         }
-        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-callout' }))
-        document.removeEventListener('insert-callout', spy)
+        expect(spy).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-divider' }))
+        document.removeEventListener('insert-divider', spy)
+      } finally {
+        restore()
+      }
+    })
+
+    it('callout overflow row opens the type picker; selecting a variant dispatches the type (#215)', async () => {
+      const restore = withTightLayout(120)
+      try {
+        const spy = vi.fn()
+        document.addEventListener('insert-callout', spy as EventListener)
+        render(<FormattingToolbar editor={makeEditor()} />)
+        await screen.findByRole('button', { name: t('toolbar.more') })
+        fireEvent.pointerDown(screen.getByTestId('callout-type-tip'))
+        expect((spy.mock.calls[0]?.[0] as CustomEvent | undefined)?.detail).toEqual({ type: 'tip' })
+        document.removeEventListener('insert-callout', spy as EventListener)
       } finally {
         restore()
       }
