@@ -290,9 +290,12 @@ export const references: Record<string, string> = {
   'search.help.section.booleanOperators': 'Boolean operators',
   'search.help.section.tips': 'Tips',
   // PEND-55 — toggle row (`Aa` / `Ab|` / `.*`) + search history.
-  'search.toggle.caseSensitive': 'Case-sensitive (Aa)',
-  'search.toggle.wholeWord': 'Whole word (Ab|)',
-  'search.toggle.regex': 'Regex (.*)',
+  // #154 UX-A8 — the abbreviation is now rendered as always-visible text
+  // on each toggle, so it is dropped from the accessible name here to
+  // avoid a doubled "Case-sensitive A a" screen-reader announcement.
+  'search.toggle.caseSensitive': 'Case-sensitive',
+  'search.toggle.wholeWord': 'Whole word',
+  'search.toggle.regex': 'Regex',
   'search.toggle.toolbarLabel': 'Search modes',
   'search.history.title': 'Recent searches',
   'search.history.empty': 'No recent searches',

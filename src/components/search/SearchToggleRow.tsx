@@ -1,17 +1,26 @@
 /**
- * PEND-55 — Search toggle row.
+ * PEND-55 — Search toggle row (#154 UX-A8).
  *
  * Three `<button aria-pressed>` toggles next to the search input — VS
  * Code's `Aa` / `Ab|` / `.*` family for case-sensitive, whole-word, and
- * regex modes. Each toggle has a `lucide-react` icon, a tooltip via the
- * shared `Tooltip` primitive, and a 44px hit area on coarse pointers
- * (AGENTS.md a11y invariant).
+ * regex modes. Each toggle pairs a `lucide-react` icon with an
+ * always-visible abbreviation label and a 44px hit area on coarse
+ * pointers (AGENTS.md a11y invariant).
+ *
+ * #154 UX-A8 — the abbreviation is rendered as visible text rather than
+ * relying on a hover tooltip: Radix tooltips don't fire on touch-tap, so
+ * a touch user got no explanation of an icon-only control. The visible
+ * label makes each mode self-evident without any hover/long-press
+ * affordance; the full localised name stays on `aria-label` (screen
+ * readers) and the native `title` (desktop hover), so no information is
+ * lost for pointer users.
  *
  * State is owned upstream; this is a pure controlled component. Tests
  * exercise:
  *   - `aria-pressed` flips on click;
  *   - `role="toolbar"` on the container;
- *   - each toggle exposes its tooltip text as an `aria-label`;
+ *   - each toggle exposes its full label as an `aria-label`;
+ *   - each toggle shows its visible abbreviation text;
  *   - the three icons render distinct DOM (so screenshot regressions
  *     can detect a swap).
  *
@@ -22,7 +31,6 @@ import { CaseSensitive, Regex, WholeWord } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 export interface SearchToggleState {
@@ -42,6 +50,8 @@ export interface SearchToggleRowProps {
 interface ToggleSpec {
   key: keyof SearchToggleState
   labelKey: string
+  /** Always-visible abbreviation (VS Code's `Aa` / `Ab|` / `.*`). */
+  abbr: string
   testId: string
   Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
 }
@@ -50,18 +60,21 @@ const TOGGLES: ReadonlyArray<ToggleSpec> = [
   {
     key: 'caseSensitive',
     labelKey: 'search.toggle.caseSensitive',
+    abbr: 'Aa',
     testId: 'search-toggle-case-sensitive',
     Icon: CaseSensitive,
   },
   {
     key: 'wholeWord',
     labelKey: 'search.toggle.wholeWord',
+    abbr: 'Ab|',
     testId: 'search-toggle-whole-word',
     Icon: WholeWord,
   },
   {
     key: 'isRegex',
     labelKey: 'search.toggle.regex',
+    abbr: '.*',
     testId: 'search-toggle-regex',
     Icon: Regex,
   },
@@ -75,63 +88,70 @@ export function SearchToggleRow({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <div
-        role="toolbar"
-        aria-label={t('search.toggle.toolbarLabel')}
-        data-testid="search-toggle-row"
-        className="inline-flex items-center gap-1 rounded-md border border-input bg-background p-0.5"
-      >
-        {TOGGLES.map(({ key, labelKey, testId, Icon }) => {
-          const pressed = toggles[key]
-          const label = t(labelKey)
-          return (
-            <Tooltip key={key}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-pressed={pressed}
-                  aria-label={label}
-                  title={label}
-                  disabled={disabled}
-                  data-testid={testId}
-                  data-state={pressed ? 'on' : 'off'}
-                  onClick={() => onChange({ ...toggles, [key]: !pressed })}
-                  className={cn(
-                    'relative inline-flex items-center justify-center rounded-sm px-2 py-1',
-                    // Coarse-pointer hit area
-                    '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
-                    'text-muted-foreground transition-colors',
-                    'hover:bg-accent hover:text-accent-foreground',
-                    'focus-ring-visible',
-                    // UX-15 — the active toggle was previously cued ONLY by a
-                    // low-contrast fill + subtle shadow (a colour-only signal).
-                    // Add a non-colour cue: a visible inset ring (a shape/border
-                    // change) on the pressed state so the active mode is
-                    // distinguishable independent of colour perception. The
-                    // small dot below the icon is a second, redundant
-                    // shape-only indicator.
-                    pressed && 'bg-secondary text-foreground shadow-sm ring-1 ring-inset ring-ring',
-                    'disabled:pointer-events-none disabled:opacity-50',
-                  )}
-                >
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {/* UX-15 — shape-only active indicator (no colour reliance):
-                      a small dot renders only while the toggle is pressed. */}
-                  {pressed && (
-                    <span
-                      aria-hidden="true"
-                      data-testid={`${testId}-active-dot`}
-                      className="pointer-events-none absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-                    />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{label}</TooltipContent>
-            </Tooltip>
-          )
-        })}
-      </div>
-    </TooltipProvider>
+    <div
+      role="toolbar"
+      aria-label={t('search.toggle.toolbarLabel')}
+      data-testid="search-toggle-row"
+      className="inline-flex items-center gap-1 rounded-md border border-input bg-background p-0.5"
+    >
+      {TOGGLES.map(({ key, labelKey, abbr, testId, Icon }) => {
+        const pressed = toggles[key]
+        const label = t(labelKey)
+        return (
+          <button
+            key={key}
+            type="button"
+            aria-pressed={pressed}
+            aria-label={label}
+            // Native title gives pointer users the full name on hover.
+            // This is NOT the Radix tooltip the old design relied on —
+            // the visible abbreviation below is the touch-safe affordance.
+            title={label}
+            disabled={disabled}
+            data-testid={testId}
+            data-state={pressed ? 'on' : 'off'}
+            onClick={() => onChange({ ...toggles, [key]: !pressed })}
+            className={cn(
+              'relative inline-flex items-center justify-center gap-1 rounded-sm px-2 py-1',
+              // Coarse-pointer hit area
+              '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11',
+              'text-muted-foreground transition-colors',
+              'hover:bg-accent hover:text-accent-foreground',
+              'focus-ring-visible',
+              // UX-15 — the active toggle was previously cued ONLY by a
+              // low-contrast fill + subtle shadow (a colour-only signal).
+              // Add a non-colour cue: a visible inset ring (a shape/border
+              // change) on the pressed state so the active mode is
+              // distinguishable independent of colour perception. The
+              // small dot below the icon is a second, redundant
+              // shape-only indicator.
+              pressed && 'bg-secondary text-foreground shadow-sm ring-1 ring-inset ring-ring',
+              'disabled:pointer-events-none disabled:opacity-50',
+            )}
+          >
+            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {/* #154 UX-A8 — always-visible abbreviation, so the mode is
+                legible on touch with no tooltip/long-press. aria-hidden
+                because the button already has the full `aria-label`. */}
+            <span
+              aria-hidden="true"
+              data-testid={`${testId}-abbr`}
+              className="font-mono text-xs leading-none"
+            >
+              {abbr}
+            </span>
+            {/* UX-15 — shape-only active indicator (no colour reliance):
+                a small dot renders only while the toggle is pressed. */}
+            {pressed && (
+              <span
+                aria-hidden="true"
+                data-testid={`${testId}-active-dot`}
+                className="pointer-events-none absolute bottom-0.5 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+              />
+            )}
+          </button>
+        )
+      })}
+    </div>
   )
 }
