@@ -25,9 +25,13 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    # `secrets` can't be read from a step-level `if:`, so map the presence of the
+    # reviewer-app credentials into an env var the steps below can branch on.
+    env:
+      HAS_REVIEWER_APP: ${{ secrets.REVIEWER_APP_ID != '' }}
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: write # submit the approving / request-changes review
       issues: read
       id-token: write
 
@@ -38,18 +42,49 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # Mint a token for the dedicated reviewer GitHub App so the approving
+      # review is attributed to a distinct identity. This is required because
+      # (a) GitHub blocks a user/bot from approving its own PR, and (b) approvals
+      # made with the default GITHUB_TOKEN do not count toward required reviews.
+      # No-op until the REVIEWER_APP_ID / REVIEWER_APP_PRIVATE_KEY secrets exist.
+      - name: Generate reviewer app token
+        id: app-token
+        if: env.HAS_REVIEWER_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Operate as the reviewer app so its verdict counts as the required
+          # review. Falls back to the default token before the app is configured:
+          # the review still runs, but the approval won't satisfy the ruleset yet.
+          github_token: ${{ steps.app-token.outputs.token || github.token }}
           plugin_marketplaces: 'https://github.com/anthropics/claude-code.git'
           plugins: 'code-review@claude-code-plugins'
-          prompt: '/code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}'
+          # Run the standard review, then cast a merge verdict. The ruleset's
+          # dismiss_stale_reviews_on_push means this re-runs and re-approves on
+          # every push, so a stale approval never lingers on changed code.
+          prompt: |
+            /code-review:code-review ${{ github.repository }}/pull/${{ github.event.pull_request.number }}
+
+            After completing the review above, cast a merge verdict on PR #${{ github.event.pull_request.number }}:
+            - If you found NO blocking issues (high-severity correctness or
+              security problems), approve it:
+                gh pr review ${{ github.event.pull_request.number }} --approve --body "<one-line rationale>"
+            - Otherwise, request changes and list what must be fixed:
+                gh pr review ${{ github.event.pull_request.number }} --request-changes --body "<what to fix>"
+            Only approve when you are confident the change is safe to merge.
+          # Allow Claude to submit the review verdict.
+          claude_args: '--allowed-tools "Bash(gh pr review:*)"'
           # claude-code-action refuses to run on bot-triggered PRs by default
           # ("Workflow initiated by non-human actor: dependabot (type: Bot)").
           # Explicitly allow `dependabot[bot]` so weekly bump PRs get the same
-          # review pass as human PRs; every other bot is still blocked.
+          # review + approval pass as human PRs; every other bot is still blocked.
           allowed_bots: 'dependabot[bot]'
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://code.claude.com/docs/en/cli-reference for available options
