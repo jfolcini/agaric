@@ -58,7 +58,7 @@ function renderExternalLink(
   )
 }
 
-/** Apply bold / italic / code / strike / highlight / link marks to a text node, innermost-out. */
+/** Apply bold / italic / code / strike / highlight / underline / link marks to a text node, innermost-out. */
 function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.ReactNode {
   const linkMark = node.marks?.find((m) => m.type === 'link')
   // Re-validate the href scheme at the render sink: input-time validation
@@ -91,6 +91,11 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
   }
   if (node.marks?.some((m) => m.type === 'bold') === true) {
     content = <strong>{content}</strong>
+  }
+  // #211 P2-5 — underline is the outermost mark (mirrors the serializer's
+  // `<u>…</u>` wrapping), so apply it last.
+  if (node.marks?.some((m) => m.type === 'underline') === true) {
+    content = <u>{content}</u>
   }
   return content
 }

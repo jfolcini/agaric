@@ -472,6 +472,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.highlight',
   },
   {
+    // #211 P2-5 — underline mark. Ctrl+U is the near-universal underline combo.
+    id: 'underline',
+    keys: 'Ctrl + U',
+    category: 'keyboard.category.editorFormatting',
+    description: 'keyboard.underline',
+  },
+  {
     id: 'codeBlock',
     keys: 'Ctrl + Shift + C',
     category: 'keyboard.category.editorFormatting',

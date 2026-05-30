@@ -46,6 +46,13 @@ function escapeText(s: string): string {
       out += `\\${ch}`
       continue
     }
+    // `<u>` / `</u>` are the underline storage tokens (#211 P2-5) — escape the
+    // leading `<` so literal angle-bracket text round-trips as text instead of
+    // re-parsing into an underline mark.
+    if (ch === '<' && (s.slice(i + 1, i + 3) === 'u>' || s.slice(i + 1, i + 4) === '/u>')) {
+      out += '\\<'
+      continue
+    }
     // # before [ could be confused with tag_ref #[ULID] — escape the #
     if (ch === '#' && i + 1 < s.length && s[i + 1] === '[') {
       out += '\\#'
@@ -77,12 +84,16 @@ function escapeText(s: string): string {
  */
 function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>): string {
   let result = ''
-  // Close marks no longer needed (inner first: highlight, strike, italic before bold)
+  // Close marks no longer needed (inner first → outer last: highlight, strike,
+  // italic, bold, then underline which is the outermost wrapper).
   if (from.has('highlight') && !to.has('highlight')) result += '=='
   if (from.has('strike') && !to.has('strike')) result += '~~'
   if (from.has('italic') && !to.has('italic')) result += '*'
   if (from.has('bold') && !to.has('bold')) result += '**'
-  // Open marks newly needed (outer first: bold, italic before strike, highlight)
+  if (from.has('underline') && !to.has('underline')) result += '</u>'
+  // Open marks newly needed (outer first → inner last: underline, then bold,
+  // italic, strike, highlight).
+  if (to.has('underline') && !from.has('underline')) result += '<u>'
   if (to.has('bold') && !from.has('bold')) result += '**'
   if (to.has('italic') && !from.has('italic')) result += '*'
   if (to.has('strike') && !from.has('strike')) result += '~~'
@@ -90,13 +101,14 @@ function emitMarkTransition(from: ReadonlySet<string>, to: ReadonlySet<string>):
   return result
 }
 
-/** Close all active marks (inner first: highlight, strike, italic before bold). */
+/** Close all active marks (inner first → outer last; underline outermost). */
 function emitCloseAll(active: ReadonlySet<string>): string {
   let result = ''
   if (active.has('highlight')) result += '=='
   if (active.has('strike')) result += '~~'
   if (active.has('italic')) result += '*'
   if (active.has('bold')) result += '**'
+  if (active.has('underline')) result += '</u>'
   return result
 }
 
@@ -205,11 +217,17 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
   return transition + escapeText(child.text)
 }
 
-/** Pull the bold/italic/strike/highlight subset out of a mark list. */
+/** Pull the bold/italic/strike/highlight/underline subset out of a mark list. */
 function markSetFromMarks(marks: readonly PMMark[]): Set<string> {
   const desired = new Set<string>()
   for (const m of marks) {
-    if (m.type === 'bold' || m.type === 'italic' || m.type === 'strike' || m.type === 'highlight') {
+    if (
+      m.type === 'bold' ||
+      m.type === 'italic' ||
+      m.type === 'strike' ||
+      m.type === 'highlight' ||
+      m.type === 'underline'
+    ) {
       desired.add(m.type)
     }
   }

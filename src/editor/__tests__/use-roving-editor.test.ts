@@ -9,6 +9,7 @@ import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { logger } from '../../lib/logger'
+import { Underline } from '../extensions/underline'
 import { parse, serialize } from '../markdown-serializer'
 import { toggleCodeBlockSafely } from '../toggle-code-block-safely'
 import type { DocNode } from '../types'
@@ -416,6 +417,33 @@ describe('custom extension keyboard shortcuts', () => {
     editor.commands.selectAll()
     editor.commands.toggleHighlight()
     expect(editor.isActive('highlight')).toBe(true)
+  })
+
+  it('Underline registers the underline mark (#211 P2-5)', () => {
+    editor = createEditor([Underline])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'underline')).toBe(true)
+  })
+
+  it('Underline toggles underline via command and renders <u> (#211 P2-5)', () => {
+    editor = createEditor([Underline])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    editor.commands.selectAll()
+    editor.commands.toggleUnderline()
+    expect(editor.isActive('underline')).toBe(true)
+    expect(editor.getHTML()).toContain('<u>')
+    // Toggling again clears the mark.
+    editor.commands.toggleUnderline()
+    expect(editor.isActive('underline')).toBe(false)
+  })
+
+  it('Underline parses an existing <u> tag as the mark (#211 P2-5)', () => {
+    editor = createEditor([Underline])
+    editor.commands.setContent('<p><u>under</u></p>')
+    editor.commands.selectAll()
+    expect(editor.isActive('underline')).toBe(true)
   })
 
   it('CodeBlockWithShortcut toggles code block via command', () => {

@@ -28,12 +28,23 @@ export interface HighlightMark {
   readonly type: 'highlight'
 }
 
+export interface UnderlineMark {
+  readonly type: 'underline'
+}
+
 export interface LinkMark {
   readonly type: 'link'
   readonly attrs: { readonly href: string }
 }
 
-export type PMMark = BoldMark | ItalicMark | CodeMark | StrikeMark | HighlightMark | LinkMark
+export type PMMark =
+  | BoldMark
+  | ItalicMark
+  | CodeMark
+  | StrikeMark
+  | HighlightMark
+  | UnderlineMark
+  | LinkMark
 
 // -- Node types ---------------------------------------------------------------
 

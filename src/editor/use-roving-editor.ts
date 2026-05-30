@@ -44,6 +44,7 @@ import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
 import { TagRef } from './extensions/tag-ref'
+import { Underline } from './extensions/underline'
 import { notifyUnknownNodeTypeToast } from './markdown-serialize-toast'
 import { parse, serialize } from './markdown-serializer'
 import { cleanupOrphanedPopups } from './suggestion-renderer'
@@ -299,6 +300,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       CodeWithShortcut,
       StrikeWithShortcut,
       HighlightWithShortcut,
+      Underline,
       Blockquote,
       OrderedList,
 

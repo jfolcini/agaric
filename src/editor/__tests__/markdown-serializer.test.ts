@@ -38,6 +38,7 @@ import {
   tableRow,
   tagRef,
   text,
+  underline,
 } from './builders'
 
 /** Create a text node with a link mark (and optional additional marks). */
@@ -104,6 +105,15 @@ describe('serialize', () => {
 
     it('highlight', () => {
       expect(serialize(doc(paragraph(highlight('important'))))).toBe('==important==')
+    })
+
+    it('underline (#211 P2-5)', () => {
+      expect(serialize(doc(paragraph(underline('under'))))).toBe('<u>under</u>')
+    })
+
+    it('underline wraps bold (underline is outermost)', () => {
+      const node = text('both', [{ type: 'underline' }, { type: 'bold' }])
+      expect(serialize(doc(paragraph(node)))).toBe('<u>**both**</u>')
     })
 
     it('bold + italic (nested)', () => {
@@ -450,6 +460,34 @@ describe('parse', () => {
 
     it('highlight', () => {
       expect(parse('==important==')).toEqual(doc(paragraph(highlight('important'))))
+    })
+
+    it('underline (#211 P2-5)', () => {
+      expect(parse('<u>under</u>')).toEqual(doc(paragraph(underline('under'))))
+    })
+
+    it('underline wrapping bold round-trips', () => {
+      const md = '<u>**both**</u>'
+      expect(serialize(parse(md))).toBe(md)
+    })
+
+    it('unclosed <u> reverts to literal text', () => {
+      expect(parse('<u>unclosed')).toEqual(doc(paragraph(text('<u>unclosed'))))
+    })
+
+    it('stray </u> with no open tag is literal text', () => {
+      expect(parse('plain</u>')).toEqual(doc(paragraph(text('plain</u>'))))
+    })
+
+    it('literal <u>…</u> in unmarked text survives doc→md→doc (#211 P2-5)', () => {
+      // Regression: without escaping the `<u>` token, plain text containing
+      // literal angle-bracket markup re-parsed into a spurious underline mark.
+      const original = doc(paragraph(text('see <u>tag</u> here')))
+      const md = serialize(original)
+      // The leading `<` of both tokens is backslash-escaped on the way out.
+      expect(md).toBe('see \\<u>tag\\</u> here')
+      // …and the markdown round-trips back to the same single unmarked text node.
+      expect(parse(md)).toEqual(original)
     })
 
     it('bold + italic nested', () => {

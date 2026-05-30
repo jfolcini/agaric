@@ -142,6 +142,7 @@ export const shortcuts: Record<string, string> = {
   'keyboard.inlineCode': 'Toggle inline code',
   'keyboard.strikethrough': 'Toggle strikethrough',
   'keyboard.highlight': 'Toggle highlight',
+  'keyboard.underline': 'Toggle underline',
   'keyboard.codeBlock': 'Toggle code block',
   'keyboard.priority1': 'Set priority 1 (high)',
   'keyboard.priority2': 'Set priority 2 (medium)',

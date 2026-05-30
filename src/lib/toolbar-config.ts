@@ -28,6 +28,7 @@ import {
   Redo2,
   Settings2,
   Strikethrough,
+  Underline,
   Undo2,
   X,
 } from 'lucide-react'
@@ -138,6 +139,15 @@ export function createMarkToggles(editor: Editor): ToolbarButtonConfig[] {
       tip: 'toolbar.highlightTip',
       activeKey: 'highlight',
       action: () => editor.chain().focus().toggleHighlight().run(),
+    },
+    {
+      // #211 P2-5 — underline. Takes the bubble menu to 7 marks + Link,
+      // within the ≤8-button calm-UI ceiling the issue adopts.
+      icon: Underline,
+      label: 'toolbar.underline',
+      tip: 'toolbar.underlineTip',
+      activeKey: 'underline',
+      action: () => editor.chain().focus().toggleUnderline().run(),
     },
   ]
 }
