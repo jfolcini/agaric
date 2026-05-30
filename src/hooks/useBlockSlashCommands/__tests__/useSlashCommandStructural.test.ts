@@ -174,6 +174,34 @@ describe('useSlashCommandStructural — table', () => {
     expect(handler).toBeDefined()
     expect(() => handler?.(ctx, { id: 'table:4:6', label: 'Table 4×6' })).not.toThrow()
   })
+
+  // #215 — header-row opt-out. Capture the `insertTable` options to assert the
+  // `withHeaderRow` flag for both the default and the no-header variant.
+  function ctxWithInsertTableSpy() {
+    const insertTable = vi.fn(() => ({ run: vi.fn() }))
+    const { ctx } = makeSyntheticCtx()
+    ctx.rovingEditor.editor = {
+      chain: () => ({ focus: () => ({ insertTable }) }),
+    } as unknown as typeof ctx.rovingEditor.editor
+    return { ctx, insertTable }
+  }
+
+  it('/table inserts a 3×3 table WITH a header row', () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, insertTable } = ctxWithInsertTableSpy()
+    result.current.exact['table']?.(ctx, { id: 'table', label: 'Table' })
+    expect(insertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: true })
+  })
+
+  it('/table-no-header inserts a 3×3 table WITHOUT a header row (#215)', () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, insertTable } = ctxWithInsertTableSpy()
+    result.current.exact['table-no-header']?.(ctx, {
+      id: 'table-no-header',
+      label: 'Table (no header)',
+    })
+    expect(insertTable).toHaveBeenCalledWith({ rows: 3, cols: 3, withHeaderRow: false })
+  })
 })
 
 describe('useSlashCommandStructural — table identity', () => {

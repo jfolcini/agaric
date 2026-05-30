@@ -212,6 +212,13 @@ export const SLASH_COMMANDS: PickerItem[] = [
     icon: Grid3x3,
   },
   {
+    // #215 — header-row opt-out: `withHeaderRow:true` is hardcoded for `/table`.
+    id: 'table-no-header',
+    label: 'TABLE (no header) — Insert table without a header row',
+    category: 'slashCommand.categories.structure',
+    icon: Grid3x3,
+  },
+  {
     id: 'numbered-list',
     label: 'NUMBERED LIST — Insert ordered list',
     category: 'slashCommand.categories.structure',
