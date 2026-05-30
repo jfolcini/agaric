@@ -571,8 +571,13 @@ describe('SearchPanel', () => {
   it('navigates to parent page when clicking a result with parent_id', async () => {
     const user = userEvent.setup()
 
-    // search_blocks returns a block with parent_id
-    mockedInvoke.mockResolvedValueOnce({
+    // #254 — command-aware mock (mirrors the recent-pages test below) instead
+    // of a positional `mockResolvedValueOnce` queue. When the result renders,
+    // the breadcrumb effect fires `batch_resolve`; under batch pollution that
+    // interleaved invoke could steal a queued `get_block` once-value, leaving
+    // the click's `getBlock` to read a leaked default → title 'Untitled'.
+    // Routing by command makes the test order-independent and hermetic.
+    const searchResults = {
       items: [
         makeSearchResult({
           id: 'CHILD1',
@@ -585,6 +590,20 @@ describe('SearchPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
+    }
+    const parentBlock = {
+      id: 'PARENT1',
+      block_type: 'page',
+      content: 'Parent Page Title',
+      parent_id: null,
+      position: 0,
+      deleted_at: null,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') return searchResults
+      if (cmd === 'get_block') return parentBlock
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
     })
 
     render(<SearchPanel />)
@@ -594,16 +613,6 @@ describe('SearchPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(textContent('child content'))).toBeInTheDocument()
-    })
-
-    // Mock get_block for parent lookup
-    mockedInvoke.mockResolvedValueOnce({
-      id: 'PARENT1',
-      block_type: 'page',
-      content: 'Parent Page Title',
-      parent_id: null,
-      position: 0,
-      deleted_at: null,
     })
 
     await user.click(screen.getByText(textContent('child content')))
@@ -698,7 +707,10 @@ describe('SearchPanel', () => {
   it('shows toast when parent lookup fails on result click', async () => {
     const user = userEvent.setup()
 
-    mockedInvoke.mockResolvedValueOnce({
+    // #254 — command-aware mock: `get_block` always rejects so the breadcrumb
+    // `batch_resolve` (which fires when results render) can't steal a queued
+    // rejection and leave the click's lookup resolving silently → no toast.
+    const searchResults = {
       items: [
         makeSearchResult({
           id: 'CHILD1',
@@ -711,6 +723,12 @@ describe('SearchPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') return searchResults
+      if (cmd === 'get_block') throw new Error('fail')
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
     })
 
     render(<SearchPanel />)
@@ -721,8 +739,6 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(textContent('child block'))).toBeInTheDocument()
     })
-
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
 
     await user.click(screen.getByText(textContent('child block')))
 
@@ -1073,8 +1089,16 @@ describe('SearchPanel', () => {
   it('disables result row during click loading', async () => {
     const user = userEvent.setup()
 
-    // search_blocks returns a block with parent_id
-    mockedInvoke.mockResolvedValueOnce({
+    // #254 — command-aware mock. `get_block` returns a controllable pending
+    // promise so the click's loading state persists; routing by command keeps
+    // the breadcrumb `batch_resolve` from consuming that pending promise (a
+    // positional once-queue would let it, and the click would then resolve
+    // instantly → the loading state never appears).
+    let resolveGetBlock!: (value: unknown) => void
+    const getBlockPending = new Promise((resolve) => {
+      resolveGetBlock = resolve
+    })
+    const searchResults = {
       items: [
         makeSearchResult({
           id: 'CHILD1',
@@ -1087,6 +1111,12 @@ describe('SearchPanel', () => {
       next_cursor: null,
       has_more: false,
       total_count: null,
+    }
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_blocks') return searchResults
+      if (cmd === 'get_block') return getBlockPending
+      if (cmd === 'batch_resolve') return []
+      return emptyPage
     })
 
     render(<SearchPanel />)
@@ -1097,15 +1127,6 @@ describe('SearchPanel', () => {
     await waitFor(() => {
       expect(screen.getByText(textContent('child block'))).toBeInTheDocument()
     })
-
-    // Mock get_block with a pending promise so loading state persists
-    let resolveGetBlock!: (value: unknown) => void
-    mockedInvoke.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveGetBlock = resolve
-        }),
-    )
 
     // PEND-50 Phase 1 — the row is a `role="option"` `<li>` (not a
     // `<button>`); "disabled" surfaces via `aria-disabled` rather than
