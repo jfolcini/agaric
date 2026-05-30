@@ -808,9 +808,12 @@ describe('RichContentRenderer', () => {
     expect(chip.textContent).toContain(REF_BLOCK.slice(0, 8))
   })
 
-  // -- Inline mark fall-through (strike / highlight) --------------------------
+  // -- Inline marks: strike / highlight (#211 P0-2) ---------------------------
+  // Previously these rendered as plain text — the static renderer had no
+  // strike/highlight branch, so the marks were silently invisible. Now they
+  // wrap in <s> / <mark> respectively.
 
-  it('strike mark text passes through as plain text (no wrapper)', () => {
+  it('renders strike mark with <s>', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -821,10 +824,12 @@ describe('RichContentRenderer', () => {
       ],
     })
     const { container } = render(renderRichContent('~~crossed~~', {}))
-    expect(container.textContent).toBe('crossed')
+    const s = container.querySelector('s')
+    expect(s).not.toBeNull()
+    expect(s?.textContent).toBe('crossed')
   })
 
-  it('highlight mark text passes through as plain text (no wrapper)', () => {
+  it('renders highlight mark with <mark> and the canonical colour class', () => {
     mockedParse.mockReturnValueOnce({
       type: 'doc',
       content: [
@@ -835,7 +840,10 @@ describe('RichContentRenderer', () => {
       ],
     })
     const { container } = render(renderRichContent('==hl==', {}))
-    expect(container.textContent).toBe('hl')
+    const mark = container.querySelector('mark')
+    expect(mark).not.toBeNull()
+    expect(mark?.textContent).toBe('hl')
+    expect(mark?.className).toContain('bg-yellow-200')
   })
 
   // -- Combined marks ---------------------------------------------------------
@@ -847,6 +855,28 @@ describe('RichContentRenderer', () => {
     expect(strong).not.toBeNull()
     expect(em).not.toBeNull()
     expect(em?.textContent).toBe('both')
+  })
+
+  it('bold + highlight nests mark inside strong (#211 P0-2 ordering)', () => {
+    mockedParse.mockReturnValueOnce({
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'text',
+              text: 'both',
+              marks: [{ type: 'bold' }, { type: 'highlight' }],
+            },
+          ],
+        },
+      ],
+    })
+    const { container } = render(renderRichContent('ignored', {}))
+    const strong = container.querySelector('strong')
+    expect(strong?.querySelector('mark')).not.toBeNull()
+    expect(strong?.querySelector('mark')?.textContent).toBe('both')
   })
 
   it('code + bold nests code inside bold', () => {
