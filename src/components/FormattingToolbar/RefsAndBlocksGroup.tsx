@@ -50,23 +50,25 @@ export function renderCodeBlockButton({
   setOpen,
   onOverflowClose,
 }: CodeBlockButtonProps): React.ReactElement {
+  // #215 P2-8 — persistent label so the inactive button doesn't read as
+  // icon-only/disabled. Active state surfaces the language short code.
+  const codeBlockLabel =
+    isCodeBlock && codeBlockLanguage ? (LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage) : 'Code'
+
   if (mode === 'sentinel') {
     // Just the button shape — skip Popover wrapper to avoid duplicating
-    // popover content in the DOM.
+    // popover content in the DOM. Must match the real button's footprint so
+    // `useToolbarOverflow`'s width measurement stays accurate.
     return (
       <Button
         variant="ghost"
-        size="icon-xs"
+        size="sm"
         aria-hidden
         tabIndex={-1}
-        className={cn(isCodeBlock && toolbarActiveClass)}
+        className={cn('h-7 gap-1 px-1.5 text-xs', isCodeBlock && toolbarActiveClass)}
       >
         <FileCode2 className="h-3.5 w-3.5" />
-        {isCodeBlock && codeBlockLanguage && (
-          <span className="text-xs font-bold">
-            {LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage}
-          </span>
-        )}
+        <span className="font-medium">{codeBlockLabel}</span>
       </Button>
     )
   }
@@ -101,21 +103,17 @@ export function renderCodeBlockButton({
       <Tip label={tipLabel}>
         <Button
           variant="ghost"
-          size="icon-xs"
+          size="sm"
           aria-label={t('toolbar.codeBlockLanguage')}
           aria-pressed={isCodeBlock}
-          className={cn(isCodeBlock && toolbarActiveClass)}
+          className={cn('h-7 gap-1 px-1.5 text-xs', isCodeBlock && toolbarActiveClass)}
           onPointerDown={(e) => {
             e.preventDefault()
             setOpen((prev) => !prev)
           }}
         >
           <FileCode2 className="h-3.5 w-3.5" />
-          {isCodeBlock && codeBlockLanguage && (
-            <span className="text-xs font-bold">
-              {LANG_SHORT[codeBlockLanguage] ?? codeBlockLanguage}
-            </span>
-          )}
+          <span className="font-medium">{codeBlockLabel}</span>
         </Button>
       </Tip>
     )
@@ -162,6 +160,10 @@ export function renderHeadingButton({
   setOpen,
   onOverflowClose,
 }: HeadingButtonProps): React.ReactElement {
+  // NOTE: the heading button keeps its icon-only form — the Heading icon is
+  // itself an "H" glyph, so a persistent "H" text label would render a
+  // redundant "H H" (verified at runtime). The active-level badge is enough.
+  // (#215 P2-8 persistent labels apply to the code-block button only.)
   if (mode === 'sentinel') {
     return (
       <Button

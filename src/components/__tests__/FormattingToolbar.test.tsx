@@ -320,6 +320,12 @@ describe('FormattingToolbar', () => {
   // ── Code block popover ──────────────────────────────────────────────
 
   describe('code block popover', () => {
+    it('shows a persistent "Code" label so the button does not read as icon-only (#215 P2-8)', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.codeBlockLanguage') })
+      expect(btn.textContent).toContain('Code')
+    })
+
     it('toggles code block via editor chain', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // Code block button is a popover — click opens it, select "Plain text" to toggle
