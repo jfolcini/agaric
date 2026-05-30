@@ -3,8 +3,9 @@
  *
  * Coverage:
  * - `role="toolbar"` on the container.
- * - Each toggle exposes its label as `aria-label` (used for both
- *   accessible-name and tooltip text).
+ * - Each toggle exposes its full label as `aria-label` (accessible name).
+ * - Each toggle shows its always-visible abbreviation (#154 UX-A8 —
+ *   touch-safe, no tooltip reliance).
  * - `aria-pressed` reflects the controlled state and flips on click.
  * - All three toggles render distinct SVG icons (regression guard
  *   against a swap).
@@ -34,6 +35,23 @@ describe('SearchToggleRow', () => {
     expect(buttons[0]).toHaveAttribute('aria-label', expect.stringMatching(/Case-sensitive/))
     expect(buttons[1]).toHaveAttribute('aria-label', expect.stringMatching(/Whole word/))
     expect(buttons[2]).toHaveAttribute('aria-label', expect.stringMatching(/Regex/))
+  })
+
+  it('shows an always-visible abbreviation on each toggle (#154 UX-A8)', () => {
+    // The abbreviation text is what makes the mode legible on touch,
+    // where the old hover tooltip never fired. It is decorative
+    // (aria-hidden) since the button already carries the full aria-label.
+    render(<SearchToggleRow toggles={OFF} onChange={vi.fn()} />)
+    expect(screen.getByTestId('search-toggle-case-sensitive-abbr')).toHaveTextContent('Aa')
+    expect(screen.getByTestId('search-toggle-whole-word-abbr')).toHaveTextContent('Ab|')
+    expect(screen.getByTestId('search-toggle-regex-abbr')).toHaveTextContent('.*')
+    for (const testId of [
+      'search-toggle-case-sensitive-abbr',
+      'search-toggle-whole-word-abbr',
+      'search-toggle-regex-abbr',
+    ]) {
+      expect(screen.getByTestId(testId)).toHaveAttribute('aria-hidden', 'true')
+    }
   })
 
   it('reflects controlled state via aria-pressed', () => {
