@@ -49,25 +49,29 @@ jobs:
     uses: ./.github/workflows/_validate.yml
 
   # ---------------------------------------------------------------------------
-  # Skip-the-heavy-bits gate. Inspects the diff and emits `code=true`
-  # when at least one non-docs path changed. The `build` and
-  # `android-build` jobs key off this so docs-only / pending-only / log-
-  # only PRs short-circuit to a fast pass instead of paying the ~24 min
-  # Linux smoke build (and ~28 min Android slot on push). Skipped jobs
+  # Skip-the-heavy-bits gate. Inspects the diff and emits two booleans —
+  # `desktop` (Linux bundle-relevant paths changed) and `android`
+  # (Android-package-relevant paths changed). The `build` and
+  # `android-build` jobs path-gate on these so frontend-only / docs-only
+  # PRs stop paying the ~24 min Linux slot and ~28 min Android slot.
+  # Logic correctness is already covered by `validate`; these two jobs
+  # only add value for bundling / packaging / cross-compile drift, and
+  # `release.yml` is the full-matrix catch-all at tag time. Skipped jobs
   # count as success for branch protection per GitHub's docs, so this
   # is safe to wire on required checks.
   #
   # Implemented inline with `git diff` (no extra action dependency) so
   # the workflow has no new SHA-pin to maintain. The base ref for the
   # comparison comes from the pull-request payload or `github.event.before`
-  # for push events; new-branch / force-push edge cases fall back to
-  # "assume code changed" to avoid masking real diffs.
+  # for push events; new-branch / force-push / unreachable-base edge cases
+  # fall back to "assume both changed" to avoid masking real bundling drift.
   # ---------------------------------------------------------------------------
   detect-changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
-      code: ${{ steps.diff.outputs.code }}
+      desktop: ${{ steps.diff.outputs.desktop }}
+      android: ${{ steps.diff.outputs.android }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -96,49 +100,64 @@ jobs:
           fi
 
           # New-branch / orphan-push: github.event.before is all-zeros and
-          # there's nothing to diff against. Treat as "code changed" so we
-          # never silently skip the first push of a new branch.
+          # there's nothing to diff against. Assume both bundles relevant so
+          # we never silently skip the first push of a new branch.
           if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            echo "Base sha unresolved — assuming code changed."
-            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "Base sha unresolved — assuming desktop+android changed."
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "android=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # Force-pushes can leave `base` unreachable in the runner clone
           # (the old tip was rewritten upstream). `git cat-file -e` confirms
-          # the object is reachable; if not, conservatively run the build.
+          # the object is reachable; if not, conservatively run both builds.
           if ! git cat-file -e "$base" 2>/dev/null; then
-            echo "Base sha $base unreachable in shallow clone — assuming code changed."
-            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "Base sha $base unreachable in shallow clone — assuming desktop+android changed."
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "android=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           mapfile -t changed < <(git diff --name-only "$base" "$head")
 
           if [ "${#changed[@]}" -eq 0 ]; then
-            echo "Empty diff — skipping build."
-            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "Empty diff — skipping both bundle jobs."
+            echo "desktop=false" >> "$GITHUB_OUTPUT"
+            echo "android=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           echo "Changed files:"
           printf '  %s\n' "${changed[@]}"
 
-          # Docs-only paths. Match against a single regex so adding a new
-          # docs surface is one line. Anything outside this set counts as
-          # "code changed" and triggers the build.
-          docs_re='^(docs/|pending/|.*\.md$|LICENSE$|SESSION-LOG\.md$|\.github/CODEOWNERS$|\.github/ISSUE_TEMPLATE/)'
+          # Path sets, anchored at repo root. A changed file matching
+          # `desktop_re` makes the Linux `build` run; one matching
+          # `android_re` makes `android-build` run (push-to-main only).
+          # Logic correctness lives in `validate`; these jobs guard only
+          # bundling/packaging/cross-compile drift, so the sets are narrow.
+          #
+          # Android is deliberately NOT triggered by every `src-tauri/**`
+          # change — host-side Rust that compiles almost always cross-
+          # compiles, and triggering on all backend PRs would defeat the
+          # gate. Android breakage comes from the scaffold/override/conf
+          # files, the cross-compile dependency graph (`Cargo.lock`), the
+          # android multicast shim, and the patch script; `release.yml`
+          # covers the rest at tag time.
+          desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.lock$|src-tauri/src/sync_daemon/android_multicast\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
 
-          code=false
+          desktop=false
+          android=false
           for f in "${changed[@]}"; do
-            if ! [[ "$f" =~ $docs_re ]]; then
-              code=true
-              break
-            fi
+            [[ "$f" =~ $desktop_re ]] && desktop=true
+            [[ "$f" =~ $android_re ]] && android=true
           done
 
-          echo "code=$code"
-          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "desktop=$desktop"
+          echo "android=$android"
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # Linux smoke build. Catches Tauri-config drift early without burning
@@ -147,8 +166,10 @@ jobs:
   # on tag push, which is the only place macOS/Windows artifacts must
   # actually ship.
   #
-  # Gated on `detect-changes.outputs.code == 'true'` — docs-only diffs
-  # skip the ~24 min runner slot entirely.
+  # Path-gated on `detect-changes.outputs.desktop == 'true'` — only diffs
+  # touching desktop bundle-relevant paths (`src-tauri/**`, bundling
+  # scripts, JS manifests, this workflow) pay the ~24 min runner slot.
+  # Frontend-only and docs-only PRs skip it entirely.
   #
   # If a Tauri / wry / cargo-tauri bump breaks a non-Linux target, the
   # tag-push release will surface it — the solo maintainer tagging the
@@ -159,7 +180,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     needs: [validate, detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.desktop == 'true'
     # PEND-41 R1 — observed Linux wall-clock 24.3 min (run 25966040732,
     # 2026-05-16, n=1). +50% headroom + round up → 50.
     timeout-minutes: 50
@@ -282,16 +303,19 @@ jobs:
             src-tauri/target/release/bundle/appimage/*.AppImage
 
   # ---------------------------------------------------------------------------
-  # Android APK build. Skipped on `pull_request` events — the typical
-  # frontend PR doesn't touch Android-specific paths and the ~28-min
-  # Android slot dominates PR wall-clock. Pushes (including the merge
-  # commit on `main` and feature-branch pushes) still run it, so
-  # Android-related branches keep CI signal. `release.yml` builds the
-  # Android artifact at tag time independently.
+  # Android APK build. Skipped on `pull_request` events entirely — the
+  # ~28-min Android slot dominates PR wall-clock and the typical PR never
+  # touches Android-specific paths. On push (the merge commit on `main`,
+  # feature-branch pushes) it additionally path-gates on
+  # `detect-changes.outputs.android`, so it only runs when an
+  # Android-relevant path changed (scaffold/override/conf files, the
+  # cross-compile dependency graph, the multicast shim, the patch script,
+  # or this workflow). `release.yml` builds the signed Android artifact at
+  # tag time independently, covering everything this gate skips.
   # ---------------------------------------------------------------------------
   android-build:
     needs: [validate, detect-changes]
-    if: github.event_name != 'pull_request' && needs.detect-changes.outputs.code == 'true'
+    if: github.event_name != 'pull_request' && needs.detect-changes.outputs.android == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 27.8 min (run 25966040732, 2026-05-16,
     # n=1). +50% headroom + round up → 45 min.
