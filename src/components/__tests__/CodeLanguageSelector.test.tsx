@@ -303,6 +303,81 @@ describe('CodeLanguageSelector', () => {
     })
   })
 
+  describe('custom language input (#215 P2-10)', () => {
+    it('offers a "Use «typed»" row + no-match hint when nothing matches', async () => {
+      const user = userEvent.setup()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, 'elixir')
+
+      expect(screen.getByTestId('no-language-match')).toBeInTheDocument()
+      expect(screen.getByTestId('use-custom-language')).toBeInTheDocument()
+      // No built-in language button survives the non-matching filter.
+      expect(screen.queryByRole('button', { name: 'rust' })).not.toBeInTheDocument()
+    })
+
+    it('does NOT offer the custom row when a built-in language matches', async () => {
+      const user = userEvent.setup()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={vi.fn()}
+        />,
+      )
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, 'rust')
+      expect(screen.queryByTestId('use-custom-language')).not.toBeInTheDocument()
+    })
+
+    it('applies the raw typed language (lower-cased, trimmed) when in a code block', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={onClose}
+        />,
+      )
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, '  Kotlin ')
+      await user.pointer({
+        keys: '[MouseLeft>]',
+        target: screen.getByTestId('use-custom-language'),
+      })
+
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'kotlin' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('Enter applies the custom language when no built-in matches', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock={true}
+          currentLanguage=""
+          onClose={onClose}
+        />,
+      )
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, 'swift{Enter}')
+      expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'swift' })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('accessibility', () => {
     it('has no a11y violations', async () => {
       const { container } = render(

@@ -50,6 +50,12 @@ export function CodeLanguageSelector({
     [filter],
   )
 
+  // #215 P2-10 — when the filter matches no built-in language, let the user
+  // apply the raw typed string (e.g. Elixir, Kotlin, Swift, PHP, R). Lowlight
+  // highlights what it knows and degrades to plain monospace otherwise.
+  const customLang = filter.trim().toLowerCase()
+  const showCustom = filteredLanguages.length === 0 && customLang.length > 0
+
   function applyLanguage(lang: string): void {
     const attrs = { language: lang }
     if (!isCodeBlock) {
@@ -65,8 +71,14 @@ export function CodeLanguageSelector({
   }
 
   const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
-    itemCount: filteredLanguages.length,
+    // When no built-in language matches, the single "Use «typed»" row is the
+    // only selectable item, so Enter applies the custom language.
+    itemCount: showCustom ? 1 : filteredLanguages.length,
     onSelect: (idx) => {
+      if (showCustom) {
+        applyLanguage(customLang)
+        return
+      }
       const lang = filteredLanguages[idx]
       if (lang) applyLanguage(lang)
     },
@@ -106,6 +118,29 @@ export function CodeLanguageSelector({
           {lang}
         </Button>
       ))}
+      {showCustom && (
+        // #215 P2-10 — no built-in match: apply the raw typed language.
+        <>
+          <span className="px-2 py-1 text-xs text-muted-foreground" data-testid="no-language-match">
+            {t('toolbar.noLanguageMatch')}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              'justify-start text-sm',
+              focusedIndex === 0 && 'bg-accent text-accent-foreground',
+            )}
+            data-testid="use-custom-language"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              applyLanguage(customLang)
+            }}
+          >
+            {t('toolbar.useCustomLanguage', { language: customLang })}
+          </Button>
+        </>
+      )}
       <Button
         variant="ghost"
         size="sm"
