@@ -94,6 +94,16 @@ export const pages: Record<string, string> = {
   'templates.newTemplatePlaceholder': 'New template name...',
   'templates.newTemplateInputLabel': 'New template name',
   'templates.createFailed': 'Failed to create template',
+  // #215 — dynamic-variable discoverability. These tokens are expanded by
+  // `expandTemplateVariables` when a template is inserted; previously they
+  // were documented only in code comments.
+  'templates.variablesHintLabel': 'Dynamic variables:',
+  'templates.variablesHintIntro':
+    'Use these tokens anywhere in a template — they expand when the template is inserted.',
+  'templates.variableToday': 'Current date (YYYY-MM-DD)',
+  'templates.variableTime': 'Current time (HH:MM)',
+  'templates.variableDatetime': 'Current date and time',
+  'templates.variablePageTitle': 'Title of the page you insert into',
   'pageHeader.exportMarkdown': 'Export as Markdown',
   'pageHeader.deletePage': 'Delete page',
   'pageHeader.deletePageTitle': 'Delete page',
