@@ -12,6 +12,8 @@ import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
+import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { cn } from '@/lib/utils'
 
 /** An item in the suggestion popup (tag or page). */
@@ -40,6 +42,19 @@ export interface PickerItem {
   icon?: React.ComponentType<{ className?: string | undefined }>
   /** Secondary breadcrumb text shown below the label (e.g. parent namespace). */
   breadcrumb?: string | undefined
+  /**
+   * Keyboard catalog id whose *live* binding is rendered as a right-aligned
+   * chord chip (picks up user rebinds via `getShortcutKeys`). Use for items
+   * backed by the keyboard catalog — e.g. the `/strike` mark → `strikethrough`.
+   * Takes precedence over `keys` when both are set. #211 P0-5.
+   */
+  shortcutId?: string
+  /**
+   * Static chord string (e.g. "Ctrl + B") rendered as a right-aligned chip
+   * for items with no keyboard-catalog entry — e.g. `/bold` and `/italic`,
+   * which use TipTap StarterKit defaults. Ignored when `shortcutId` is set.
+   */
+  keys?: string
 }
 
 export interface SuggestionListProps {
@@ -184,6 +199,32 @@ export const SuggestionList = ({
     return labelNode
   }
 
+  // Right-aligned chord chips for a row's keyboard shortcut. Prefers the live
+  // catalog binding (`shortcutId`, picks up rebinds); falls back to a static
+  // `keys` string for marks with no catalog entry (Bold/Italic). Returns null
+  // when neither is set so non-mark rows keep their existing layout. #211 P0-5.
+  const renderShortcut = (item: PickerItem) => {
+    const keys = item.shortcutId ? getShortcutKeys(item.shortcutId) : (item.keys ?? '')
+    const tokens = formatChordTokens(keys)
+    if (tokens.length === 0) return null
+    return (
+      <span
+        className="ml-auto inline-flex items-center gap-1 pl-2"
+        aria-hidden="true"
+        data-testid={`suggestion-shortcut-${item.id}`}
+      >
+        {tokens.map((tok) => (
+          <kbd
+            key={tok}
+            className="rounded border border-border bg-muted/40 px-1 py-px font-mono text-[10px]"
+          >
+            {tok}
+          </kbd>
+        ))}
+      </span>
+    )
+  }
+
   const renderItem = (item: PickerItem, index: number) => (
     <button
       key={item.id}
@@ -202,6 +243,7 @@ export const SuggestionList = ({
       aria-selected={index === selectedIndex}
     >
       {renderItemContent(item)}
+      {renderShortcut(item)}
     </button>
   )
 

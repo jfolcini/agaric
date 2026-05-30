@@ -23,6 +23,7 @@ import {
   useBlockSlashCommands,
 } from '../useBlockSlashCommands'
 import { useSlashCommandDate } from '../useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandMarks } from '../useBlockSlashCommands/useSlashCommandMarks'
 import { useSlashCommandProperty } from '../useBlockSlashCommands/useSlashCommandProperty'
 import { useSlashCommandStructural } from '../useBlockSlashCommands/useSlashCommandStructural'
 import { useSlashCommandTemplate } from '../useBlockSlashCommands/useSlashCommandTemplate'
@@ -691,7 +692,8 @@ describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
         const date = useSlashCommandDate()
         const property = useSlashCommandProperty()
         const structural = useSlashCommandStructural()
-        return mergeSlashHandlerTables(template.tables, date, property, structural)
+        const marks = useSlashCommandMarks()
+        return mergeSlashHandlerTables(template.tables, date, property, structural, marks)
       },
       { wrapper },
     )
@@ -744,6 +746,7 @@ describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
         date: useSlashCommandDate(),
         property: useSlashCommandProperty(),
         structural: useSlashCommandStructural(),
+        marks: useSlashCommandMarks(),
       }),
       { wrapper },
     )
@@ -752,6 +755,7 @@ describe('useBlockSlashCommands dispatcher coverage (#PEND-30 D-4)', () => {
       result.current.date,
       result.current.property,
       result.current.structural,
+      result.current.marks,
     ]) {
       for (const key of Object.keys(tbl.exact)) {
         expect(seen.has(key), `duplicate exact handler for /${key}`).toBe(false)

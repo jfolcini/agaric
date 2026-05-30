@@ -62,6 +62,7 @@ import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { isCancellation } from '@/lib/app-error'
 import { jaroWinkler } from '@/lib/jaro-winkler'
+import { formatChordTokens } from '@/lib/keyboard-config/format-chord'
 import { getCurrentShortcuts, getShortcutKeys } from '@/lib/keyboard-config/storage'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -1392,43 +1393,6 @@ function SearchModeGroups({
 // ───────────────────────────────────────────────────────────────────
 // Commands mode
 // ───────────────────────────────────────────────────────────────────
-
-/**
- * PEND-67 Phase 1 — split a catalog keys string ("Ctrl + Shift + F")
- * into a list of chord chip tokens with platform-typical glyphs.
- *
- * The catalog stores chord names as "Modifier + Modifier + Key"
- * (`src/lib/keyboard-config/catalog.ts`). We map a small allow-list
- * of common modifier names to single-glyph chips so they read as
- * keyboard shortcuts at a glance (Raycast / Linear / VSCode parity).
- * Unknown tokens fall through verbatim (uppercased) so a future
- * catalog addition does not silently render blank.
- */
-function formatChordTokens(keys: string): string[] {
-  if (keys.length === 0) return []
-  const GLYPHS: Record<string, string> = {
-    ctrl: '⌃',
-    control: '⌃',
-    shift: '⇧',
-    cmd: '⌘',
-    command: '⌘',
-    meta: '⌘',
-    alt: '⌥',
-    option: '⌥',
-    enter: '↵',
-    return: '↵',
-    escape: 'esc',
-    esc: 'esc',
-    space: '␣',
-    tab: '⇥',
-    backspace: '⌫',
-  }
-  return keys
-    .split('+')
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .map((t) => GLYPHS[t.toLowerCase()] ?? t.toUpperCase())
-}
 
 /**
  * Right-aligned chord chip group rendered inside a `<CommandItem>`.

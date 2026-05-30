@@ -11,6 +11,7 @@
 
 import {
   AlertTriangle,
+  Bold,
   Calendar,
   CalendarClock,
   CalendarDays,
@@ -27,7 +28,9 @@ import {
   Heading4,
   Heading5,
   Heading6,
+  Highlighter,
   Info,
+  Italic,
   LayoutTemplate,
   Lightbulb,
   Link2,
@@ -40,6 +43,7 @@ import {
   Search,
   Signal,
   StickyNote,
+  Strikethrough,
   Tag,
   Timer,
   UserCircle,
@@ -105,6 +109,46 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'TAG — Insert tag reference',
     category: 'slashCommand.categories.references',
     icon: Tag,
+  },
+  // #211 P0-5 — mark slash commands. Each applies the mark to the current
+  // selection, or (with no selection) inserts the delimiter pair and parks
+  // the caret between the delimiters. Wired in `useSlashCommandMarks`.
+  // `id: 'code-mark'` is distinct from the `code` code-*block* command above;
+  // both surface under a `/code` query and disambiguate by category.
+  {
+    id: 'bold',
+    label: 'BOLD — Bold text',
+    category: 'slashCommand.categories.formatting',
+    icon: Bold,
+    keys: 'Ctrl + B',
+  },
+  {
+    id: 'italic',
+    label: 'ITALIC — Italic text',
+    category: 'slashCommand.categories.formatting',
+    icon: Italic,
+    keys: 'Ctrl + I',
+  },
+  {
+    id: 'code-mark',
+    label: 'CODE — Inline code',
+    category: 'slashCommand.categories.formatting',
+    icon: Code,
+    shortcutId: 'inlineCode',
+  },
+  {
+    id: 'strike',
+    label: 'STRIKE — Strikethrough text',
+    category: 'slashCommand.categories.formatting',
+    icon: Strikethrough,
+    shortcutId: 'strikethrough',
+  },
+  {
+    id: 'highlight',
+    label: 'HIGHLIGHT — Highlight text',
+    category: 'slashCommand.categories.formatting',
+    icon: Highlighter,
+    shortcutId: 'highlight',
   },
   {
     id: 'code',

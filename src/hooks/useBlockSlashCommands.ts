@@ -36,6 +36,7 @@ import type {
   UseBlockSlashCommandsReturn,
 } from './useBlockSlashCommands/types-public'
 import { useSlashCommandDate } from './useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandMarks } from './useBlockSlashCommands/useSlashCommandMarks'
 import { useSlashCommandProperty } from './useBlockSlashCommands/useSlashCommandProperty'
 import { useSlashCommandStructural } from './useBlockSlashCommands/useSlashCommandStructural'
 import { useSlashCommandTemplate } from './useBlockSlashCommands/useSlashCommandTemplate'
@@ -62,9 +63,9 @@ export type {
 } from './useBlockSlashCommands/types-public'
 
 /**
- * Merge the four sub-hook tables. Order is fixed:
- *   1. exact: template, date, property, structural — keys are disjoint so
- *      the merge order is for readability only.
+ * Merge the sub-hook tables. Order is fixed:
+ *   1. exact: template, date, property, structural, marks — keys are disjoint
+ *      so the merge order is for readability only.
  *   2. prefix: property first (`assignee-`, `location-`, `effort-`,
  *      `repeat-limit-`, `repeat-`), then structural (`table:`, `callout-`).
  *      No prefix collisions across categories — `table:` (with colon) does
@@ -123,6 +124,7 @@ export function useBlockSlashCommands({
   const date = useSlashCommandDate()
   const property = useSlashCommandProperty()
   const structural = useSlashCommandStructural()
+  const marks = useSlashCommandMarks()
 
   const handleCheckboxSyntax = useCheckboxSyntax({
     focusedBlockId,
@@ -132,8 +134,8 @@ export function useBlockSlashCommands({
   })
 
   const tables = useMemo(
-    () => mergeSlashHandlerTables(template.tables, date, property, structural),
-    [template.tables, date, property, structural],
+    () => mergeSlashHandlerTables(template.tables, date, property, structural, marks),
+    [template.tables, date, property, structural, marks],
   )
 
   // Bundle every per-call dispatcher input into a single ref. This is what
