@@ -77,4 +77,15 @@ export const toolbar: Record<string, string> = {
   'toolbar.useCustomLanguage': 'Use "{{language}}"',
   'toolbar.more': 'More',
   'toolbar.moreTip': 'More toolbar actions',
+  // #215 — table row/column operations. The trigger only appears when the
+  // selection is inside a table cell.
+  'toolbar.tableOps': 'Table',
+  'toolbar.tableOpsTip': 'Table row & column actions',
+  'toolbar.tableInsertRowAbove': 'Insert row above',
+  'toolbar.tableInsertRowBelow': 'Insert row below',
+  'toolbar.tableInsertColumnLeft': 'Insert column left',
+  'toolbar.tableInsertColumnRight': 'Insert column right',
+  'toolbar.tableDeleteRow': 'Delete row',
+  'toolbar.tableDeleteColumn': 'Delete column',
+  'toolbar.tableDeleteTable': 'Delete table',
 }

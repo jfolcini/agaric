@@ -35,6 +35,7 @@ const mockEditorState = {
   codeBlockLanguage: '',
   blockquote: false,
   headingLevel: 0,
+  isInsideTable: false,
   canUndo: false,
   canRedo: false,
 }
@@ -187,6 +188,7 @@ describe('FormattingToolbar', () => {
     mockEditorState.codeBlockLanguage = ''
     mockEditorState.blockquote = false
     mockEditorState.headingLevel = 0
+    mockEditorState.isInsideTable = false
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
     mockGetAttributes.mockReturnValue({})
@@ -1139,6 +1141,27 @@ describe('FormattingToolbar', () => {
       const popovers = screen.getAllByTestId('popover-content')
       // Heading popover is the second PopoverContent.
       expect(popovers[1]?.className).toContain('max-w-[calc(100vw-2rem)]')
+    })
+  })
+
+  // ── Table ops (#215) — contextual trigger ──────────────────────────────
+  describe('table operations trigger', () => {
+    it('is absent when the selection is not inside a table', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      expect(screen.queryByRole('button', { name: 'Table' })).not.toBeInTheDocument()
+      expect(screen.queryByTestId('table-op-delete-table')).not.toBeInTheDocument()
+    })
+
+    it('appears when the selection is inside a table cell', () => {
+      mockEditorState.isInsideTable = true
+      render(<FormattingToolbar editor={makeEditor()} />)
+      // The trigger button (label "Table") is present...
+      expect(screen.getAllByRole('button', { name: 'Table' }).length).toBeGreaterThan(0)
+      // ...and the popover content exposes the row/column/table operations.
+      expect(screen.getByTestId('table-op-insert-row-above')).toBeInTheDocument()
+      expect(screen.getByTestId('table-op-insert-column-right')).toBeInTheDocument()
+      expect(screen.getByTestId('table-op-delete-row')).toBeInTheDocument()
+      expect(screen.getByTestId('table-op-delete-table')).toBeInTheDocument()
     })
   })
 })

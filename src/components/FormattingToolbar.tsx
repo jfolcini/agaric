@@ -44,6 +44,7 @@ import {
   renderCalloutButton,
   renderCodeBlockButton,
   renderHeadingButton,
+  renderTableOpsButton,
 } from './FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton, Tip } from './FormattingToolbar/shared'
 import { Button } from './ui/button'
@@ -76,6 +77,7 @@ export function FormattingToolbar({
   const [headingPopoverOpen, setHeadingPopoverOpen] = useState(false)
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
   const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
+  const [tableOpsPopoverOpen, setTableOpsPopoverOpen] = useState(false)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -91,6 +93,8 @@ export function FormattingToolbar({
         : '',
       blockquote: ctx.editor.isActive('blockquote'),
       headingLevel: getHeadingLevel(ctx.editor),
+      // #215 — drives the contextual table-ops trigger's presence.
+      isInsideTable: ctx.editor.isActive('table'),
       canUndo: ctx.editor.can().undo(),
       canRedo: ctx.editor.can().redo(),
     }),
@@ -106,7 +110,10 @@ export function FormattingToolbar({
     [editor],
   )
   const configByKey = useMemo(() => buildConfigByKey(groups), [groups])
-  const items: ToolbarItem[] = useMemo(() => buildToolbarItems(groups), [groups])
+  const items: ToolbarItem[] = useMemo(
+    () => buildToolbarItems(groups, { includeTableOps: state.isInsideTable }),
+    [groups, state.isInsideTable],
+  )
 
   const { visible, overflowed } = useToolbarOverflow(containerRef, sentinelRef, items)
 
@@ -153,6 +160,15 @@ export function FormattingToolbar({
           t,
           open: calloutPopoverOpen,
           setOpen: setCalloutPopoverOpen,
+          onOverflowClose: closeOverflow,
+        })
+      case 'toolbar.tableOps':
+        return renderTableOpsButton({
+          editor,
+          mode,
+          t,
+          open: tableOpsPopoverOpen,
+          setOpen: setTableOpsPopoverOpen,
           onOverflowClose: closeOverflow,
         })
       case 'toolbar.cyclePriority':

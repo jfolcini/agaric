@@ -10,7 +10,7 @@
  */
 
 import type { Editor } from '@tiptap/react'
-import { FileCode2, Heading, Info } from 'lucide-react'
+import { FileCode2, Heading, Info, Table2 } from 'lucide-react'
 import type React from 'react'
 
 import { LANG_SHORT, toolbarActiveClass } from '@/lib/toolbar-config'
@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { CalloutTypeSelector } from '../CalloutTypeSelector'
 import { CodeLanguageSelector } from '../CodeLanguageSelector'
 import { HeadingLevelSelector } from '../HeadingLevelSelector'
+import { TableOpsSelector } from '../TableOpsSelector'
 import { Button } from '../ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
 import { type RenderMode, Tip, tooltipWithShortcut } from './shared'
@@ -310,6 +311,98 @@ export function renderCalloutButton({
         data-editor-portal
       >
         <CalloutTypeSelector
+          onClose={() => {
+            setOpen(false)
+            if (mode === 'overflow') onOverflowClose()
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface TableOpsButtonProps {
+  editor: Editor
+  mode: RenderMode
+  t: (key: string) => string
+  open: boolean
+  setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+  onOverflowClose: () => void
+}
+
+/**
+ * Render the table-operations popover trigger (#215). Only added to the
+ * toolbar item list when the selection is inside a table (see
+ * `buildToolbarItems`'s `includeTableOps`), so unlike the other triggers it
+ * has no inactive/empty state — it simply isn't present otherwise. Opens a
+ * `TableOpsSelector` whose items run TipTap table commands on the editor.
+ */
+export function renderTableOpsButton({
+  editor,
+  mode,
+  t,
+  open,
+  setOpen,
+  onOverflowClose,
+}: TableOpsButtonProps): React.ReactElement {
+  if (mode === 'sentinel') {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-hidden
+        tabIndex={-1}
+        className="h-7 gap-1 px-1.5 text-xs"
+      >
+        <Table2 className="h-3.5 w-3.5" />
+        <span className="font-medium">{t('toolbar.tableOps')}</span>
+      </Button>
+    )
+  }
+
+  const trigger =
+    mode === 'overflow' ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={t('toolbar.tableOps')}
+        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          setOpen((prev) => !prev)
+        }}
+      >
+        <Table2 className="h-3.5 w-3.5 mr-2" />
+        <span>{t('toolbar.tableOps')}</span>
+      </Button>
+    ) : (
+      <Tip label={t('toolbar.tableOpsTip')}>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={t('toolbar.tableOps')}
+          className="h-7 gap-1 px-1.5 text-xs"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setOpen((prev) => !prev)
+          }}
+        >
+          <Table2 className="h-3.5 w-3.5" />
+          <span className="font-medium">{t('toolbar.tableOps')}</span>
+        </Button>
+      </Tip>
+    )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>{trigger}</PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className="w-auto max-w-[calc(100vw-2rem)] p-1"
+        data-editor-portal
+      >
+        <TableOpsSelector
+          editor={editor}
           onClose={() => {
             setOpen(false)
             if (mode === 'overflow') onOverflowClose()
