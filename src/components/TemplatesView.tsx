@@ -46,6 +46,21 @@ interface TemplateItem {
   isJournalTemplate: boolean
 }
 
+/**
+ * #215 — the dynamic template variables expanded by
+ * `expandTemplateVariables` (`template-utils.ts`). Surfaced as a low-chrome
+ * hint row beneath the create form so users discover them without reading
+ * source comments. `token` is the literal syntax; `descKey` names the i18n
+ * description shown in the tooltip. Keep in sync with the `.replace(…)`
+ * chain in `expandTemplateVariables`.
+ */
+const TEMPLATE_VARIABLES: ReadonlyArray<{ token: string; descKey: string }> = [
+  { token: '<% today %>', descKey: 'templates.variableToday' },
+  { token: '<% time %>', descKey: 'templates.variableTime' },
+  { token: '<% datetime %>', descKey: 'templates.variableDatetime' },
+  { token: '<% page title %>', descKey: 'templates.variablePageTitle' },
+]
+
 export function TemplatesView(): React.ReactElement {
   const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
@@ -175,6 +190,32 @@ export function TemplatesView(): React.ReactElement {
           {t('templates.create')}
         </Button>
       </form>
+
+      {/* #215 — dynamic-variable discoverability hint. Low-chrome muted row;
+          each token carries a tooltip describing what it expands to. */}
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="font-medium cursor-help">{t('templates.variablesHintLabel')}</span>
+            </TooltipTrigger>
+            <TooltipContent>{t('templates.variablesHintIntro')}</TooltipContent>
+          </Tooltip>
+          {TEMPLATE_VARIABLES.map(({ token, descKey }) => (
+            <Tooltip key={token}>
+              <TooltipTrigger asChild>
+                <code
+                  className="rounded bg-muted px-1 py-0.5 font-mono text-[0.7rem] cursor-help"
+                  data-testid={`template-variable-${token.replace(/[^a-z]+/g, '-').replace(/^-|-$/g, '')}`}
+                >
+                  {token}
+                </code>
+              </TooltipTrigger>
+              <TooltipContent>{t(descKey)}</TooltipContent>
+            </Tooltip>
+          ))}
+        </TooltipProvider>
+      </p>
 
       <ListViewState
         loading={loading}

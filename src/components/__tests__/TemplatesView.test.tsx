@@ -99,6 +99,21 @@ describe('TemplatesView', () => {
     ).toBeInTheDocument()
   })
 
+  it('surfaces the dynamic template variables as a discoverability hint (#215)', async () => {
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<TemplatesView />)
+
+    // The hint row lives outside `ListViewState`, so it renders even with
+    // zero templates. Each of the four `expandTemplateVariables` tokens
+    // appears verbatim under its testid.
+    expect(await screen.findByTestId('template-variable-today')).toHaveTextContent('<% today %>')
+    expect(screen.getByTestId('template-variable-time')).toHaveTextContent('<% time %>')
+    expect(screen.getByTestId('template-variable-datetime')).toHaveTextContent('<% datetime %>')
+    expect(screen.getByTestId('template-variable-page-title')).toHaveTextContent('<% page title %>')
+    expect(screen.getByText('Dynamic variables:')).toBeInTheDocument()
+  })
+
   it('renders template list with preview', async () => {
     // PEND-35 Tier 2.8 — preview fetches go through the
     // `first_child_for_blocks` batch IPC, not per-template `list_blocks`.
