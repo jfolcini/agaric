@@ -58,7 +58,7 @@ function renderExternalLink(
   )
 }
 
-/** Apply bold / italic / code / link marks to a text node, innermost-out. */
+/** Apply bold / italic / code / strike / highlight / link marks to a text node, innermost-out. */
 function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.ReactNode {
   const linkMark = node.marks?.find((m) => m.type === 'link')
   // Re-validate the href scheme at the render sink: input-time validation
@@ -74,6 +74,17 @@ function applyTextMarks(node: TextNode, ctx: RenderContext, key: string): React.
     content = (
       <code className="bg-muted rounded px-1 py-0.5 text-[0.85em] font-mono">{content}</code>
     )
+  }
+  // #211 P0-2 — strike and highlight previously had no static-render branch,
+  // so the marks were silently invisible once a block rendered statically.
+  if (node.marks?.some((m) => m.type === 'strike') === true) {
+    content = <s>{content}</s>
+  }
+  if (node.marks?.some((m) => m.type === 'highlight') === true) {
+    // Canonical highlight colour for the static renderer. Aligning the
+    // editor's `<mark>` (TipTap default styling today) to this token is a
+    // #211 follow-up.
+    content = <mark className="bg-yellow-200 dark:bg-yellow-800/60 rounded px-0.5">{content}</mark>
   }
   if (node.marks?.some((m) => m.type === 'italic') === true) {
     content = <em>{content}</em>
