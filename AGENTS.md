@@ -314,6 +314,15 @@ During development, run only the relevant check:
 - Never run clippy/fmt/oxlint/oxfmt manually — prek hooks handle it at commit time
 - Frontend checks are irrelevant when only Rust changed (and vice versa)
 
+### Verifying UI behavior at runtime (Playwright + mock backend)
+
+For UI work where unit tests can't fully prove behavior — toolbar buttons, pickers, overflow, popovers, editor round-trips — **drive the real app** instead of deferring. The Playwright e2e harness runs the actual frontend against the in-memory **tauri mock backend**, no native build required:
+
+- `playwright.config.ts` auto-starts the dev server (`webServer: npm run dev`); the mock backend auto-activates in dev (`main.tsx` → `setupMock()` when `!import.meta.env.PROD && !window.__TAURI_INTERNALS__`). No flag needed.
+- Run one spec: `npx playwright test e2e/<file>.spec.ts --workers=1 --reporter=list` (~60s incl. boot; chromium is installed).
+- Helpers in `e2e/helpers.ts` (`waitForBoot`, `openPage(page, 'Getting Started')`, `focusBlock`, `saveBlock`, `selectEditorRange`); seed data documented in `src/lib/tauri-mock/` and spec headers. Click controls by accessible name (`getByRole('button', { name: 'Divider' })`); assert the static render via `[data-testid="sortable-block"]` + markers (`horizontal-rule`, `callout-block`, `<ol>`, …). For visual checks, `await page.screenshot({ path })` and read the image.
+- **Make the verification permanent:** land the spec in the PR. A one-off manual check rots; an e2e spec guards the behavior in CI. This workflow caught a real round-trip bug (#258) while verifying #253 — exactly the class of defect unit tests miss.
+
 ## Code Quality Enforcement
 
 Strict compiler and linter settings are enabled project-wide. **Do not weaken these.**
