@@ -378,11 +378,16 @@ describe('FormattingToolbar', () => {
       document.removeEventListener('cycle-priority', spy)
     })
 
-    it('shows "P" with no dot when no priority is set', () => {
+    it('shows "P" with a neutral hollow dot when no priority is set (#217)', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const btn = screen.getByRole('button', { name: t('toolbar.cyclePriority') })
       expect(btn.textContent).toBe('P')
-      expect(btn.querySelector('.rounded-full')).toBeNull()
+      // #217 — unset renders a hollow outline dot (interactive "no priority"
+      // affordance), NOT a colored priority dot and NOT nothing.
+      const dot = btn.querySelector('.rounded-full')
+      expect(dot).not.toBeNull()
+      expect(dot?.className).toContain('border')
+      expect(dot?.className).not.toContain('bg-priority')
       expect(btn).toHaveAttribute('aria-pressed', 'false')
     })
 

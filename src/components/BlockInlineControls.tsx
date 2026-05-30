@@ -320,7 +320,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="property-overflow inline-flex items-center flex-shrink-0 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
+                  className="property-overflow inline-flex items-center flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors select-none focus-ring-visible active:scale-95 max-sm:px-2.5 max-sm:py-1"
                   data-testid="property-overflow"
                   aria-label={t('block.showAllProperties', {
                     count: filteredProperties.length,
