@@ -8,6 +8,7 @@ import { renderHeadingBlock } from './heading'
 import { renderHorizontalRuleBlock } from './horizontalRule'
 import { renderInlineContent } from './inline'
 import { renderOrderedListBlock } from './orderedList'
+import { renderTableBlock } from './table'
 
 /**
  * Dispatch a block-level node to its sub-renderer. Paragraphs return an
@@ -30,6 +31,8 @@ export function renderBlock(
       return renderOrderedListBlock(block, key, ctx)
     case 'horizontalRule':
       return renderHorizontalRuleBlock(key)
+    case 'table':
+      return renderTableBlock(block, key, ctx)
     case 'paragraph':
       return block.content ? renderInlineContent(block.content, key, ctx) : null
     default:
