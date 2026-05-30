@@ -220,9 +220,31 @@ export function FormattingToolbar({
               data-testid="toolbar-overflow-menu"
             >
               <div className="flex flex-col gap-0.5">
-                {overflowed.map((item) => (
-                  <span key={`o-${item.key}`}>{renderItem(item, 'overflow')}</span>
-                ))}
+                {/*
+                 * #217 A2 — preserve group structure in the overflow popover.
+                 * `renderItem` drops separator items in overflow mode, so the
+                 * list was previously flat. Filter the separators out and
+                 * re-insert a divider whenever the group index changes,
+                 * mirroring the inline toolbar's inter-group dividers (and the
+                 * block context menu) on both desktop and pointer:coarse.
+                 */}
+                {overflowed
+                  .filter((item) => item.kind !== 'separator')
+                  .map((item, i, buttons) => {
+                    const prev = buttons[i - 1]
+                    const showDivider = prev != null && item.group !== prev.group
+                    return (
+                      <span key={`o-${item.key}`}>
+                        {showDivider && (
+                          <hr
+                            className="my-1 h-px border-0 bg-border"
+                            data-testid="overflow-group-divider"
+                          />
+                        )}
+                        {renderItem(item, 'overflow')}
+                      </span>
+                    )
+                  })}
               </div>
             </MenuPopoverContent>
           </Popover>
