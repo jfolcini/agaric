@@ -337,16 +337,17 @@ describe('KeyboardShortcuts', () => {
     })
   })
 
-  // BUG-31: strikethrough binding had drifted between keyboard-config,
-  // tooltip, and docs. Lock the resolved binding in at the display path.
-  it('renders strikethrough as Ctrl + Shift + X (BUG-31)', () => {
+  // #211 P2-11: strikethrough rebound to Ctrl+Shift+S (was Ctrl+Shift+X).
+  // Lock the resolved binding in at the display path. The legacy Ctrl+Shift+X
+  // still works via a hardcoded editor alias, but the dialog advertises S.
+  it('renders strikethrough as Ctrl + Shift + S (#211 P2-11)', () => {
     setPlatform('Linux x86_64')
     render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
     const strikethroughLabel = screen.getByText(t('keyboard.strikethrough'))
     const row = strikethroughLabel.closest('tr') as HTMLElement
     const kbdTexts = Array.from(row.querySelectorAll('kbd')).map((el) => el.textContent)
-    expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'X'])
+    expect(kbdTexts).toEqual(['Ctrl', 'Shift', 'S'])
   })
 
   // UX-228: closeOverlays shortcut dispatches a window CustomEvent;

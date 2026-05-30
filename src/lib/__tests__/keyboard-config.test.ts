@@ -586,12 +586,13 @@ describe('keyboard-config', () => {
       expect(s?.keys).toBe('Ctrl + E')
     })
 
-    it('strikethrough defaults to Ctrl + Shift + X (BUG-31)', () => {
-      // BUG-31: must match TipTap StarterKit's `Mod-Shift-X` default AND
-      // the tooltip string in `i18n.ts` — previously drifted to
-      // `Ctrl + Shift + S` which was unreachable.
+    it('strikethrough defaults to Ctrl + Shift + S (#211 P2-11)', () => {
+      // #211 P2-11: rebound from the low-mnemonic `Ctrl+Shift+X` to
+      // `Ctrl+Shift+S`. `StrikeWithShortcut` keeps `Ctrl+Shift+X` as a
+      // hardcoded legacy alias for one release, so the old chord still works
+      // even though the catalog (display + tooltip) now advertises `S`.
       const s = DEFAULT_SHORTCUTS.find((s) => s.id === 'strikethrough')
-      expect(s?.keys).toBe('Ctrl + Shift + X')
+      expect(s?.keys).toBe('Ctrl + Shift + S')
     })
 
     it('highlight defaults to Ctrl + Shift + H', () => {

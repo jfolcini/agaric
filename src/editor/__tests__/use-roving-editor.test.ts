@@ -408,6 +408,20 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.isActive('strike')).toBe(true)
   })
 
+  it('StrikeWithShortcut binds both Ctrl+Shift+S and the legacy Ctrl+Shift+X (#211 P2-11)', () => {
+    // `strikethrough` defaults to Ctrl+Shift+S → Mod-Shift-s; the legacy
+    // Ctrl+Shift+X (Mod-Shift-x) is kept hardcoded for one release.
+    const addKeyboardShortcuts = StrikeWithShortcut.config.addKeyboardShortcuts as
+      | ((this: { editor: { commands: { toggleStrike: () => boolean } } }) => Record<
+          string,
+          unknown
+        >)
+      | undefined
+    const toggleStrike = vi.fn(() => true)
+    const shortcuts = addKeyboardShortcuts?.call({ editor: { commands: { toggleStrike } } }) ?? {}
+    expect(Object.keys(shortcuts).sort()).toEqual(['Mod-Shift-s', 'Mod-Shift-x'])
+  })
+
   it('HighlightWithShortcut toggles highlight via command', () => {
     editor = createEditor([HighlightWithShortcut])
     editor.commands.setContent({
