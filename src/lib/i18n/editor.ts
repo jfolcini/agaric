@@ -37,6 +37,7 @@ export const editor: Record<string, string> = {
   'slashCommand.categories.tasks': 'Tasks',
   'slashCommand.categories.dates': 'Dates',
   'slashCommand.categories.references': 'References',
+  'slashCommand.categories.formatting': 'Formatting',
   'slashCommand.categories.structure': 'Structure',
   'slashCommand.categories.properties': 'Properties',
   'slashCommand.categories.templates': 'Templates',

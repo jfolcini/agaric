@@ -832,4 +832,59 @@ describe('SuggestionList', () => {
     expect(footer).toHaveTextContent('Enter to select')
     expect(footer).toHaveTextContent('Esc to close')
   })
+
+  // -- #211 P0-5: per-row keyboard shortcut chips -----------------------------
+
+  describe('per-row keyboard shortcut (#211 P0-5)', () => {
+    it('renders a static `keys` chord as chips (Bold/Italic have no catalog id)', () => {
+      const command = vi.fn()
+      render(
+        <SuggestionList
+          items={[{ id: 'bold', label: 'BOLD', keys: 'Ctrl + B' }]}
+          command={command}
+        />,
+      )
+      const chip = screen.getByTestId('suggestion-shortcut-bold')
+      expect(chip).toBeInTheDocument()
+      expect(chip).toHaveAttribute('aria-hidden', 'true')
+      // "Ctrl + B" → glyph ⌃ + key B.
+      expect(chip).toHaveTextContent('⌃')
+      expect(chip).toHaveTextContent('B')
+    })
+
+    it('resolves a live `shortcutId` from the keyboard catalog', () => {
+      const command = vi.fn()
+      // `strikethrough` defaults to Ctrl + Shift + X in the catalog.
+      render(
+        <SuggestionList
+          items={[{ id: 'strike', label: 'STRIKE', shortcutId: 'strikethrough' }]}
+          command={command}
+        />,
+      )
+      const chip = screen.getByTestId('suggestion-shortcut-strike')
+      expect(chip).toHaveTextContent('⌃')
+      expect(chip).toHaveTextContent('⇧')
+      expect(chip).toHaveTextContent('X')
+    })
+
+    it('prefers `shortcutId` over `keys` when both are set', () => {
+      const command = vi.fn()
+      render(
+        <SuggestionList
+          items={[{ id: 'code-mark', label: 'CODE', shortcutId: 'inlineCode', keys: 'Ctrl + Z' }]}
+          command={command}
+        />,
+      )
+      const chip = screen.getByTestId('suggestion-shortcut-code-mark')
+      // inlineCode = Ctrl + E; the stray `keys: Ctrl + Z` must be ignored.
+      expect(chip).toHaveTextContent('E')
+      expect(chip).not.toHaveTextContent('Z')
+    })
+
+    it('renders no shortcut chip for items without keys/shortcutId', () => {
+      const command = vi.fn()
+      render(<SuggestionList items={[{ id: 'plain', label: 'Plain' }]} command={command} />)
+      expect(screen.queryByTestId('suggestion-shortcut-plain')).not.toBeInTheDocument()
+    })
+  })
 })
