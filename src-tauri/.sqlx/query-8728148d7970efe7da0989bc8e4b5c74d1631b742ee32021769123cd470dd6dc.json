@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8728148d7970efe7da0989bc8e4b5c74d1631b742ee32021769123cd470dd6dc"
+}

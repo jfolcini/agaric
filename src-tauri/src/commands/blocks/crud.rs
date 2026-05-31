@@ -228,10 +228,10 @@ pub(crate) async fn create_block_in_tx(
         Some(block_id.as_str().to_string())
     } else if let Some(ref pid) = parent_id {
         // Look up parent's page_id. If parent is a page, use parent's id.
-        let parent_page = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?"
+        let parent_page = sqlx::query_scalar!(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?",
+            pid
         )
-        .bind(pid)
         .fetch_optional(&mut **tx)
         .await?
         .flatten();
@@ -241,16 +241,17 @@ pub(crate) async fn create_block_in_tx(
     };
 
     // 5. Insert into blocks table within same transaction
-    sqlx::query(
+    let block_id_str = block_id.as_str();
+    sqlx::query!(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
          VALUES (?, ?, ?, ?, ?, ?)",
+        block_id_str,
+        block_type,
+        content,
+        parent_id,
+        effective_position,
+        page_id,
     )
-    .bind(block_id.as_str())
-    .bind(&block_type)
-    .bind(&content)
-    .bind(&parent_id)
-    .bind(effective_position)
-    .bind(&page_id)
     .execute(&mut **tx)
     .await?;
 
@@ -510,11 +511,13 @@ pub async fn edit_block_inner(
     // 4. Update blocks table within same transaction.
     // `AND deleted_at IS NULL` guard prevents overwriting content on a
     // block that was concurrently soft-deleted.
-    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-        .bind(&to_text)
-        .bind(&block_id)
-        .execute(&mut **tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
+        to_text,
+        block_id
+    )
+    .execute(&mut **tx)
+    .await?;
 
     // 5. Commit + dispatch edit background cache tasks (fire-and-forget).
     //    The `block_type` hint restricts the rebuild fan-out so content
@@ -1204,34 +1207,33 @@ pub async fn restore_block_inner(
     //    parent's `page_id` (or parent's `id` if parent is a page) for
     //    non-pages; self for pages.
     let parent_id: Option<String> =
-        sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(&block_id)
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
             .fetch_one(&mut **tx)
             .await?;
     let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-        sqlx::query_scalar::<_, Option<String>>(
+        sqlx::query_scalar!(
             "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
              FROM blocks WHERE id = ?",
+            pid
         )
-        .bind(pid)
         .fetch_optional(&mut **tx)
         .await?
         .flatten()
     } else {
         None
     };
-    let is_page: bool =
-        sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
-            .bind(&block_id)
-            .fetch_one(&mut **tx)
-            .await?
-            == "page";
+    let is_page: bool = sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id)
+        .fetch_one(&mut **tx)
+        .await?
+        == "page";
     if !is_page {
-        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
-            .bind(&new_page_id)
-            .bind(&block_id)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query!(
+            "UPDATE blocks SET page_id = ? WHERE id = ?",
+            new_page_id,
+            block_id
+        )
+        .execute(&mut **tx)
+        .await?;
     }
     // 2. Cascade page_id to all non-page active descendants. Pages keep
     //    their own id as page_id regardless of parent (mirrors the
@@ -1241,7 +1243,7 @@ pub async fn restore_block_inner(
     } else {
         new_page_id
     };
-    sqlx::query(
+    sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -1252,9 +1254,9 @@ pub async fn restore_block_inner(
          ) \
          UPDATE blocks SET page_id = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+        block_id,
+        effective_page_id,
     )
-    .bind(&block_id)
-    .bind(&effective_page_id)
     .execute(&mut **tx)
     .await?;
 
@@ -1587,16 +1589,15 @@ pub async fn restore_all_deleted_inner(
         //    `page_id` (or parent's `id` if parent is a page) for
         //    non-pages; self for pages.
         let parent_id: Option<String> =
-            sqlx::query_scalar::<_, Option<String>>("SELECT parent_id FROM blocks WHERE id = ?")
-                .bind(&root.id)
+            sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", root.id)
                 .fetch_one(&mut **tx)
                 .await?;
         let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-            sqlx::query_scalar::<_, Option<String>>(
+            sqlx::query_scalar!(
                 "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
                  FROM blocks WHERE id = ?",
+                pid
             )
-            .bind(pid)
             .fetch_optional(&mut **tx)
             .await?
             .flatten()
@@ -1604,17 +1605,18 @@ pub async fn restore_all_deleted_inner(
             None
         };
         let is_page: bool =
-            sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
-                .bind(&root.id)
+            sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root.id)
                 .fetch_one(&mut **tx)
                 .await?
                 == "page";
         if !is_page {
-            sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
-                .bind(&new_page_id)
-                .bind(&root.id)
-                .execute(&mut **tx)
-                .await?;
+            sqlx::query!(
+                "UPDATE blocks SET page_id = ? WHERE id = ?",
+                new_page_id,
+                root.id
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         // 2. Cascade page_id to all non-page active descendants. Pages
         //    keep their own id as page_id regardless of parent (mirrors
@@ -1624,7 +1626,7 @@ pub async fn restore_all_deleted_inner(
         } else {
             new_page_id
         };
-        sqlx::query(
+        sqlx::query!(
             "WITH RECURSIVE descendants(id, depth) AS ( \
                  SELECT b.id, 0 FROM blocks b \
                  WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -1635,9 +1637,9 @@ pub async fn restore_all_deleted_inner(
              ) \
              UPDATE blocks SET page_id = ?2 \
              WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+            root.id,
+            effective_page_id,
         )
-        .bind(&root.id)
-        .bind(&effective_page_id)
         .execute(&mut **tx)
         .await?;
     }
@@ -2020,7 +2022,8 @@ pub async fn restore_blocks_by_ids_inner(
     // a paranoia guard against alive descendants whose parent was the
     // selected root (shouldn't happen for cascaded subtrees, but keeps
     // the UPDATE idempotent against repeats).
-    let restore_sql = "WITH RECURSIVE descendants(id, depth) AS ( \
+    let result = sqlx::query!(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks \
              WHERE id IN (SELECT value FROM json_each(?1)) \
              UNION ALL \
@@ -2029,11 +2032,11 @@ pub async fn restore_blocks_by_ids_inner(
              WHERE d.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NOT NULL";
-    let result = sqlx::query(restore_sql)
-        .bind(&ids_json)
-        .execute(&mut **tx)
-        .await?;
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NOT NULL",
+        ids_json
+    )
+    .execute(&mut **tx)
+    .await?;
     let count = result.rows_affected();
 
     // Recompute tag inheritance for each restored root subtree.
@@ -2646,17 +2649,17 @@ pub(crate) async fn set_property_in_tx(
         // native boolean type; the column CHECK constraint set in
         // migration 0042 keeps the stored value to (0, 1, NULL).
         let value_bool_int: Option<i64> = value_bool.map(|b| b as i64);
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            block_id,
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool_int,
         )
-        .bind(&block_id)
-        .bind(key)
-        .bind(&value_text)
-        .bind(value_num)
-        .bind(&value_date)
-        .bind(&value_ref)
-        .bind(value_bool_int)
         .execute(&mut **tx)
         .await?;
     }
@@ -2785,11 +2788,13 @@ pub(crate) async fn delete_property_in_tx(
             }
         }
     } else {
-        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-            .bind(block_id)
-            .bind(key)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id,
+            key
+        )
+        .execute(&mut **tx)
+        .await?;
     }
 
     Ok(op_record)

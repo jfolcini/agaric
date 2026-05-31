@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT NOT EXISTS (SELECT 1 FROM page_link_cache) AS \"v!: i32\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "v!: i32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "da24fe7e08c1ba85371996dfaae8a18eef25f02cbd2daa68b15e6efe46aaabac"
+}
