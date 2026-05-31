@@ -56,10 +56,10 @@ pub async fn set_page_aliases_inner(
     let page_id = page_id.to_ascii_uppercase();
 
     // Verify page exists and is a page type
-    let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+    let exists: bool = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) > 0 AS "exists!: bool" FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL"#,
+        page_id,
     )
-    .bind(&page_id)
     .fetch_one(pool)
     .await?;
 
@@ -77,8 +77,7 @@ pub async fn set_page_aliases_inner(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
     // Delete existing aliases
-    sqlx::query("DELETE FROM page_aliases WHERE page_id = ?1")
-        .bind(&page_id)
+    sqlx::query!("DELETE FROM page_aliases WHERE page_id = ?1", page_id)
         .execute(&mut *tx)
         .await?;
 
@@ -90,12 +89,13 @@ pub async fn set_page_aliases_inner(
             continue;
         }
         // INSERT OR IGNORE handles duplicate alias across different pages
-        let result =
-            sqlx::query("INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)")
-                .bind(&page_id)
-                .bind(&trimmed)
-                .execute(&mut *tx)
-                .await?;
+        let result = sqlx::query!(
+            "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
+            page_id,
+            trimmed,
+        )
+        .execute(&mut *tx)
+        .await?;
         if result.rows_affected() > 0 {
             inserted.push(trimmed);
         }
@@ -112,11 +112,12 @@ pub async fn get_page_aliases_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let aliases: Vec<String> =
-        sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias")
-            .bind(page_id)
-            .fetch_all(pool)
-            .await?;
+    let aliases: Vec<String> = sqlx::query_scalar!(
+        "SELECT alias FROM page_aliases WHERE page_id = ?1 ORDER BY alias",
+        page_id,
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(aliases)
 }
 
@@ -137,20 +138,21 @@ pub async fn resolve_page_by_alias_inner(
     scope: &SpaceScope,
 ) -> Result<Option<(String, Option<String>)>, AppError> {
     let space_filter = scope.as_filter_param();
-    let result: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT pa.page_id, b.content \
-         FROM page_aliases pa \
-         JOIN blocks b ON b.id = pa.page_id \
-         WHERE pa.alias = ?1 COLLATE NOCASE \
-           AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR pa.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+    let result = sqlx::query!(
+        r#"SELECT pa.page_id AS "page_id!", b.content
+         FROM page_aliases pa
+         JOIN blocks b ON b.id = pa.page_id
+         WHERE pa.alias = ?1 COLLATE NOCASE
+           AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR pa.page_id IN (
+                SELECT bp.block_id FROM block_properties bp
+                WHERE bp.key = 'space' AND bp.value_ref = ?2))"#,
+        alias,
+        space_filter,
     )
-    .bind(alias)
-    .bind(space_filter)
     .fetch_optional(pool)
-    .await?;
+    .await?
+    .map(|r| (r.page_id, r.content));
     Ok(result)
 }
 
@@ -449,12 +451,15 @@ pub async fn export_page_markdown_inner(
     }
 
     // 4. Get page properties for frontmatter
-    let properties: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT key, value_text, value_date FROM block_properties WHERE block_id = ?1",
+    let properties: Vec<(String, Option<String>, Option<String>)> = sqlx::query!(
+        r#"SELECT key AS "key!", value_text, value_date FROM block_properties WHERE block_id = ?1"#,
+        page_id,
     )
-    .bind(page_id)
     .fetch_all(pool)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|r| (r.key, r.value_text, r.value_date))
+    .collect();
 
     // 5. Build markdown output
     let mut output = String::new();
@@ -714,13 +719,13 @@ pub async fn list_page_links_inner(
     // without modification" true while preserving the steady-state
     // perf win.
     let cache_empty: bool =
-        sqlx::query_scalar::<_, i32>("SELECT NOT EXISTS (SELECT 1 FROM page_link_cache)")
+        sqlx::query_scalar!(r#"SELECT NOT EXISTS (SELECT 1 FROM page_link_cache) AS "v!: i32""#)
             .fetch_one(pool)
             .await?
             == 1;
     if cache_empty {
         let block_links_present: bool =
-            sqlx::query_scalar::<_, i32>("SELECT EXISTS (SELECT 1 FROM block_links)")
+            sqlx::query_scalar!(r#"SELECT EXISTS (SELECT 1 FROM block_links) AS "v!: i32""#)
                 .fetch_one(pool)
                 .await?
                 == 1;
@@ -766,15 +771,16 @@ pub async fn list_page_links_inner(
     // — the tag-EXISTS branch UNIONs `block_tags`,
     // `block_tag_inherited`, and `block_tag_refs` to mirror the
     // canonical `tag_query::resolve_tag_leaves` union semantics.
-    let links = sqlx::query_as::<_, PageLink>(
-        "WITH space_members AS MATERIALIZED (
+    let links = sqlx::query_as!(
+        PageLink,
+        r#"WITH space_members AS MATERIALIZED (
              SELECT block_id FROM block_properties
              WHERE key = 'space' AND value_ref = ?1
          )
          SELECT
-            plc.source_page_id AS source_id,
-            plc.target_page_id AS target_id,
-            plc.edge_count AS ref_count
+            plc.source_page_id AS "source_id!: crate::ulid::ActiveBlockId",
+            plc.target_page_id AS "target_id!: crate::ulid::ActiveBlockId",
+            plc.edge_count AS "ref_count!: i64"
          FROM page_link_cache plc
          JOIN blocks src ON src.id = plc.source_page_id
              AND src.deleted_at IS NULL
@@ -798,10 +804,10 @@ pub async fn list_page_links_inner(
                  SELECT 1 FROM block_tag_refs btr
                  WHERE btr.source_id = plc.target_page_id
                    AND btr.tag_id IN (SELECT value FROM json_each(?2))
-             ))",
+             ))"#,
+        scope.as_filter_param(),
+        tag_ids_json.as_deref(),
     )
-    .bind(scope.as_filter_param())
-    .bind(tag_ids_json.as_deref())
     .fetch_all(pool)
     .await?;
 

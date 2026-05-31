@@ -104,18 +104,16 @@ pub async fn apply_reverse_in_tx(
             // Invariant #9: the recursive CTE filters `deleted_at IS
             // NULL` in both members AND bounds `depth < 100`.
             let block_id_str = p.block_id.as_str();
-            let parent_id: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT parent_id FROM blocks WHERE id = ?",
-            )
-            .bind(block_id_str)
-            .fetch_one(&mut **tx)
-            .await?;
+            let parent_id: Option<String> =
+                sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", block_id_str,)
+                    .fetch_one(&mut **tx)
+                    .await?;
             let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-                sqlx::query_scalar::<_, Option<String>>(
+                sqlx::query_scalar!(
                     "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
                      FROM blocks WHERE id = ?",
+                    pid,
                 )
-                .bind(pid)
                 .fetch_optional(&mut **tx)
                 .await?
                 .flatten()
@@ -123,24 +121,25 @@ pub async fn apply_reverse_in_tx(
                 None
             };
             let is_page: bool =
-                sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
-                    .bind(block_id_str)
+                sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id_str)
                     .fetch_one(&mut **tx)
                     .await?
                     == "page";
             if !is_page {
-                sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
-                    .bind(&new_page_id)
-                    .bind(block_id_str)
-                    .execute(&mut **tx)
-                    .await?;
+                sqlx::query!(
+                    "UPDATE blocks SET page_id = ? WHERE id = ?",
+                    new_page_id,
+                    block_id_str,
+                )
+                .execute(&mut **tx)
+                .await?;
             }
             let effective_page_id = if is_page {
                 Some(block_id_str.to_string())
             } else {
                 new_page_id
             };
-            sqlx::query(
+            sqlx::query!(
                 "WITH RECURSIVE descendants(id, depth) AS ( \
                      SELECT b.id, 0 FROM blocks b \
                      WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -151,19 +150,21 @@ pub async fn apply_reverse_in_tx(
                  ) \
                  UPDATE blocks SET page_id = ?2 \
                  WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+                block_id_str,
+                effective_page_id,
             )
-            .bind(block_id_str)
-            .bind(&effective_page_id)
             .execute(&mut **tx)
             .await?;
         }
         OpPayload::EditBlock(p) => {
-            let result =
-                sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-                    .bind(&p.to_text)
-                    .bind(p.block_id.as_str())
-                    .execute(&mut **tx)
-                    .await?;
+            let block_id_str = p.block_id.as_str();
+            let result = sqlx::query!(
+                "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
+                p.to_text,
+                block_id_str,
+            )
+            .execute(&mut **tx)
+            .await?;
             if result.rows_affected() == 0 {
                 return Err(AppError::NotFound(format!(
                     "block '{}' not found or soft-deleted during undo",
@@ -172,13 +173,15 @@ pub async fn apply_reverse_in_tx(
             }
         }
         OpPayload::MoveBlock(p) => {
-            let result = sqlx::query(
+            let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
+            let move_block_id_str = p.block_id.as_str();
+            let result = sqlx::query!(
                 "UPDATE blocks SET parent_id = ?, position = ? \
                  WHERE id = ? AND deleted_at IS NULL",
+                new_parent_id_str,
+                p.new_position,
+                move_block_id_str,
             )
-            .bind(p.new_parent_id.as_ref().map(BlockId::as_str))
-            .bind(p.new_position)
-            .bind(p.block_id.as_str())
             .execute(&mut **tx)
             .await?;
             if result.rows_affected() == 0 {
@@ -201,11 +204,12 @@ pub async fn apply_reverse_in_tx(
             // otherwise be reparented under the moved subtree.
             let block_id_str = p.block_id.as_str();
             let new_page_id: Option<String> = if let Some(ref pid) = p.new_parent_id {
-                sqlx::query_scalar::<_, Option<String>>(
+                let pid_str = pid.as_str();
+                sqlx::query_scalar!(
                     "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
                      FROM blocks WHERE id = ?",
+                    pid_str,
                 )
-                .bind(pid.as_str())
                 .fetch_optional(&mut **tx)
                 .await?
                 .flatten()
@@ -213,24 +217,25 @@ pub async fn apply_reverse_in_tx(
                 None
             };
             let is_page: bool =
-                sqlx::query_scalar::<_, String>("SELECT block_type FROM blocks WHERE id = ?")
-                    .bind(block_id_str)
+                sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", block_id_str)
                     .fetch_one(&mut **tx)
                     .await?
                     == "page";
             if !is_page {
-                sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
-                    .bind(&new_page_id)
-                    .bind(block_id_str)
-                    .execute(&mut **tx)
-                    .await?;
+                sqlx::query!(
+                    "UPDATE blocks SET page_id = ? WHERE id = ?",
+                    new_page_id,
+                    block_id_str,
+                )
+                .execute(&mut **tx)
+                .await?;
             }
             let effective_page_id = if is_page {
                 Some(block_id_str.to_string())
             } else {
                 new_page_id
             };
-            sqlx::query(
+            sqlx::query!(
                 "WITH RECURSIVE descendants(id, depth) AS ( \
                      SELECT b.id, 0 FROM blocks b \
                      WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -241,9 +246,9 @@ pub async fn apply_reverse_in_tx(
                  ) \
                  UPDATE blocks SET page_id = ?2 \
                  WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+                block_id_str,
+                effective_page_id,
             )
-            .bind(block_id_str)
-            .bind(&effective_page_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -252,71 +257,90 @@ pub async fn apply_reverse_in_tx(
         // rows_affected.  During sync replays the same undo/redo sequence can
         // be applied more than once, so both directions must be lenient.
         OpPayload::AddTag(p) => {
-            sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-                .bind(p.block_id.as_str())
-                .bind(p.tag_id.as_str())
-                .execute(&mut **tx)
-                .await?;
+            let block_id_str = p.block_id.as_str();
+            let tag_id_str = p.tag_id.as_str();
+            sqlx::query!(
+                "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+                block_id_str,
+                tag_id_str,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         OpPayload::RemoveTag(p) => {
-            sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-                .bind(p.block_id.as_str())
-                .bind(p.tag_id.as_str())
-                .execute(&mut **tx)
-                .await?;
+            let block_id_str = p.block_id.as_str();
+            let tag_id_str = p.tag_id.as_str();
+            sqlx::query!(
+                "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+                block_id_str,
+                tag_id_str,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         OpPayload::SetProperty(p) => {
             // PEND-14: persist `value_bool` as INTEGER (0/1).
             let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
-            sqlx::query(
+            let block_id_str = p.block_id.as_str();
+            sqlx::query!(
                 "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
                  VALUES (?, ?, ?, ?, ?, ?, ?)",
+                block_id_str,
+                p.key,
+                p.value_text,
+                p.value_num,
+                p.value_date,
+                p.value_ref,
+                value_bool_int,
             )
-            .bind(p.block_id.as_str())
-            .bind(&p.key)
-            .bind(&p.value_text)
-            .bind(p.value_num)
-            .bind(&p.value_date)
-            .bind(&p.value_ref)
-            .bind(value_bool_int)
             .execute(&mut **tx)
             .await?;
         }
         OpPayload::DeleteProperty(p) => {
-            sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                .bind(p.block_id.as_str())
-                .bind(&p.key)
-                .execute(&mut **tx)
-                .await?;
+            let block_id_str = p.block_id.as_str();
+            sqlx::query!(
+                "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+                block_id_str,
+                p.key,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         OpPayload::DeleteAttachment(p) => {
-            sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
-                .bind(now_rfc3339())
-                .bind(p.attachment_id.as_str())
-                .execute(&mut **tx)
-                .await?;
+            let now = now_rfc3339();
+            let attachment_id_str = p.attachment_id.as_str();
+            sqlx::query!(
+                "UPDATE attachments SET deleted_at = ? WHERE id = ?",
+                now,
+                attachment_id_str,
+            )
+            .execute(&mut **tx)
+            .await?;
         }
         OpPayload::AddAttachment(p) => {
             // Preserve original created_at from the existing (soft-deleted) attachment record
-            let original_created_at: Option<i64> =
-                sqlx::query_scalar("SELECT created_at FROM attachments WHERE id = ?")
-                    .bind(p.attachment_id.as_str())
-                    .fetch_optional(&mut **tx)
-                    .await?;
+            let attachment_id_str = p.attachment_id.as_str();
+            let original_created_at: Option<i64> = sqlx::query_scalar!(
+                "SELECT created_at FROM attachments WHERE id = ?",
+                attachment_id_str,
+            )
+            .fetch_optional(&mut **tx)
+            .await?;
 
             let created_at = original_created_at.unwrap_or_else(crate::db::now_ms);
+            let block_id_str = p.block_id.as_str();
 
-            sqlx::query(
+            sqlx::query!(
                 "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+                attachment_id_str,
+                block_id_str,
+                p.mime_type,
+                p.filename,
+                p.size_bytes,
+                p.fs_path,
+                created_at,
             )
-            .bind(p.attachment_id.as_str())
-            .bind(p.block_id.as_str())
-            .bind(&p.mime_type)
-            .bind(&p.filename)
-            .bind(p.size_bytes)
-            .bind(&p.fs_path)
-            .bind(created_at)
             .execute(&mut **tx)
             .await?;
         }
@@ -503,20 +527,23 @@ pub async fn restore_page_to_op_inner(
     // We need to find ops on blocks that may have been deleted after the target point,
     // since restoring to that point means un-deleting those blocks.
     let ops_after: Vec<(String, i64, String)> = if page_id == "__all__" {
-        sqlx::query_as::<_, (String, i64, String)>(
+        sqlx::query!(
             "SELECT device_id, seq, op_type FROM op_log \
              WHERE (created_at > ?1 OR (created_at = ?1 AND (seq > ?2 OR (seq = ?2 AND device_id > ?3)))) \
              ORDER BY created_at DESC, seq DESC, device_id DESC",
+            target_ts,
+            target_seq,
+            target_device_id,
         )
-        .bind(target_ts)
-        .bind(target_seq)
-        .bind(&target_device_id)
         .fetch_all(pool)
         .await?
+        .into_iter()
+        .map(|r| (r.device_id, r.seq, r.op_type))
+        .collect()
     } else {
         // Recursive CTE with `depth < 100` to bound the walk against
         // runaway recursion on corrupted data (invariant #9).
-        sqlx::query_as::<_, (String, i64, String)>(
+        sqlx::query!(
             "WITH RECURSIVE page_blocks(id, depth) AS ( \
                SELECT id, 0 FROM blocks WHERE id = ?1 \
                UNION ALL \
@@ -534,13 +561,16 @@ pub async fn restore_page_to_op_inner(
              ) \
              AND (o.created_at > ?2 OR (o.created_at = ?2 AND (o.seq > ?3 OR (o.seq = ?3 AND o.device_id > ?4)))) \
              ORDER BY o.created_at DESC, o.seq DESC, o.device_id DESC",
+            page_id,
+            target_ts,
+            target_seq,
+            target_device_id,
         )
-        .bind(&page_id)
-        .bind(target_ts)
-        .bind(target_seq)
-        .bind(&target_device_id)
         .fetch_all(pool)
         .await?
+        .into_iter()
+        .map(|r| (r.device_id, r.seq, r.op_type))
+        .collect()
     };
 
     // Separate reversible from non-reversible ops
@@ -822,7 +852,7 @@ pub async fn find_undo_group_inner(
     // `undo_page_op_inner`, bounding worst-case recursion against a
     // pathological burst of same-device ops.
     let seed_rn: i64 = depth + 1; // depth=0 → rn=1 (newest)
-    let count: Option<i64> = sqlx::query_scalar(
+    let count: Option<i64> = sqlx::query_scalar!(
         "WITH RECURSIVE page_blocks(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ?1 \
              UNION ALL \
@@ -851,10 +881,10 @@ pub async fn find_undo_group_inner(
                AND w.count_so_far < 1000 \
          ) \
          SELECT MAX(count_so_far) FROM walk",
+        page_id,
+        seed_rn,
+        window_ms,
     )
-    .bind(page_id)
-    .bind(seed_rn)
-    .bind(window_ms)
     .fetch_one(pool)
     .await?;
 

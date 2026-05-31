@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pa.page_id AS \"page_id!\", b.content\n         FROM page_aliases pa\n         JOIN blocks b ON b.id = pa.page_id\n         WHERE pa.alias = ?1 COLLATE NOCASE\n           AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR pa.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_aliases",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "content"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "2eb4b523f0288dbe753b775d0ac50f1399f17a723532a2eb5cebbf3015f3588a"
+}

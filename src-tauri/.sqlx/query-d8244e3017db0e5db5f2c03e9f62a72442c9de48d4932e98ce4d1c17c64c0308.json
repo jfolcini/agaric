@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "d8244e3017db0e5db5f2c03e9f62a72442c9de48d4932e98ce4d1c17c64c0308"
+}

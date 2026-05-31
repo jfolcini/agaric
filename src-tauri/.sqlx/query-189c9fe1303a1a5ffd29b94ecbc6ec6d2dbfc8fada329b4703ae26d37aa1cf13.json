@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) > 0 AS \"exists!: bool\" FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "exists!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "189c9fe1303a1a5ffd29b94ecbc6ec6d2dbfc8fada329b4703ae26d37aa1cf13"
+}
