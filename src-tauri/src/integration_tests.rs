@@ -1145,6 +1145,10 @@ async fn children_listed_in_position_order() {
     let c1 = create_content(&pool, &mat, "pos 1", Some(parent.id.to_string()), Some(1)).await;
     let c2 = create_content(&pool, &mat, "pos 2", Some(parent.id.to_string()), Some(2)).await;
 
+    // Drain the materializer's background dispatches before reading: the
+    // children are indexed asynchronously, so without this the list query
+    // intermittently saw fewer than 3 (flaky "should list all 3 children").
+    settle_bg_tasks(&mat).await;
     assign_all_to_test_space(&pool).await;
     let children = list_blocks_inner(
         &pool,
