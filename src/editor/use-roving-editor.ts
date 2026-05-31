@@ -40,6 +40,7 @@ import { BlockRef } from './extensions/block-ref'
 import { BlockRefPicker, blockRefPickerPluginKey } from './extensions/block-ref-picker'
 import { CalloutBlockquote } from './extensions/callout-blockquote'
 import { CheckboxInputRule } from './extensions/checkbox-input-rule'
+import { EmojiPicker, emojiPickerPluginKey } from './extensions/emoji-picker'
 import { ExternalLink } from './extensions/external-link'
 import { PropertyPicker, propertyPickerPluginKey } from './extensions/property-picker'
 import { SlashCommand, slashCommandPluginKey } from './extensions/slash-command'
@@ -56,6 +57,7 @@ const suggestionPluginKeys = [
   atTagPickerPluginKey,
   blockLinkPickerPluginKey,
   blockRefPickerPluginKey,
+  emojiPickerPluginKey,
   propertyPickerPluginKey,
   slashCommandPluginKey,
 ]
@@ -359,6 +361,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         items: (query: string) => searchPropertyKeysRef.current(query),
         onSelect: (item: PickerItem) => onPropertySelectRef.current?.(item),
       }),
+      // #130 — inline `:` emoji picker. Self-contained (static emoji data +
+      // internal insert), so no options to wire.
+      EmojiPicker,
       CheckboxInputRule.configure({
         onCheckbox: (state: 'TODO' | 'DONE') => onCheckboxRef.current?.(state),
       }),

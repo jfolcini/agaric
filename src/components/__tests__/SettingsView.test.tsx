@@ -179,20 +179,21 @@ describe('SettingsView', () => {
     })
   })
 
-  it('renders with 9 tabs', () => {
+  it('renders with 10 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(9)
+    expect(tabs).toHaveLength(10)
     expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
     expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
     expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
-    expect(tabs[3]).toHaveTextContent(t('settings.tabKeyboard'))
-    expect(tabs[4]).toHaveTextContent(t('settings.tabData'))
-    expect(tabs[5]).toHaveTextContent(t('settings.tabSync'))
-    expect(tabs[6]).toHaveTextContent(t('settings.tabAgentAccess'))
-    expect(tabs[7]).toHaveTextContent(t('settings.tabGoogleCalendar'))
-    expect(tabs[8]).toHaveTextContent(t('settings.tabHelp'))
+    expect(tabs[3]).toHaveTextContent(t('settings.tabEditor'))
+    expect(tabs[4]).toHaveTextContent(t('settings.tabKeyboard'))
+    expect(tabs[5]).toHaveTextContent(t('settings.tabData'))
+    expect(tabs[6]).toHaveTextContent(t('settings.tabSync'))
+    expect(tabs[7]).toHaveTextContent(t('settings.tabAgentAccess'))
+    expect(tabs[8]).toHaveTextContent(t('settings.tabGoogleCalendar'))
+    expect(tabs[9]).toHaveTextContent(t('settings.tabHelp'))
   })
 
   it('Google Calendar tab renders the GoogleCalendarSettingsTab panel', async () => {

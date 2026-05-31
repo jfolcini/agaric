@@ -39,6 +39,7 @@ import { KeyboardSettingsTab } from './KeyboardSettingsTab'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { PropertyDefinitionsList } from './PropertyDefinitionsList'
 import { AppearanceTab } from './settings/AppearanceTab'
+import { EditorTab } from './settings/EditorTab'
 import { GeneralTab } from './settings/GeneralTab'
 import { HelpTab } from './settings/HelpTab'
 
@@ -52,6 +53,7 @@ type SettingsTab =
   | 'general'
   | 'properties'
   | 'appearance'
+  | 'editor'
   | 'keyboard'
   | 'data'
   | 'sync'
@@ -63,6 +65,7 @@ const TAB_IDS: SettingsTab[] = [
   'general',
   'properties',
   'appearance',
+  'editor',
   'keyboard',
   'data',
   'sync',
@@ -102,6 +105,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   general: 'settings.tabGeneral',
   properties: 'settings.tabProperties',
   appearance: 'settings.tabAppearance',
+  editor: 'settings.tabEditor',
   keyboard: 'settings.tabKeyboard',
   data: 'settings.tabData',
   sync: 'settings.tabSync',
@@ -201,6 +205,8 @@ export function SettingsView(): React.ReactElement {
         {activeTab === 'properties' && <PropertyDefinitionsList />}
 
         {activeTab === 'appearance' && <AppearanceTab />}
+
+        {activeTab === 'editor' && <EditorTab />}
 
         {activeTab === 'keyboard' && <KeyboardSettingsTab />}
 
