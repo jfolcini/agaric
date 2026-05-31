@@ -24,10 +24,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
 
+import { useIsTouch } from '../hooks/useIsTouch'
 import type { PropertyDefinition } from '../lib/tauri'
 
 export interface AddPropertyPopoverProps {
@@ -60,6 +69,10 @@ export function AddPropertyPopover({
   disabledTooltip,
 }: AddPropertyPopoverProps) {
   const { t } = useTranslation()
+  // A (#216): on coarse pointers render the picker in a bottom Sheet so the
+  // on-screen keyboard can't cover the search input / list. Desktop keeps the
+  // anchored Popover path unchanged.
+  const isTouch = useIsTouch()
   const [internalOpen, setInternalOpen] = useState(false)
   const [defSearch, setDefSearch] = useState('')
   const [creatingDef, setCreatingDef] = useState(false)
@@ -121,97 +134,124 @@ export function AddPropertyPopover({
     </Button>
   )
 
-  return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <PopoverTrigger asChild>
-        {disabled && disabledTooltip ? (
-          <TooltipProvider>
-            <Tooltip>
-              {/* `span` wrapper so the tooltip still shows on a disabled button.
-                  Radix Tooltip requires a focusable trigger; a disabled <button>
-                  doesn't fire pointer events, so we wrap it in a focusable span. */}
-              <TooltipTrigger asChild>
-                {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
-                <span tabIndex={0}>{triggerButton}</span>
-              </TooltipTrigger>
-              <TooltipContent>{disabledTooltip}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          triggerButton
-        )}
-      </PopoverTrigger>
-      <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageProperty.pickerLabel')}>
-        <Input
-          placeholder={t('pageProperty.searchPlaceholder')}
-          value={defSearch}
-          onChange={(e) => {
-            setDefSearch(e.target.value)
-            setCreatingDef(false)
-          }}
-          aria-label={t('pageProperty.searchLabel')}
-        />
-        <ScrollArea className="max-h-[min(240px,40vh)]">
-          {filteredDefs.map((def) => (
-            <Button
-              key={def.key}
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start gap-2"
-              onClick={() => handleAddFromDef(def)}
-            >
-              <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
-              <Badge tone="outline" className="font-mono text-xs">
-                {def.value_type}
-              </Badge>
-            </Button>
-          ))}
-        </ScrollArea>
+  // Trigger (with the disabled-state tooltip wrapper) is shared between the
+  // Popover and Sheet variants.
+  const trigger =
+    disabled && disabledTooltip ? (
+      <TooltipProvider>
+        <Tooltip>
+          {/* `span` wrapper so the tooltip still shows on a disabled button.
+              Radix Tooltip requires a focusable trigger; a disabled <button>
+              doesn't fire pointer events, so we wrap it in a focusable span. */}
+          <TooltipTrigger asChild>
+            {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Radix tooltip-on-disabled-button requires a focusable wrapper. */}
+            <span tabIndex={0}>{triggerButton}</span>
+          </TooltipTrigger>
+          <TooltipContent>{disabledTooltip}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    ) : (
+      triggerButton
+    )
 
-        {/* "Create new definition" prompt — UX-272 sub-fix 7: surface the
-            default value type so users know what they get when clicking. */}
-        {supportCreateDef && defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
+  // Picker body (search + list + create-flow) is identical in both variants.
+  const pickerBody = (
+    <>
+      <Input
+        placeholder={t('pageProperty.searchPlaceholder')}
+        value={defSearch}
+        onChange={(e) => {
+          setDefSearch(e.target.value)
+          setCreatingDef(false)
+        }}
+        aria-label={t('pageProperty.searchLabel')}
+      />
+      <ScrollArea className="max-h-[min(240px,40vh)]">
+        {filteredDefs.map((def) => (
           <Button
+            key={def.key}
             variant="ghost"
             size="sm"
-            className="w-full text-muted-foreground"
-            onClick={() => setCreatingDef(true)}
+            className="w-full justify-start gap-2"
+            onClick={() => handleAddFromDef(def)}
           >
-            {t('pageProperty.createButton', { name: defSearch.trim() })}
-            <span className="ml-1 text-xs text-muted-foreground" data-testid="create-new-type-hint">
-              {t('properties.createNewTypeHint')}
-            </span>
+            <span className="flex-1 text-left">{formatPropertyName(def.key)}</span>
+            <Badge tone="outline" className="font-mono text-xs">
+              {def.value_type}
+            </Badge>
           </Button>
-        )}
+        ))}
+      </ScrollArea>
 
-        {/* Type selector for creating a new definition */}
-        {creatingDef && (
-          <div className="space-y-2">
-            <Label size="xs" htmlFor="new-def-type">
-              {t('pageProperty.valueTypeLabel')}
-            </Label>
-            <Select value={newDefType} onValueChange={setNewDefType}>
-              <SelectTrigger
-                id="new-def-type"
-                className="w-full"
-                aria-label={t('pageProperty.valueTypeLabel')}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="text">{t('pageProperty.textType')}</SelectItem>
-                <SelectItem value="number">{t('pageProperty.numberType')}</SelectItem>
-                <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
-                <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
-                <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
-                <SelectItem value="boolean">{t('pageProperty.booleanType')}</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button size="sm" className="w-full" onClick={handleCreateDef}>
-              {t('pageProperty.createDefinitionButton')}
-            </Button>
-          </div>
-        )}
+      {/* "Create new definition" prompt — UX-272 sub-fix 7: surface the
+          default value type so users know what they get when clicking. */}
+      {supportCreateDef && defSearch.trim() && !searchMatchesExistingDef && !creatingDef && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground"
+          onClick={() => setCreatingDef(true)}
+        >
+          {t('pageProperty.createButton', { name: defSearch.trim() })}
+          <span className="ml-1 text-xs text-muted-foreground" data-testid="create-new-type-hint">
+            {t('properties.createNewTypeHint')}
+          </span>
+        </Button>
+      )}
+
+      {/* Type selector for creating a new definition */}
+      {creatingDef && (
+        <div className="space-y-2">
+          <Label size="xs" htmlFor="new-def-type">
+            {t('pageProperty.valueTypeLabel')}
+          </Label>
+          <Select value={newDefType} onValueChange={setNewDefType}>
+            <SelectTrigger
+              id="new-def-type"
+              className="w-full"
+              aria-label={t('pageProperty.valueTypeLabel')}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="text">{t('pageProperty.textType')}</SelectItem>
+              <SelectItem value="number">{t('pageProperty.numberType')}</SelectItem>
+              <SelectItem value="date">{t('pageProperty.dateType')}</SelectItem>
+              <SelectItem value="select">{t('pageProperty.selectType')}</SelectItem>
+              <SelectItem value="ref">{t('pageProperty.refType')}</SelectItem>
+              <SelectItem value="boolean">{t('pageProperty.booleanType')}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button size="sm" className="w-full" onClick={handleCreateDef}>
+            {t('pageProperty.createDefinitionButton')}
+          </Button>
+        </div>
+      )}
+    </>
+  )
+
+  // A (#216): coarse pointer → bottom Sheet (keyboard-safe).
+  if (isTouch) {
+    return (
+      <Sheet open={popoverOpen} onOpenChange={setPopoverOpen}>
+        <SheetTrigger asChild>{trigger}</SheetTrigger>
+        <SheetContent side="bottom" className="max-h-[80vh]" data-testid="add-property-sheet">
+          <SheetHeader>
+            <SheetTitle>{t('pageProperty.addPropertyButton')}</SheetTitle>
+            <SheetDescription>{t('pageProperty.pickerLabel')}</SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-2">{pickerBody}</div>
+        </SheetContent>
+      </Sheet>
+    )
+  }
+
+  // Desktop → anchored Popover (unchanged).
+  return (
+    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageProperty.pickerLabel')}>
+        {pickerBody}
       </MenuPopoverContent>
     </Popover>
   )

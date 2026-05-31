@@ -1,3 +1,4 @@
+import { AlignCenter, AlignLeft, AlignRight } from 'lucide-react'
 import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,15 +17,31 @@ export const IMAGE_WIDTH_PRESETS = [
   { label: 'imageResize.full', value: '100' },
 ] as const
 
-/** Floating toolbar for resizing images via width presets. */
+/** Alignment options (#212 item 4). Default is `center`. */
+export type ImageAlignment = 'left' | 'center' | 'right'
+
+export const IMAGE_ALIGNMENTS = [
+  { label: 'imageAlign.left', value: 'left', Icon: AlignLeft },
+  { label: 'imageAlign.center', value: 'center', Icon: AlignCenter },
+  { label: 'imageAlign.right', value: 'right', Icon: AlignRight },
+] as const
+
+/** Default image alignment when no `image_alignment` property is set. */
+export const DEFAULT_IMAGE_ALIGNMENT: ImageAlignment = 'center'
+
+/** Floating toolbar for resizing and aligning images via presets. */
 export function ImageResizeToolbar({
   blockId,
   currentWidth,
   onWidthChange,
+  currentAlignment,
+  onAlignmentChange,
 }: {
   blockId: string
   currentWidth: string
   onWidthChange: (width: string) => void
+  currentAlignment: ImageAlignment
+  onAlignmentChange: (alignment: ImageAlignment) => void
 }): React.ReactElement {
   const { t } = useTranslation()
 
@@ -43,6 +60,23 @@ export function ImageResizeToolbar({
       })
     },
     [blockId, currentWidth, onWidthChange, t],
+  )
+
+  const handleAlign = useCallback(
+    (value: ImageAlignment) => {
+      onAlignmentChange(value)
+      setProperty({
+        blockId,
+        key: 'image_alignment',
+        valueText: value,
+      }).catch((err) => {
+        logger.warn('ImageResizeToolbar', 'alignment save failed', { blockId, value }, err)
+        // Revert on failure — restore previous alignment
+        onAlignmentChange(currentAlignment)
+        notify.error(t('imageAlign.saveFailed'))
+      })
+    },
+    [blockId, currentAlignment, onAlignmentChange, t],
   )
 
   return (
@@ -66,6 +100,25 @@ export function ImageResizeToolbar({
           data-testid={`image-resize-${preset.value}`}
         >
           {`${preset.value}%`}
+        </Button>
+      ))}
+
+      <span className="mx-0.5 h-5 w-px bg-border" aria-hidden="true" />
+
+      {IMAGE_ALIGNMENTS.map(({ label, value, Icon }) => (
+        <Button
+          key={value}
+          variant={currentAlignment === value ? 'secondary' : 'ghost'}
+          size="sm"
+          aria-label={t(label)}
+          aria-pressed={currentAlignment === value}
+          onClick={(e) => {
+            e.stopPropagation()
+            handleAlign(value)
+          }}
+          data-testid={`image-align-${value}`}
+        >
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </Button>
       ))}
     </div>

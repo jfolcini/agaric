@@ -14,11 +14,35 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
 const { setProperty } = await import('../../lib/tauri')
 const mockedSetProperty = vi.mocked(setProperty)
 
-import { IMAGE_WIDTH_PRESETS, ImageResizeToolbar } from '../ImageResizeToolbar'
+import {
+  DEFAULT_IMAGE_ALIGNMENT,
+  type ImageAlignment,
+  IMAGE_ALIGNMENTS,
+  IMAGE_WIDTH_PRESETS,
+  ImageResizeToolbar,
+} from '../ImageResizeToolbar'
+
+/**
+ * Render helper so width-focused tests don't have to spell out the alignment
+ * props every time. Pass overrides for whatever a test cares about.
+ */
+function renderToolbar(
+  props: Partial<React.ComponentProps<typeof ImageResizeToolbar>> = {},
+): ReturnType<typeof render> {
+  return render(
+    <ImageResizeToolbar
+      blockId={props.blockId ?? 'B1'}
+      currentWidth={props.currentWidth ?? '100'}
+      onWidthChange={props.onWidthChange ?? vi.fn()}
+      currentAlignment={props.currentAlignment ?? DEFAULT_IMAGE_ALIGNMENT}
+      onAlignmentChange={props.onAlignmentChange ?? vi.fn()}
+    />,
+  )
+}
 
 describe('ImageResizeToolbar', () => {
   it('renders 4 preset buttons (25%, 50%, 75%, 100%)', () => {
-    render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+    renderToolbar()
 
     expect(screen.getByTestId('image-resize-25')).toBeInTheDocument()
     expect(screen.getByTestId('image-resize-50')).toBeInTheDocument()
@@ -27,7 +51,7 @@ describe('ImageResizeToolbar', () => {
   })
 
   it('displays percentage text for each preset', () => {
-    render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+    renderToolbar()
 
     expect(screen.getByText('25%')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
@@ -38,7 +62,7 @@ describe('ImageResizeToolbar', () => {
   it('click fires onWidthChange with correct value', async () => {
     const user = userEvent.setup()
     const onWidthChange = vi.fn()
-    render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={onWidthChange} />)
+    renderToolbar({ onWidthChange })
 
     await user.click(screen.getByTestId('image-resize-50'))
     expect(onWidthChange).toHaveBeenCalledWith('50')
@@ -46,7 +70,7 @@ describe('ImageResizeToolbar', () => {
 
   it('click calls setProperty with image_width', async () => {
     const user = userEvent.setup()
-    render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+    renderToolbar()
 
     await user.click(screen.getByTestId('image-resize-25'))
     expect(mockedSetProperty).toHaveBeenCalledWith({
@@ -57,7 +81,7 @@ describe('ImageResizeToolbar', () => {
   })
 
   it('active preset uses secondary variant', () => {
-    render(<ImageResizeToolbar blockId="B1" currentWidth="50" onWidthChange={vi.fn()} />)
+    renderToolbar({ currentWidth: '50' })
 
     // The active button (50%) should be distinguishable — it gets variant="secondary"
     const btn50 = screen.getByTestId('image-resize-50')
@@ -68,7 +92,7 @@ describe('ImageResizeToolbar', () => {
   })
 
   it('preset matching currentWidth has aria-pressed="true"; others "false" (UX-280)', () => {
-    render(<ImageResizeToolbar blockId="B1" currentWidth="50" onWidthChange={vi.fn()} />)
+    renderToolbar({ currentWidth: '50' })
 
     expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByTestId('image-resize-50')).toHaveAttribute('aria-pressed', 'true')
@@ -77,21 +101,27 @@ describe('ImageResizeToolbar', () => {
   })
 
   it('aria-pressed updates when currentWidth changes (UX-280)', () => {
-    const { rerender } = render(
-      <ImageResizeToolbar blockId="B1" currentWidth="25" onWidthChange={vi.fn()} />,
-    )
+    const { rerender } = renderToolbar({ currentWidth: '25' })
 
     expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'false')
 
-    rerender(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+    rerender(
+      <ImageResizeToolbar
+        blockId="B1"
+        currentWidth="100"
+        onWidthChange={vi.fn()}
+        currentAlignment={DEFAULT_IMAGE_ALIGNMENT}
+        onAlignmentChange={vi.fn()}
+      />,
+    )
 
     expect(screen.getByTestId('image-resize-25')).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByTestId('image-resize-100')).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('has role="toolbar" with aria-label', () => {
-    render(<ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />)
+    renderToolbar()
 
     const toolbar = screen.getByTestId('image-resize-toolbar')
     expect(toolbar).toHaveAttribute('role', 'toolbar')
@@ -103,10 +133,46 @@ describe('ImageResizeToolbar', () => {
     expect(IMAGE_WIDTH_PRESETS.map((p) => p.value)).toEqual(['25', '50', '75', '100'])
   })
 
+  // ---- #212 item 4: alignment ----
+
+  it('renders three alignment buttons (left/center/right)', () => {
+    renderToolbar()
+
+    expect(screen.getByTestId('image-align-left')).toBeInTheDocument()
+    expect(screen.getByTestId('image-align-center')).toBeInTheDocument()
+    expect(screen.getByTestId('image-align-right')).toBeInTheDocument()
+  })
+
+  it('exports IMAGE_ALIGNMENTS with left/center/right and a center default', () => {
+    expect(IMAGE_ALIGNMENTS.map((a) => a.value)).toEqual(['left', 'center', 'right'])
+    expect(DEFAULT_IMAGE_ALIGNMENT).toBe('center')
+  })
+
+  it('the active alignment has aria-pressed="true"; others "false"', () => {
+    renderToolbar({ currentAlignment: 'right' })
+
+    expect(screen.getByTestId('image-align-left')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('image-align-center')).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByTestId('image-align-right')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('clicking an alignment fires onAlignmentChange and persists image_alignment', async () => {
+    const user = userEvent.setup()
+    const onAlignmentChange = vi.fn()
+    renderToolbar({ onAlignmentChange })
+
+    await user.click(screen.getByTestId('image-align-left'))
+
+    expect(onAlignmentChange).toHaveBeenCalledWith('left' as ImageAlignment)
+    expect(mockedSetProperty).toHaveBeenCalledWith({
+      blockId: 'B1',
+      key: 'image_alignment',
+      valueText: 'left',
+    })
+  })
+
   it('has no a11y violations', async () => {
-    const { container } = render(
-      <ImageResizeToolbar blockId="B1" currentWidth="100" onWidthChange={vi.fn()} />,
-    )
+    const { container } = renderToolbar()
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()

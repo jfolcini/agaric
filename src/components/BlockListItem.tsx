@@ -20,6 +20,7 @@ import { notify } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
 import { useBlockReschedule } from '../hooks/useBlockReschedule'
+import { useIsTouch } from '../hooks/useIsTouch'
 import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { announce } from '../lib/announcer'
 import { dueDateColor, formatCompactDate, formatDate, getTodayString } from '../lib/date-utils'
@@ -33,6 +34,14 @@ import { renderRichContent } from './RichContentRenderer'
 import { Badge } from './ui/badge'
 import { Calendar } from './ui/calendar'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from './ui/sheet'
 import { StatusIcon } from './ui/status-icon'
 
 /** Variant of the priority badge rendering used in the metadata row. */
@@ -63,44 +72,78 @@ function DueDateChipInner({
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const overdue = isOverdue(dueDate)
+  // A (#216): on coarse pointers render the date editor in a bottom Sheet so
+  // the on-screen keyboard can't cover the natural-language date input.
+  const isTouch = useIsTouch()
 
+  const chipButton = (
+    <button
+      type="button"
+      className={cn(
+        'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 font-medium cursor-pointer hover:ring-1 hover:ring-ring',
+        dueDateColor(dueDate),
+      )}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+      aria-label={t('dateChip.editDate')}
+    >
+      {/* UX-6: surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
+      {overdue && <AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />}
+      {formatCompactDate(dueDate)}
+    </button>
+  )
+
+  // Editor closes the surface + refreshes; DateChipEditor already fires its
+  // own notify.success + announce on save, so no redundant toast here.
+  const editor = blockId ? (
+    <DateChipEditor
+      blockId={blockId}
+      dateType="due"
+      currentDate={dueDate}
+      onSuccess={() => {
+        setOpen(false)
+        onDateChanged?.()
+      }}
+    />
+  ) : null
+
+  // A (#216): coarse pointer → bottom Sheet (keyboard-safe).
+  if (isTouch) {
+    return (
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetTrigger asChild>{chipButton}</SheetTrigger>
+        {blockId && (
+          <SheetContent
+            side="bottom"
+            className="max-h-[80vh]"
+            data-testid="due-date-sheet"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <SheetHeader>
+              <SheetTitle>{t('dateChip.editDate')}</SheetTitle>
+              <SheetDescription>{t('dateChip.inputLabel')}</SheetDescription>
+            </SheetHeader>
+            <div className="mt-4">{editor}</div>
+          </SheetContent>
+        )}
+      </Sheet>
+    )
+  }
+
+  // Desktop → anchored Popover (unchanged).
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            'agenda-results-due inline-flex items-center rounded-full px-2 py-0.5 text-xs [@media(pointer:coarse)]:text-sm [@media(pointer:coarse)]:py-1 font-medium cursor-pointer hover:ring-1 hover:ring-ring',
-            dueDateColor(dueDate),
-          )}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          aria-label={t('dateChip.editDate')}
-        >
-          {/* UX-6: surface overdue with an icon as well as a colour so colour-blind users perceive the state. */}
-          {overdue && <AlertCircle className="h-3 w-3 mr-1" aria-hidden="true" />}
-          {formatCompactDate(dueDate)}
-        </button>
-      </PopoverTrigger>
+      <PopoverTrigger asChild>{chipButton}</PopoverTrigger>
       {blockId && (
         <PopoverContent
           align="start"
           className="w-64 max-w-[calc(100vw-2rem)]"
+          data-testid="due-date-popover"
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
-          <DateChipEditor
-            blockId={blockId}
-            dateType="due"
-            currentDate={dueDate}
-            onSuccess={() => {
-              // DateChipEditor already fires its own `notify.success` + `announce`
-              // on save, so UX-4's explicit-feedback requirement is satisfied
-              // without a second redundant toast here. Just close + refresh.
-              setOpen(false)
-              onDateChanged?.()
-            }}
-          />
+          {editor}
         </PopoverContent>
       )}
     </Popover>
