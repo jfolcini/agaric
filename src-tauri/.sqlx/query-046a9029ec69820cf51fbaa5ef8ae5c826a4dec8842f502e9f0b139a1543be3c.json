@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT bt.block_id FROM block_tags bt JOIN blocks b ON b.id = bt.block_id WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL UNION SELECT bti.block_id FROM block_tag_inherited bti JOIN blocks b ON b.id = bti.block_id WHERE bti.tag_id = ?1 AND b.deleted_at IS NULL UNION SELECT btr.source_id AS block_id FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tags",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "046a9029ec69820cf51fbaa5ef8ae5c826a4dec8842f502e9f0b139a1543be3c"
+}

@@ -30,7 +30,7 @@ async fn apply_sort_merge_rebuild(
     write_conn: &mut sqlx::SqliteConnection,
     now: i64,
 ) -> Result<u64, AppError> {
-    let upsert = sqlx::query(
+    let upsert = sqlx::query!(
         "INSERT INTO pages_cache (page_id, title, updated_at) \
          SELECT id, content, ? \
          FROM blocks \
@@ -39,12 +39,12 @@ async fn apply_sort_merge_rebuild(
              title      = excluded.title, \
              updated_at = excluded.updated_at \
          WHERE pages_cache.title != excluded.title",
+        now,
     )
-    .bind(now)
     .execute(&mut *write_conn)
     .await?;
 
-    let delete = sqlx::query(
+    let delete = sqlx::query!(
         "DELETE FROM pages_cache \
          WHERE page_id NOT IN ( \
              SELECT id FROM blocks \

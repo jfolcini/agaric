@@ -1,0 +1,40 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",\n             bl.target_id AS \"target_page_id!\",\n             COUNT(*) AS \"edge_count!\"\n         FROM block_links bl\n         JOIN blocks sb ON sb.id = bl.source_id\n         WHERE sb.deleted_at IS NULL\n         GROUP BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "name": "target_page_id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "edge_count!",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b8cf26ba546770a537ffbc967b5dc614fa81b4106bcff4b4f6e9f63908104cf9"
+}

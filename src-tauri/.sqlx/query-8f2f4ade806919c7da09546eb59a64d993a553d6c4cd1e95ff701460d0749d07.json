@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM page_link_cache WHERE source_page_id = ?1 AND target_page_id IN (SELECT value FROM json_each(?2)) AND NOT EXISTS ( SELECT 1 FROM block_links bl JOIN blocks sb ON sb.id = bl.source_id WHERE COALESCE(sb.parent_id, sb.id) = ?1 AND sb.deleted_at IS NULL AND bl.target_id = page_link_cache.target_page_id )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8f2f4ade806919c7da09546eb59a64d993a553d6c4cd1e95ff701460d0749d07"
+}

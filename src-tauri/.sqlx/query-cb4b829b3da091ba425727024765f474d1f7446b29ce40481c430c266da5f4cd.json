@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT bt.block_id FROM tags_cache tc JOIN block_tags bt ON bt.tag_id = tc.tag_id JOIN blocks b ON b.id = bt.block_id WHERE tc.name LIKE ?1 ESCAPE '\\' AND b.deleted_at IS NULL UNION SELECT DISTINCT bti.block_id FROM tags_cache tc JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id JOIN blocks b ON b.id = bti.block_id WHERE tc.name LIKE ?1 ESCAPE '\\' AND b.deleted_at IS NULL UNION SELECT DISTINCT btr.source_id AS block_id FROM tags_cache tc JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id JOIN blocks b ON b.id = btr.source_id WHERE tc.name LIKE ?1 ESCAPE '\\' AND b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tags",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cb4b829b3da091ba425727024765f474d1f7446b29ce40481c430c266da5f4cd"
+}
