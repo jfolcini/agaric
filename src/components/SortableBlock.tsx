@@ -205,6 +205,12 @@ function SortableBlockInner({
         style={style}
         data-block-id={blockId}
         data-testid="sortable-block"
+        // B (#216): describe the swipe-to-delete gesture for assistive tech.
+        // The swipe handlers only do anything on coarse pointers and only
+        // when a delete handler is wired up, so scope the description the same way.
+        {...(isTouchDevice && onDelete
+          ? { 'aria-description': t('block.swipeRowDescription') }
+          : {})}
         className={cn(
           'sortable-block group relative flex items-center gap-1 max-sm:items-start min-w-0',
           // BUG-37: suppress the iOS/Android long-press text-selection

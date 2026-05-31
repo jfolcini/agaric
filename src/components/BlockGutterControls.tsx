@@ -116,6 +116,10 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       ariaLabel={t('block.reorder')}
       testId="drag-handle"
       className="drag-handle cursor-grab hover:text-foreground"
+      // B (#216): expose the keyboard-reorder shortcut to assistive tech.
+      // The naming tooltip ("Reorder — Ctrl+Shift+↑/↓") already comes from
+      // `block.reorderTip`; this makes the shortcut programmatically discoverable.
+      aria-keyshortcuts={t('block.reorderKeyshortcuts')}
       // Stable focus-fallback target for `BlockContextMenu`'s
       // `handleCloseWithFocus` (MAINT-174). The drag handle is the only
       // gutter button guaranteed to render on every block.
@@ -138,6 +142,9 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
         ariaLabel={t('block.reorderTouchHint')}
         testId="drag-handle"
         className="drag-handle cursor-grab hover:text-foreground"
+        // B (#216): keyboard-reorder shortcut for AT (keyboard users on
+        // touch UAs with an attached keyboard).
+        aria-keyshortcuts={t('block.reorderKeyshortcuts')}
         data-context-trigger="true"
         {...dragAttributes}
         {...dragListeners}

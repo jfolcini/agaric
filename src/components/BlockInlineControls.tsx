@@ -191,8 +191,17 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center"
+              className={cn(
+                'collapse-toggle flex-shrink-0 w-5 p-0.5 text-muted-foreground hover:text-foreground transition-opacity focus-ring-visible active:scale-95 touch-target max-sm:flex max-sm:items-center max-sm:justify-center',
+                // C4 (#216): the chevron signals collapsed/expanded by rotation
+                // alone, which colour-blind users (and anyone who misses the
+                // subtle 90° turn) can't reliably perceive. Add a non-rotation
+                // cue — a faint filled background + ring — that only shows when
+                // the block is collapsed (i.e. has hidden children).
+                isCollapsed && 'rounded-sm bg-muted/60 text-foreground ring-1 ring-border',
+              )}
               data-testid="collapse-toggle"
+              data-collapsed={isCollapsed}
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
               aria-expanded={!isCollapsed}
