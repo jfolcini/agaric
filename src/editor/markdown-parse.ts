@@ -515,6 +515,13 @@ export interface InlineState {
   /** Position in source where the currently-open bold/italic delimiter started. */
   boldOpenPos: number
   italicOpenPos: number
+  /**
+   * Which delimiter char opened the currently-open bold/italic run — `'*'` or
+   * `'_'` (GFM accepts both). Only the matching char closes, so `*foo_` /
+   * `_foo*` don't cross-close. `''` when not open.
+   */
+  boldOpenChar: string
+  italicOpenChar: string
   /** Snapshots of `nodes.length` at the moment a mark opened (for revert). */
   boldOpenNodeLen: number
   italicOpenNodeLen: number
@@ -538,6 +545,8 @@ export function createInlineState(line: string, depth: number): InlineState {
     inUnderline: false,
     boldOpenPos: -1,
     italicOpenPos: -1,
+    boldOpenChar: '',
+    italicOpenChar: '',
     boldOpenNodeLen: 0,
     italicOpenNodeLen: 0,
     codeOpenNodeLen: 0,
@@ -637,15 +646,42 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   return true
 }
 
-/** Bold toggle: `**`. */
+/**
+ * Whether the `_`-run starting at the scanner cursor is intraword — an
+ * alphanumeric on BOTH sides of the whole run. GFM/CommonMark disallow `_`
+ * emphasis inside a word, so such a run is literal text (keeps `snake_case`,
+ * `a__b`, `__init__`-inside-a-word intact). `*` runs have no such restriction.
+ */
+function isIntrawordUnderscoreRun(s: Scanner): boolean {
+  if (peek(s) !== '_') return false
+  // Extend over the FULL consecutive `_` run in both directions — the cursor
+  // may sit mid-run if an earlier `_` was already emitted as literal (e.g. the
+  // 2nd `_` of `a__b`), and the flanking check must see the whole run's edges.
+  let start = 0
+  while (peek(s, start - 1) === '_') start -= 1
+  let end = 0
+  while (peek(s, end) === '_') end += 1
+  const before = peek(s, start - 1)
+  const after = peek(s, end)
+  return /[A-Za-z0-9]/.test(before) && /[A-Za-z0-9]/.test(after)
+}
+
+/** Bold toggle: `**` or `__` (GFM). */
 export function scanBold(st: InlineState): boolean {
-  if (peek(st.scanner) !== '*' || peek(st.scanner, 1) !== '*') return false
+  const ch = peek(st.scanner)
+  if ((ch !== '*' && ch !== '_') || peek(st.scanner, 1) !== ch) return false
+  // GFM underscore emphasis is not allowed intraword.
+  if (ch === '_' && isIntrawordUnderscoreRun(st.scanner)) return false
+  // Only the matching delimiter char closes an open run (no `**…__` crossing).
+  if (st.inBold && st.boldOpenChar !== ch) return false
   flushBuf(st, currentMarks(st))
   if (st.inBold) {
     st.inBold = false
+    st.boldOpenChar = ''
   } else {
     st.boldOpenPos = st.scanner.pos
     st.boldOpenNodeLen = st.nodes.length
+    st.boldOpenChar = ch
     st.inBold = true
   }
   st.scanner.pos += 2
@@ -713,13 +749,20 @@ export function scanUnderline(st: InlineState): boolean {
 
 /** Italic toggle: `*` (single star, not already matched as bold `**`). */
 export function scanItalic(st: InlineState): boolean {
-  if (peek(st.scanner) !== '*') return false
+  const ch = peek(st.scanner)
+  if (ch !== '*' && ch !== '_') return false
+  // `**`/`__` are bold (handled by scanBold, which runs first); a single
+  // `_` is intraword-guarded like the bold case.
+  if (ch === '_' && isIntrawordUnderscoreRun(st.scanner)) return false
+  if (st.inItalic && st.italicOpenChar !== ch) return false
   flushBuf(st, currentMarks(st))
   if (st.inItalic) {
     st.inItalic = false
+    st.italicOpenChar = ''
   } else {
     st.italicOpenPos = st.scanner.pos
     st.italicOpenNodeLen = st.nodes.length
+    st.italicOpenChar = ch
     st.inItalic = true
   }
   st.scanner.pos++
