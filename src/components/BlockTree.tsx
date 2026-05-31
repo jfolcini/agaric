@@ -54,6 +54,8 @@ import { useBlockZoom } from '../hooks/useBlockZoom'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { useViewportObserver } from '../hooks/useViewportObserver'
 import type { NavigateToPageFn } from '../lib/block-events'
+import type { BlockTypeToken } from '../lib/block-type-convert'
+import { convertBlockContent } from '../lib/block-type-convert'
 import { deleteDraft, editBlock, setProperty } from '../lib/tauri'
 import { getDragDescendants } from '../lib/tree-utils'
 import { useBlockStore } from '../stores/blocks'
@@ -316,6 +318,26 @@ export function BlockTree({
       notify.error(t('queryBuilder.saveFailed'))
     }
   }
+
+  // #264 — "Turn into" from the block context-menu. Converts the right-clicked
+  // / long-pressed block (which may differ from the focused block) to the
+  // chosen type by rewriting its markdown content via the shared
+  // `convertBlockContent` helper — the same conversion the `/turn` slash
+  // command runs, so the logic is not duplicated.
+  const handleTurnInto = useCallback(
+    async (blockId: string, blockType: BlockTypeToken) => {
+      const current = pageStore.getState().blocksById.get(blockId)
+      if (!current) return
+      try {
+        await editBlock(blockId, convertBlockContent(current.content ?? '', blockType))
+        await load()
+      } catch (err) {
+        logger.error('BlockTree', 'Failed to convert block', { blockId, blockType }, err)
+        notify.error(t('slash.turnIntoFailed'))
+      }
+    },
+    [pageStore, load, t],
+  )
 
   // ── Slash commands hook ────────────────────────────────────────────
   const {
@@ -641,6 +663,7 @@ export function BlockTree({
     onShowProperties: handleShowProperties,
     onZoomIn: handleZoomIn,
     onSelect: handleSelect,
+    onTurnInto: handleTurnInto,
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     resolveBlockStatus: resolve.resolveBlockStatus,

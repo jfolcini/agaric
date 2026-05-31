@@ -17,7 +17,13 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import { _resetPropertyKeysCacheForTest } from '../property-keys-cache'
-import { SLASH_COMMANDS, searchPropertyKeys } from '../slash-commands'
+import {
+  SLASH_COMMANDS,
+  TURN_INTO_COMMANDS,
+  TURN_INTO_OPTIONS,
+  searchPropertyKeys,
+  searchSlashCommands,
+} from '../slash-commands'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -84,5 +90,49 @@ describe('SLASH_COMMANDS catalog', () => {
   it('has unique command ids', () => {
     const ids = SLASH_COMMANDS.map((c) => c.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  // #264 — "Turn into" parent slash entry.
+  it('registers the /turn parent command in the structure group', () => {
+    const turn = SLASH_COMMANDS.find((c) => c.id === 'turn')
+    expect(turn).toBeDefined()
+    expect(turn?.category).toBe('slashCommand.categories.structure')
+    expect(turn?.icon).toBeDefined()
+  })
+})
+
+describe('TURN_INTO commands (#264)', () => {
+  it('exposes the full block-type option set', () => {
+    expect(TURN_INTO_OPTIONS.map((o) => o.blockType)).toEqual([
+      'paragraph',
+      'h1',
+      'h2',
+      'h3',
+      'quote',
+      'code',
+      'numbered-list',
+      'callout',
+    ])
+  })
+
+  it('every option id is prefixed turn- and the catalog mirrors the options', () => {
+    for (const opt of TURN_INTO_OPTIONS) {
+      expect(opt.id).toMatch(/^turn-/)
+    }
+    expect(TURN_INTO_COMMANDS.map((c) => c.id)).toEqual(TURN_INTO_OPTIONS.map((o) => o.id))
+  })
+
+  it('searchSlashCommands surfaces the parent + expanded options for a /turn query', () => {
+    const ids = searchSlashCommands('turn').map((r) => r.id)
+    expect(ids).toContain('turn')
+    expect(ids).toContain('turn-paragraph')
+    expect(ids).toContain('turn-h1')
+    expect(ids).toContain('turn-code')
+    expect(ids).toContain('turn-callout')
+  })
+
+  it('does not surface turn options for an unrelated query', () => {
+    const ids = searchSlashCommands('priority').map((r) => r.id)
+    expect(ids).not.toContain('turn-paragraph')
   })
 })

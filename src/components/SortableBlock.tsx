@@ -26,6 +26,7 @@ import { useBlockResolvers } from '../hooks/useBlockResolvers'
 import { useBlockSwipeActions } from '../hooks/useBlockSwipeActions'
 import { useBlockTouchLongPress } from '../hooks/useBlockTouchLongPress'
 import { usePropertyDefForEdit } from '../hooks/usePropertyDefForEdit'
+import { detectBlockType } from '../lib/block-type-convert'
 import { INTERNAL_PROPERTY_KEYS } from '../lib/block-utils'
 import { cn } from '../lib/utils'
 import { AttachmentList } from './AttachmentList'
@@ -108,6 +109,7 @@ function SortableBlockInner({
     onShowProperties,
     onZoomIn: onZoomInResolved,
     onSelect,
+    onTurnInto,
   } = useBlockActions()
   // Context menu zoom is gated by hasChildren (was previously gated in
   // SortableBlockWrapper before the props chain was collapsed).
@@ -403,6 +405,8 @@ function SortableBlockInner({
             onShowHistory={onShowHistory}
             onShowProperties={onShowProperties}
             onZoomIn={onZoomIn}
+            onTurnInto={onTurnInto}
+            activeBlockType={detectBlockType(content)}
             hasChildren={hasChildren}
             isCollapsed={isCollapsed}
             todoState={todoState}

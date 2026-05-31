@@ -21,6 +21,7 @@ import {
   Merge,
   MoveDown,
   MoveUp,
+  Replace,
   Settings2,
   Signal,
   Trash2,
@@ -33,8 +34,10 @@ import { useTranslation } from 'react-i18next'
 import { notify } from '@/lib/notify'
 
 import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
+import type { BlockTypeToken } from '../lib/block-type-convert'
 import { writeText } from '../lib/clipboard'
 import { logger } from '../lib/logger'
+import { TURN_INTO_OPTIONS } from '../lib/slash-commands'
 import { cn } from '../lib/utils'
 
 export interface BlockContextMenuProps {
@@ -66,6 +69,14 @@ export interface BlockContextMenuProps {
   onZoomIn?: ((blockId: string) => void) | undefined
   /** URL of external link under cursor (for Copy URL action). */
   linkUrl?: string | undefined
+  /**
+   * #264 — convert this block to another block type ("Turn into ▸"). When
+   * provided, the menu renders a "Turn into" group listing the block-type
+   * options. `activeBlockType` highlights the block's current type.
+   */
+  onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
+  /** Current block type, used to indicate the active option in "Turn into". */
+  activeBlockType?: BlockTypeToken | undefined
 }
 
 interface MenuItem {
@@ -74,6 +85,8 @@ interface MenuItem {
   action: (() => void) | undefined
   className?: string
   shortcut?: string
+  /** #264 — marks the active block type inside the "Turn into" group. */
+  active?: boolean
 }
 
 // ── State-aware label helpers ─────────────────────────────────────────
@@ -129,10 +142,16 @@ export function BlockContextMenu({
   onShowProperties,
   onZoomIn,
   linkUrl,
+  onTurnInto,
+  activeBlockType,
 }: BlockContextMenuProps): React.ReactElement {
   const { t } = useTranslation()
   const menuRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  // #264 — the "Turn into" group is collapsed by default; expanding reveals
+  // the block-type options inline (no nested floating popover, so the existing
+  // single-list keyboard navigation keeps working).
+  const [turnIntoOpen, setTurnIntoOpen] = useState(false)
 
   const handleCloseWithFocus = useCallback(() => {
     // If the trigger element has been removed from the DOM during the menu's
@@ -404,6 +423,40 @@ export function BlockContextMenu({
 
   const copyUrlGroup = copyUrlItem ? [copyUrlItem] : []
 
+  // #264 — "Turn into" group. A parent toggle row ("Turn into ▸/▾") that
+  // expands to the block-type options inline. Each option converts the block
+  // via `onTurnInto` and closes the menu; the block's current type is marked
+  // active and rendered as a non-interactive indicator (converting to the
+  // current type is a no-op the user shouldn't reach for).
+  const turnIntoGroup: MenuItem[] = onTurnInto
+    ? [
+        {
+          label: t('contextMenu.turnInto'),
+          icon: <Replace className="h-3.5 w-3.5" />,
+          action: () => setTurnIntoOpen((o) => !o),
+          shortcut: turnIntoOpen ? '▾' : '▸',
+        },
+        ...(turnIntoOpen
+          ? TURN_INTO_OPTIONS.map((opt): MenuItem => {
+              const Icon = opt.icon
+              const blockType = opt.blockType as BlockTypeToken
+              const isActive = activeBlockType === blockType
+              return {
+                label: t(`contextMenu.turnIntoType.${opt.blockType}`),
+                icon: Icon ? <Icon className="ml-3 h-3.5 w-3.5" /> : <span className="ml-3" />,
+                active: isActive,
+                action: isActive
+                  ? undefined
+                  : () => {
+                      onTurnInto(blockId, blockType)
+                      onClose()
+                    },
+              }
+            })
+          : []),
+      ]
+    : []
+
   // Filter out items without actions and empty groups.
   //
   // #217 A1 — order for calm scannability and mis-click safety: contextual
@@ -412,11 +465,15 @@ export function BlockContextMenu({
   // Delete previously sat at the very top (group1) — the easiest item to
   // mis-click; it now lives at the bottom, visually separated by the
   // existing inter-group divider and its `text-destructive` styling.
-  const groups = [copyUrlGroup, group4, group2, group3, group5, group1]
-    .map((group) => group.filter((item) => item.action !== undefined))
+  const groups = [copyUrlGroup, group4, turnIntoGroup, group2, group3, group5, group1]
+    // Keep actionable items, plus the active "Turn into" indicator row (which
+    // has no action by design — it shows the block's current type).
+    .map((group) => group.filter((item) => item.action !== undefined || item.active))
     .filter((group) => group.length > 0)
 
-  const visibleItems = groups.flat()
+  // Only actionable items participate in keyboard roving focus; the active
+  // indicator row is skipped.
+  const visibleItems = groups.flat().filter((item) => item.action !== undefined)
 
   // ── Keyboard navigation ──────────────────────────────────────────
   const { focusedIndex, handleKeyDown: navHandleKeyDown } = useListKeyboardNavigation({
@@ -470,6 +527,23 @@ export function BlockContextMenu({
         <div key={groupIdx} role="group">
           {groupIdx > 0 && <hr className="my-1 h-px border-0 bg-border" />}
           {group.map((item) => {
+            // #264 — the active "Turn into" type renders as a non-interactive
+            // indicator: no action, no `itemIndex`, skipped by roving focus.
+            if (item.action === undefined && item.active) {
+              return (
+                <div
+                  key={item.label}
+                  role="menuitem"
+                  aria-disabled="true"
+                  aria-current="true"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-accent-foreground bg-accent/60"
+                >
+                  {item.icon}
+                  <span className="flex-1">{item.label}</span>
+                  <span className="ml-4 text-xs text-muted-foreground">✓</span>
+                </div>
+              )
+            }
             const idx = itemIndex++
             return (
               <button
