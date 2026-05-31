@@ -22,6 +22,7 @@
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
+import { isEmojiPickerEnabled } from '../../lib/editor-preferences'
 import { searchEmoji } from '../emoji-data'
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'
@@ -43,6 +44,9 @@ export const EmojiPicker = Extension.create({
         char: ':',
         allowedPrefixes: [' ', '\u00A0', '\n'],
         allow: ({ state, range }) => {
+          // Live-read the user preference (#130 \u2014 disable-able in Settings \u2192
+          // Editor). Read here so toggling takes effect with no remount.
+          if (!isEmojiPickerEnabled()) return false
           // 'U+FFFC' is the leaf placeholder textBetween uses for non-text nodes.
           const text = state.doc.textBetween(range.from, range.to, undefined, '\ufffc')
           return EMOJI_QUERY_RE.test(text)

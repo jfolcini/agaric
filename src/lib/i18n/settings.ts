@@ -19,6 +19,10 @@ export const settings: Record<string, string> = {
   'settings.tabGeneral': 'General',
   'settings.tabProperties': 'Properties',
   'settings.tabAppearance': 'Appearance',
+  'settings.tabEditor': 'Editor',
+  'settings.editor.emojiPickerLabel': 'Emoji picker',
+  'settings.editor.emojiPickerHelp':
+    'Type : followed by a shortcode (e.g. :joy) to insert an emoji inline. Turn off to type a literal colon with no popup.',
   'settings.tabSync': 'Sync & Devices',
   'settings.tabData': 'Data',
   'settings.themeLabel': 'Theme',

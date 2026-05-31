@@ -56,4 +56,16 @@ test.describe('Inline emoji picker — `:` trigger (#130)', () => {
     await page.keyboard.type(' : ', { delay: 30 })
     await expect(page.locator('[data-testid="suggestion-popup"]')).toHaveCount(0)
   })
+
+  test('disabling the emoji picker (Settings → Editor) stops `:` from triggering', async ({
+    page,
+  }) => {
+    // The editor reads the preference live, so no reload is needed — the
+    // next `:query` keystroke respects the flag.
+    await page.evaluate(() => localStorage.setItem('agaric-emoji-picker-enabled', 'false'))
+    await focusBlock(page)
+    await page.keyboard.press('End')
+    await page.keyboard.type(' :joy', { delay: 30 })
+    await expect(page.locator('[data-testid="suggestion-popup"]')).toHaveCount(0)
+  })
 })
