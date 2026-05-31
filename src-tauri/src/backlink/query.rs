@@ -82,7 +82,7 @@ pub async fn eval_backlink_query(
     // 1. `total_count` via SQL — never materialises the base id set.
     //    Mirrors the predicate shape (self-exclusion + deleted_at + space
     //    scope) that the pre-H1 implementation used to build base_ids.
-    let total_count_i64: i64 = sqlx::query_scalar::<_, i64>(
+    let total_count_i64: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
@@ -90,9 +90,9 @@ pub async fn eval_backlink_query(
            AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+        block_id,
+        space_id,
     )
-    .bind(block_id)
-    .bind(space_id)
     .fetch_one(pool)
     .await?;
     let total_count: usize = usize::try_from(total_count_i64).unwrap_or(0);
@@ -199,7 +199,7 @@ async fn eval_created_sort_keyset(
         None => total_count,
         Some(set) => {
             let json = serde_json::to_string(&set.iter().collect::<Vec<_>>())?;
-            let count_i64: i64 = sqlx::query_scalar::<_, i64>(
+            let count_i64: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM block_links bl \
                  JOIN blocks b ON b.id = bl.source_id \
                  WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
@@ -208,10 +208,10 @@ async fn eval_created_sort_keyset(
                         SELECT bp.block_id FROM block_properties bp \
                         WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
                    AND b.id IN (SELECT value FROM json_each(?3))",
+                block_id,
+                space_id,
+                json,
             )
-            .bind(block_id)
-            .bind(space_id)
-            .bind(&json)
             .fetch_one(pool)
             .await?;
             usize::try_from(count_i64).unwrap_or(0)
@@ -351,7 +351,8 @@ async fn eval_property_sort_materialised(
         None => None,
     };
 
-    let filtered_ids: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+    let filter_json_ref = filter_json.as_deref();
+    let filtered_ids: FxHashSet<String> = sqlx::query_scalar!(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
@@ -360,10 +361,10 @@ async fn eval_property_sort_materialised(
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
            AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
+        block_id,
+        space_id,
+        filter_json_ref,
     )
-    .bind(block_id)
-    .bind(space_id)
-    .bind(filter_json.as_deref())
     .fetch_all(pool)
     .await?
     .into_iter()
@@ -617,11 +618,10 @@ pub(super) async fn resolve_root_pages_cte(
 /// filter dropdowns). Callers that need the full universe (admin /
 /// migration paths) should query `block_properties` directly.
 pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1000",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows =
+        sqlx::query_scalar!("SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1000",)
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE log_snapshots SET status = 'complete' WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "4e686a2799dc4c75d5cfe5c30bfe7e53471de3ca16a78fcbf2e1d50768107722"
+}

@@ -106,15 +106,15 @@ pub(crate) async fn collect_tables(
     .fetch_all(&mut *conn)
     .await?;
 
-    let property_definitions: Vec<PropertyDefinitionSnapshot> =
-        sqlx::query_as::<_, PropertyDefinitionSnapshot>(
-            "SELECT key, value_type, options, created_at FROM property_definitions",
-        )
-        .fetch_all(&mut *conn)
-        .await?;
+    let property_definitions: Vec<PropertyDefinitionSnapshot> = sqlx::query_as!(
+        PropertyDefinitionSnapshot,
+        "SELECT key, value_type, options, created_at FROM property_definitions"
+    )
+    .fetch_all(&mut *conn)
+    .await?;
 
     let page_aliases: Vec<PageAliasSnapshot> =
-        sqlx::query_as::<_, PageAliasSnapshot>("SELECT page_id, alias FROM page_aliases")
+        sqlx::query_as!(PageAliasSnapshot, "SELECT page_id, alias FROM page_aliases")
             .fetch_all(&mut *conn)
             .await?;
 
@@ -234,14 +234,15 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
     let mut tx = crate::db::begin_immediate_logged(pool, "snapshot_create").await?;
 
     // Step 1: INSERT with status='pending'
-    sqlx::query(
+    let up_to_seqs_json = serde_json::to_string(&data.up_to_seqs)?;
+    sqlx::query!(
         "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
          VALUES (?, 'pending', ?, ?, ?)",
+        snapshot_id,
+        up_to_hash,
+        up_to_seqs_json,
+        encoded,
     )
-    .bind(&snapshot_id)
-    .bind(&up_to_hash)
-    .bind(serde_json::to_string(&data.up_to_seqs)?)
-    .bind(&encoded)
     .execute(&mut *tx)
     .await?;
 
@@ -249,10 +250,12 @@ pub async fn create_snapshot(pool: &SqlitePool, device_id: &str) -> Result<Strin
     // Inside the same tx — either both rows land (status='complete') or
     // neither does. Boot cleanup is therefore only needed for crashes
     // mid-transaction at the SQLite layer, not for our application logic.
-    sqlx::query("UPDATE log_snapshots SET status = 'complete' WHERE id = ?")
-        .bind(&snapshot_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE log_snapshots SET status = 'complete' WHERE id = ?",
+        snapshot_id
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
@@ -385,22 +388,25 @@ pub async fn compact_op_log(
     let mut tx = crate::db::begin_immediate_logged(pool, "compact_op_log_phase3_snapshot").await?;
 
     // Step 1: INSERT with status='pending'
-    sqlx::query(
+    let up_to_seqs_json = serde_json::to_string(&data.up_to_seqs)?;
+    sqlx::query!(
         "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) \
          VALUES (?, 'pending', ?, ?, ?)",
+        snapshot_id,
+        up_to_hash,
+        up_to_seqs_json,
+        encoded,
     )
-    .bind(&snapshot_id)
-    .bind(&up_to_hash)
-    .bind(serde_json::to_string(&data.up_to_seqs)?)
-    .bind(&encoded)
     .execute(&mut *tx)
     .await?;
 
     // Step 2: UPDATE to 'complete'
-    sqlx::query("UPDATE log_snapshots SET status = 'complete' WHERE id = ?")
-        .bind(&snapshot_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "UPDATE log_snapshots SET status = 'complete' WHERE id = ?",
+        snapshot_id
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
     // Snapshot is durable on disk. From here on, a crash leaves the
@@ -424,12 +430,12 @@ pub async fn compact_op_log(
 
     let mut deleted_count: u64 = 0;
     for (dev_id, max_seq) in &data.up_to_seqs {
-        let res = sqlx::query(
+        let res = sqlx::query!(
             "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",
+            cutoff_ms,
+            dev_id,
+            max_seq,
         )
-        .bind(cutoff_ms)
-        .bind(dev_id)
-        .bind(max_seq)
         .execute(&mut *tx)
         .await?;
         deleted_count += res.rows_affected();
@@ -444,13 +450,13 @@ pub async fn compact_op_log(
     // the two derived-state deletes commit together. If this tx fails the
     // snapshot itself remains intact in `log_snapshots` from TX 1.
     let keep: i64 = 3;
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM log_snapshots WHERE status = 'pending' \
          OR id NOT IN \
          (SELECT id FROM log_snapshots WHERE status = 'complete' \
           ORDER BY id DESC LIMIT ?1)",
+        keep,
     )
-    .bind(keep)
     .execute(&mut *tx)
     .await?;
 
@@ -495,13 +501,13 @@ pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64
     }
     let keep_i64: i64 = i64::try_from(keep)
         .expect("invariant: keep is a small configuration value (typically < 100) and fits in i64");
-    let result = sqlx::query(
+    let result = sqlx::query!(
         "DELETE FROM log_snapshots WHERE status = 'pending' \
          OR id NOT IN \
          (SELECT id FROM log_snapshots WHERE status = 'complete' \
           ORDER BY id DESC LIMIT ?1)",
+        keep_i64,
     )
-    .bind(keep_i64)
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
