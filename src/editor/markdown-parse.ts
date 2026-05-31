@@ -518,10 +518,11 @@ export interface InlineState {
   /**
    * Which delimiter char opened the currently-open bold/italic run — `'*'` or
    * `'_'` (GFM accepts both). Only the matching char closes, so `*foo_` /
-   * `_foo*` don't cross-close. `''` when not open.
+   * `_foo*` don't cross-close. `null` when not open. Also drives the
+   * unclosed-mark revert so an unclosed `_`/`__` reverts to the right literal.
    */
-  boldOpenChar: string
-  italicOpenChar: string
+  boldDelim: '*' | '_' | null
+  italicDelim: '*' | '_' | null
   /** Snapshots of `nodes.length` at the moment a mark opened (for revert). */
   boldOpenNodeLen: number
   italicOpenNodeLen: number
@@ -545,8 +546,8 @@ export function createInlineState(line: string, depth: number): InlineState {
     inUnderline: false,
     boldOpenPos: -1,
     italicOpenPos: -1,
-    boldOpenChar: '',
-    italicOpenChar: '',
+    boldDelim: null,
+    italicDelim: null,
     boldOpenNodeLen: 0,
     italicOpenNodeLen: 0,
     codeOpenNodeLen: 0,
@@ -646,42 +647,65 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   return true
 }
 
+/** Word char per CommonMark flanking (Unicode letters + numbers). */
+const WORD_CHAR_RE = /[\p{L}\p{N}]/u
+
 /**
- * Whether the `_`-run starting at the scanner cursor is intraword — an
- * alphanumeric on BOTH sides of the whole run. GFM/CommonMark disallow `_`
- * emphasis inside a word, so such a run is literal text (keeps `snake_case`,
- * `a__b`, `__init__`-inside-a-word intact). `*` runs have no such restriction.
+ * CommonMark-aligned flanking test for an underscore delimiter run at the
+ * scanner cursor. The flanking chars are taken from the FULL contiguous `_`
+ * run in both directions — the cursor may sit mid-run if an earlier `_` was
+ * already emitted as literal (e.g. the 2nd `_` of `a__b__c`), and the rule
+ * must always see the whole run's outer edges, never an inner `_`.
+ *
+ * The run can OPEN only when the char immediately before it is absent (line
+ * start) or NOT a word char, AND the char immediately after the run is
+ * present and NOT whitespace. It can CLOSE only when the char before is
+ * present and NOT whitespace, AND the char after is absent (line end) or NOT
+ * a word char. A run that is neither a valid open nor close — e.g. a `_`/`__`
+ * flanked by word chars on both sides (`snake_case`, `a_b_c`, `a__b__c`) — is
+ * literal text. (`*` runs use the naive asterisk toggle and have no such
+ * guard, so the asterisk path stays byte-identical to before.)
  */
-function isIntrawordUnderscoreRun(s: Scanner): boolean {
-  if (peek(s) !== '_') return false
-  // Extend over the FULL consecutive `_` run in both directions — the cursor
-  // may sit mid-run if an earlier `_` was already emitted as literal (e.g. the
-  // 2nd `_` of `a__b`), and the flanking check must see the whole run's edges.
+function underscoreFlank(s: Scanner): { canOpen: boolean; canClose: boolean } {
   let start = 0
   while (peek(s, start - 1) === '_') start -= 1
   let end = 0
   while (peek(s, end) === '_') end += 1
-  const before = peek(s, start - 1)
-  const after = peek(s, end)
-  return /[A-Za-z0-9]/.test(before) && /[A-Za-z0-9]/.test(after)
+  const before = peek(s, start - 1) // '' at line start
+  const after = peek(s, end) // '' at line end
+  const beforeWord = before !== '' && WORD_CHAR_RE.test(before)
+  const afterWord = after !== '' && WORD_CHAR_RE.test(after)
+  const beforeWs = before === '' || /\s/.test(before)
+  const afterWs = after === '' || /\s/.test(after)
+  const canOpen = !beforeWord && after !== '' && !afterWs
+  const canClose = before !== '' && !beforeWs && !afterWord
+  return { canOpen, canClose }
 }
 
-/** Bold toggle: `**` or `__` (GFM). */
+/** Bold toggle: `**` (asterisk, naive) or `__` (underscore, CommonMark flanking). */
 export function scanBold(st: InlineState): boolean {
   const ch = peek(st.scanner)
   if ((ch !== '*' && ch !== '_') || peek(st.scanner, 1) !== ch) return false
-  // GFM underscore emphasis is not allowed intraword.
-  if (ch === '_' && isIntrawordUnderscoreRun(st.scanner)) return false
-  // Only the matching delimiter char closes an open run (no `**…__` crossing).
-  if (st.inBold && st.boldOpenChar !== ch) return false
+  if (ch === '_') {
+    // Underscore obeys CommonMark flanking; only `__` can close a `__` run.
+    const { canOpen, canClose } = underscoreFlank(st.scanner)
+    if (st.inBold) {
+      if (st.boldDelim !== '_' || !canClose) return false
+    } else if (!canOpen) {
+      return false // neither a valid open nor a close → literal text
+    }
+  } else if (st.inBold && st.boldDelim !== '*') {
+    // `*` open run can only be closed by `*` (no `__…**` crossing).
+    return false
+  }
   flushBuf(st, currentMarks(st))
   if (st.inBold) {
     st.inBold = false
-    st.boldOpenChar = ''
+    st.boldDelim = null
   } else {
     st.boldOpenPos = st.scanner.pos
     st.boldOpenNodeLen = st.nodes.length
-    st.boldOpenChar = ch
+    st.boldDelim = ch
     st.inBold = true
   }
   st.scanner.pos += 2
@@ -747,22 +771,31 @@ export function scanUnderline(st: InlineState): boolean {
   return false
 }
 
-/** Italic toggle: `*` (single star, not already matched as bold `**`). */
+/** Italic toggle: `*` (single star) or `_` (single underscore, CommonMark flanking). */
 export function scanItalic(st: InlineState): boolean {
   const ch = peek(st.scanner)
   if (ch !== '*' && ch !== '_') return false
-  // `**`/`__` are bold (handled by scanBold, which runs first); a single
-  // `_` is intraword-guarded like the bold case.
-  if (ch === '_' && isIntrawordUnderscoreRun(st.scanner)) return false
-  if (st.inItalic && st.italicOpenChar !== ch) return false
+  // `**`/`__` are bold (handled by scanBold, which runs first).
+  if (ch === '_') {
+    // Underscore obeys CommonMark flanking; only `_` can close a `_` run.
+    const { canOpen, canClose } = underscoreFlank(st.scanner)
+    if (st.inItalic) {
+      if (st.italicDelim !== '_' || !canClose) return false
+    } else if (!canOpen) {
+      return false // neither a valid open nor a close → literal text
+    }
+  } else if (st.inItalic && st.italicDelim !== '*') {
+    // `*` open run can only be closed by `*` (no `_…*` crossing).
+    return false
+  }
   flushBuf(st, currentMarks(st))
   if (st.inItalic) {
     st.inItalic = false
-    st.italicOpenChar = ''
+    st.italicDelim = null
   } else {
     st.italicOpenPos = st.scanner.pos
     st.italicOpenNodeLen = st.nodes.length
-    st.italicOpenChar = ch
+    st.italicDelim = ch
     st.inItalic = true
   }
   st.scanner.pos++
@@ -796,7 +829,9 @@ function revertUnclosedMarks(st: InlineState): void {
   revertUnclosedItalic(st)
   if (st.inBold) {
     const reverted = st.nodes.splice(st.boldOpenNodeLen)
-    st.buf = `**${reverted.map(nodeToPlainText).join('')}${st.buf}`
+    // Revert to the literal delimiter that opened the run (`**` or `__`).
+    const lit = st.boldDelim === '_' ? '__' : '**'
+    st.buf = `${lit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
   }
   // Underline is the outermost mark (opened first) → reverted last so the
   // inner reverts above have already folded their nodes back into `buf`.
@@ -815,14 +850,17 @@ function revertUnclosedMarks(st: InlineState): void {
 function revertUnclosedItalic(st: InlineState): void {
   if (!st.inItalic) return
   const reverted = st.nodes.splice(st.italicOpenNodeLen)
+  // Revert to the literal delimiter that opened each run (`*`/`_`, `**`/`__`).
+  const italicLit = st.italicDelim === '_' ? '_' : '*'
   if (st.inBold && st.boldOpenPos > st.italicOpenPos) {
+    const boldLit = st.boldDelim === '_' ? '__' : '**'
     const splitAt = st.boldOpenNodeLen - st.italicOpenNodeLen
     const before = reverted.slice(0, splitAt)
     const after = reverted.slice(splitAt)
-    st.buf = `*${before.map(nodeToPlainText).join('')}**${after.map(nodeToPlainText).join('')}${st.buf}`
+    st.buf = `${italicLit}${before.map(nodeToPlainText).join('')}${boldLit}${after.map(nodeToPlainText).join('')}${st.buf}`
     st.inBold = false
   } else {
-    st.buf = `*${reverted.map(nodeToPlainText).join('')}${st.buf}`
+    st.buf = `${italicLit}${reverted.map(nodeToPlainText).join('')}${st.buf}`
   }
 }
 
