@@ -580,7 +580,13 @@ export function searchSlashCommands(query: string): PickerItem[] {
   // #264 — `/turn` surfaces the block-type conversion options inline. The
   // parent `turn` entry lives in SLASH_COMMANDS (baseResults); the expanded
   // `turn-*` options are merged here so typing `/turn` lists every target type.
-  const turnIntoResults = matchSorter(TURN_INTO_COMMANDS, q, { keys: ['label'] })
+  // Gate on the `turn` prefix: the option labels embed their target-type name
+  // ("TURN INTO Heading 1", "TURN INTO Quote", …), so matching them against an
+  // unscoped query would duplicate the canonical type commands and pollute
+  // searches like `/heading`, `/quote`, or `/code`.
+  const turnIntoResults = q.startsWith('turn')
+    ? matchSorter(TURN_INTO_COMMANDS, q, { keys: ['label'] })
+    : []
 
   const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
   let results = [
