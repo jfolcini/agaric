@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO log_snapshots (id, status, up_to_hash, up_to_seqs, data) VALUES (?, 'pending', ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "d63f5d9126825c22b719237dc3ed31dcdf3ebcd7907a49cd107b63b013dfa836"
+}
