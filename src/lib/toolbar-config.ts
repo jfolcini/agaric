@@ -210,11 +210,15 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
       },
     },
     {
+      // #265 — blockquote is a long-tail structural insert with a `/quote`
+      // slash twin (the canonical home). Demoted below the high-frequency
+      // structure (heading 65 / code block 55 / ordered list 50) so it drops
+      // into the overflow popover first under width pressure (#217).
       icon: Quote,
       label: 'toolbar.blockquote',
       tip: 'toolbar.blockquoteTip',
       activeKey: 'blockquote',
-      priority: 50,
+      priority: 35,
       action: () => editor.chain().focus().toggleBlockquote().run(),
     },
   ]
@@ -223,6 +227,8 @@ export function createRefsAndBlocks(editor: Editor): ToolbarButtonConfig[] {
 export function createStructureButtons(): ToolbarButtonConfig[] {
   return [
     {
+      // #265 — ordered list is one of the high-frequency structural inserts
+      // kept inline (heading / code block / list). Priority unchanged at 50.
       icon: ListOrdered,
       label: 'toolbar.orderedList',
       tip: 'toolbar.orderedListTip',
@@ -230,17 +236,21 @@ export function createStructureButtons(): ToolbarButtonConfig[] {
       action: () => dispatchBlockEvent('INSERT_ORDERED_LIST'),
     },
     {
+      // #265 — divider is a long-tail structural insert with a `/divider`
+      // slash twin. Demoted (50 → 35) into the overflow popover first.
       icon: Minus,
       label: 'toolbar.divider',
       tip: 'toolbar.dividerTip',
-      priority: 50,
+      priority: 35,
       action: () => dispatchBlockEvent('INSERT_DIVIDER'),
     },
     {
+      // #265 — callout is a long-tail structural insert with a `/callout`
+      // slash twin. Demoted (40 → 30) so it is the first structure to overflow.
       icon: Info,
       label: 'toolbar.callout',
       tip: 'toolbar.calloutTip',
-      priority: 40,
+      priority: 30,
       action: () => dispatchBlockEvent('INSERT_CALLOUT'),
     },
   ]
@@ -249,24 +259,29 @@ export function createStructureButtons(): ToolbarButtonConfig[] {
 export function createMetadataButtons(): ToolbarButtonConfig[] {
   return [
     {
+      // #265 — the three date pickers (insert / due / scheduled) all have
+      // slash twins (`/date`, `/due`, `/scheduled`) and are long-tail on the
+      // standing bar. Demoted (70 → 40) toward the overflow popover so the
+      // high-frequency TODO toggle (80) and priority cycle (75) keep their
+      // place; the dates remain reachable via slash + overflow.
       icon: CalendarDays,
       label: 'toolbar.insertDate',
       tip: 'toolbar.insertDateTip',
-      priority: 70,
+      priority: 40,
       action: () => dispatchBlockEvent('OPEN_DATE_PICKER'),
     },
     {
       icon: CalendarClock,
       label: 'toolbar.setDueDate',
       tip: 'toolbar.dueDateTip',
-      priority: 70,
+      priority: 40,
       action: () => dispatchBlockEvent('OPEN_DUE_DATE_PICKER'),
     },
     {
       icon: CalendarCheck2,
       label: 'toolbar.setScheduledDate',
       tip: 'toolbar.scheduledDateTip',
-      priority: 70,
+      priority: 40,
       action: () => dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER'),
     },
     {

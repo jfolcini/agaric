@@ -160,6 +160,18 @@ describe('createRefsAndBlocks', () => {
     ])
   })
 
+  // #265 — blockquote is a long-tail structural insert with a `/quote` slash
+  // twin (its canonical home), so it is demoted below the refs/blocks that
+  // have no slash-only equivalent and drops into the overflow popover first.
+  it('demotes blockquote below the refs/blocks so it overflows first (#265)', () => {
+    const byLabel = Object.fromEntries(createRefsAndBlocks(makeEditor()).map((b) => [b.label, b]))
+    const blockquote = byLabel['toolbar.blockquote']?.priority ?? 0
+    const internalLink = byLabel['toolbar.internalLink']?.priority ?? 0
+    const insertTag = byLabel['toolbar.insertTag']?.priority ?? 0
+    expect(blockquote).toBeLessThan(internalLink)
+    expect(blockquote).toBeLessThan(insertTag)
+  })
+
   // #213 PR 4 — block-ref creation parity (mirrors the page-link button).
   describe('insertBlockRef button', () => {
     it('inserts the "((" trigger when there is no selection', () => {
@@ -281,6 +293,21 @@ describe('createStructureButtons', () => {
     expect(labels).toEqual(['toolbar.orderedList', 'toolbar.divider', 'toolbar.callout'])
   })
 
+  // #265 — structural-insert overflow trim. The slash menu is the canonical
+  // home for structural inserts; only the high-frequency ordered-list stays
+  // toward the front of the bar, while the long-tail divider/callout twins are
+  // demoted so they collapse into the overflow popover first (relieving #217).
+  it('keeps the high-frequency ordered list ahead of the long-tail divider/callout', () => {
+    const byLabel = Object.fromEntries(createStructureButtons().map((b) => [b.label, b]))
+    const orderedList = byLabel['toolbar.orderedList']?.priority ?? 0
+    const divider = byLabel['toolbar.divider']?.priority ?? 0
+    const callout = byLabel['toolbar.callout']?.priority ?? 0
+    expect(orderedList).toBeGreaterThan(divider)
+    expect(orderedList).toBeGreaterThan(callout)
+    // Callout is the first structural insert to overflow.
+    expect(callout).toBeLessThanOrEqual(divider)
+  })
+
   it('actions dispatch block events', () => {
     const spy = vi.fn()
     document.addEventListener('insert-ordered-list', spy)
@@ -316,6 +343,17 @@ describe('createMetadataButtons', () => {
       'toolbar.todoToggle',
       'toolbar.properties',
     ])
+  })
+
+  // #265 — the three date pickers have `/date`, `/due`, `/scheduled` slash
+  // twins (their canonical home), so they are demoted below the
+  // high-frequency TODO toggle and drop into the overflow popover first.
+  it('demotes the three date pickers below the TODO toggle so they overflow first (#265)', () => {
+    const byLabel = Object.fromEntries(createMetadataButtons().map((b) => [b.label, b]))
+    const todo = byLabel['toolbar.todoToggle']?.priority ?? 0
+    for (const label of ['toolbar.insertDate', 'toolbar.setDueDate', 'toolbar.setScheduledDate']) {
+      expect(byLabel[label]?.priority ?? 0).toBeLessThan(todo)
+    }
   })
 
   it('actions dispatch block events', () => {
