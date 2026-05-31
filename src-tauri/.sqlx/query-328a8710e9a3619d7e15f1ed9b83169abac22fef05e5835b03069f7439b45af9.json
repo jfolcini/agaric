@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "328a8710e9a3619d7e15f1ed9b83169abac22fef05e5835b03069f7439b45af9"
+}

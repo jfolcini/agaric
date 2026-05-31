@@ -1,6 +1,6 @@
 //! FTS index management — create, update, remove, and rebuild FTS entries.
 
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
 use super::strip::{load_ref_maps, strip_for_fts_with_maps};
 use crate::error::AppError;
@@ -104,22 +104,19 @@ pub async fn update_fts_for_block_with_maps(
     match row {
         None => {
             // Block doesn't exist — remove from FTS if present
-            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-                .bind(block_id)
+            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
                 .execute(&mut *tx)
                 .await?;
         }
         Some(ref r) if r.deleted_at.is_some() => {
             // deleted_at IS NOT NULL — remove from FTS
-            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-                .bind(block_id)
+            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
                 .execute(&mut *tx)
                 .await?;
         }
         Some(ref r) if r.content.is_none() => {
             // content IS NULL — remove from FTS
-            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-                .bind(block_id)
+            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -129,17 +126,18 @@ pub async fn update_fts_for_block_with_maps(
             let stripped = strip_for_fts_with_maps(&content, tag_names, page_titles);
 
             // Delete existing entry
-            sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-                .bind(block_id)
+            sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
                 .execute(&mut *tx)
                 .await?;
 
             // Insert new entry
-            sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
-                .bind(block_id)
-                .bind(&stripped)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query!(
+                "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
+                block_id,
+                stripped
+            )
+            .execute(&mut *tx)
+            .await?;
         }
     }
 
@@ -191,8 +189,7 @@ pub async fn update_fts_for_block_split_with_maps(
 
     if should_delete {
         // Phase 2a: Delete only — minimal write lock
-        sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-            .bind(block_id)
+        sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
             .execute(write_pool)
             .await?;
         return Ok(());
@@ -204,23 +201,23 @@ pub async fn update_fts_for_block_split_with_maps(
 
     // Phase 2b: Write — minimal transaction
     let mut tx = crate::db::begin_immediate_logged(write_pool, "fts_update_block_write").await?;
-    sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-        .bind(block_id)
+    sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
-        .bind(block_id)
-        .bind(&stripped)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
+        block_id,
+        stripped
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }
 
 /// Remove a block from the FTS index (for soft-delete/purge).
 pub async fn remove_fts_for_block(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM fts_blocks WHERE block_id = ?")
-        .bind(block_id)
+    sqlx::query!("DELETE FROM fts_blocks WHERE block_id = ?", block_id)
         .execute(pool)
         .await?;
     Ok(())
@@ -300,19 +297,21 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
             crate::db::begin_immediate_logged(pool, "fts_reindex_references_chunk").await?;
 
         // Batch fetch this chunk's block metadata (1 query per chunk)
-        let rows = sqlx::query(
+        let rows = sqlx::query!(
             r#"SELECT id, content, deleted_at FROM blocks
                WHERE id IN (SELECT value FROM json_each(?))"#,
+            ids_json
         )
-        .bind(&ids_json)
         .fetch_all(&mut *tx)
         .await?;
 
         // Batch delete this chunk's old FTS entries (1 query per chunk)
-        sqlx::query("DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))")
-            .bind(&ids_json)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM fts_blocks WHERE block_id IN (SELECT value FROM json_each(?))",
+            ids_json
+        )
+        .execute(&mut *tx)
+        .await?;
 
         // PEND-25 L7: stage (id, stripped) pairs for the chunk, then emit
         // multi-row `INSERT INTO fts_blocks` via QueryBuilder. The previous
@@ -322,14 +321,10 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         // staging loop is just an in-memory map.
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(rows.len());
         for row in &rows {
-            let id: &str = row.get("id");
-            let deleted_at: Option<&str> = row.get("deleted_at");
-            let content: Option<&str> = row.get("content");
-
-            if deleted_at.is_none() {
-                if let Some(content) = content {
+            if row.deleted_at.is_none() {
+                if let Some(content) = row.content.as_deref() {
                     let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
-                    to_insert.push((id.to_owned(), stripped));
+                    to_insert.push((row.id.to_owned(), stripped));
                 }
             }
         }
@@ -397,7 +392,7 @@ async fn rebuild_fts_index_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // milliseconds.
     {
         let mut tx = crate::db::begin_immediate_logged(pool, "fts_rebuild_index_clear").await?;
-        sqlx::query("DELETE FROM fts_blocks")
+        sqlx::query!("DELETE FROM fts_blocks")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -478,7 +473,7 @@ async fn rebuild_fts_index_split_impl(
     {
         let mut tx =
             crate::db::begin_immediate_logged(write_pool, "fts_rebuild_index_clear_write").await?;
-        sqlx::query("DELETE FROM fts_blocks")
+        sqlx::query!("DELETE FROM fts_blocks")
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -509,7 +504,7 @@ async fn rebuild_fts_index_split_impl(
 
 /// Run FTS5 optimize to merge segments.
 pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query("INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')")
+    sqlx::query!("INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')")
         .execute(pool)
         .await?;
     Ok(())

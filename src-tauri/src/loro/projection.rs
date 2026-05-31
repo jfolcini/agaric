@@ -62,16 +62,17 @@ pub async fn project_create_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
-    sqlx::query(
+    let parent_id = snapshot.parent_id.as_deref();
+    sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
              (id, block_type, content, parent_id, position) \
          VALUES (?, ?, ?, ?, ?)",
+        snapshot.block_id,
+        snapshot.block_type,
+        snapshot.content,
+        parent_id,
+        snapshot.position,
     )
-    .bind(&snapshot.block_id)
-    .bind(&snapshot.block_type)
-    .bind(&snapshot.content)
-    .bind(snapshot.parent_id.as_deref())
-    .bind(snapshot.position)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -88,11 +89,13 @@ pub async fn project_edit_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-        .bind(&snapshot.content)
-        .bind(&snapshot.block_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
+        snapshot.content,
+        snapshot.block_id,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -162,18 +165,19 @@ pub async fn project_set_property_to_sql(
         }
     } else {
         let value_bool_int: Option<i64> = payload.value_bool.map(|b| b as i64);
-        sqlx::query(
+        let block_id = payload.block_id.as_str();
+        sqlx::query!(
             "INSERT OR REPLACE INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            block_id,
+            payload.key,
+            payload.value_text,
+            payload.value_num,
+            payload.value_date,
+            payload.value_ref,
+            value_bool_int,
         )
-        .bind(payload.block_id.as_str())
-        .bind(&payload.key)
-        .bind(&payload.value_text)
-        .bind(payload.value_num)
-        .bind(&payload.value_date)
-        .bind(&payload.value_ref)
-        .bind(value_bool_int)
         .execute(&mut *conn)
         .await?;
     }
@@ -197,16 +201,13 @@ pub async fn project_purge_block_to_sql(
     conn: &mut SqliteConnection,
     block_id: &str,
 ) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM block_tags WHERE block_id = ?")
-        .bind(block_id)
+    sqlx::query!("DELETE FROM block_tags WHERE block_id = ?", block_id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM block_properties WHERE block_id = ?")
-        .bind(block_id)
+    sqlx::query!("DELETE FROM block_properties WHERE block_id = ?", block_id)
         .execute(&mut *conn)
         .await?;
-    sqlx::query("DELETE FROM blocks WHERE id = ?")
-        .bind(block_id)
+    sqlx::query!("DELETE FROM blocks WHERE id = ?", block_id)
         .execute(&mut *conn)
         .await?;
     Ok(())
@@ -271,12 +272,15 @@ pub async fn project_move_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-        .bind(snapshot.parent_id.as_deref())
-        .bind(snapshot.position)
-        .bind(&snapshot.block_id)
-        .execute(&mut *conn)
-        .await?;
+    let parent_id = snapshot.parent_id.as_deref();
+    sqlx::query!(
+        "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
+        parent_id,
+        snapshot.position,
+        snapshot.block_id,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -359,11 +363,13 @@ pub async fn project_delete_property_to_sql(
             }
         }
     } else {
-        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-            .bind(block_id)
-            .bind(key)
-            .execute(&mut *conn)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id,
+            key,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -379,11 +385,13 @@ pub async fn project_add_tag_to_sql(
     block_id: &str,
     tag_id: &str,
 ) -> Result<(), AppError> {
-    sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-        .bind(block_id)
-        .bind(tag_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+        block_id,
+        tag_id,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -398,11 +406,13 @@ pub async fn project_remove_tag_to_sql(
     block_id: &str,
     tag_id: &str,
 ) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-        .bind(block_id)
-        .bind(tag_id)
-        .execute(&mut *conn)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        block_id,
+        tag_id,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -453,7 +463,8 @@ pub async fn project_block_full_to_sql(
 ) -> Result<(), AppError> {
     match snapshot {
         Some(snap) => {
-            sqlx::query(
+            let parent_id = snap.parent_id.as_deref();
+            sqlx::query!(
                 "INSERT INTO blocks \
                      (id, block_type, content, parent_id, position) \
                  VALUES (?, ?, ?, ?, ?) \
@@ -462,12 +473,12 @@ pub async fn project_block_full_to_sql(
                      content = excluded.content, \
                      parent_id = excluded.parent_id, \
                      position = excluded.position",
+                snap.block_id,
+                snap.block_type,
+                snap.content,
+                parent_id,
+                snap.position,
             )
-            .bind(&snap.block_id)
-            .bind(&snap.block_type)
-            .bind(&snap.content)
-            .bind(snap.parent_id.as_deref())
-            .bind(snap.position)
             .execute(&mut *conn)
             .await?;
             Ok(())
@@ -555,10 +566,13 @@ pub async fn reproject_block_properties_from_engine(
     // block, and this DELETE never sweeps a property the engine doesn't know.
     // (A future change that lets spaceless blocks into an engine must revisit
     // this.)
-    sqlx::query("DELETE FROM block_properties WHERE block_id = ?")
-        .bind(block_id.as_str())
-        .execute(&mut *conn)
-        .await?;
+    let block_id_str = block_id.as_str();
+    sqlx::query!(
+        "DELETE FROM block_properties WHERE block_id = ?",
+        block_id_str
+    )
+    .execute(&mut *conn)
+    .await?;
 
     for (key, value) in props {
         if is_reserved_property_key(key) {
@@ -570,20 +584,21 @@ pub async fn reproject_block_properties_from_engine(
         // Recover the SQL type from the property definition; default to
         // "text" for an undefined key (warn once so a missing definition
         // is observable without spamming the log per-property).
-        let value_type: String =
-            sqlx::query_scalar("SELECT value_type FROM property_definitions WHERE key = ?")
-                .bind(key)
-                .fetch_optional(&mut *conn)
-                .await?
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        key = %key,
-                        block_id = %block_id.as_str(),
-                        "reproject_block_properties_from_engine: no property_definitions row; \
-                         defaulting to 'text'"
-                    );
-                    "text".to_string()
-                });
+        let value_type: String = sqlx::query_scalar!(
+            "SELECT value_type FROM property_definitions WHERE key = ?",
+            key
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .unwrap_or_else(|| {
+            tracing::warn!(
+                key = %key,
+                block_id = %block_id.as_str(),
+                "reproject_block_properties_from_engine: no property_definitions row; \
+                 defaulting to 'text'"
+            );
+            "text".to_string()
+        });
 
         // Route the single string value into exactly one typed column.
         let mut value_text: Option<&str> = None;
@@ -616,18 +631,18 @@ pub async fn reproject_block_properties_from_engine(
             continue;
         }
 
-        sqlx::query(
+        sqlx::query!(
             "INSERT INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            block_id_str,
+            key,
+            value_text,
+            value_num,
+            value_date,
+            value_ref,
+            value_bool,
         )
-        .bind(block_id.as_str())
-        .bind(key)
-        .bind(value_text)
-        .bind(value_num)
-        .bind(value_date)
-        .bind(value_ref)
-        .bind(value_bool)
         .execute(&mut *conn)
         .await?;
     }
@@ -653,16 +668,16 @@ pub async fn reproject_block_properties_from_engine(
             _ => {}
         }
     }
-    sqlx::query(
+    sqlx::query!(
         "UPDATE blocks SET \
              todo_state = ?, priority = ?, due_date = ?, scheduled_date = ? \
          WHERE id = ?",
+        todo_state,
+        priority,
+        due_date,
+        scheduled_date,
+        block_id_str,
     )
-    .bind(todo_state)
-    .bind(priority)
-    .bind(due_date)
-    .bind(scheduled_date)
-    .bind(block_id.as_str())
     .execute(&mut *conn)
     .await?;
 
@@ -711,8 +726,8 @@ pub async fn reproject_block_tags_from_engine(
 ) -> Result<(), AppError> {
     // Authoritative replace: clear all existing edges first so remote
     // removals (absent from `tag_ids`) are swept and never re-inserted.
-    sqlx::query("DELETE FROM block_tags WHERE block_id = ?")
-        .bind(block_id.as_str())
+    let block_id_str = block_id.as_str();
+    sqlx::query!("DELETE FROM block_tags WHERE block_id = ?", block_id_str)
         .execute(&mut *conn)
         .await?;
 
@@ -720,13 +735,13 @@ pub async fn reproject_block_tags_from_engine(
         // FK-safe + idempotent: only insert when the tag block exists (see
         // the "FK safety" doc above); `INSERT OR IGNORE` keeps re-adds a
         // no-op like the local `add_tag_inner` path.
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
              SELECT ?, ? WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+            block_id_str,
+            tag_id,
+            tag_id,
         )
-        .bind(block_id.as_str())
-        .bind(tag_id)
-        .bind(tag_id)
         .execute(&mut *conn)
         .await?;
     }
@@ -793,9 +808,9 @@ pub async fn reproject_block_deleted_at_from_engine(
             // The remote says this block is alive. Read SQL's current
             // soft-delete state: nothing to do if it is already alive or
             // absent.
+            let block_id_str = block_id.as_str();
             let current: Option<Option<i64>> =
-                sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
-                    .bind(block_id.as_str())
+                sqlx::query_scalar!("SELECT deleted_at FROM blocks WHERE id = ?", block_id_str)
                     .fetch_optional(&mut *conn)
                     .await?;
             let Some(Some(deleted_at_ref)) = current else {

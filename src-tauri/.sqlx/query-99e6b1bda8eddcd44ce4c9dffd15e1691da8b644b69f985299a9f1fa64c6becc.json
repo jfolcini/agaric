@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "99e6b1bda8eddcd44ce4c9dffd15e1691da8b644b69f985299a9f1fa64c6becc"
+}
