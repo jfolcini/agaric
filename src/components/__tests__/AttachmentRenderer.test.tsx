@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -130,7 +131,7 @@ describe('AttachmentRenderer', () => {
     expect(screen.getByTestId('image-resize-toolbar')).toBeInTheDocument()
   })
 
-  it('image click triggers onLightboxOpen with the blob URL', async () => {
+  it('image click triggers onLightboxOpen with the blob URL and the image set', async () => {
     const onLightboxOpen = vi.fn()
     render(
       <AttachmentRenderer
@@ -141,11 +142,56 @@ describe('AttachmentRenderer', () => {
     )
     const img = await screen.findByRole('img')
     fireEvent.click(img)
-    expect(onLightboxOpen).toHaveBeenCalledWith({
-      src: expect.stringMatching(/^blob:/),
-      alt: 'photo.png',
-      fsPath: 'attachments/att-1',
-    })
+    expect(onLightboxOpen).toHaveBeenCalledWith(
+      {
+        src: expect.stringMatching(/^blob:/),
+        alt: 'photo.png',
+        fsPath: 'attachments/att-1',
+      },
+      [
+        {
+          src: expect.stringMatching(/^blob:/),
+          alt: 'photo.png',
+          fsPath: 'attachments/att-1',
+        },
+      ],
+    )
+  })
+
+  it('caps inline image height at min(400px, 60vh) with auto width (#212 item 1)', async () => {
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+    const img = await screen.findByRole('img')
+    // jsdom's CSSOM drops the CSS `min()` function from computed style, so assert
+    // against the raw inline style attribute instead of toHaveStyle().
+    const style = img.getAttribute('style') ?? ''
+    expect(style).toContain('max-height: min(400px, 60vh)')
+    expect(style).toContain('width: auto')
+    expect(style).toContain('max-width: 100%')
+  })
+
+  it('opens the lightbox with the full ordered image set, clicked image first (#212 item 2)', async () => {
+    const onLightboxOpen = vi.fn()
+    const atts = [
+      makeAttachment({ id: 'a', filename: 'a.png', fs_path: 'attachments/a' }),
+      makeAttachment({ id: 'b', filename: 'b.png', fs_path: 'attachments/b' }),
+      makeAttachment({ id: 'c', filename: 'c.png', fs_path: 'attachments/c' }),
+    ]
+    render(<AttachmentRenderer {...baseProps} attachments={atts} onLightboxOpen={onLightboxOpen} />)
+
+    // All three images must load (and register their blob URLs) first.
+    await waitFor(() => expect(screen.getAllByRole('img')).toHaveLength(3))
+
+    const buttons = screen.getAllByRole('button', { name: /Open image .* in full screen/ })
+    const secondButton = buttons[1]
+    if (!secondButton) throw new Error('expected three image buttons')
+    await userEvent.click(secondButton)
+
+    expect(onLightboxOpen).toHaveBeenCalledOnce()
+    const call = onLightboxOpen.mock.calls[0]
+    if (!call) throw new Error('expected onLightboxOpen to have been called')
+    const [clicked, images] = call
+    expect(clicked.alt).toBe('b.png')
+    expect((images as { alt: string }[]).map((i) => i.alt)).toEqual(['a.png', 'b.png', 'c.png'])
   })
 
   it('renders non-image attachments as file chips (no IPC read)', () => {
