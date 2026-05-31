@@ -18,5 +18,6 @@ export {
   resetAllShortcuts,
   resetShortcut,
   setCustomShortcut,
+  toAriaKeyshortcuts,
 } from './keyboard-config/storage'
 export { configKeyToTipTap } from './keyboard-config/tiptap'

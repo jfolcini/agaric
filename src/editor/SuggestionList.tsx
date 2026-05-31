@@ -171,7 +171,14 @@ export const SuggestionList = ({
             ? 'suggestion.noResults.blockRef'
             : 'suggestion.noResults'
     return (
-      <output className="suggestion-empty p-2 text-sm text-muted-foreground" aria-live="polite">
+      // #216 C1 — name the live region so AT announces it in context
+      // ("Tags: No results") rather than a bare, origin-less message. Mirrors
+      // the listbox's `aria-label` below.
+      <output
+        className="suggestion-empty p-2 text-sm text-muted-foreground"
+        aria-live="polite"
+        aria-label={label ?? 'Suggestions'}
+      >
         {t(emptyKey)}
       </output>
     )
