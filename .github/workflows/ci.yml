@@ -75,10 +75,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # `fetch-depth: 2` is the minimum that lets `git diff HEAD~1 HEAD`
-          # work for the push case. Pull-request events use the base/head
-          # SHAs from the payload and don't need extra history.
-          fetch-depth: 2
+          # Full history so the three-dot `base...head` diff below can resolve
+          # the merge-base. A shallow clone (the old `fetch-depth: 2`) lacks the
+          # branch point for PRs whose head is behind `main`, which would make
+          # the symmetric-difference diff fail or fall back to a stale base.
+          fetch-depth: 0
           persist-credentials: false
       - id: diff
         shell: bash
@@ -119,7 +120,15 @@ jobs:
             exit 0
           fi
 
-          mapfile -t changed < <(git diff --name-only "$base" "$head")
+          # Three-dot (symmetric-difference) diff: compare from the
+          # merge-base of base..head to head, i.e. ONLY the files this branch
+          # changed — not files where `main` (base) moved ahead while the
+          # branch sat behind. A two-dot `git diff base head` reports those
+          # base-side changes too, so a frontend-only PR that was branched
+          # before an unrelated `src-tauri/` merge would spuriously match
+          # `desktop_re` and run the ~24 min build. (Bug from the original
+          # path-gate; fixed here.)
+          mapfile -t changed < <(git diff --name-only "$base"..."$head")
 
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "Empty diff — skipping both bundle jobs."
