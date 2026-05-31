@@ -135,4 +135,16 @@ describe('TURN_INTO commands (#264)', () => {
     const ids = searchSlashCommands('priority').map((r) => r.id)
     expect(ids).not.toContain('turn-paragraph')
   })
+
+  // #264 regression — the option labels embed their target-type name
+  // ("TURN INTO Heading 1"), so a type-name query like `/heading`, `/quote`, or
+  // `/code` must NOT pull in the turn-* duplicates alongside the canonical type
+  // commands (which would also break strict-mode `hasText` locators in e2e).
+  it.each(['heading', 'quote', 'code'])(
+    'does not surface turn options for the type-name query %p',
+    (query) => {
+      const ids = searchSlashCommands(query).map((r) => r.id)
+      expect(ids.some((id) => id.startsWith('turn-'))).toBe(false)
+    },
+  )
 })
