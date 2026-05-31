@@ -1321,43 +1321,56 @@ mod tests {
 
     /// M-31: a chatty session can grow `agaric.log` to tens of MB; the
     /// bug-report dialog must not stall the IPC thread on an unbounded
-    /// `fs::read_to_string` of the live log. With the cap applied, a
-    /// 2+ MB file completes well under 200 ms even with an ERROR line
-    /// at the very tail. The threshold is set with CI variability in
-    /// mind — local dev machines see ~5 ms, but shared GitHub-Actions
-    /// runners regularly land in the 50–95 ms band; without the cap
-    /// the same file took over 1 s. 200 ms keeps the regression-detection
-    /// signal (ratio over 5×) without flaking the public CI.
+    /// `fs::read_to_string` of the live log. The fix caps each file read to
+    /// the last `MAX_FILE_BYTES` bytes (truncating from the head).
+    ///
+    /// We assert the cap's *behaviour* deterministically rather than its
+    /// wall-clock time. The previous `elapsed < 200ms` assertion measured
+    /// machine contention, not code: on a saturated CI runner (nextest runs
+    /// the whole suite in parallel) a tens-of-ms operation can blow past
+    /// 200ms, so it flaked (observed TRY-1 FAIL → TRY-2 PASS). A capped read
+    /// is bounded-fast *by construction*, so verifying the cap is applied
+    /// subsumes the timing concern with zero flakiness: an ERROR marker at
+    /// the HEAD of an oversized file must NOT survive (it lies before the
+    /// last-`MAX_FILE_BYTES` window and is never read), while the TAIL marker
+    /// must. Filler is `INFO`, so the two markers are the only ERROR lines —
+    /// a missing head marker can only mean the file cap dropped it (not the
+    /// `RECENT_ERRORS_CAP` of 20).
     #[test]
-    fn collect_metadata_completes_quickly_for_oversized_log_file() {
+    fn collect_metadata_caps_oversized_log_file_to_the_tail() {
         let dir = TempDir::new().unwrap();
         let log_dir = log_dir_for_app_data(dir.path());
         fs::create_dir_all(&log_dir).unwrap();
 
-        // Write > MAX_FILE_BYTES of filler followed by a clearly
-        // identifiable ERROR line at the tail.
+        // ERROR marker at the very head, then > MAX_FILE_BYTES of INFO
+        // filler, then an ERROR marker at the tail. The head marker sits well
+        // inside the region the cap truncates away.
         let cap = usize::try_from(MAX_FILE_BYTES).unwrap_or(usize::MAX);
-        let mut contents = String::with_capacity(cap + 4_096);
-        while contents.len() < cap + 1_024 {
+        let mut contents = String::with_capacity(cap + 8_192);
+        contents.push_str("2025-01-01 ERROR [agaric] M31_HEAD_MARKER\n");
+        while contents.len() < cap + 4_096 {
             contents.push_str("2025-01-01 INFO [agaric] filler line abcdefghijklmnopqrstuvwxyz\n");
         }
         contents.push_str("2025-01-01 ERROR [agaric] M31_TAIL_MARKER\n");
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let start = std::time::Instant::now();
         let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
-        let elapsed = start.elapsed();
 
-        assert!(
-            elapsed < std::time::Duration::from_millis(200),
-            "collect_bug_report_metadata_inner took {elapsed:?}; expected < 200ms with the read cap in place"
-        );
         // Tail marker survives the cap-truncate-from-head path.
         assert!(
             md.recent_errors
                 .iter()
                 .any(|l| l.contains("M31_TAIL_MARKER")),
             "tail ERROR marker must survive the cap, got recent_errors: {:?}",
+            md.recent_errors
+        );
+        // Head marker was truncated away by the read cap — it must NOT appear.
+        // (If it did, the read was unbounded — the exact regression M-31 fixed.)
+        assert!(
+            !md.recent_errors
+                .iter()
+                .any(|l| l.contains("M31_HEAD_MARKER")),
+            "head ERROR marker must be dropped by the read cap, got recent_errors: {:?}",
             md.recent_errors
         );
     }
