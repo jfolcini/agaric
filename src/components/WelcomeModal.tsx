@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { AtSign, FileText, Keyboard, Layers, RefreshCw, Tag } from 'lucide-react'
+import { AtSign, Bold, SquareSlash } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,36 +31,24 @@ function markOnboardingDone(): void {
   }
 }
 
+// #214 Phase 1B — three concrete workflow rows replace the earlier six
+// abstract feature blurbs. Each teaches one core gesture a new user can
+// try immediately: the slash menu, links/tags, and inline formatting.
 const FEATURES = [
   {
-    icon: FileText,
-    titleKey: 'welcome.featureBlocks',
-    descKey: 'welcome.featureBlocksDesc',
-  },
-  {
-    icon: Keyboard,
-    titleKey: 'welcome.featureShortcuts',
-    descKey: 'welcome.featureShortcutsDesc',
-  },
-  {
-    icon: Tag,
-    titleKey: 'welcome.featureTags',
-    descKey: 'welcome.featureTagsDesc',
-  },
-  {
-    icon: RefreshCw,
-    titleKey: 'welcome.featureSync',
-    descKey: 'welcome.featureSyncDesc',
-  },
-  {
-    icon: Layers,
-    titleKey: 'welcome.featureSpaces',
-    descKey: 'welcome.featureSpacesDesc',
+    icon: SquareSlash,
+    titleKey: 'welcome.workflowSlash',
+    descKey: 'welcome.workflowSlashDesc',
   },
   {
     icon: AtSign,
-    titleKey: 'welcome.featureReferences',
-    descKey: 'welcome.featureReferencesDesc',
+    titleKey: 'welcome.workflowLinkTag',
+    descKey: 'welcome.workflowLinkTagDesc',
+  },
+  {
+    icon: Bold,
+    titleKey: 'welcome.workflowFormat',
+    descKey: 'welcome.workflowFormatDesc',
   },
 ] as const
 

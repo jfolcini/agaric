@@ -19,24 +19,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // Mock lucide-react icons so we don't pull in the full icon library in tests.
+// #214 Phase 1B replaced the six abstract feature icons with three workflow
+// icons (SquareSlash, AtSign, Bold).
 vi.mock('lucide-react', () => ({
-  FileText: (props: { className?: string }) => (
-    <svg data-testid="icon-file-text" className={props.className} />
-  ),
-  Keyboard: (props: { className?: string }) => (
-    <svg data-testid="icon-keyboard" className={props.className} />
-  ),
-  Tag: (props: { className?: string }) => (
-    <svg data-testid="icon-tag" className={props.className} />
-  ),
-  RefreshCw: (props: { className?: string }) => (
-    <svg data-testid="icon-refresh-cw" className={props.className} />
-  ),
-  Layers: (props: { className?: string }) => (
-    <svg data-testid="icon-layers" className={props.className} />
+  SquareSlash: (props: { className?: string }) => (
+    <svg data-testid="icon-square-slash" className={props.className} />
   ),
   AtSign: (props: { className?: string }) => (
     <svg data-testid="icon-at-sign" className={props.className} />
+  ),
+  Bold: (props: { className?: string }) => (
+    <svg data-testid="icon-bold" className={props.className} />
   ),
   XIcon: (props: { className?: string }) => (
     <svg data-testid="x-icon" className={props.className} />
@@ -96,85 +89,72 @@ describe('WelcomeModal', () => {
     expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
   })
 
-  it('displays all six feature highlights', () => {
+  // #214 Phase 1B — the welcome modal now teaches three concrete
+  // workflows instead of six abstract feature blurbs.
+  it('displays the three workflow rows', () => {
     render(<WelcomeModal />)
 
-    expect(screen.getByText('Blocks + pages')).toBeInTheDocument()
-    expect(screen.getByText('Keyboard shortcuts')).toBeInTheDocument()
-    expect(screen.getByText('Tags + properties')).toBeInTheDocument()
-    expect(screen.getByText('Sync across devices')).toBeInTheDocument()
-    expect(screen.getByText('Separate work and personal')).toBeInTheDocument()
-    expect(screen.getByText('Reference syntax')).toBeInTheDocument()
+    expect(screen.getByText('Press / for tasks & dates')).toBeInTheDocument()
+    expect(screen.getByText('Type [[ to link, @ to tag')).toBeInTheDocument()
+    expect(screen.getByText('Select text to format')).toBeInTheDocument()
   })
 
-  // UX-278: feature list must use <ul role="list"> + <li> for proper SR semantics.
-  it('renders the feature list with semantic <ul>/<li> markup', () => {
+  // UX-278: feature list must use <ul role="list"> + <li> for proper SR
+  // semantics. #214 Phase 1B reduced six rows to three workflows.
+  it('renders the workflow list with semantic <ul>/<li> markup', () => {
     render(<WelcomeModal />)
 
     const list = screen.getByRole('list')
     expect(list.tagName).toBe('UL')
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(6)
-    // Each <li> hosts one feature title
-    expect(items[0]).toHaveTextContent('Blocks + pages')
-    expect(items[1]).toHaveTextContent('Keyboard shortcuts')
-    expect(items[2]).toHaveTextContent('Tags + properties')
-    expect(items[3]).toHaveTextContent('Sync across devices')
-    expect(items[4]).toHaveTextContent('Separate work and personal')
-    expect(items[5]).toHaveTextContent('Reference syntax')
+    expect(items).toHaveLength(3)
+    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[1]).toHaveTextContent('Type [[ to link, @ to tag')
+    expect(items[2]).toHaveTextContent('Select text to format')
   })
 
-  // UX-382: Sync is Agaric's biggest differentiator (local-first,
-  // multi-device sync) and must appear in the welcome highlights so new
-  // users discover it immediately. Pins both the count (was 3, now 4,
-  // now 5 after UX-365 added Spaces) and the new title so a regression
-  // that drops the entry trips the test.
-  it('highlights "Sync across devices" as the 4th feature (UX-382)', () => {
+  // #214 Phase 1B — the slash workflow row teaches the command menu and
+  // uses the SquareSlash icon.
+  it('renders the slash workflow row first with its description and icon (#214)', () => {
     render(<WelcomeModal />)
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(6)
-    expect(items[3]).toHaveTextContent('Sync across devices')
-  })
-
-  // UX-365: the "Spaces are private; data never leaves your device"
-  // banner used to live only inside SpaceManageDialog, which new users
-  // may never reach. Surface the same intent as a 5th welcome highlight
-  // so it's seen on first launch. Pins the entry to position 5 with the
-  // Layers icon so a regression that drops it trips the test.
-  it('highlights "Separate work and personal" as the 5th feature (UX-365)', () => {
-    render(<WelcomeModal />)
-
-    const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(6)
-    expect(items[4]).toHaveTextContent('Separate work and personal')
-    expect(items[4]).toHaveTextContent(
-      'Spaces keep notes private and isolated. Switch contexts without mixing data.',
+    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[0]).toHaveTextContent(
+      'Open the command menu to add tasks, dates, headings, and more.',
     )
-    // Layers is the conventional lucide icon for spaces/workspaces.
-    expect(items[4]?.querySelector('[data-testid="icon-layers"]')).not.toBeNull()
+    expect(items[0]?.querySelector('[data-testid="icon-square-slash"]')).not.toBeNull()
   })
 
-  // UX-310: the four reference-syntax triggers (`@`, `[[`, `((`, `#[…]`)
-  // were only documented in the `?` help panel. Surface them as a 6th
-  // welcome highlight so new users discover them on first launch
-  // without reading docs. Pins the entry to position 6 with the AtSign
-  // icon and asserts the trigger characters appear in the description
-  // so a regression that drops or paraphrases the entry trips the test.
-  it('highlights "Reference syntax" as the 6th feature (UX-310)', () => {
+  // #214 Phase 1B — the link/tag workflow row teaches the `[[` and `@`
+  // triggers and uses the AtSign icon.
+  it('renders the link/tag workflow row with both triggers and the AtSign icon (#214)', () => {
     render(<WelcomeModal />)
 
     const items = screen.getAllByRole('listitem')
-    expect(items).toHaveLength(6)
-    expect(items[5]).toHaveTextContent('Reference syntax')
-    // All four documented triggers must be visible in the description.
-    expect(items[5]).toHaveTextContent('@')
-    expect(items[5]).toHaveTextContent('[[')
-    expect(items[5]).toHaveTextContent('((')
-    expect(items[5]).toHaveTextContent('#[')
-    // AtSign is the conventional lucide icon for `@`-style references.
-    expect(items[5]?.querySelector('[data-testid="icon-at-sign"]')).not.toBeNull()
+    expect(items[1]).toHaveTextContent('[[')
+    expect(items[1]).toHaveTextContent('@')
+    expect(items[1]?.querySelector('[data-testid="icon-at-sign"]')).not.toBeNull()
+  })
+
+  // #214 Phase 1B — the formatting workflow row teaches the select-to-format
+  // gesture and uses the Bold icon.
+  it('renders the formatting workflow row last with the Bold icon (#214)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[2]).toHaveTextContent('Select text to format')
+    expect(items[2]?.querySelector('[data-testid="icon-bold"]')).not.toBeNull()
+  })
+
+  // #214 Phase 1B — the old six abstract feature blurbs must be gone.
+  it('no longer renders the old abstract feature blurbs (#214)', () => {
+    render(<WelcomeModal />)
+
+    expect(screen.queryByText('Blocks + pages')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sync across devices')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reference syntax')).not.toBeInTheDocument()
   })
 
   it('"Get Started" dismisses and sets localStorage', async () => {
@@ -456,25 +436,25 @@ describe('WelcomeModal', () => {
   // ----------------------------------------------------------------------
 
   describe('responsive path (MAINT-215)', () => {
-    it('mounts on the mobile path (Sheet) with title, feature list, and buttons accessible', () => {
+    it('mounts on the mobile path (Sheet) with title, workflow list, and buttons accessible', () => {
       mockedUseIsMobile.mockReturnValue(true)
 
       render(<WelcomeModal />)
 
       expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
-      // Feature list still renders inline on mobile.
-      expect(screen.getAllByRole('listitem')).toHaveLength(6)
+      // Workflow list still renders inline on mobile (#214 Phase 1B: 3 rows).
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
       expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
     })
 
-    it('mounts on the desktop path (Dialog) with title, feature list, and buttons accessible', () => {
+    it('mounts on the desktop path (Dialog) with title, workflow list, and buttons accessible', () => {
       mockedUseIsMobile.mockReturnValue(false)
 
       render(<WelcomeModal />)
 
       expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
-      expect(screen.getAllByRole('listitem')).toHaveLength(6)
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
       expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
     })

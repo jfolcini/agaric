@@ -102,8 +102,10 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getAllByText('Enter').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Arrow Right').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Shift').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('@')).toBeInTheDocument()
-    expect(screen.getByText('[[')).toBeInTheDocument()
+    // #214 Phase 3: bare `@` and `[[` now also appear in the Essential
+    // group's trigger kbds, so there can be more than one match.
+    expect(screen.getAllByText('@').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('[[').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1)
 
     // Verify conditions are rendered separately from keys. FEAT-7 moved the
@@ -137,10 +139,11 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText(t('keyboard.syntax.tagReference'))).toBeInTheDocument()
     expect(screen.getByText(t('keyboard.syntax.pageLink'))).toBeInTheDocument()
 
-    // Verify syntax entries are rendered in monospace code elements
+    // Verify syntax entries are rendered in monospace code elements.
+    // #214 Phase 3 added three rows (`:`, `::`, `<u>`): 14 → 17.
     const syntaxTable = screen.getByTestId('syntax-table')
     const codeElements = syntaxTable.querySelectorAll('code')
-    expect(codeElements.length).toBe(14)
+    expect(codeElements.length).toBe(17)
 
     const codeTexts = Array.from(codeElements).map((el) => el.textContent)
     expect(codeTexts).toContain('**text**')
