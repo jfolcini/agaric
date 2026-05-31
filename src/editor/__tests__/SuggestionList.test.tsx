@@ -67,6 +67,16 @@ describe('SuggestionList', () => {
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })
 
+  it('#216 C1 — empty-state live region carries the listbox label for AT context', () => {
+    const command = vi.fn()
+    const { rerender } = render(<SuggestionList items={[]} command={command} label="Tags" />)
+    // The aria-live status names its origin, so AT announces "Tags: No results".
+    expect(screen.getByText('No results')).toHaveAttribute('aria-label', 'Tags')
+    // Falls back to the generic listbox label when no label prop is given.
+    rerender(<SuggestionList items={[]} command={command} />)
+    expect(screen.getByText('No results')).toHaveAttribute('aria-label', 'Suggestions')
+  })
+
   it('clicking an item calls command with that item', async () => {
     const user = userEvent.setup()
     const command = vi.fn()

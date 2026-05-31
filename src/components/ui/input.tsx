@@ -8,6 +8,11 @@ export const SHARED_INPUT_CLASSES = [
 ] as const
 
 const Input = ({ ref, className, type, ...props }: React.ComponentProps<'input'>) => {
+  // #216 C3 — the `[@media(pointer:coarse)]:text-base` (16px) in the class list
+  // below is load-bearing for mobile: iOS Safari auto-zooms the viewport when a
+  // focused input's font-size is < 16px. Do NOT drop the coarse-pointer
+  // `text-base` override or lower it below 16px, or touch users get a jarring
+  // zoom on every field focus.
   return (
     <input
       ref={ref}
