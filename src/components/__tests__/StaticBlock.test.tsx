@@ -840,9 +840,13 @@ describe('StaticBlock', () => {
       expect(img.getAttribute('alt')).toBe('photo.png')
       expect(img.getAttribute('loading')).toBe('lazy')
       expect(img.getAttribute('src')).toMatch(/^blob:/)
-      expect((img as HTMLElement).style.maxWidth).toBe('100%')
-      expect((img as HTMLElement).style.maxHeight).toBe('400px')
-      expect((img as HTMLElement).style.objectFit).toBe('contain')
+      // #212 item 1: responsive cap — min(400px, 60vh) with auto width.
+      // jsdom CSSOM drops the CSS min() function, so assert the inline style attr.
+      const style = (img as HTMLElement).getAttribute('style') ?? ''
+      expect(style).toContain('max-width: 100%')
+      expect(style).toContain('max-height: min(400px, 60vh)')
+      expect(style).toContain('object-fit: contain')
+      expect(style).toContain('width: auto')
       expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
     })
 

@@ -125,11 +125,12 @@ function StaticBlockInner({
   const [pdfViewerUrl, setPdfViewerUrl] = useState('')
   const [pdfViewerFilename, setPdfViewerFilename] = useState('')
 
-  // Image lightbox state
-  const [lightboxImage, setLightboxImage] = useState<{
-    src: string
-    alt: string
-    fsPath: string
+  // Image lightbox state. `images` is the full ordered set of image
+  // attachments in this block (#212 item 2 — enables prev/next nav); `index`
+  // points at the currently displayed one.
+  const [lightboxState, setLightboxState] = useState<{
+    images: { src: string; alt: string; fsPath: string }[]
+    index: number
   } | null>(null)
 
   // Image resize state
@@ -163,8 +164,22 @@ function StaticBlockInner({
 
   const hasAttachments = !attachmentsLoading && attachments.length > 0
 
-  const handleLightboxOpen = useCallback((image: { src: string; alt: string; fsPath: string }) => {
-    setLightboxImage(image)
+  const handleLightboxOpen = useCallback(
+    (
+      image: { src: string; alt: string; fsPath: string },
+      images: { src: string; alt: string; fsPath: string }[],
+    ) => {
+      const index = Math.max(
+        0,
+        images.findIndex((img) => img.src === image.src),
+      )
+      setLightboxState({ images, index })
+    },
+    [],
+  )
+
+  const handleLightboxIndexChange = useCallback((index: number) => {
+    setLightboxState((prev) => (prev ? { ...prev, index } : prev))
   }, [])
 
   const handlePdfOpen = useCallback((url: string, filename: string) => {
@@ -314,15 +329,19 @@ function StaticBlockInner({
           filename={pdfViewerFilename}
         />
       </Suspense>
-      {lightboxImage && (
+      {lightboxState && (
         <ImageLightbox
-          src={lightboxImage.src}
-          alt={lightboxImage.alt}
-          open={!!lightboxImage}
+          images={lightboxState.images.map((img) => ({ src: img.src, alt: img.alt }))}
+          index={lightboxState.index}
+          onIndexChange={handleLightboxIndexChange}
+          open={!!lightboxState}
           onOpenChange={(open) => {
-            if (!open) setLightboxImage(null)
+            if (!open) setLightboxState(null)
           }}
-          onOpenExternal={() => openUrl(lightboxImage.fsPath)}
+          onOpenExternal={() => {
+            const current = lightboxState.images[lightboxState.index]
+            if (current) openUrl(current.fsPath)
+          }}
         />
       )}
     </>

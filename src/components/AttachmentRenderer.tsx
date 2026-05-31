@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { formatSize } from '../lib/attachment-utils'
@@ -29,6 +29,12 @@ function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
   return new Blob([new Uint8Array(bytes)], { type: mimeType })
 }
 
+export interface LightboxImage {
+  src: string
+  alt: string
+  fsPath: string
+}
+
 export interface AttachmentRendererProps {
   blockId: string
   attachments: Attachment[]
@@ -36,7 +42,12 @@ export interface AttachmentRendererProps {
   imageHovered: boolean
   onImageHoveredChange: (hovered: boolean) => void
   onImageWidthChange: (width: string) => void
-  onLightboxOpen: (image: { src: string; alt: string; fsPath: string }) => void
+  /**
+   * Open the lightbox for `image`. `images` is the full set of loaded image
+   * attachments in this block (render order) so the lightbox can offer
+   * prev/next navigation (#212 item 2).
+   */
+  onLightboxOpen: (image: LightboxImage, images: LightboxImage[]) => void
   onPdfOpen: (url: string, filename: string) => void
 }
 
@@ -56,6 +67,7 @@ function AttachmentImage({
   onImageHoveredChange,
   onImageWidthChange,
   onLightboxOpen,
+  onUrlChange,
 }: {
   att: Attachment
   imageWidth: string
@@ -63,7 +75,10 @@ function AttachmentImage({
   blockId: string
   onImageHoveredChange: (hovered: boolean) => void
   onImageWidthChange: (width: string) => void
-  onLightboxOpen: (image: { src: string; alt: string; fsPath: string }) => void
+  /** Open the lightbox at this image; receives this image's loaded blob URL. */
+  onLightboxOpen: (url: string) => void
+  /** Report this image's loaded blob URL (or null) to the parent registry. */
+  onUrlChange: (id: string, url: string | null) => void
 }): React.ReactElement {
   const { t } = useTranslation()
   const [url, setUrl] = useState<string | null>(null)
@@ -80,6 +95,7 @@ function AttachmentImage({
         if (cancelled) return
         objectUrl = URL.createObjectURL(bytesToBlob(bytes, att.mime_type))
         setUrl(objectUrl)
+        onUrlChange(att.id, objectUrl)
       })
       .catch((err) => {
         if (cancelled) return
@@ -90,9 +106,10 @@ function AttachmentImage({
     // Revoke on unmount AND whenever the attachment id changes (effect re-runs).
     return () => {
       cancelled = true
+      onUrlChange(att.id, null)
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [att.id, att.mime_type])
+  }, [att.id, att.mime_type, onUrlChange])
 
   if (error) {
     return (
@@ -152,7 +169,7 @@ function AttachmentImage({
         className="block cursor-pointer rounded-md border-0 bg-transparent p-0 hover:opacity-90 transition-opacity"
         onClick={(e) => {
           e.stopPropagation()
-          onLightboxOpen({ src: url, alt: att.filename, fsPath: att.fs_path })
+          onLightboxOpen(url)
         }}
       >
         <img
@@ -160,7 +177,16 @@ function AttachmentImage({
           alt={att.filename}
           loading="lazy"
           className="rounded-md"
-          style={{ maxWidth: '100%', maxHeight: '400px', objectFit: 'contain' }}
+          // Responsive cap (#212 item 1): never taller than 400px nor 60% of the
+          // viewport height, whichever is smaller; width auto-scales to preserve
+          // aspect ratio.
+          style={{
+            maxWidth: '100%',
+            maxHeight: 'min(400px, 60vh)',
+            height: 'auto',
+            width: 'auto',
+            objectFit: 'contain',
+          }}
         />
       </button>
     </div>
@@ -178,6 +204,44 @@ export function AttachmentRenderer({
   onPdfOpen,
 }: AttachmentRendererProps): React.ReactElement | null {
   const { t } = useTranslation()
+
+  // Registry of loaded image blob URLs, keyed by attachment id. Children report
+  // their URL as it loads/unloads; we read it (in attachment order) to build the
+  // lightbox image set on click so prev/next can cycle the whole block.
+  const urlsRef = useRef<Map<string, string>>(new Map())
+  const imageAttachments = useMemo(
+    () => attachments.filter((att) => att.mime_type.startsWith('image/')),
+    [attachments],
+  )
+
+  const handleUrlChange = useCallback((id: string, url: string | null) => {
+    if (url) urlsRef.current.set(id, url)
+    else urlsRef.current.delete(id)
+  }, [])
+
+  const buildImageSet = useCallback((): LightboxImage[] => {
+    const out: LightboxImage[] = []
+    for (const att of imageAttachments) {
+      const url = urlsRef.current.get(att.id)
+      if (url) out.push({ src: url, alt: att.filename, fsPath: att.fs_path })
+    }
+    return out
+  }, [imageAttachments])
+
+  const handleImageClick = useCallback(
+    (att: Attachment, url: string) => {
+      // Build the full set for prev/next from the registry, but ensure the
+      // clicked image is present (its own loaded URL) even if the registry
+      // hasn't caught it yet, so the lightbox always opens on the right image.
+      const set = buildImageSet()
+      if (!set.some((img) => img.src === url)) {
+        set.push({ src: url, alt: att.filename, fsPath: att.fs_path })
+      }
+      onLightboxOpen({ src: url, alt: att.filename, fsPath: att.fs_path }, set)
+    },
+    [onLightboxOpen, buildImageSet],
+  )
+
   if (attachments.length === 0) return null
 
   return (
@@ -193,7 +257,8 @@ export function AttachmentRenderer({
               imageHovered={imageHovered}
               onImageHoveredChange={onImageHoveredChange}
               onImageWidthChange={onImageWidthChange}
-              onLightboxOpen={onLightboxOpen}
+              onLightboxOpen={(url) => handleImageClick(att, url)}
+              onUrlChange={handleUrlChange}
             />
           )
         }
