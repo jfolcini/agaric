@@ -21,6 +21,7 @@ import { cn } from '../lib/utils'
 import { useResolveStore } from '../stores/resolve'
 import { AttachmentRenderer } from './AttachmentRenderer'
 import { ImageLightbox } from './ImageLightbox'
+import { DEFAULT_IMAGE_ALIGNMENT, type ImageAlignment } from './ImageResizeToolbar'
 import { QueryResult } from './QueryResult'
 import { renderRichContent } from './RichContentRenderer'
 import { Spinner } from './ui/spinner'
@@ -129,21 +130,25 @@ function StaticBlockInner({
   // attachments in this block (#212 item 2 — enables prev/next nav); `index`
   // points at the currently displayed one.
   const [lightboxState, setLightboxState] = useState<{
-    images: { src: string; alt: string; fsPath: string }[]
+    images: { src: string; alt: string; fsPath: string; caption?: string | undefined }[]
     index: number
   } | null>(null)
 
-  // Image resize state
+  // Image resize / alignment / caption state (#212 items 3 & 4). Alignment and
+  // caption ride the same per-block property mechanism as `image_width`
+  // (setProperty/getProperty) — no schema migration.
   const [imageWidth, setImageWidth] = useState('100')
+  const [imageAlignment, setImageAlignment] = useState<ImageAlignment>(DEFAULT_IMAGE_ALIGNMENT)
+  const [imageCaption, setImageCaption] = useState('')
   const [imageHovered, setImageHovered] = useState(false)
 
-  // Only fetch image_width property when the block has image attachments
+  // Only fetch image properties when the block has image attachments
   const hasImageAttachments =
     !attachmentsLoading && attachments.some((a) => a.mime_type.startsWith('image/'))
 
-  // Load stored image_width property when image attachments are present.
-  // PEND-35 Tier 2.4c — single-key PK lookup instead of fetching the
-  // whole property vocabulary just to read one row.
+  // Load stored image_width / image_alignment / image_caption properties when
+  // image attachments are present. PEND-35 Tier 2.4c — single-key PK lookups
+  // instead of fetching the whole property vocabulary just to read a few rows.
   useEffect(() => {
     if (!hasImageAttachments) return
     let cancelled = false
@@ -157,6 +162,27 @@ function StaticBlockInner({
       .catch((err) => {
         logger.warn('StaticBlock', 'image width property fetch failed', undefined, err)
       })
+    getProperty(blockId, 'image_alignment')
+      .then((alignProp) => {
+        if (cancelled) return
+        const v = alignProp?.value_text
+        if (v === 'left' || v === 'center' || v === 'right') {
+          setImageAlignment(v)
+        }
+      })
+      .catch((err) => {
+        logger.warn('StaticBlock', 'image alignment property fetch failed', undefined, err)
+      })
+    getProperty(blockId, 'image_caption')
+      .then((captionProp) => {
+        if (cancelled) return
+        if (captionProp?.value_text != null) {
+          setImageCaption(captionProp.value_text)
+        }
+      })
+      .catch((err) => {
+        logger.warn('StaticBlock', 'image caption property fetch failed', undefined, err)
+      })
     return () => {
       cancelled = true
     }
@@ -166,8 +192,8 @@ function StaticBlockInner({
 
   const handleLightboxOpen = useCallback(
     (
-      image: { src: string; alt: string; fsPath: string },
-      images: { src: string; alt: string; fsPath: string }[],
+      image: { src: string; alt: string; fsPath: string; caption?: string | undefined },
+      images: { src: string; alt: string; fsPath: string; caption?: string | undefined }[],
     ) => {
       const index = Math.max(
         0,
@@ -315,8 +341,12 @@ function StaticBlockInner({
           attachments={attachments}
           imageWidth={imageWidth}
           imageHovered={imageHovered}
+          imageAlignment={imageAlignment}
+          imageCaption={imageCaption}
           onImageHoveredChange={setImageHovered}
           onImageWidthChange={setImageWidth}
+          onImageAlignmentChange={setImageAlignment}
+          onImageCaptionChange={setImageCaption}
           onLightboxOpen={handleLightboxOpen}
           onPdfOpen={handlePdfOpen}
         />
@@ -331,7 +361,11 @@ function StaticBlockInner({
       </Suspense>
       {lightboxState && (
         <ImageLightbox
-          images={lightboxState.images.map((img) => ({ src: img.src, alt: img.alt }))}
+          images={lightboxState.images.map((img) => ({
+            src: img.src,
+            alt: img.alt,
+            caption: img.caption,
+          }))}
           index={lightboxState.index}
           onIndexChange={handleLightboxIndexChange}
           open={!!lightboxState}

@@ -106,4 +106,14 @@ export const editor: Record<string, string> = {
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
   'imageResize.saveFailed': 'Could not save image size',
+  // #212 item 3 — captions / alt-text
+  'imageCaption.placeholder': 'Add a caption…',
+  'imageCaption.label': 'Image caption',
+  'imageCaption.saveFailed': 'Could not save caption',
+  // #212 item 4 — alignment
+  'imageAlign.toolbar': 'Image alignment',
+  'imageAlign.left': 'Align left',
+  'imageAlign.center': 'Align center',
+  'imageAlign.right': 'Align right',
+  'imageAlign.saveFailed': 'Could not save image alignment',
 }

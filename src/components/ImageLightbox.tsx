@@ -24,6 +24,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dial
 export interface LightboxImage {
   src: string
   alt: string
+  /** Optional caption shown under the image (#212 item 3). */
+  caption?: string | undefined
 }
 
 export interface ImageLightboxProps {
@@ -115,6 +117,15 @@ export function ImageLightbox({
           )}
           data-testid="lightbox-image"
         />
+
+        {current.caption && (
+          <p
+            className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[80vw] truncate rounded-md bg-black/60 px-3 py-1.5 text-center text-sm text-white/90"
+            data-testid="lightbox-caption"
+          >
+            {current.caption}
+          </p>
+        )}
 
         {hasMultiple && (
           <>
