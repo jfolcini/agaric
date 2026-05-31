@@ -14,13 +14,15 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
   return {
     ...mod,
     readAttachment: vi.fn(),
+    setProperty: vi.fn(() => Promise.resolve({})),
   }
 })
 
-import { readAttachment } from '../../lib/tauri'
+import { readAttachment, setProperty } from '../../lib/tauri'
 import { AttachmentRenderer } from '../AttachmentRenderer'
 
 const mockedReadAttachment = vi.mocked(readAttachment)
+const mockedSetProperty = vi.mocked(setProperty)
 
 function makeAttachment(
   overrides: Partial<{
@@ -45,8 +47,12 @@ const baseProps = {
   blockId: 'B1',
   imageWidth: '100',
   imageHovered: false,
+  imageAlignment: 'center' as const,
+  imageCaption: '',
   onImageHoveredChange: vi.fn(),
   onImageWidthChange: vi.fn(),
+  onImageAlignmentChange: vi.fn(),
+  onImageCaptionChange: vi.fn(),
   onLightboxOpen: vi.fn(),
   onPdfOpen: vi.fn(),
 }
@@ -297,5 +303,158 @@ describe('AttachmentRenderer', () => {
     expect(wrapper.getAttribute('role')).toBe('group')
     expect(wrapper.getAttribute('aria-label')).toBe('Toggle resize toolbar')
     expect(wrapper.getAttribute('tabindex')).toBe('0')
+  })
+
+  // ---- #212 item 3: captions / alt-text ----
+
+  it('uses the filename as alt when there is no caption', async () => {
+    render(<AttachmentRenderer {...baseProps} imageCaption="" attachments={[makeAttachment()]} />)
+    const img = await screen.findByRole('img')
+    expect(img.getAttribute('alt')).toBe('photo.png')
+  })
+
+  it('renders the caption as a low-chrome input and uses it as the image alt (#212 item 3)', async () => {
+    render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageCaption="A red bicycle"
+        attachments={[makeAttachment()]}
+      />,
+    )
+    const img = await screen.findByRole('img')
+    // Caption doubles as alt text (filename fallback only when empty).
+    expect(img.getAttribute('alt')).toBe('A red bicycle')
+
+    const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+    expect(caption.value).toBe('A red bicycle')
+    expect(caption.getAttribute('placeholder')).toBe('Add a caption…')
+  })
+
+  it('persists image_caption on blur and reports the change to the parent', async () => {
+    const onImageCaptionChange = vi.fn()
+    render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageCaption=""
+        onImageCaptionChange={onImageCaptionChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+
+    fireEvent.change(caption, { target: { value: 'Sunset over the bay' } })
+    expect(caption.value).toBe('Sunset over the bay')
+    fireEvent.blur(caption)
+
+    expect(onImageCaptionChange).toHaveBeenCalledWith('Sunset over the bay')
+    expect(mockedSetProperty).toHaveBeenCalledWith({
+      blockId: 'B1',
+      key: 'image_caption',
+      valueText: 'Sunset over the bay',
+    })
+  })
+
+  it('does not persist the caption when it is unchanged on blur', async () => {
+    render(
+      <AttachmentRenderer {...baseProps} imageCaption="kept" attachments={[makeAttachment()]} />,
+    )
+    await screen.findByRole('img')
+    const caption = screen.getByTestId('image-caption-input') as HTMLInputElement
+    fireEvent.blur(caption)
+    expect(mockedSetProperty).not.toHaveBeenCalled()
+  })
+
+  it('forwards the caption into the lightbox image set (#212 item 3)', async () => {
+    const onLightboxOpen = vi.fn()
+    render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageCaption="A caption"
+        onLightboxOpen={onLightboxOpen}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    const img = await screen.findByRole('img')
+    fireEvent.click(img)
+    const call = onLightboxOpen.mock.calls[0]
+    if (!call) throw new Error('expected onLightboxOpen to have been called')
+    const [clicked, images] = call
+    expect(clicked.caption).toBe('A caption')
+    expect((images as { caption?: string }[])[0]?.caption).toBe('A caption')
+  })
+
+  // ---- #212 item 4: alignment ----
+
+  it('defaults the image row to center alignment', async () => {
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="center"
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const row = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
+    expect(row.getAttribute('data-alignment')).toBe('center')
+    expect(row.style.justifyContent).toBe('center')
+  })
+
+  it('applies the stored alignment to the image row (#212 item 4)', async () => {
+    const { container } = render(
+      <AttachmentRenderer {...baseProps} imageAlignment="right" attachments={[makeAttachment()]} />,
+    )
+    await screen.findByRole('img')
+    const row = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
+    expect(row.getAttribute('data-alignment')).toBe('right')
+    expect(row.style.justifyContent).toBe('flex-end')
+  })
+
+  it('setting alignment via the toolbar persists image_alignment and re-renders (#212 item 4)', async () => {
+    const onImageAlignmentChange = vi.fn()
+    const { container, rerender } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageHovered
+        imageAlignment="center"
+        onImageAlignmentChange={onImageAlignmentChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+
+    await userEvent.click(screen.getByTestId('image-align-left'))
+    expect(onImageAlignmentChange).toHaveBeenCalledWith('left')
+    expect(mockedSetProperty).toHaveBeenCalledWith({
+      blockId: 'B1',
+      key: 'image_alignment',
+      valueText: 'left',
+    })
+
+    // Parent state flows back down → the row reflects the new alignment.
+    rerender(
+      <AttachmentRenderer
+        {...baseProps}
+        imageHovered
+        imageAlignment="left"
+        onImageAlignmentChange={onImageAlignmentChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    const row = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
+    expect(row.style.justifyContent).toBe('flex-start')
+  })
+
+  it('has no a11y violations with a caption present', async () => {
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageCaption="A caption"
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 })

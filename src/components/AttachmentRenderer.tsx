@@ -5,9 +5,16 @@ import { useTranslation } from 'react-i18next'
 import { formatSize } from '../lib/attachment-utils'
 import { logger } from '../lib/logger'
 import { notify } from '../lib/notify'
-import { readAttachment } from '../lib/tauri'
-import { ImageResizeToolbar } from './ImageResizeToolbar'
+import { readAttachment, setProperty } from '../lib/tauri'
+import { type ImageAlignment, ImageResizeToolbar } from './ImageResizeToolbar'
 import { MimeIcon } from './MimeIcon'
+
+/** Map an alignment value to the flex justification of the image row. */
+const ALIGNMENT_JUSTIFY: Record<ImageAlignment, string> = {
+  left: 'flex-start',
+  center: 'center',
+  right: 'flex-end',
+}
 
 interface Attachment {
   id: string
@@ -33,6 +40,8 @@ export interface LightboxImage {
   src: string
   alt: string
   fsPath: string
+  /** Optional caption (#212 item 3) — shown under the image in the lightbox. */
+  caption?: string | undefined
 }
 
 export interface AttachmentRendererProps {
@@ -40,8 +49,14 @@ export interface AttachmentRendererProps {
   attachments: Attachment[]
   imageWidth: string
   imageHovered: boolean
+  /** Current alignment for this block's image(s) (#212 item 4). */
+  imageAlignment: ImageAlignment
+  /** Current caption for this block's image(s) (#212 item 3). */
+  imageCaption: string
   onImageHoveredChange: (hovered: boolean) => void
   onImageWidthChange: (width: string) => void
+  onImageAlignmentChange: (alignment: ImageAlignment) => void
+  onImageCaptionChange: (caption: string) => void
   /**
    * Open the lightbox for `image`. `images` is the full set of loaded image
    * attachments in this block (render order) so the lightbox can offer
@@ -63,18 +78,26 @@ function AttachmentImage({
   att,
   imageWidth,
   imageHovered,
+  imageAlignment,
+  imageCaption,
   blockId,
   onImageHoveredChange,
   onImageWidthChange,
+  onImageAlignmentChange,
+  onImageCaptionChange,
   onLightboxOpen,
   onUrlChange,
 }: {
   att: Attachment
   imageWidth: string
   imageHovered: boolean
+  imageAlignment: ImageAlignment
+  imageCaption: string
   blockId: string
   onImageHoveredChange: (hovered: boolean) => void
   onImageWidthChange: (width: string) => void
+  onImageAlignmentChange: (alignment: ImageAlignment) => void
+  onImageCaptionChange: (caption: string) => void
   /** Open the lightbox at this image; receives this image's loaded blob URL. */
   onLightboxOpen: (url: string) => void
   /** Report this image's loaded blob URL (or null) to the parent registry. */
@@ -83,6 +106,32 @@ function AttachmentImage({
   const { t } = useTranslation()
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
+
+  // When a caption exists it doubles as the image's alt text (#212 item 3);
+  // otherwise we fall back to the filename.
+  const altText = imageCaption.trim() || att.filename
+
+  // Persist the caption on blur. Empty caption clears the property via an
+  // empty string (kept simple — no delete needed, the load path treats an
+  // empty value as "no caption").
+  const handleCaptionBlur = useCallback(
+    (e: React.FocusEvent<HTMLInputElement>) => {
+      const next = e.target.value
+      if (next === imageCaption) return
+      onImageCaptionChange(next)
+      setProperty({
+        blockId,
+        key: 'image_caption',
+        valueText: next,
+      }).catch((err) => {
+        logger.warn('AttachmentRenderer', 'caption save failed', { blockId }, err)
+        // Revert on failure — restore the previous caption.
+        onImageCaptionChange(imageCaption)
+        notify.error(t('imageCaption.saveFailed'))
+      })
+    },
+    [blockId, imageCaption, onImageCaptionChange, t],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -161,6 +210,8 @@ function AttachmentImage({
           blockId={blockId}
           currentWidth={imageWidth}
           onWidthChange={onImageWidthChange}
+          currentAlignment={imageAlignment}
+          onAlignmentChange={onImageAlignmentChange}
         />
       )}
       <button
@@ -174,7 +225,7 @@ function AttachmentImage({
       >
         <img
           src={url}
-          alt={att.filename}
+          alt={altText}
           loading="lazy"
           className="rounded-md"
           // Responsive cap (#212 item 1): never taller than 400px nor 60% of the
@@ -189,6 +240,29 @@ function AttachmentImage({
           }}
         />
       </button>
+      {/* Caption line (#212 item 3): low-chrome, placeholder-only until focused
+          or filled. Persists `image_caption` on blur and doubles as the image's
+          alt text. The input lives inside the focusable group so it shares the
+          hover/focus reveal and blur-collapse behaviour. */}
+      <input
+        type="text"
+        defaultValue={imageCaption}
+        placeholder={t('imageCaption.placeholder')}
+        aria-label={t('imageCaption.label')}
+        className="mt-1 w-full border-0 bg-transparent px-0 text-center text-xs text-muted-foreground placeholder:text-muted-foreground/60 focus:outline-none focus-visible:outline-none"
+        data-testid="image-caption-input"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Don't let Enter/Space bubble to the group's toolbar toggle; Enter
+          // commits the caption by blurring the input.
+          e.stopPropagation()
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            ;(e.target as HTMLInputElement).blur()
+          }
+        }}
+        onBlur={handleCaptionBlur}
+      />
     </div>
   )
 }
@@ -198,8 +272,12 @@ export function AttachmentRenderer({
   attachments,
   imageWidth,
   imageHovered,
+  imageAlignment,
+  imageCaption,
   onImageHoveredChange,
   onImageWidthChange,
+  onImageAlignmentChange,
+  onImageCaptionChange,
   onLightboxOpen,
   onPdfOpen,
 }: AttachmentRendererProps): React.ReactElement | null {
@@ -219,14 +297,23 @@ export function AttachmentRenderer({
     else urlsRef.current.delete(id)
   }, [])
 
+  // Caption (#212 item 3) is a block-level property shared by the block's
+  // image(s); a non-empty caption doubles as the alt text (filename fallback).
+  const altFor = useCallback(
+    (att: Attachment) => imageCaption.trim() || att.filename,
+    [imageCaption],
+  )
+  const captionForLightbox = imageCaption.trim() || undefined
+
   const buildImageSet = useCallback((): LightboxImage[] => {
     const out: LightboxImage[] = []
     for (const att of imageAttachments) {
       const url = urlsRef.current.get(att.id)
-      if (url) out.push({ src: url, alt: att.filename, fsPath: att.fs_path })
+      if (url)
+        out.push({ src: url, alt: altFor(att), fsPath: att.fs_path, caption: captionForLightbox })
     }
     return out
-  }, [imageAttachments])
+  }, [imageAttachments, altFor, captionForLightbox])
 
   const handleImageClick = useCallback(
     (att: Attachment, url: string) => {
@@ -235,17 +322,25 @@ export function AttachmentRenderer({
       // hasn't caught it yet, so the lightbox always opens on the right image.
       const set = buildImageSet()
       if (!set.some((img) => img.src === url)) {
-        set.push({ src: url, alt: att.filename, fsPath: att.fs_path })
+        set.push({ src: url, alt: altFor(att), fsPath: att.fs_path, caption: captionForLightbox })
       }
-      onLightboxOpen({ src: url, alt: att.filename, fsPath: att.fs_path }, set)
+      onLightboxOpen(
+        { src: url, alt: altFor(att), fsPath: att.fs_path, caption: captionForLightbox },
+        set,
+      )
     },
-    [onLightboxOpen, buildImageSet],
+    [onLightboxOpen, buildImageSet, altFor, captionForLightbox],
   )
 
   if (attachments.length === 0) return null
 
   return (
-    <div className="mt-1 flex flex-wrap gap-2 px-3 pb-1" data-testid="attachment-section">
+    <div
+      className="mt-1 flex flex-wrap gap-2 px-3 pb-1"
+      style={{ justifyContent: ALIGNMENT_JUSTIFY[imageAlignment] }}
+      data-testid="attachment-section"
+      data-alignment={imageAlignment}
+    >
       {attachments.map((att) => {
         if (att.mime_type.startsWith('image/')) {
           return (
@@ -255,8 +350,12 @@ export function AttachmentRenderer({
               blockId={blockId}
               imageWidth={imageWidth}
               imageHovered={imageHovered}
+              imageAlignment={imageAlignment}
+              imageCaption={imageCaption}
               onImageHoveredChange={onImageHoveredChange}
               onImageWidthChange={onImageWidthChange}
+              onImageAlignmentChange={onImageAlignmentChange}
+              onImageCaptionChange={onImageCaptionChange}
               onLightboxOpen={(url) => handleImageClick(att, url)}
               onUrlChange={handleUrlChange}
             />
