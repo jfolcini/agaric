@@ -313,6 +313,32 @@ describe('SelectionBubbleMenu', () => {
       expect(screen.getByRole('button', { name: t('toolbar.link') })).toBeInTheDocument()
     })
 
+    it('#216 C2 — mark buttons expose canonical aria-keyshortcuts', () => {
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      // Bold/Italic are TipTap built-ins (fixed bindings); the rest derive
+      // from the keyboard config, normalised to ARIA token form.
+      expect(screen.getByRole('button', { name: t('toolbar.bold') })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+B',
+      )
+      expect(screen.getByRole('button', { name: t('toolbar.italic') })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+I',
+      )
+      expect(screen.getByRole('button', { name: t('toolbar.code') })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+E',
+      )
+      expect(screen.getByRole('button', { name: t('toolbar.strikethrough') })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+Shift+S',
+      )
+      expect(screen.getByRole('button', { name: t('toolbar.highlight') })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'Control+Shift+H',
+      )
+    })
+
     it('has role="toolbar" with aria-label "Selection formatting"', () => {
       render(<SelectionBubbleMenu editor={makeEditor()} />)
       const toolbar = screen.getByRole('toolbar', {

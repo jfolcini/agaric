@@ -22,7 +22,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { getShortcutKeys } from '@/lib/keyboard-config'
+import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { createMarkToggles, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
@@ -70,6 +70,20 @@ const BUBBLE_MENU_SHORTCUT_IDS: Record<string, string> = {
   'toolbar.code': 'inlineCode',
   'toolbar.strikethrough': 'strikethrough',
   'toolbar.highlight': 'highlight',
+}
+
+/**
+ * #216 C2 — canonical `aria-keyshortcuts` per mark button so AT announces the
+ * binding (tooltips never fire on touch). Bold/Italic use TipTap StarterKit
+ * built-ins (not in the configurable catalog), so their bindings are fixed
+ * here; the rest derive from the live (user-customisable) keyboard config.
+ */
+function ariaKeyshortcutsFor(label: string): string | undefined {
+  if (label === 'toolbar.bold') return 'Control+B'
+  if (label === 'toolbar.italic') return 'Control+I'
+  const id = BUBBLE_MENU_SHORTCUT_IDS[label]
+  if (!id) return undefined
+  return toAriaKeyshortcuts(getShortcutKeys(id)) || undefined
 }
 
 const Tip = ({
@@ -244,6 +258,7 @@ export function SelectionBubbleMenu({
                 size="icon-xs"
                 aria-label={t(btn.label)}
                 aria-pressed={active}
+                aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
                 className={cn(active && toolbarActiveClass)}
                 onPointerDown={(e) => {
                   e.preventDefault()

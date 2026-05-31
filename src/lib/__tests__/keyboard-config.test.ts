@@ -16,6 +16,7 @@ import {
   resetAllShortcuts,
   resetShortcut,
   setCustomShortcut,
+  toAriaKeyshortcuts,
 } from '../keyboard-config'
 
 vi.mock('../logger', () => ({
@@ -143,6 +144,24 @@ describe('keyboard-config', () => {
 
   it('getShortcutKeys returns empty string for unknown id', () => {
     expect(getShortcutKeys('nonexistent')).toBe('')
+  })
+
+  describe('toAriaKeyshortcuts (#216 C2)', () => {
+    it('normalises modifiers and strips key whitespace to canonical tokens', () => {
+      expect(toAriaKeyshortcuts('Ctrl + E')).toBe('Control+E')
+      expect(toAriaKeyshortcuts('Ctrl + Shift + S')).toBe('Control+Shift+S')
+      expect(toAriaKeyshortcuts('Ctrl + Shift + Arrow Up')).toBe('Control+Shift+ArrowUp')
+    })
+
+    it('maps Cmd/⌘ → Meta and Opt/Option → Alt', () => {
+      expect(toAriaKeyshortcuts('Cmd + B')).toBe('Meta+B')
+      expect(toAriaKeyshortcuts('⌘ + K')).toBe('Meta+K')
+      expect(toAriaKeyshortcuts('Opt + Enter')).toBe('Alt+Enter')
+    })
+
+    it('returns empty string for an empty binding', () => {
+      expect(toAriaKeyshortcuts('')).toBe('')
+    })
   })
 
   it('getCurrentShortcuts returns all shortcuts with isCustom=false by default', () => {

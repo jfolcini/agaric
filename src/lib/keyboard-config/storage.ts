@@ -27,6 +27,40 @@ export function getShortcutKeys(id: string): string {
   return def?.keys ?? ''
 }
 
+/**
+ * Convert a human-readable display binding ("Ctrl + Shift + Arrow Up") to the
+ * canonical `aria-keyshortcuts` token form ("Control+Shift+ArrowUp") so
+ * assistive tech announces the binding (#216 C2 — tooltips don't fire on
+ * touch). Modifier aliases are normalised to the ARIA names; non-modifier
+ * keys have their internal whitespace stripped ("Arrow Up" → "ArrowUp").
+ * Returns `''` for an empty/unknown binding so callers can omit the attribute.
+ */
+export function toAriaKeyshortcuts(displayKeys: string): string {
+  if (!displayKeys) return ''
+  return displayKeys
+    .split('+')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      switch (part) {
+        case 'Ctrl':
+        case 'Control':
+          return 'Control'
+        case 'Cmd':
+        case 'Command':
+        case '⌘':
+          return 'Meta'
+        case 'Opt':
+        case 'Option':
+        case 'Alt':
+          return 'Alt'
+        default:
+          return part.replace(/\s+/g, '')
+      }
+    })
+    .join('+')
+}
+
 export function getCurrentShortcuts(): (ShortcutBinding & { isCustom: boolean })[] {
   const overrides = getCustomOverrides()
   return DEFAULT_SHORTCUTS.map((s) => ({
