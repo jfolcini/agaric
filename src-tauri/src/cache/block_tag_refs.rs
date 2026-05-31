@@ -105,13 +105,13 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     // `cache/block_links.rs` pattern.
     if !to_delete.is_empty() {
         let delete_json = serde_json::to_string(&to_delete)?;
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM block_tag_refs \
              WHERE source_id = ? \
                AND tag_id IN (SELECT value FROM json_each(?))",
+            block_id,
+            delete_json,
         )
-        .bind(block_id)
-        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -124,14 +124,14 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
         // if two insert passes race (shouldn't happen inside a tx, but
         // keeps the statement idempotent).
         let insert_json = serde_json::to_string(&to_insert)?;
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
              SELECT ?, value FROM json_each(?) \
              WHERE EXISTS \
                  (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
+            block_id,
+            insert_json,
         )
-        .bind(block_id)
-        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -194,13 +194,13 @@ pub async fn reindex_block_tag_refs_split(
     // `cache/block_links.rs` pattern.
     if !to_delete.is_empty() {
         let delete_json = serde_json::to_string(&to_delete)?;
-        sqlx::query(
+        sqlx::query!(
             "DELETE FROM block_tag_refs \
              WHERE source_id = ? \
                AND tag_id IN (SELECT value FROM json_each(?))",
+            block_id,
+            delete_json,
         )
-        .bind(block_id)
-        .bind(&delete_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -211,14 +211,14 @@ pub async fn reindex_block_tag_refs_split(
         // match the regex but point at content/page blocks) are silently
         // dropped.
         let insert_json = serde_json::to_string(&to_insert)?;
-        sqlx::query(
+        sqlx::query!(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
              SELECT ?, value FROM json_each(?) \
              WHERE EXISTS \
                  (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
+            block_id,
+            insert_json,
         )
-        .bind(block_id)
-        .bind(&insert_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -337,9 +337,10 @@ async fn diff_against_current(
     current_conn: &mut sqlx::SqliteConnection,
     write_conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
-    let mut current_stream = sqlx::query_as::<_, (String, String)>(
+    let mut current_stream = sqlx::query!(
         "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id ASC, tag_id ASC",
     )
+    .map(|r| (r.source_id, r.tag_id))
     .fetch(current_conn);
 
     let mut deletes: Vec<(String, String)> = Vec::new();

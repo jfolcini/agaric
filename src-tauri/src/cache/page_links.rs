@@ -31,12 +31,12 @@
 //!   fallback, and the delete/restore/purge FULL_CACHE_REBUILD_TASKS
 //!   fan-out.
 //!
-//! All queries here use runtime-checked [`sqlx::query`] / [`sqlx::query_as`]
-//! rather than the compile-checked `query!` / `query_as!` macros, so the
-//! migration that creates `page_link_cache` does not need to land in the
-//! `.sqlx` offline cache for the crate to build. Bind parameters are
-//! still typed-checked at SQLite-prepare time at first call; the
-//! schema-existence check happens via the migration smoke test in
+//! The static-literal queries here use the compile-checked `query!` /
+//! `query_as!` macros (#235), validated against the `.sqlx` offline cache.
+//! The dynamic chunked upserts (variable `json_each`/placeholder counts)
+//! remain runtime-checked [`sqlx::query`] via `AssertSqlSafe`, since the
+//! macros require a single string literal. The schema-existence check
+//! happens via the migration smoke test in
 //! `op_log::tests::page_link_cache_table_post_migration_0065`.
 
 use sqlx::SqlitePool;
@@ -100,10 +100,10 @@ pub async fn reindex_page_link_cache_for_block(
     // mirror that exact shape here so the cache and the legacy query
     // agree byte-for-byte on what "source page" means.
     let source_page: String =
-        match sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(block_id)
+        match sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
             .fetch_optional(&mut *tx)
             .await?
+            .map(|r| (r.parent_id,))
         {
             Some((Some(parent),)) => parent,
             // `parent_id IS NULL` → block is its own page (or a top-level
@@ -121,8 +121,8 @@ pub async fn reindex_page_link_cache_for_block(
     // previously cached, now zero edges left). Soft-deleted source
     // blocks contribute zero to the count — mirrors the legacy
     // `JOIN blocks sb ON ... AND sb.deleted_at IS NULL` filter.
-    let touched_targets: Vec<String> = sqlx::query_as::<_, (String,)>(
-        "SELECT target_id FROM (
+    let touched_targets: Vec<String> = sqlx::query!(
+        "SELECT target_id AS \"target_id!\" FROM (
              SELECT DISTINCT bl.target_id
              FROM block_links bl
              JOIN blocks sb ON sb.id = bl.source_id
@@ -133,12 +133,12 @@ pub async fn reindex_page_link_cache_for_block(
              FROM page_link_cache
              WHERE source_page_id = ?1
          )",
+        source_page,
     )
-    .bind(&source_page)
     .fetch_all(&mut *tx)
     .await?
     .into_iter()
-    .map(|(t,)| t)
+    .map(|row| row.target_id)
     .collect();
 
     // B-C3 (issue #108): collapse the per-target COUNT + UPSERT/DELETE
@@ -153,7 +153,7 @@ pub async fn reindex_page_link_cache_for_block(
     }
     let targets_json = serde_json::to_string(&touched_targets)?;
 
-    sqlx::query(
+    sqlx::query!(
         "WITH desired AS ( \
              SELECT bl.target_id AS target, COUNT(*) AS edge_count \
              FROM block_links bl \
@@ -167,9 +167,9 @@ pub async fn reindex_page_link_cache_for_block(
          SELECT ?1, target, edge_count FROM desired WHERE true \
          ON CONFLICT(source_page_id, target_page_id) \
          DO UPDATE SET edge_count = excluded.edge_count",
+        source_page,
+        targets_json,
     )
-    .bind(&source_page)
-    .bind(&targets_json)
     .execute(&mut *tx)
     .await?;
 
@@ -177,7 +177,7 @@ pub async fn reindex_page_link_cache_for_block(
     // is now zero. Inlined `NOT EXISTS` against `block_links` mirrors
     // the `desired` CTE's filter shape — using the CTE directly is not
     // an option here because CTEs don't outlive their statement.
-    sqlx::query(
+    sqlx::query!(
         "DELETE FROM page_link_cache \
          WHERE source_page_id = ?1 \
            AND target_page_id IN (SELECT value FROM json_each(?2)) \
@@ -188,9 +188,9 @@ pub async fn reindex_page_link_cache_for_block(
                  AND sb.deleted_at IS NULL \
                  AND bl.target_id = page_link_cache.target_page_id \
            )",
+        source_page,
+        targets_json,
     )
-    .bind(&source_page)
-    .bind(&targets_json)
     .execute(&mut *tx)
     .await?;
 
@@ -221,7 +221,7 @@ pub async fn rebuild_page_link_cache(pool: &SqlitePool) -> Result<(), AppError> 
 async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_links_rebuild").await?;
 
-    sqlx::query("DELETE FROM page_link_cache")
+    sqlx::query!("DELETE FROM page_link_cache")
         .execute(&mut *tx)
         .await?;
 
@@ -231,18 +231,21 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     // `blocks` on the source side to read `parent_id`; output cardinality
     // is bounded by `min(distinct sources, distinct targets) ≤ #pages`,
     // typically a few thousand rows on a 100K-block vault.
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+    let rows: Vec<(String, String, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.parent_id, bl.source_id) AS source_page_id,
-             bl.target_id AS target_page_id,
-             COUNT(*) AS edge_count
+             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",
+             bl.target_id AS \"target_page_id!\",
+             COUNT(*) AS \"edge_count!\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
          WHERE sb.deleted_at IS NULL
          GROUP BY 1, 2",
     )
     .fetch_all(&mut *tx)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|r| (r.source_page_id, r.target_page_id, r.edge_count))
+    .collect();
 
     let mut inserted: u64 = 0;
     for chunk in rows.chunks(REBUILD_CHUNK) {
@@ -283,23 +286,26 @@ async fn rebuild_page_link_cache_split_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
+    let rows: Vec<(String, String, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.parent_id, bl.source_id) AS source_page_id,
-             bl.target_id AS target_page_id,
-             COUNT(*) AS edge_count
+             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",
+             bl.target_id AS \"target_page_id!\",
+             COUNT(*) AS \"edge_count!\"
          FROM block_links bl
          JOIN blocks sb ON sb.id = bl.source_id
          WHERE sb.deleted_at IS NULL
          GROUP BY 1, 2",
     )
     .fetch_all(read_pool)
-    .await?;
+    .await?
+    .into_iter()
+    .map(|r| (r.source_page_id, r.target_page_id, r.edge_count))
+    .collect();
 
     let mut tx =
         crate::db::begin_immediate_logged(write_pool, "cache_page_links_rebuild_write").await?;
 
-    sqlx::query("DELETE FROM page_link_cache")
+    sqlx::query!("DELETE FROM page_link_cache")
         .execute(&mut *tx)
         .await?;
 

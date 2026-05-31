@@ -206,14 +206,15 @@ pub async fn tombstone_purge(
     // cutoff as ms, not an rfc3339 string.
     let cutoff_ms = cutoff.timestamp_millis();
 
-    let ids: Vec<String> = sqlx::query_scalar(
+    let batch_limit = TOMBSTONE_PURGE_BATCH_LIMIT;
+    let ids: Vec<String> = sqlx::query_scalar!(
         "SELECT id FROM blocks \
          WHERE deleted_at IS NOT NULL AND deleted_at < ? \
          ORDER BY deleted_at ASC \
          LIMIT ?",
+        cutoff_ms,
+        batch_limit
     )
-    .bind(cutoff_ms)
-    .bind(TOMBSTONE_PURGE_BATCH_LIMIT)
     .fetch_all(pool)
     .await?;
 

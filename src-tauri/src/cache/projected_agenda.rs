@@ -162,7 +162,7 @@ async fn rebuild_projected_agenda_cache_impl(
     // `Transaction` Drop guard.
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_projected_agenda_rebuild").await?;
 
-    sqlx::query("DELETE FROM projected_agenda_cache")
+    sqlx::query!("DELETE FROM projected_agenda_cache")
         .execute(&mut *tx)
         .await?;
 
@@ -366,8 +366,9 @@ async fn rebuild_projected_agenda_cache_split_impl(
     // `deleted_at IS NULL`, repeat property present,
     // at least one date column, template-page exclusion.
     let mut read_tx = read_pool.begin().await?;
-    let rows: Vec<CacheRepeatingRow> = sqlx::query_as::<_, CacheRepeatingRow>(
-        "SELECT b.id,
+    let rows: Vec<CacheRepeatingRow> = sqlx::query_as!(
+        CacheRepeatingRow,
+        r#"SELECT b.id AS "id: crate::ulid::BlockId",
                 b.due_date, b.scheduled_date,
                 bp.value_text AS repeat_rule,
                 bp_until.value_date AS repeat_until,
@@ -385,7 +386,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
            AND NOT EXISTS (
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
-           )",
+           )"#,
     )
     .fetch_all(&mut *read_tx)
     .await?;
@@ -403,7 +404,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
         crate::db::begin_immediate_logged(write_pool, "cache_projected_agenda_rebuild_write")
             .await?;
 
-    sqlx::query("DELETE FROM projected_agenda_cache")
+    sqlx::query!("DELETE FROM projected_agenda_cache")
         .execute(&mut *tx)
         .await?;
 

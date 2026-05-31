@@ -33,7 +33,7 @@ pub(crate) async fn resolve_tag_leaves(
     include_inherited: bool,
 ) -> Result<Vec<String>, AppError> {
     if include_inherited {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar!(
             "SELECT bt.block_id \
              FROM block_tags bt \
              JOIN blocks b ON b.id = bt.block_id \
@@ -48,8 +48,8 @@ pub(crate) async fn resolve_tag_leaves(
              FROM block_tag_refs btr \
              JOIN blocks b ON b.id = btr.source_id \
              WHERE btr.tag_id = ?1 AND b.deleted_at IS NULL",
+            tag_id
         )
-        .bind(tag_id)
         .fetch_all(pool)
         .await?;
         Ok(rows)
@@ -95,7 +95,7 @@ pub(crate) async fn resolve_tag_prefix_leaves(
 ) -> Result<Vec<String>, AppError> {
     let escaped = format!("{}%", escape_like(prefix));
     if include_inherited {
-        let rows = sqlx::query_scalar::<_, String>(
+        let rows = sqlx::query_scalar!(
             "SELECT DISTINCT bt.block_id \
              FROM tags_cache tc \
              JOIN block_tags bt ON bt.tag_id = tc.tag_id \
@@ -116,8 +116,8 @@ pub(crate) async fn resolve_tag_prefix_leaves(
              JOIN blocks b ON b.id = btr.source_id \
              WHERE tc.name LIKE ?1 ESCAPE '\\' \
                AND b.deleted_at IS NULL",
+            escaped
         )
-        .bind(&escaped)
         .fetch_all(pool)
         .await?;
         Ok(rows)
@@ -203,20 +203,19 @@ pub fn resolve_expr<'a>(
                 let inner_set: FxHashSet<String> =
                     resolve_expr(pool, inner, include_inherited).await?;
                 if inner_set.is_empty() {
-                    let rows = sqlx::query_scalar::<_, String>(
-                        "SELECT id FROM blocks WHERE deleted_at IS NULL",
-                    )
-                    .fetch_all(pool)
-                    .await?;
+                    let rows =
+                        sqlx::query_scalar!("SELECT id FROM blocks WHERE deleted_at IS NULL",)
+                            .fetch_all(pool)
+                            .await?;
                     return Ok(rows.into_iter().collect());
                 }
                 let json_ids = serde_json::to_string(&inner_set.iter().collect::<Vec<_>>())
                     .map_err(|e| AppError::InvalidOperation(e.to_string()))?;
-                Ok(sqlx::query_scalar::<_, String>(
+                Ok(sqlx::query_scalar!(
                     "SELECT id FROM blocks WHERE deleted_at IS NULL \
                      AND id NOT IN (SELECT value FROM json_each(?))",
+                    json_ids
                 )
-                .bind(&json_ids)
                 .fetch_all(pool)
                 .await?
                 .into_iter()
