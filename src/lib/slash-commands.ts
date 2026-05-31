@@ -39,8 +39,10 @@ import {
   Minus,
   Paperclip,
   Parentheses,
+  Pilcrow,
   Quote,
   Repeat,
+  Replace,
   Search,
   Signal,
   StickyNote,
@@ -229,6 +231,17 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'DIVIDER — Insert horizontal rule',
     category: 'slashCommand.categories.structure',
     icon: Minus,
+  },
+  {
+    // #264 — "Turn into" parent entry. Typing `/turn` surfaces the
+    // block-type conversion list (TURN_INTO_COMMANDS), which converts the
+    // current block's cursor node (paragraph, H1–H3, quote, code, ordered
+    // list, callout). Modeled as an inline-expanded family like the
+    // heading/callout variants, not a nested submenu.
+    id: 'turn',
+    label: 'TURN INTO — Convert this block to another type',
+    category: 'slashCommand.categories.structure',
+    icon: Replace,
   },
   {
     id: 'query',
@@ -505,6 +518,53 @@ export const CALLOUT_COMMANDS: PickerItem[] = [
   },
 ]
 
+/**
+ * #264 — "Turn into" block-type conversion options.
+ *
+ * Single source of truth shared by the `/turn` slash family (surfaced via
+ * `searchSlashCommands`) and the "Turn into ▸" group in the block
+ * context-menu. Each `id` is `turn-<type>`; the structural slash handler
+ * (`useSlashCommandStructural`) and the context-menu conversion callback
+ * both dispatch off the same `id` via `turnIdToBlockType`, so the conversion
+ * logic lives in one place and is never duplicated.
+ *
+ * `blockType` is the canonical type token used to compute the active-type
+ * indication (highlighting the current block's type in the menu).
+ */
+export interface TurnIntoOption {
+  /** Slash/menu item id: `turn-paragraph`, `turn-h1`, … */
+  id: string
+  /** Canonical block-type token for active-state matching. */
+  blockType: string
+  /** Short menu label (the context-menu localises via i18n; this is the fallback). */
+  label: string
+  /** Always set — non-optional so `TURN_INTO_COMMANDS` satisfies `PickerItem`. */
+  icon: NonNullable<PickerItem['icon']>
+}
+
+export const TURN_INTO_OPTIONS: TurnIntoOption[] = [
+  { id: 'turn-paragraph', blockType: 'paragraph', label: 'Text', icon: Pilcrow },
+  { id: 'turn-h1', blockType: 'h1', label: 'Heading 1', icon: Heading1 },
+  { id: 'turn-h2', blockType: 'h2', label: 'Heading 2', icon: Heading2 },
+  { id: 'turn-h3', blockType: 'h3', label: 'Heading 3', icon: Heading3 },
+  { id: 'turn-quote', blockType: 'quote', label: 'Quote', icon: Quote },
+  { id: 'turn-code', blockType: 'code', label: 'Code block', icon: Code },
+  {
+    id: 'turn-numbered-list',
+    blockType: 'numbered-list',
+    label: 'Ordered list',
+    icon: ListOrdered,
+  },
+  { id: 'turn-callout', blockType: 'callout', label: 'Callout', icon: Info },
+]
+
+export const TURN_INTO_COMMANDS: PickerItem[] = TURN_INTO_OPTIONS.map((o) => ({
+  id: o.id,
+  label: `TURN INTO ${o.label}`,
+  category: 'slashCommand.categories.structure',
+  icon: o.icon,
+}))
+
 export function searchSlashCommands(query: string): PickerItem[] {
   const q = query.toLowerCase()
   const baseResults = q ? matchSorter(SLASH_COMMANDS, q, { keys: ['label'] }) : SLASH_COMMANDS
@@ -517,6 +577,10 @@ export function searchSlashCommands(query: string): PickerItem[] {
   const assigneeResults = matchSorter(ASSIGNEE_COMMANDS, q, { keys: ['label'] })
   const locationResults = matchSorter(LOCATION_COMMANDS, q, { keys: ['label'] })
   const calloutResults = matchSorter(CALLOUT_COMMANDS, q, { keys: ['label'] })
+  // #264 — `/turn` surfaces the block-type conversion options inline. The
+  // parent `turn` entry lives in SLASH_COMMANDS (baseResults); the expanded
+  // `turn-*` options are merged here so typing `/turn` lists every target type.
+  const turnIntoResults = matchSorter(TURN_INTO_COMMANDS, q, { keys: ['label'] })
 
   const tableMatch = q.match(/^table\s+(\d+)\s*x\s*(\d+)$/i)
   let results = [
@@ -529,6 +593,7 @@ export function searchSlashCommands(query: string): PickerItem[] {
     ...assigneeResults,
     ...locationResults,
     ...calloutResults,
+    ...turnIntoResults,
   ]
   if (tableMatch) {
     const rows = Number.parseInt(tableMatch[1] as string, 10)

@@ -12,7 +12,9 @@
 import { useMemo } from 'react'
 
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
 
+import type { PickerItem } from '../../editor/SuggestionList'
 import { applyContentEdit, readCurrentContent } from './helpers'
 import type { SlashCommandContext, SlashHandlerTables } from './types'
 
@@ -30,6 +32,18 @@ async function handleCallout(ctx: SlashCommandContext, calloutType: string): Pro
 async function handleNumberedList(ctx: SlashCommandContext): Promise<void> {
   const newContent = `1. ${readCurrentContent(ctx)}`
   await applyContentEdit(ctx, newContent, 'slash.numberedListFailed')
+}
+
+/**
+ * #264 — `/turn <type>` converts the current block to the target block type,
+ * reusing the shared `convertBlockContent` so the conversion logic is not
+ * duplicated across the slash menu and the context-menu "Turn into" group.
+ */
+async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
+  const type = turnIdToBlockType(item.id)
+  if (!type) return
+  const newContent = convertBlockContent(readCurrentContent(ctx), type)
+  await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
 }
 
 async function handleDivider(ctx: SlashCommandContext): Promise<void> {
@@ -83,6 +97,10 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // `{{query …}}` syntax; the builder inserts the generated expression.
         query: (ctx) => ctx.openQueryBuilder(),
         callout: (ctx) => handleCallout(ctx, 'info'),
+        // #264 — the bare `/turn` parent is a label that surfaces the
+        // `turn-*` conversion options inline in the menu; selecting it
+        // directly is a no-op (the user picks a concrete target type).
+        turn: () => {},
         'numbered-list': (ctx) => handleNumberedList(ctx),
         divider: (ctx) => handleDivider(ctx),
         table: (ctx) => handleTable(ctx, 'table'),
@@ -93,6 +111,9 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // Order matters: dynamic-dimension `table:NxM` is matched before
         // the generic `callout-` prefix.
         ['table:', (ctx, item) => handleTable(ctx, item.id)],
+        // #264 — `turn-*` block-type conversions. Disjoint from the other
+        // prefixes; grouped here with the structural commands.
+        ['turn-', (ctx, item) => handleTurnInto(ctx, item)],
         ['callout-', (ctx, item) => handleCallout(ctx, item.id.replace('callout-', ''))],
       ],
     }
