@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_type, parent_id FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      },
+      {
+        "name": "parent_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "parent_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "2c79f17e4ccc658f019c299dcc2411757db2fd247f98461477b671d845b9ec87"
+}

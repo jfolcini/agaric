@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b0ead61bbf9fc79ace1bcb856ecb255ba36278e6f8e6161e7a97b99f9c0aa4f4"
+}

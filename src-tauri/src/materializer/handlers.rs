@@ -593,7 +593,7 @@ async fn recompute_pages_cache_counts_for_pages(
     let unique: HashSet<&String> = page_ids.iter().collect();
     let unique: Vec<&String> = unique.into_iter().collect();
     let json = serde_json::to_string(&unique)?;
-    sqlx::query(
+    sqlx::query!(
         "UPDATE pages_cache SET \
              inbound_link_count = ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
@@ -612,8 +612,8 @@ async fn recompute_pages_cache_counts_for_pages(
                        AND descendant.id != pages_cache.page_id \
              ) \
          WHERE page_id IN (SELECT value FROM json_each(?))",
+        json,
     )
-    .bind(&json)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -630,15 +630,15 @@ async fn distinct_pages_for_blocks(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(block_ids)?;
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT page_id FROM blocks \
+    let rows = sqlx::query!(
+        "SELECT DISTINCT page_id AS \"page_id!\" FROM blocks \
          WHERE id IN (SELECT value FROM json_each(?)) \
            AND page_id IS NOT NULL",
+        json,
     )
-    .bind(&json)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().map(|(p,)| p).collect())
+    Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
 /// Parse all `[[ULID]]` / `((ULID))` link tokens from a block's content
@@ -663,15 +663,15 @@ async fn outbound_target_pages_for_block(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT b.page_id FROM block_links bl \
+    let rows = sqlx::query!(
+        "SELECT DISTINCT b.page_id AS \"page_id!\" FROM block_links bl \
              JOIN blocks b ON b.id = bl.target_id \
          WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+        block_id,
     )
-    .bind(block_id)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().map(|(p,)| p).collect())
+    Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
 /// Resolve the set of pages each candidate target block would contribute
@@ -688,15 +688,15 @@ async fn target_pages_for_block_ids(
         return Ok(Vec::new());
     }
     let json = serde_json::to_string(target_ids)?;
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT page_id FROM blocks \
+    let rows = sqlx::query!(
+        "SELECT DISTINCT page_id AS \"page_id!\" FROM blocks \
          WHERE id IN (SELECT value FROM json_each(?)) \
            AND page_id IS NOT NULL",
+        json,
     )
-    .bind(&json)
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows.into_iter().map(|(p,)| p).collect())
+    Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
 /// PEND-56b: maintenance hook called from `apply_op_tx` after each per-op
@@ -766,14 +766,14 @@ async fn maintain_pages_cache_counts_after_op(
                     // (matches `rebuild_pages_cache`'s desired-state SQL).
                     let title = pre_state.create_content.as_deref().unwrap_or("");
                     let now = crate::db::now_ms();
-                    sqlx::query(
+                    sqlx::query!(
                         "INSERT OR IGNORE INTO pages_cache \
                              (page_id, title, updated_at, inbound_link_count, child_block_count) \
                          VALUES (?, ?, ?, 0, 0)",
+                        block_id,
+                        title,
+                        now,
                     )
-                    .bind(block_id)
-                    .bind(title)
-                    .bind(now)
                     .execute(&mut *conn)
                     .await?;
                     affected.insert(block_id.clone());
@@ -796,12 +796,10 @@ async fn maintain_pages_cache_counts_after_op(
         OpType::EditBlock => {
             if let Some(block_id) = &pre_state.edit_block_id {
                 // Owning page of the edited block.
-                let row: Option<(Option<String>,)> =
-                    sqlx::query_as("SELECT page_id FROM blocks WHERE id = ?")
-                        .bind(block_id)
-                        .fetch_optional(&mut *conn)
-                        .await?;
-                if let Some((Some(p),)) = row {
+                let row = sqlx::query!("SELECT page_id FROM blocks WHERE id = ?", block_id)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                if let Some(Some(p)) = row.map(|r| r.page_id) {
                     affected.insert(p);
                 }
                 // Pages reachable via OLD outbound edges (still in
@@ -936,12 +934,13 @@ async fn reparent_moved_subtree_page_id(
     block_id: &str,
 ) -> Result<Option<String>, AppError> {
     // The block's current parent_id reflects the post-projection move.
-    let row: Option<(String, Option<String>)> =
-        sqlx::query_as("SELECT block_type, parent_id FROM blocks WHERE id = ?")
-            .bind(block_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    let Some((block_type, parent_id)) = row else {
+    let row = sqlx::query!(
+        "SELECT block_type, parent_id FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((block_type, parent_id)) = row.map(|r| (r.block_type, r.parent_id)) else {
         // Block vanished (e.g. concurrent purge); nothing to recompute.
         return Ok(None);
     };
@@ -950,11 +949,11 @@ async fn reparent_moved_subtree_page_id(
     // itself; any other parent contributes its own `page_id`. No parent
     // → top-level → no owning page (page_id NULL). Mirrors `move_ops.rs`.
     let new_page_id: Option<String> = if let Some(pid) = &parent_id {
-        sqlx::query_scalar::<_, Option<String>>(
+        sqlx::query_scalar!(
             "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
-             FROM blocks WHERE id = ?",
+             AS \"v?\" FROM blocks WHERE id = ?",
+            pid,
         )
-        .bind(pid)
         .fetch_optional(&mut *conn)
         .await?
         .flatten()
@@ -973,18 +972,22 @@ async fn reparent_moved_subtree_page_id(
 
     // Update the moved block itself (pages keep page_id = self).
     if !is_page {
-        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
-            .bind(new_page_id.as_deref())
-            .bind(block_id)
-            .execute(&mut *conn)
-            .await?;
+        let new_page_id_ref = new_page_id.as_deref();
+        sqlx::query!(
+            "UPDATE blocks SET page_id = ? WHERE id = ?",
+            new_page_id_ref,
+            block_id,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
 
     // Update all non-page descendants to inherit the moved block's page
     // id. Recursive CTE bounds `depth < 100` (invariant #9) and filters
     // `deleted_at IS NULL` in both members so soft-deleted conflict
     // copies don't leak into the walk. Mirrors `move_ops.rs`.
-    sqlx::query(
+    let effective_page_id_ref = effective_page_id.as_deref();
+    sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT b.id, 0 FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -995,9 +998,9 @@ async fn reparent_moved_subtree_page_id(
          ) \
          UPDATE blocks SET page_id = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+        block_id,
+        effective_page_id_ref,
     )
-    .bind(block_id)
-    .bind(effective_page_id.as_deref())
     .execute(&mut *conn)
     .await?;
 
@@ -1067,15 +1070,15 @@ async fn pre_diff_target_pages(
     pool: &sqlx::SqlitePool,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT b.page_id FROM block_links bl \
+    let rows = sqlx::query!(
+        "SELECT DISTINCT b.page_id AS \"page_id!\" FROM block_links bl \
              JOIN blocks b ON b.id = bl.target_id \
          WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+        block_id,
     )
-    .bind(block_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(|(p,)| p).collect())
+    Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
 /// Refresh `pages_cache.inbound_link_count` for every page reachable
@@ -1121,40 +1124,39 @@ async fn refresh_inbound_counts_after_reindex(
     }
 
     // (2) Current outbound targets' page ids.
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT b.page_id FROM block_links bl \
+    let rows = sqlx::query!(
+        "SELECT DISTINCT b.page_id AS \"page_id!\" FROM block_links bl \
              JOIN blocks b ON b.id = bl.target_id \
          WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+        block_id,
     )
-    .bind(block_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (p,) in rows {
-        affected.insert(p);
+    for r in rows {
+        affected.insert(r.page_id);
     }
 
     // (3) Resolve the source page (the page this block rolls up to in
     // `page_link_cache` — `COALESCE(parent_id, block_id)` to mirror
     // `cache::reindex_page_link_cache_for_block`).
-    let parent_row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(block_id)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let source_page: String = match parent_row {
-        Some((Some(parent),)) => parent,
+    let parent_row = sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let source_page: String = match parent_row.map(|r| r.parent_id) {
+        Some(Some(parent)) => parent,
         _ => block_id.to_owned(),
     };
 
     // Add every target_page_id currently in page_link_cache from this
     // source so we catch any remaining cached edges that point out.
-    let cached: Vec<(String,)> =
-        sqlx::query_as("SELECT target_page_id FROM page_link_cache WHERE source_page_id = ?")
-            .bind(&source_page)
-            .fetch_all(&mut *tx)
-            .await?;
-    for (p,) in cached {
-        affected.insert(p);
+    let cached = sqlx::query!(
+        "SELECT target_page_id FROM page_link_cache WHERE source_page_id = ?",
+        source_page,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    for r in cached {
+        affected.insert(r.target_page_id);
     }
 
     if affected.is_empty() {
@@ -1303,9 +1305,9 @@ async fn apply_op_tx(
             // descendants and the destination page gains them — both
             // `child_block_count`s must be refreshed post-projection.
             pre_state.move_block_id = Some(p.block_id.as_str().to_owned());
+            let move_block_id_str = p.block_id.as_str();
             pre_state.move_src_page =
-                sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
-                    .bind(p.block_id.as_str())
+                sqlx::query_scalar!("SELECT page_id FROM blocks WHERE id = ?", move_block_id_str)
                     .fetch_optional(&mut *conn)
                     .await?
                     .flatten();
@@ -1367,7 +1369,7 @@ async fn collect_purge_affected_pages(
     // Walk the descendant CTE (PurgeBlock's `purge_block_sql_cascade`
     // uses the same shape) to find the cohort. Then read each block's
     // page_id + outbound target page_ids.
-    let cohort: Vec<(String,)> = sqlx::query_as(
+    let cohort = sqlx::query!(
         "WITH RECURSIVE descendants(id, depth) AS ( \
              SELECT id, 0 FROM blocks WHERE id = ? \
              UNION ALL \
@@ -1375,12 +1377,12 @@ async fn collect_purge_affected_pages(
              INNER JOIN descendants d ON b.parent_id = d.id \
              WHERE d.depth < 100 \
          ) \
-         SELECT id FROM descendants",
+         SELECT id AS \"id!\" FROM descendants",
+        seed_block_id,
     )
-    .bind(seed_block_id)
     .fetch_all(&mut *conn)
     .await?;
-    let cohort_ids: Vec<String> = cohort.into_iter().map(|(id,)| id).collect();
+    let cohort_ids: Vec<String> = cohort.into_iter().map(|r| r.id).collect();
     let mut affected: HashSet<String> = HashSet::new();
     for p in distinct_pages_for_blocks(conn, &cohort_ids).await? {
         affected.insert(p);
@@ -1770,12 +1772,10 @@ async fn apply_restore_block_via_loro(
     // Read parent_id directly (the canonical resolver filters out
     // soft-deleted rows, which would always be the case here).
     let block_id_str = p.block_id.as_str();
-    let parent_row: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT parent_id FROM blocks WHERE id = ?")
-            .bind(block_id_str)
-            .fetch_optional(&mut *conn)
-            .await?;
-    let resolution_anchor: BlockId = match parent_row.and_then(|(p,)| p) {
+    let parent_row = sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", block_id_str)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let resolution_anchor: BlockId = match parent_row.and_then(|r| r.parent_id) {
         Some(parent) => BlockId::from_trusted(&parent),
         None => p.block_id.clone(),
     };
@@ -2113,16 +2113,18 @@ async fn apply_create_block_sql_only(
     p: CreateBlockPayload,
 ) -> Result<(), AppError> {
     let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
-    sqlx::query(
+    let block_id_str = p.block_id.as_str();
+    let parent_id_ref = parent_id_str.as_deref();
+    sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
              (id, block_type, content, parent_id, position) \
          VALUES (?, ?, ?, ?, ?)",
+        block_id_str,
+        p.block_type,
+        p.content,
+        parent_id_ref,
+        p.position,
     )
-    .bind(p.block_id.as_str())
-    .bind(&p.block_type)
-    .bind(&p.content)
-    .bind(parent_id_str.as_deref())
-    .bind(p.position)
     .execute(&mut *conn)
     .await?;
     let parent_str = parent_id_str.as_deref();
@@ -2135,11 +2137,14 @@ async fn apply_edit_block_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: EditBlockPayload,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
-        .bind(&p.to_text)
-        .bind(p.block_id.as_str())
-        .execute(&mut *conn)
-        .await?;
+    let block_id_str = p.block_id.as_str();
+    sqlx::query!(
+        "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
+        p.to_text,
+        block_id_str,
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -2191,12 +2196,16 @@ async fn apply_move_block_sql_only(
     p: MoveBlockPayload,
 ) -> Result<(), AppError> {
     let new_parent_str = p.new_parent_id.as_ref().map(|id| id.as_str().to_owned());
-    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
-        .bind(new_parent_str.as_deref())
-        .bind(p.new_position)
-        .bind(p.block_id.as_str())
-        .execute(&mut *conn)
-        .await?;
+    let new_parent_ref = new_parent_str.as_deref();
+    let block_id_str = p.block_id.as_str();
+    sqlx::query!(
+        "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
+        new_parent_ref,
+        p.new_position,
+        block_id_str,
+    )
+    .execute(&mut *conn)
+    .await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
@@ -2206,11 +2215,15 @@ async fn apply_add_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: AddTagPayload,
 ) -> Result<(), AppError> {
-    sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-        .bind(p.block_id.as_str())
-        .bind(p.tag_id.as_str())
-        .execute(&mut *conn)
-        .await?;
+    let block_id_str = p.block_id.as_str();
+    let tag_id_str = p.tag_id.as_str();
+    sqlx::query!(
+        "INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)",
+        block_id_str,
+        tag_id_str,
+    )
+    .execute(&mut *conn)
+    .await?;
     tag_inheritance::propagate_tag_to_descendants(
         &mut *conn,
         p.block_id.as_str(),
@@ -2225,11 +2238,15 @@ async fn apply_remove_tag_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: RemoveTagPayload,
 ) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-        .bind(p.block_id.as_str())
-        .bind(p.tag_id.as_str())
-        .execute(&mut *conn)
-        .await?;
+    let block_id_str = p.block_id.as_str();
+    let tag_id_str = p.tag_id.as_str();
+    sqlx::query!(
+        "DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?",
+        block_id_str,
+        tag_id_str,
+    )
+    .execute(&mut *conn)
+    .await?;
     tag_inheritance::remove_inherited_tag(&mut *conn, p.block_id.as_str(), p.tag_id.as_str())
         .await?;
     Ok(())
@@ -2285,18 +2302,19 @@ async fn apply_set_property_sql_only(
         }
     } else {
         let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
-        sqlx::query(
+        let block_id_str = p.block_id.as_str();
+        sqlx::query!(
             "INSERT OR REPLACE INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
+            block_id_str,
+            p.key,
+            p.value_text,
+            p.value_num,
+            p.value_date,
+            p.value_ref,
+            value_bool_int,
         )
-        .bind(p.block_id.as_str())
-        .bind(&p.key)
-        .bind(&p.value_text)
-        .bind(p.value_num)
-        .bind(&p.value_date)
-        .bind(&p.value_ref)
-        .bind(value_bool_int)
         .execute(&mut *conn)
         .await?;
     }
@@ -2339,11 +2357,14 @@ async fn apply_delete_property_sql_only(
             ),
         }
     } else {
-        sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-            .bind(p.block_id.as_str())
-            .bind(&p.key)
-            .execute(&mut *conn)
-            .await?;
+        let block_id_str = p.block_id.as_str();
+        sqlx::query!(
+            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
+            block_id_str,
+            p.key,
+        )
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -2354,18 +2375,20 @@ async fn apply_add_attachment_tx(
     p: AddAttachmentPayload,
     created_at: i64,
 ) -> Result<(), AppError> {
-    sqlx::query(
+    let attachment_id_str = p.attachment_id.as_str();
+    let block_id_str = p.block_id.as_str();
+    sqlx::query!(
         "INSERT OR IGNORE INTO attachments \
              (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
+        attachment_id_str,
+        block_id_str,
+        p.filename,
+        p.fs_path,
+        p.mime_type,
+        p.size_bytes,
+        created_at,
     )
-    .bind(p.attachment_id.as_str())
-    .bind(p.block_id.as_str())
-    .bind(&p.filename)
-    .bind(&p.fs_path)
-    .bind(&p.mime_type)
-    .bind(p.size_bytes)
-    .bind(created_at)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -2376,8 +2399,8 @@ async fn apply_delete_attachment_tx(
     conn: &mut sqlx::SqliteConnection,
     p: DeleteAttachmentPayload,
 ) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM attachments WHERE id = ?")
-        .bind(p.attachment_id.as_str())
+    let attachment_id_str = p.attachment_id.as_str();
+    sqlx::query!("DELETE FROM attachments WHERE id = ?", attachment_id_str)
         .execute(&mut *conn)
         .await?;
     Ok(())

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE descendants(id, depth) AS ( SELECT id, 0 FROM blocks WHERE id = ? UNION ALL SELECT b.id, d.depth + 1 FROM blocks b INNER JOIN descendants d ON b.parent_id = d.id WHERE d.depth < 100 ) SELECT id AS \"id!\" FROM descendants",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "63728617a92284a5cc09449c04587aacc5380ad32af0cb1cffb95a28047166ec"
+}

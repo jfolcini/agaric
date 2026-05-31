@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE pages_cache SET inbound_link_count = ( SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl JOIN blocks descendant ON bl.target_id = descendant.id JOIN blocks src ON src.id = bl.source_id WHERE descendant.page_id = pages_cache.page_id AND descendant.deleted_at IS NULL AND src.deleted_at IS NULL AND src.page_id IS NOT NULL AND src.page_id != pages_cache.page_id ), child_block_count = ( SELECT COUNT(*) FROM blocks descendant WHERE descendant.page_id = pages_cache.page_id AND descendant.deleted_at IS NULL AND descendant.id != pages_cache.page_id ) WHERE page_id IN (SELECT value FROM json_each(?))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "74beb2193a892ea85e1c40a1fd6e6d4de336f3fd890f5c9d19f525be0c67e906"
+}
