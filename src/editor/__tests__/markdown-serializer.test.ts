@@ -450,6 +450,46 @@ describe('parse', () => {
       expect(parse('*emphasis*')).toEqual(doc(paragraph(italic('emphasis'))))
     })
 
+    // #211 — GFM also accepts underscore emphasis.
+    describe('underscore emphasis (GFM)', () => {
+      it('parses __bold__ as bold', () => {
+        expect(parse('__strong__')).toEqual(doc(paragraph(bold('strong'))))
+      })
+
+      it('parses _italic_ as italic', () => {
+        expect(parse('_emphasis_')).toEqual(doc(paragraph(italic('emphasis'))))
+      })
+
+      it('normalises underscore emphasis to asterisks on serialize', () => {
+        expect(serialize(parse('_emphasis_'))).toBe('*emphasis*')
+        expect(serialize(parse('__strong__'))).toBe('**strong**')
+      })
+
+      it('round-trips a mid-sentence underscore mark', () => {
+        expect(parse('say _hi_ now')).toEqual(
+          doc(paragraph(text('say '), italic('hi'), text(' now'))),
+        )
+      })
+
+      it('leaves intraword underscores literal (snake_case)', () => {
+        expect(parse('snake_case_name')).toEqual(doc(paragraph(text('snake_case_name'))))
+      })
+
+      it('leaves intraword double-underscore literal (a__b__c)', () => {
+        expect(parse('a__b__c')).toEqual(doc(paragraph(text('a__b__c'))))
+      })
+
+      it('bolds a space-flanked __init__ (GFM behaviour)', () => {
+        expect(parse('the __init__ method')).toEqual(
+          doc(paragraph(text('the '), bold('init'), text(' method'))),
+        )
+      })
+
+      it('does not cross-close mismatched delimiters (*foo_ stays literal)', () => {
+        expect(parse('*foo_')).toEqual(doc(paragraph(text('*foo_'))))
+      })
+    })
+
     it('code', () => {
       expect(parse('`fn()`')).toEqual(doc(paragraph(code('fn()'))))
     })
