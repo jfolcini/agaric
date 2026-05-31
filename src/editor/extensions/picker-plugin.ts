@@ -33,6 +33,13 @@ export interface PickerPluginConfig {
   allowSpaces?: boolean
   /** Explicit allowedPrefixes list. Omit to use the TipTap default ([' ']). */
   allowedPrefixes?: string[] | null
+  /**
+   * Optional gate deciding whether a match should open the popup at all.
+   * Omit to use the TipTap default (always allow). Used by the emoji `:`
+   * picker to require `:` + ≥2 word-chars so it stays dormant for a bare
+   * `:`, a trailing `: `, and the `::` property trigger.
+   */
+  allow?: SuggestionOptions<PickerItem>['allow']
   /** Editor reference (passed via this.editor at the call site). */
   editor: Editor
   /** Items callback wrapped by the helper with try/catch + logger.warn. */
@@ -55,6 +62,7 @@ export function createPickerPlugin(cfg: PickerPluginConfig) {
     char: cfg.char,
     ...(cfg.allowSpaces !== undefined ? { allowSpaces: cfg.allowSpaces } : {}),
     ...(cfg.allowedPrefixes !== undefined ? { allowedPrefixes: cfg.allowedPrefixes } : {}),
+    ...(cfg.allow !== undefined ? { allow: cfg.allow } : {}),
     items: async ({ query }) => {
       try {
         return await cfg.items(query)

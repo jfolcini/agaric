@@ -40,6 +40,12 @@ export interface PickerItem {
   category?: string
   /** Icon component from lucide-react, rendered inline before the label. */
   icon?: React.ComponentType<{ className?: string | undefined }>
+  /**
+   * Native emoji glyph rendered inline before the label (#130 — the `:`
+   * emoji picker). Mutually exclusive with `icon`; when set, the row shows
+   * the emoji then its `:shortcode` label.
+   */
+  emoji?: string
   /** Secondary breadcrumb text shown below the label (e.g. parent namespace). */
   breadcrumb?: string | undefined
   /**
@@ -169,7 +175,9 @@ export const SuggestionList = ({
           ? 'suggestion.noResults.atTag'
           : triggerChar === '(('
             ? 'suggestion.noResults.blockRef'
-            : 'suggestion.noResults'
+            : triggerChar === ':'
+              ? 'suggestion.noResults.emoji'
+              : 'suggestion.noResults'
     return (
       // #216 C1 — name the live region so AT announces it in context
       // ("Tags: No results") rather than a bare, origin-less message. Mirrors
@@ -210,6 +218,20 @@ export const SuggestionList = ({
     ) : (
       item.label
     )
+    if (item.emoji) {
+      // #130 — the `:` emoji picker. Show the native glyph then its
+      // `:shortcode` so the binding is reinforced as the user scans.
+      return (
+        <span className="flex items-center">
+          <span className="mr-2 text-base leading-none" aria-hidden="true">
+            {item.emoji}
+          </span>
+          <span className="truncate" title={item.label}>
+            :{item.label}
+          </span>
+        </span>
+      )
+    }
     if (Icon) {
       return (
         <span className={cn('flex items-center', item.breadcrumb && 'items-start')}>

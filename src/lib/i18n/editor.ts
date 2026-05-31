@@ -69,6 +69,7 @@ export const editor: Record<string, string> = {
   'suggestion.noResults.blockLink': 'No results — press Enter to create a new page',
   'suggestion.noResults.blockRef':
     'No results — block references can only point at existing blocks',
+  'suggestion.noResults.emoji': 'No emoji match',
   'suggestion.hint.minChars': 'Type at least 2 characters to search',
   'suggestion.create': 'Create',
   'suggestion.footer.navigate': '↑↓ navigate',
