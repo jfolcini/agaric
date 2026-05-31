@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "8a3cb0221ce3066d2d1c4c2b43bbee82c1202a498fef2b801aadcd6d072cfd96"
+}

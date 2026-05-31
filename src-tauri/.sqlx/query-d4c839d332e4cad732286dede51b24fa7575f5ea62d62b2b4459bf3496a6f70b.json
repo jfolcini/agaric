@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "d4c839d332e4cad732286dede51b24fa7575f5ea62d62b2b4459bf3496a6f70b"
+}
