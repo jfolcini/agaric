@@ -45,7 +45,7 @@ export const editor: Record<string, string> = {
   'slashCommand.categories.repeat': 'Repeat',
   'editor.templatePlaceholder': 'Type /template to start from a template, or just start typing...',
   // UX-309: discoverability hint for the slash-command palette on empty blocks.
-  'editor.emptyBlockPlaceholder': 'Type / for commands…',
+  'editor.emptyBlockPlaceholder': 'Type / for commands, [[ to link, @ to tag',
   // UX-304: label shown over the swipe-to-delete overlay on coarse-pointer
   // devices once the auto-delete threshold (200 px) is crossed mid-drag.
   'block.swipe.releaseToDelete': 'Release to delete',

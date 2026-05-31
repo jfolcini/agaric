@@ -15,6 +15,15 @@ export const shortcuts: Record<string, string> = {
   'keyboard.shortcutHeader': 'Shortcut',
   'keyboard.actionHeader': 'Action',
   'keyboard.descriptionHeader': 'Description',
+  // #214 Phase 3 — "Essential" group surfaced at the top of the help
+  // sheet so new users discover the five core triggers (undo, slash,
+  // link, tag, search) before the long per-category list.
+  'keyboard.category.essential': 'Essential',
+  'keyboard.essential.undo': 'Undo your last change',
+  'keyboard.essential.slash': 'Open the command menu',
+  'keyboard.essential.link': 'Link to another page',
+  'keyboard.essential.tag': 'Tag a block',
+  'keyboard.essential.search': 'Search your notes',
   'keyboard.category.navigation': 'Navigation',
   'keyboard.category.editing': 'Editing',
   'keyboard.category.blockTree': 'Block Tree',
@@ -113,6 +122,10 @@ export const shortcuts: Record<string, string> = {
   'keyboard.syntax.pageLink': 'Page link',
   'keyboard.syntax.blockReference': 'Block reference',
   'keyboard.syntax.slashCommand': 'Slash command menu',
+  // #214 Phase 3 — previously undocumented inline-syntax triggers.
+  'keyboard.syntax.emoji': 'Emoji picker',
+  'keyboard.syntax.properties': 'Block properties',
+  'keyboard.syntax.underline': 'Underline',
   'keyboard.settings.title': 'Keyboard Shortcuts',
   'keyboard.settings.description':
     'Customize keyboard shortcuts. Click the edit button to change a binding.',

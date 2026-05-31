@@ -220,21 +220,15 @@ export const common: Record<string, string> = {
   'sidebar.daysAgo': '{{count}}d ago',
   'welcome.title': 'Welcome to Agaric',
   'welcome.description': 'A local-first note-taking app for organizing your thoughts.',
-  'welcome.featureBlocks': 'Blocks + pages',
-  'welcome.featureBlocksDesc': 'Build knowledge with nested blocks organized into pages.',
-  'welcome.featureShortcuts': 'Keyboard shortcuts',
-  'welcome.featureShortcutsDesc': 'Press ? any time to see all available shortcuts.',
-  'welcome.featureTags': 'Tags + properties',
-  'welcome.featureTagsDesc': 'Organize and filter your notes with tags and custom properties.',
-  'welcome.featureSync': 'Sync across devices',
-  'welcome.featureSyncDesc':
-    'Local-first storage with peer-to-peer sync over your local network. No cloud account required.',
-  'welcome.featureSpaces': 'Separate work and personal',
-  'welcome.featureSpacesDesc':
-    'Spaces keep notes private and isolated. Switch contexts without mixing data.',
-  'welcome.featureReferences': 'Reference syntax',
-  'welcome.featureReferencesDesc':
-    '@ \u2014 tags  \u00b7  [[ \u2014 page links  \u00b7  (( \u2014 block refs  \u00b7  #[\u2026] \u2014 explicit tag',
+  // #214 Phase 1B \u2014 three concrete workflow rows that teach the core
+  // gestures (slash menu, link/tag, inline formatting) instead of the
+  // earlier six abstract feature blurbs.
+  'welcome.workflowSlash': 'Press / for tasks & dates',
+  'welcome.workflowSlashDesc': 'Open the command menu to add tasks, dates, headings, and more.',
+  'welcome.workflowLinkTag': 'Type [[ to link, @ to tag',
+  'welcome.workflowLinkTagDesc': 'Connect pages with [[links]] and organize blocks with @tags.',
+  'welcome.workflowFormat': 'Select text to format',
+  'welcome.workflowFormatDesc': 'Highlight any text to make it bold, italic, or underlined.',
   'welcome.getStarted': 'Get Started',
   'welcome.createSamplePages': 'Create sample pages',
   'welcome.samplePagesCreated': 'Sample pages created!',

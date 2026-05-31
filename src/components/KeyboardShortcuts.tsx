@@ -77,6 +77,25 @@ function buildShortcutGroups(): { category: string; shortcuts: ShortcutDef[] }[]
   return Array.from(groupMap.entries()).map(([category, shortcuts]) => ({ category, shortcuts }))
 }
 
+// #214 Phase 3 — the "Essential" group. A small, hand-curated set of the
+// five core triggers a new user needs first. Rendered above the full
+// per-category shortcut list (which is generated from the keyboard-config
+// catalog) so it is the first thing seen in the help sheet. The keys are
+// the literal characters a user types (or the platform mod chord for undo)
+// rather than catalog ids, so they read as a quick-start cheat sheet.
+interface EssentialEntry {
+  keys: string
+  description: string
+}
+
+const ESSENTIAL_ENTRIES: EssentialEntry[] = [
+  { keys: 'Ctrl + Z', description: 'keyboard.essential.undo' },
+  { keys: '/', description: 'keyboard.essential.slash' },
+  { keys: '[[', description: 'keyboard.essential.link' },
+  { keys: '@', description: 'keyboard.essential.tag' },
+  { keys: 'Ctrl + F', description: 'keyboard.essential.search' },
+]
+
 interface DeepLinkEntry {
   path: string
   description: string
@@ -111,6 +130,10 @@ const SYNTAX_ENTRIES: SyntaxEntry[] = [
   { syntax: '[[page]]', description: 'keyboard.syntax.pageLink' },
   { syntax: '((block))', description: 'keyboard.syntax.blockReference' },
   { syntax: '/command', description: 'keyboard.syntax.slashCommand' },
+  // #214 Phase 3 — previously undocumented inline-syntax triggers.
+  { syntax: ':', description: 'keyboard.syntax.emoji' },
+  { syntax: '::', description: 'keyboard.syntax.properties' },
+  { syntax: '<u>', description: 'keyboard.syntax.underline' },
 ]
 
 interface KeyboardShortcutsProps {
@@ -215,7 +238,42 @@ export function KeyboardShortcuts({
           />
         </SheetHeader>
         <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
-          <table className="w-full text-sm">
+          {/* #214 Phase 3 — "Essential" group: the five core triggers a new
+              user needs first, surfaced above the full catalog-driven list. */}
+          <table className="w-full text-sm" data-testid="essential-table">
+            <thead>
+              <tr>
+                <th
+                  colSpan={2}
+                  className="pb-1 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                  data-testid="essential-section-title"
+                >
+                  {t('keyboard.category.essential')}
+                </th>
+              </tr>
+              <tr className="border-b">
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.shortcutHeader')}
+                </th>
+                <th className="pb-2 text-left font-semibold text-foreground">
+                  {t('keyboard.actionHeader')}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {ESSENTIAL_ENTRIES.map((entry) => (
+                <tr key={entry.description} className="border-b last:border-0">
+                  <td className="py-3 pr-4">
+                    <span className="inline-flex flex-wrap items-center gap-1">
+                      {renderKeys(entry.keys)}
+                    </span>
+                  </td>
+                  <td className="py-3 text-muted-foreground">{t(entry.description)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <table className="w-full text-sm mt-6">
             <thead>
               <tr className="border-b">
                 <th className="pb-2 text-left font-semibold text-foreground">
