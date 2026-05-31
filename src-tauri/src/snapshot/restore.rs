@@ -113,22 +113,22 @@ pub async fn apply_snapshot<R: std::io::Read>(
 
     // Wipe core tables (children before parents purely for reviewability —
     // `defer_foreign_keys = ON` would let any order succeed).
-    sqlx::query("DELETE FROM block_links")
+    sqlx::query!("DELETE FROM block_links")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM block_properties")
+    sqlx::query!("DELETE FROM block_properties")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM block_tags")
+    sqlx::query!("DELETE FROM block_tags")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM attachments")
+    sqlx::query!("DELETE FROM attachments")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM page_aliases")
+    sqlx::query!("DELETE FROM page_aliases")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM property_definitions")
+    sqlx::query!("DELETE FROM property_definitions")
         .execute(&mut *tx)
         .await?;
     // H-13: the BEFORE DELETE trigger on op_log (migration 0036) blocks bare
@@ -140,7 +140,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // wording needs tightening; for now we extend the same bypass mechanism
     // here so sync RESET continues to function.
     crate::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
-    sqlx::query("DELETE FROM op_log").execute(&mut *tx).await?;
+    sqlx::query!("DELETE FROM op_log").execute(&mut *tx).await?;
     crate::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
 
     // M-66 — surface dropped drafts via a warn line.
@@ -156,12 +156,13 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // session has at least an entry point to look at. The cap bounds
     // log size on a pathological peer with hundreds of unflushed
     // drafts; the count itself is unbounded.
-    let dropped_count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM block_drafts")
-        .fetch_one(&mut *tx)
-        .await?;
+    let dropped_count: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) AS "count!" FROM block_drafts"#)
+            .fetch_one(&mut *tx)
+            .await?;
     if dropped_count > 0 {
         let sample_ids: Vec<String> =
-            sqlx::query_scalar::<_, String>("SELECT block_id FROM block_drafts LIMIT 8")
+            sqlx::query_scalar!("SELECT block_id FROM block_drafts LIMIT 8")
                 .fetch_all(&mut *tx)
                 .await?;
         tracing::warn!(
@@ -171,11 +172,11 @@ pub async fn apply_snapshot<R: std::io::Read>(
              any draft saved after the snapshot was taken is silently lost without this warning"
         );
     }
-    sqlx::query("DELETE FROM block_drafts")
+    sqlx::query!("DELETE FROM block_drafts")
         .execute(&mut *tx)
         .await?;
     // blocks last (parent of all FK references)
-    sqlx::query("DELETE FROM blocks").execute(&mut *tx).await?;
+    sqlx::query!("DELETE FROM blocks").execute(&mut *tx).await?;
 
     // MAINT-152(a): batch-INSERT each table via the `batch_insert_snapshot_rows!`
     // macro. The macro hides the placeholder string, the chunk-size derivation

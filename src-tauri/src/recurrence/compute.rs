@@ -80,12 +80,13 @@ pub(crate) async fn handle_recurrence_in_tx(
     block_id: &str,
 ) -> Result<bool, crate::error::AppError> {
     // Check for repeat property (inside tx)
-    let repeat_rule: Option<String> = sqlx::query_scalar(
+    let repeat_rule: Option<String> = sqlx::query_scalar!(
         "SELECT value_text FROM block_properties WHERE block_id = ?1 AND key = 'repeat'",
+        block_id
     )
-    .bind(block_id)
     .fetch_optional(&mut ***tx)
-    .await?;
+    .await?
+    .flatten();
 
     let Some(rule) = repeat_rule else {
         // No repeat rule — caller drops/commits the (read-only) tx.
@@ -138,12 +139,13 @@ pub(crate) async fn handle_recurrence_in_tx(
     let reference_date = shifted_due.as_deref().or(shifted_sched.as_deref());
 
     // --- End condition: repeat-until ---
-    let repeat_until: Option<String> = sqlx::query_scalar(
+    let repeat_until: Option<String> = sqlx::query_scalar!(
         "SELECT value_date FROM block_properties WHERE block_id = ?1 AND key = 'repeat-until'",
+        block_id
     )
-    .bind(block_id)
     .fetch_optional(&mut ***tx)
-    .await?;
+    .await?
+    .flatten();
 
     if let Some(ref until_str) = repeat_until {
         if let Some(ref_date) = reference_date {
@@ -176,19 +178,21 @@ pub(crate) async fn handle_recurrence_in_tx(
     }
 
     // --- End condition: repeat-count / repeat-seq ---
-    let repeat_count: Option<f64> = sqlx::query_scalar(
+    let repeat_count: Option<f64> = sqlx::query_scalar!(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-count'",
+        block_id
     )
-    .bind(block_id)
     .fetch_optional(&mut ***tx)
-    .await?;
+    .await?
+    .flatten();
 
-    let repeat_seq: Option<f64> = sqlx::query_scalar(
+    let repeat_seq: Option<f64> = sqlx::query_scalar!(
         "SELECT value_num FROM block_properties WHERE block_id = ?1 AND key = 'repeat-seq'",
+        block_id
     )
-    .bind(block_id)
     .fetch_optional(&mut ***tx)
-    .await?;
+    .await?
+    .flatten();
 
     if let Some(count) = repeat_count {
         // f64 → i64 has no `TryFrom` in std; the cast is safe because
@@ -205,12 +209,13 @@ pub(crate) async fn handle_recurrence_in_tx(
     }
 
     // --- Resolve repeat-origin for the chain ---
-    let repeat_origin: Option<String> = sqlx::query_scalar(
+    let repeat_origin: Option<String> = sqlx::query_scalar!(
         "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
+        block_id
     )
-    .bind(block_id)
     .fetch_optional(&mut ***tx)
-    .await?;
+    .await?
+    .flatten();
     // Use existing origin, or this block is the first in the chain
     let origin_id = repeat_origin.unwrap_or_else(|| block_id.to_string());
 

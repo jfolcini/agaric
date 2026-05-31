@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT target_page_id FROM page_link_cache WHERE source_page_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "target_page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "171842238afb0b1c028da6cc44b7bc68913d4009539de44779b84110902c6a86"
+}
