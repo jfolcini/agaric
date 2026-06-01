@@ -108,6 +108,8 @@ export const editor: Record<string, string> = {
   'linkEdit.remove': 'Remove',
   'linkEdit.urlPlaceholder': 'https://...',
   'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
+  // FIL-008 (#218 item 6) — discoverability hint that the image is resizable.
+  'attachment.resizeHint': 'Resize image — hover or focus to open the toolbar',
   'imageResize.saveFailed': 'Could not save image size',
   // #212 item 3 — captions / alt-text
   'imageCaption.placeholder': 'Add a caption…',
