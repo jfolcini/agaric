@@ -783,10 +783,22 @@ async fn recover_derived_state_from_op_log(
                     .and_then(serde_json::Value::as_bool)
                     .map(|b| if b { 1i64 } else { 0i64 });
 
+                // Guard the two FK columns (block_id, value_ref → blocks(id)).
+                // An op may reference a block that was purged or created on
+                // another device and is absent from the local op_log, so
+                // inserting blindly would trip FOREIGN KEY constraint failed
+                // (787) and abort startup. Skip the row entirely if its owning
+                // block is gone, or if a non-null value_ref dangles: under the
+                // exactly-one-value invariant (migration 0062) value_ref is the
+                // row's sole value, and its FK is ON DELETE CASCADE, so a dead
+                // ref means the whole property is dead — nulling it would just
+                // trade FK 787 for a CHECK violation on the now all-NULL row.
                 sqlx::query(
                     "INSERT OR REPLACE INTO block_properties \
                      (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     SELECT ?, ?, ?, ?, ?, ?, ? \
+                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
+                       AND (? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?))",
                 )
                 .bind(block_id)
                 .bind(key)
@@ -795,6 +807,9 @@ async fn recover_derived_state_from_op_log(
                 .bind(value_date)
                 .bind(value_ref)
                 .bind(value_bool)
+                .bind(block_id)
+                .bind(value_ref)
+                .bind(value_ref)
                 .execute(&mut *tx)
                 .await?;
             }
@@ -812,11 +827,21 @@ async fn recover_derived_state_from_op_log(
                 let block_id = payload["block_id"].as_str().unwrap_or("");
                 let tag_id = payload["tag_id"].as_str().unwrap_or("");
 
-                sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
-                    .bind(block_id)
-                    .bind(tag_id)
-                    .execute(&mut *tx)
-                    .await?;
+                // Both columns are FKs to blocks(id): skip the tag if either
+                // the tagged block or the tag block is absent (purged, or
+                // never created in the local op_log) to avoid FK 787 panic.
+                sqlx::query(
+                    "INSERT OR IGNORE INTO block_tags (block_id, tag_id) \
+                     SELECT ?, ? \
+                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?) \
+                       AND EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+                )
+                .bind(block_id)
+                .bind(tag_id)
+                .bind(block_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await?;
             }
             _ => {}
         }
@@ -2086,6 +2111,125 @@ mod tests {
             due,
             Some("2026-06-15".to_string()),
             "due_date should be backfilled from properties"
+        );
+    }
+
+    /// BUG-73 regression: derived-state recovery must not crash when op_log
+    /// contains `set_property` / `add_tag` ops that reference blocks absent
+    /// from the recovered `blocks` table (purged locally, or created on
+    /// another device and never present in the local op_log).  Those ops'
+    /// FK columns (`block_id`, `value_ref`, `tag_id` → blocks(id)) would
+    /// otherwise trip `FOREIGN KEY constraint failed (787)` and abort
+    /// startup.  Dangling ops must be skipped; valid ones still recovered.
+    #[tokio::test]
+    async fn init_pool_recovery_skips_dangling_fk_refs_73() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let ts = chrono::Utc::now().timestamp_millis();
+
+        // Seed op_log. Only PAGE1 / CHILD1 get create_block ops, so they are
+        // the only blocks rebuilt; every GHOST_* id below is absent from the
+        // recovered blocks table.
+        let ops: &[(i64, &str, &str)] = &[
+            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"Page A\",\"parent_id\":null,\"position\":1}"),
+            (2, "create_block", "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"child\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            // Valid property on a live block — must survive.
+            (3, "set_property", "{\"block_id\":\"CHILD1\",\"key\":\"priority\",\"value_text\":\"high\"}"),
+            // Dangling block_id (GHOST_BLOCK never created) — must be skipped.
+            (4, "set_property", "{\"block_id\":\"GHOST_BLOCK\",\"key\":\"priority\",\"value_text\":\"low\"}"),
+            // Dangling value_ref (sole value points at missing block) — skip whole row.
+            (5, "set_property", "{\"block_id\":\"CHILD1\",\"key\":\"related\",\"value_ref\":\"GHOST_REF\"}"),
+            // Valid tag — must survive.
+            (6, "add_tag", "{\"block_id\":\"CHILD1\",\"tag_id\":\"PAGE1\"}"),
+            // Dangling tag_id — skip.
+            (7, "add_tag", "{\"block_id\":\"CHILD1\",\"tag_id\":\"GHOST_TAG\"}"),
+            // Dangling tagged block_id — skip.
+            (8, "add_tag", "{\"block_id\":\"GHOST_BLOCK\",\"tag_id\":\"PAGE1\"}"),
+        ];
+        for (seq, op_type, payload) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Corrupt: drop blocks so recovery runs on reopen.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        // Must NOT panic / error with FK 787 — this is the regression.
+        let pool = init_pool(&db_path)
+            .await
+            .expect("recovery must skip dangling FK refs instead of crashing");
+
+        // Valid property recovered.
+        let prio: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'CHILD1' AND key = 'priority'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            prio, 1,
+            "valid property on a live block should be recovered"
+        );
+
+        // Dangling-block property skipped.
+        let ghost_prop: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'GHOST_BLOCK'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ghost_prop, 0, "property on a missing block must be skipped");
+
+        // Dangling value_ref property skipped entirely.
+        let related: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'CHILD1' AND key = 'related'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            related, 0,
+            "property whose sole value_ref dangles must be skipped"
+        );
+
+        // Valid tag recovered; dangling tags skipped.
+        let good_tag: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = 'CHILD1' AND tag_id = 'PAGE1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            good_tag, 1,
+            "tag between two live blocks should be recovered"
+        );
+
+        let bad_tags: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_tags WHERE tag_id = 'GHOST_TAG' OR block_id = 'GHOST_BLOCK'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bad_tags, 0,
+            "tags referencing a missing block must be skipped"
         );
     }
 }
