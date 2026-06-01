@@ -32,6 +32,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
+use loro::{ExportMode, LoroDoc};
+
 use crate::error::AppError;
 use crate::loro::engine::LoroEngine;
 use crate::space::SpaceId;
@@ -182,18 +184,50 @@ impl LoroEngineRegistry {
     /// the caller can decide whether to log + continue (the periodic
     /// scheduler) or abort (a debug "snapshot now" command).
     ///
-    /// The export runs while holding the top-level mutex; see the
-    /// per-call discussion in
-    /// [`crate::loro::snapshot::save_all_engines`] for why that's the
-    /// right trade-off at the 5-minute scheduler cadence.
+    /// ## Issue #153 — export runs OUTSIDE the registry mutex
+    ///
+    /// The top-level mutex serialises *every* engine apply (the
+    /// materializer's hot path goes through [`for_space`](Self::for_space)).
+    /// Previously this method ran [`LoroEngine::export_snapshot`] for each
+    /// space while holding that lock, so an O(spaces x export) serialization
+    /// pass blocked all applies for its duration. To keep the lock window
+    /// O(spaces) instead, we:
+    ///
+    /// 1. collect a [`LoroDoc`] *handle* per space under the lock —
+    ///    [`LoroEngine::doc_handle`] is an O(1) reference clone, NOT a
+    ///    deep copy, so this neither serialises nor doubles memory;
+    /// 2. drop the guard;
+    /// 3. run the (comparatively slow) snapshot export on each handle with
+    ///    the lock released, so concurrent applies are not blocked.
+    ///
+    /// Because a `LoroDoc` handle shares the underlying document, an apply
+    /// that lands on the same space *after* the lock is dropped but
+    /// *before* its export runs is simply included in that snapshot — a
+    /// strictly fresher (still consistent) point-in-time export. The
+    /// snapshot watermark in [`crate::loro::snapshot::save_all_engines`] is
+    /// already a conservative lower bound that tolerates this.
     pub fn snapshot_all_engines(&self) -> Vec<(SpaceId, Result<Vec<u8>, AppError>)> {
-        let guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(poison) => poison.into_inner(),
+        // Phase 1: collect O(1) doc handles under the lock, then release it.
+        let handles: Vec<(SpaceId, LoroDoc)> = {
+            let guard = match self.inner.lock() {
+                Ok(g) => g,
+                Err(poison) => poison.into_inner(),
+            };
+            guard
+                .iter()
+                .map(|(space_id, engine)| (space_id.clone(), engine.doc_handle()))
+                .collect()
         };
-        guard
-            .iter()
-            .map(|(space_id, engine)| (space_id.clone(), engine.export_snapshot()))
+
+        // Phase 2: export each handle with the registry lock released.
+        handles
+            .into_iter()
+            .map(|(space_id, doc)| {
+                let bytes = doc
+                    .export(ExportMode::Snapshot)
+                    .map_err(|e| AppError::Validation(format!("loro: export snapshot: {e}")));
+                (space_id, bytes)
+            })
             .collect()
     }
 }
@@ -396,6 +430,79 @@ mod tests {
             let bytes = result.expect("export ok");
             assert!(!bytes.is_empty(), "exported snapshot must be non-empty");
         }
+    }
+
+    /// Issue #153 — the snapshot exported with the registry lock released
+    /// must round-trip to the engine's exact state. Imports each exported
+    /// snapshot into a fresh engine and asserts the block created before
+    /// the snapshot is present, proving the post-lock export sees real
+    /// document state (not an empty/aliased doc).
+    #[test]
+    fn snapshot_all_engines_export_round_trips() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "round-trip", None, 0)
+                .expect("create");
+        }
+
+        let pairs = r.snapshot_all_engines();
+        assert_eq!(pairs.len(), 1);
+        let (_space_id, bytes) = pairs.into_iter().next().expect("one pair");
+        let bytes = bytes.expect("export ok");
+
+        let mut fresh = LoroEngine::new();
+        fresh.import(&bytes).expect("import snapshot");
+        assert!(
+            fresh.read_block("BLOCK_A").expect("read").is_some(),
+            "snapshot exported outside the lock must contain pre-snapshot state",
+        );
+    }
+
+    /// Issue #153 — the registry mutex must NOT be held while the
+    /// per-space snapshot export runs. `snapshot_all_engines` collects
+    /// O(1) `LoroDoc` handles under the lock, drops it, then exports.
+    /// This drives a real export pass on a worker thread while the main
+    /// thread concurrently hammers `for_space`/`space_ids` (both of which
+    /// take the registry mutex); if the export still held the lock for its
+    /// duration this would serialise, but the assertion is simply that
+    /// every operation completes — i.e. no deadlock and no panic from a
+    /// poisoned/aliased guard.
+    #[test]
+    fn snapshot_export_does_not_hold_registry_lock() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let r = Arc::new(LoroEngineRegistry::new());
+        let a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "concurrent", None, 0)
+                .expect("create");
+        }
+
+        let snapshotter = {
+            let r = Arc::clone(&r);
+            thread::spawn(move || {
+                for _ in 0..50 {
+                    let pairs = r.snapshot_all_engines();
+                    assert_eq!(pairs.len(), 1);
+                    assert!(pairs[0].1.is_ok(), "export must succeed");
+                }
+            })
+        };
+
+        // Concurrently take the registry mutex via for_space + space_ids.
+        for _ in 0..50 {
+            let _ = r.space_ids();
+            let mut g = r.for_space(&a, "device-1").expect("for_space");
+            assert!(g.engine_mut().read_block("BLOCK_A").unwrap().is_some());
+        }
+
+        snapshotter.join().expect("snapshot thread finished");
     }
 
     #[test]

@@ -1073,6 +1073,21 @@ impl LoroEngine {
             })
     }
 
+    /// A reference-clone of the engine's underlying `LoroDoc`.
+    ///
+    /// Loro's `LoroDoc::clone` is a *handle* clone — the cloned doc shares
+    /// the same underlying document (see the loro 1.12 `impl Clone for
+    /// LoroDoc` doc-comment), so this is O(1) and does NOT deep-copy the
+    /// document state. Issue #153: the periodic-snapshot scheduler uses
+    /// this to collect cheap handles under the registry mutex, drop the
+    /// lock, then run the (comparatively slow) snapshot
+    /// [`export`](loro::LoroDoc::export) outside the lock — so the engine
+    /// mutex is held only for the O(1) handle clone, not for every
+    /// per-space serialization.
+    pub fn doc_handle(&self) -> LoroDoc {
+        self.doc.clone()
+    }
+
     /// Export the doc as a self-contained snapshot byte string.
     /// Phase 1 wires this into the `loro_batch` op-log payload (item
     /// 4 on the SPIKE-REPORT.md readiness checklist).
