@@ -137,6 +137,45 @@ describe('AttachmentRenderer', () => {
     expect(screen.getByTestId('image-resize-toolbar')).toBeInTheDocument()
   })
 
+  // ---- FIL-008 (#218 item 6): resize-hint badge ----
+
+  it('renders a faint resize-hint badge on images (discoverability cue)', async () => {
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+    await screen.findByRole('img')
+    const hint = screen.getByTestId('image-resize-hint')
+    expect(hint).toBeInTheDocument()
+    // Decorative cue: hidden from the a11y tree (the focusable group + toolbar
+    // carry the real semantics) and never intercepts the image/lightbox click.
+    expect(hint.getAttribute('aria-hidden')).toBe('true')
+    expect(hint.getAttribute('title')).toBe('Resize image — hover or focus to open the toolbar')
+    expect(hint.className).toContain('pointer-events-none')
+  })
+
+  it('hides the resize-hint badge once the resize toolbar is open', async () => {
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} imageHovered />)
+    await screen.findByRole('img')
+    // The toolbar already communicates resizability — no redundant badge.
+    expect(screen.getByTestId('image-resize-toolbar')).toBeInTheDocument()
+    expect(screen.queryByTestId('image-resize-hint')).not.toBeInTheDocument()
+  })
+
+  it('does not render a resize-hint badge for non-image attachments', () => {
+    render(
+      <AttachmentRenderer
+        {...baseProps}
+        attachments={[
+          makeAttachment({
+            id: 'att-pdf',
+            filename: 'document.pdf',
+            mime_type: 'application/pdf',
+            size_bytes: 2048,
+          }),
+        ]}
+      />,
+    )
+    expect(screen.queryByTestId('image-resize-hint')).not.toBeInTheDocument()
+  })
+
   it('image click triggers onLightboxOpen with the blob URL and the image set', async () => {
     const onLightboxOpen = vi.fn()
     render(

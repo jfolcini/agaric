@@ -1,3 +1,4 @@
+import { MoveHorizontal } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -179,7 +180,7 @@ function AttachmentImage({
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- this focusable group is the disclosure trigger for the inner ImageResizeToolbar: hover/focus reveal it and Enter/Space toggle it. It can't be a <button> because it wraps the <img> and a toolbar of nested buttons (nested interactive content is invalid), so the keyboard/pointer handlers must live on the group.
     <div
-      className="relative inline-block"
+      className="group relative inline-block"
       style={{ maxWidth: `${imageWidth}%` }}
       data-testid="image-resize-wrapper"
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- focusable disclosure wrapper around an <img> + nested toolbar buttons; <fieldset>/<optgroup> etc. break the inline-block resize layout and add form/list semantics
@@ -213,6 +214,23 @@ function AttachmentImage({
           currentAlignment={imageAlignment}
           onAlignmentChange={onImageAlignmentChange}
         />
+      )}
+      {/* FIL-008 (#218 item 6): faint resize-affordance hint. Discoverability
+          only — it signals the already-working resize toolbar exists. CSS-only
+          so it adds no render churn: hidden at rest, fades in on hover/focus
+          of the group (desktop). On coarse pointers (no hover) it stays faintly
+          visible so touch users get the cue too. Suppressed once the toolbar is
+          actually open (`imageHovered`) to avoid two overlapping affordances.
+          `pointer-events-none` so it never intercepts the image/lightbox click. */}
+      {!imageHovered && (
+        <span
+          aria-hidden="true"
+          data-testid="image-resize-hint"
+          title={t('attachment.resizeHint')}
+          className="pointer-events-none absolute right-1 top-1 z-[5] rounded bg-popover/80 p-0.5 text-muted-foreground opacity-0 shadow-sm transition-opacity duration-150 group-focus-within:opacity-50 group-hover:opacity-50 [@media(hover:none)]:opacity-50"
+        >
+          <MoveHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
       )}
       <button
         type="button"
