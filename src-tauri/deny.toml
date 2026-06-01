@@ -15,6 +15,28 @@ no-default-features = false
 feature-depth = 1
 
 # ── Advisories (RustSec) ────────────────────────────────────────────────────
+#
+# OSSF-3 (issue #145): OSSF Scorecard's `Vulnerabilities` check runs against the
+# full OSV/RustSec set — it scans the entire Cargo.lock target-agnostically, the
+# same view as `cargo audit`. The bulk below are the gtk-rs GTK3 binding crates
+# (RUSTSEC-2024-0411..0420) reaching us transitively via `wry -> tauri` on Linux:
+# wry's only WebView backend on Linux is webkit2gtk (GTK3) and no GTK4 alternative
+# ships yet. These are "no longer maintained" informational notices, not
+# exploitable code paths, and are unfixable for us until upstream wry/tauri
+# migrate off GTK3. Revisit trigger: a Tauri release announces the GTK4 migration
+# complete -> drop the GTK3 entries here + in .cargo/audit.toml + re-run Scorecard.
+#
+# NOTE — TWO SCANNERS, TWO VIEWS. `cargo deny` (this file) prunes the dep graph to
+# the four `[graph].targets` below, so a few of these advisories report
+# `advisory-not-detected` ("no crate matched") here even though they ARE live:
+#   - RUSTSEC-2023-0089 (atomic-polyfill, via loro/heapless/postcard)
+#   - RUSTSEC-2024-0429 (glib 0.18.5 unsound VariantStrIter — function-scoped)
+#   - RUSTSEC-2026-0097 (rand thread_rng unsound — function-scoped)
+# These are still flagged by `cargo audit` / OSV / Scorecard (full-lockfile scan),
+# so the entries MUST stay despite the cosmetic cargo-deny warning. Do NOT delete
+# them on the strength of `advisory-not-detected` alone — confirm with
+# `cargo audit` (target-agnostic) first. `.cargo/audit.toml` is generated from this
+# list (run `node scripts/sync-audit-from-deny.mjs` after any edit here).
 [advisories]
 ignore = [
     # GTK3 bindings — unmaintained, but required by Tauri on Linux (no alternative)
@@ -40,13 +62,11 @@ ignore = [
     { id = "RUSTSEC-2024-0429", reason = "Tauri GTK3 transitive dep: glib 0.18.5 unsound (sibling of GTK3 binding accept-list above)" },
     # Loro transitive unmaintained crate (atomic-polyfill via heapless → postcard → loro)
     { id = "RUSTSEC-2023-0089", reason = "Loro transitive dep: atomic-polyfill (via heapless → postcard)" },
-    # sqlx transitive: rsa Marvin Attack timing side-channel via sqlx-mysql. Agaric
-    # configures sqlx with default-features = false and only the sqlite/runtime-tokio/
-    # macros/migrate features — the mysql driver is never invoked at runtime, but
-    # sqlx 0.8.6 still pulls sqlx-mysql at compile time (it gates the driver enable
-    # behind a Cargo feature, not behind dep pruning). The vulnerable RSA code path
-    # only executes during MySQL auth handshake, which this app never reaches.
-    { id = "RUSTSEC-2023-0071", reason = "sqlx-mysql transitive — Agaric is SQLite-only; the rsa Marvin Attack code path is in MySQL auth handshake which is never invoked" },
+    # NOTE: RUSTSEC-2023-0071 (rsa Marvin Attack, via sqlx-mysql) was removed here
+    # in OSSF-3/#145 — current sqlx (0.8.x) no longer pulls the `rsa` crate at all
+    # (absent from Cargo.lock), so the advisory is no longer reachable from any
+    # target and both cargo-deny and cargo-audit confirm it as not-present. If a
+    # future sqlx bump reintroduces `rsa`, re-add it with the SQLite-only rationale.
     # rand: deprecated `rand::thread_rng` is unsound on freshly-spawned threads.
     # Transitive via Tauri / Loro stack; Agaric's own code uses `rand::rngs::OsRng`.
     { id = "RUSTSEC-2026-0097", reason = "Transitive (Tauri/Loro stack); Agaric's own code uses OsRng, the deprecated thread_rng path is not exercised" },
