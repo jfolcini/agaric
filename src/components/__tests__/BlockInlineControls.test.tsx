@@ -304,6 +304,16 @@ describe('BlockInlineControls', () => {
     expect(screen.getByRole('button', { name: t('block.collapseChildren') })).toBeInTheDocument()
   })
 
+  // D4 (#217): the collapse/expand shortcut (Ctrl+.) must be exposed to AT via
+  // aria-keyshortcuts in addition to the sighted-only "(Ctrl+.)" tooltip text.
+  it('exposes the Ctrl+. collapse shortcut via aria-keyshortcuts', () => {
+    renderControls(makeProps({ hasChildren: true }))
+    expect(screen.getByTestId('collapse-toggle')).toHaveAttribute(
+      'aria-keyshortcuts',
+      t('block.collapseKeyshortcuts'),
+    )
+  })
+
   it('passes isExpanded=true when expanded', () => {
     renderControls(makeProps({ hasChildren: true, isCollapsed: false }))
     const chevron = screen.getByTestId('chevron-toggle')

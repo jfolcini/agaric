@@ -839,7 +839,9 @@ describe('SuggestionList', () => {
     expect(footer).toBeInTheDocument()
     expect(footer).toHaveAttribute('aria-hidden', 'true')
     expect(footer).toHaveTextContent('↑↓ navigate')
-    expect(footer).toHaveTextContent('Enter to select')
+    // D6 (#217): Tab also confirms the highlighted item, so the footer now
+    // advertises both Enter (↵) and Tab (⇥).
+    expect(footer).toHaveTextContent('↵ or ⇥ select')
     expect(footer).toHaveTextContent('Esc to close')
   })
 
