@@ -1,4 +1,4 @@
-## Session 931 — Block clarity & a11y polish (#217 small DO batch) (2026-06-01)
+## Session 932 — Block clarity & a11y polish (#217 small DO batch) (2026-06-01)
 
 | Metadata | Value |
 |----------|-------|
