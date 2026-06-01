@@ -678,6 +678,91 @@ mod tests {
         assert_eq!(count, 0, "fresh DB should have zero blocks");
     }
 
+    /// BUG-73 regression: migrations 0073 and 0080 rebuild `blocks` by
+    /// creating `_new_blocks`, copying data, then `DROP TABLE blocks`.
+    /// The original SQL declared `parent_id REFERENCES blocks(id)` and
+    /// `page_id REFERENCES blocks(id)` inside `_new_blocks`. After the
+    /// INSERT, `_new_blocks` itself became a child table with RESTRICT
+    /// and data, causing `DROP TABLE blocks` to fail with FK constraint.
+    /// The fix uses `REFERENCES _new_blocks(id)` (self-reference); after
+    /// `ALTER TABLE _new_blocks RENAME TO blocks`, SQLite rewrites the
+    /// reference to `blocks(id)`.
+    #[tokio::test]
+    async fn blocks_rebuild_self_fk_allows_drop() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&db_path)
+                    .create_if_missing(true)
+                    .pragma("foreign_keys", "ON"),
+            )
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE blocks (
+                id TEXT PRIMARY KEY NOT NULL,
+                parent_id TEXT REFERENCES blocks(id),
+                page_id TEXT REFERENCES blocks(id)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO blocks VALUES ('B1', NULL, 'B1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Reproduce the fixed migration pattern.
+        sqlx::query(
+            "CREATE TABLE _new_blocks (
+                id TEXT PRIMARY KEY NOT NULL,
+                parent_id TEXT REFERENCES _new_blocks(id),
+                page_id TEXT REFERENCES _new_blocks(id),
+                CONSTRAINT page_id_self_for_pages CHECK (
+                    page_id = id
+                )
+            ) STRICT",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO _new_blocks SELECT * FROM blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // This DROP was the failure point before the fix.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query("ALTER TABLE _new_blocks RENAME TO blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let sql: (String,) = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blocks'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            sql.0.contains("REFERENCES \"blocks\"(id)"),
+            "after rename the self-FK should point to blocks: {}",
+            sql.0
+        );
+    }
+
     // ======================================================================
     // DbPools tests
     // ======================================================================

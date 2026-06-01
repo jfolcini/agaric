@@ -90,18 +90,37 @@ CREATE TABLE _new_blocks (
     id             TEXT NOT NULL PRIMARY KEY,
     block_type     TEXT NOT NULL DEFAULT 'content',
     content        TEXT,
-    parent_id      TEXT REFERENCES blocks(id),
+    parent_id      TEXT REFERENCES _new_blocks(id),
     position       INTEGER,
     deleted_at     TEXT,
     todo_state     TEXT,
     priority       TEXT,
     due_date       TEXT,
     scheduled_date TEXT,
-    page_id        TEXT REFERENCES blocks(id),
+    page_id        TEXT REFERENCES _new_blocks(id),
     CONSTRAINT page_id_self_for_pages CHECK (
         block_type != 'page' OR page_id = id
     )
 ) STRICT;
+
+-- ---------------------------------------------------------------------
+-- Pre-cleanup: NULL out orphaned self-referencing FK values before the
+-- bulk copy. The original `blocks` table carries `parent_id REFERENCES
+-- blocks(id)` and `page_id REFERENCES blocks(id)`. If `PRAGMA
+-- foreign_keys` was ever OFF during the database's lifetime (or a
+-- historical write path bypassed FK enforcement), dangling pointers may
+-- exist. The INSERT below re-validates these FKs row-by-row, so we must
+-- clean them first. NULL is safe: NULL FK values skip validation, and
+-- the CHECK below only fires on `block_type = 'page'` rows (whose
+-- `page_id` is always `id`, never an orphan).
+-- ---------------------------------------------------------------------
+UPDATE blocks SET parent_id = NULL
+ WHERE parent_id IS NOT NULL
+   AND parent_id NOT IN (SELECT id FROM blocks);
+
+UPDATE blocks SET page_id = NULL
+ WHERE page_id IS NOT NULL
+   AND page_id NOT IN (SELECT id FROM blocks);
 
 -- ---------------------------------------------------------------------
 -- Step 4: copy rows. The CHECK fires per-row during the bulk copy; a
