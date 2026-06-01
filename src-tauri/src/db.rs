@@ -1,6 +1,6 @@
 use sqlx::pool::PoolConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use sqlx::{Sqlite, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -477,6 +477,384 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         .busy_timeout(std::time::Duration::from_secs(5))
 }
 
+// ======================================================================
+// Recovery helpers for corrupted databases (missing blocks table)
+// ======================================================================
+
+/// If the `blocks` table is missing (e.g. from a partial migration-73
+/// DROP TABLE that was not rolled back), create a temporary table and
+/// replay block-level ops from `op_log` to reconstruct it.
+///
+/// Dependent tables (block_properties, block_tags, …) are recovered
+/// *after* migrations run via [`recover_derived_state_from_op_log`]
+/// because migration 73's DROP TABLE blocks would CASCADE-delete them.
+async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::error::AppError> {
+    let exists = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'blocks'"
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0)
+        > 0;
+
+    if exists {
+        return Ok(());
+    }
+
+    // Only recover if this is a corrupted database (migrations have already
+    // run at least once). Fresh databases have no _sqlx_migrations yet.
+    let migrations_table_exists: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'"
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    if migrations_table_exists == 0 {
+        return Ok(());
+    }
+
+    let migration_rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    if migration_rows == 0 {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        "blocks table missing — likely from a partial migration-73 run. \
+         Creating temporary table and recovering from op_log."
+    );
+
+    let mut tx = pool.begin().await?;
+
+    // Temporary blocks table: no STRICT, no FK constraints, no CHECK.
+    // Migration 73 will rebuild it with the proper constraints.
+    sqlx::query(
+        "CREATE TABLE blocks (
+            id             TEXT NOT NULL PRIMARY KEY,
+            block_type     TEXT NOT NULL DEFAULT 'content',
+            content        TEXT,
+            parent_id      TEXT,
+            position       INTEGER,
+            deleted_at     TEXT,
+            todo_state     TEXT,
+            priority       TEXT,
+            due_date       TEXT,
+            scheduled_date TEXT,
+            page_id        TEXT
+        )",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // Replay create / edit / move / delete / restore / purge ops into blocks.
+    recover_blocks_from_op_log(&mut tx).await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Replay block-level ops from `op_log` into an existing (temporary)
+/// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
+/// transaction so the rebuild is atomic.
+async fn recover_blocks_from_op_log(
+    executor: &mut sqlx::SqliteConnection,
+) -> Result<(), crate::error::AppError> {
+    // Guard: op_log might not exist on ancient databases.
+    let op_log_exists = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'op_log'"
+    )
+    .fetch_one(&mut *executor)
+    .await
+    .unwrap_or(0)
+        > 0;
+
+    if !op_log_exists {
+        tracing::warn!("op_log table missing — cannot recover blocks data");
+        return Ok(());
+    }
+
+    let ops = sqlx::query("SELECT op_type, payload FROM op_log ORDER BY device_id, seq")
+        .fetch_all(&mut *executor)
+        .await?;
+
+    if ops.is_empty() {
+        return Ok(());
+    }
+
+    tracing::info!("Replaying {} ops into temporary blocks table", ops.len());
+
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+
+    for row in ops {
+        let op_type: String = row.try_get("op_type")?;
+        let payload_str: String = row.try_get("payload")?;
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
+
+        match op_type.as_str() {
+            "create_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let block_type = payload["block_type"].as_str().unwrap_or("content");
+                let content = payload
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                let parent_id = payload.get("parent_id").and_then(serde_json::Value::as_str);
+                let position = payload.get("position").and_then(serde_json::Value::as_i64);
+
+                sqlx::query(
+                    "INSERT OR IGNORE INTO blocks \
+                     (id, block_type, content, parent_id, position, deleted_at, \
+                      todo_state, priority, due_date, scheduled_date, page_id) \
+                     VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL)",
+                )
+                .bind(block_id)
+                .bind(block_type)
+                .bind(content)
+                .bind(parent_id)
+                .bind(position)
+                .execute(&mut *executor)
+                .await?;
+            }
+            "edit_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                if let Some(to_text) = payload.get("to_text").and_then(serde_json::Value::as_str) {
+                    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+                        .bind(to_text)
+                        .bind(block_id)
+                        .execute(&mut *executor)
+                        .await?;
+                }
+            }
+            "move_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let new_parent_id = payload
+                    .get("new_parent_id")
+                    .and_then(serde_json::Value::as_str);
+                let new_position = payload
+                    .get("new_position")
+                    .and_then(serde_json::Value::as_i64);
+
+                sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+                    .bind(new_parent_id)
+                    .bind(new_position)
+                    .bind(block_id)
+                    .execute(&mut *executor)
+                    .await?;
+            }
+            "delete_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
+                    .bind(&now_rfc3339)
+                    .bind(block_id)
+                    .execute(&mut *executor)
+                    .await?;
+            }
+            "restore_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE id = ?")
+                    .bind(block_id)
+                    .execute(&mut *executor)
+                    .await?;
+            }
+            "purge_block" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                sqlx::query("DELETE FROM blocks WHERE id = ?")
+                    .bind(block_id)
+                    .execute(&mut *executor)
+                    .await?;
+            }
+            _ => {
+                // set_property / delete_property / add_tag are handled
+                // post-migration so they survive migration 73's DROP TABLE.
+            }
+        }
+    }
+
+    // Clean up orphaned parent_ids so migration 73's INSERT into _new_blocks
+    // doesn't fail on dangling FK references (e.g. parent created on another
+    // device and not present in the local op_log).
+    sqlx::query(
+        "UPDATE blocks SET parent_id = NULL \
+         WHERE parent_id IS NOT NULL AND parent_id NOT IN (SELECT id FROM blocks)",
+    )
+    .execute(&mut *executor)
+    .await?;
+
+    // Compute page_id: pages self-reference, content blocks inherit from
+    // nearest page ancestor, tags stay NULL.
+    sqlx::query("UPDATE blocks SET page_id = id WHERE block_type = 'page'")
+        .execute(&mut *executor)
+        .await?;
+
+    loop {
+        let rows = sqlx::query(
+            "UPDATE blocks SET page_id = (
+                SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END
+                FROM blocks AS parent WHERE parent.id = blocks.parent_id
+            )
+            WHERE block_type = 'content' AND page_id IS NULL AND parent_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM blocks AS parent
+                  WHERE parent.id = blocks.parent_id AND parent.page_id IS NOT NULL
+              )",
+        )
+        .execute(&mut *executor)
+        .await?
+        .rows_affected();
+
+        if rows == 0 {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// After migrations run, recover dependent tables (block_properties,
+/// block_tags) from `op_log` if they are empty but the op log contains
+/// the corresponding ops.  Also backfills the denormalised columns on
+/// `blocks` (todo_state, priority, due_date, scheduled_date).
+async fn recover_derived_state_from_op_log(
+    pool: &SqlitePool,
+) -> Result<(), crate::error::AppError> {
+    // Guard: skip if op_log is empty or missing.
+    let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    if op_count == 0 {
+        return Ok(());
+    }
+
+    // Only recover if derived tables are empty — otherwise we would
+    // duplicate rows on every startup.
+    let prop_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    let tag_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    if prop_count > 0 || tag_count > 0 {
+        return Ok(());
+    }
+
+    tracing::warn!(
+        "Derived tables empty but op_log has {} ops — recovering properties and tags",
+        op_count
+    );
+
+    let mut tx = pool.begin().await?;
+
+    let ops = sqlx::query("SELECT op_type, payload FROM op_log ORDER BY device_id, seq")
+        .fetch_all(&mut *tx)
+        .await?;
+
+    for row in ops {
+        let op_type: String = row.try_get("op_type")?;
+        let payload_str: String = row.try_get("payload")?;
+        let payload: serde_json::Value =
+            serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
+
+        match op_type.as_str() {
+            "set_property" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let key = payload["key"].as_str().unwrap_or("");
+                let value_text = payload
+                    .get("value_text")
+                    .and_then(serde_json::Value::as_str);
+                let value_num = payload.get("value_num").and_then(serde_json::Value::as_f64);
+                let value_date = payload
+                    .get("value_date")
+                    .and_then(serde_json::Value::as_str);
+                let value_ref = payload.get("value_ref").and_then(serde_json::Value::as_str);
+                let value_bool = payload
+                    .get("value_bool")
+                    .and_then(serde_json::Value::as_bool)
+                    .map(|b| if b { 1i64 } else { 0i64 });
+
+                sqlx::query(
+                    "INSERT OR REPLACE INTO block_properties \
+                     (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(block_id)
+                .bind(key)
+                .bind(value_text)
+                .bind(value_num)
+                .bind(value_date)
+                .bind(value_ref)
+                .bind(value_bool)
+                .execute(&mut *tx)
+                .await?;
+            }
+            "delete_property" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let key = payload["key"].as_str().unwrap_or("");
+
+                sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                    .bind(block_id)
+                    .bind(key)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            "add_tag" => {
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let tag_id = payload["tag_id"].as_str().unwrap_or("");
+
+                sqlx::query("INSERT OR IGNORE INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+                    .bind(block_id)
+                    .bind(tag_id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            _ => {}
+        }
+    }
+
+    // Backfill denormalised columns on blocks from block_properties.
+    sqlx::query(
+        "UPDATE blocks SET todo_state = (SELECT value_text FROM block_properties \
+         WHERE block_id = blocks.id AND key = 'todo_state')",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE blocks SET priority = (SELECT value_text FROM block_properties \
+         WHERE block_id = blocks.id AND key = 'priority')",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE blocks SET due_date = (SELECT value_date FROM block_properties \
+         WHERE block_id = blocks.id AND key = 'due_date')",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE blocks SET scheduled_date = (SELECT value_date FROM block_properties \
+         WHERE block_id = blocks.id AND key = 'scheduled_date')",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Initialize separated read/write SQLite pools with WAL mode.
 ///
 /// The write pool runs migrations on creation.  The read pool sets
@@ -493,10 +871,18 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         .connect_with(write_opts)
         .await?;
 
+    // BUG-73 recovery: if a prior crash left blocks missing, recreate it
+    // from op_log so migrations have a target table to rebuild.
+    ensure_blocks_table_exists(&write_pool).await?;
+
     // Run migrations on the write pool (needs write access)
     tracing::info!("running database migrations");
     sqlx::migrate!("./migrations").run(&write_pool).await?;
     tracing::info!("database migrations complete");
+
+    // BUG-73 recovery part 2: restore properties and tags that migration 73's
+    // DROP TABLE would have CASCADE-deleted.
+    recover_derived_state_from_op_log(&write_pool).await?;
 
     // T-5: Update query planner statistics after migrations.
     // PRAGMA optimize analyzes tables whose stats may be stale and runs
@@ -548,10 +934,16 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
         .connect_with(connect_options)
         .await?;
 
+    // BUG-73 recovery
+    ensure_blocks_table_exists(&pool).await?;
+
     // Run migrations
     tracing::info!("running database migrations");
     sqlx::migrate!("./migrations").run(&pool).await?;
     tracing::info!("database migrations complete");
+
+    // BUG-73 recovery part 2
+    recover_derived_state_from_op_log(&pool).await?;
 
     // L-8: match `init_pools` — refresh planner stats after migrations.
     sqlx::query("PRAGMA optimize").execute(&pool).await?;
@@ -1535,6 +1927,165 @@ mod tests {
         assert_eq!(
             row, 1,
             "commit_without_dispatch must still commit the transaction"
+        );
+    }
+
+    /// BUG-73 regression: when `blocks` is missing but `op_log` still has
+    /// data (partial migration-73 DROP TABLE), `init_pool` must recreate
+    /// `blocks` from `op_log` and then restore dependent tables after
+    /// migrations so no user data is lost.
+    #[tokio::test]
+    async fn init_pool_recover_blocks_from_op_log_73() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Step 1: create a normal migrated database with some data.
+        let pool = init_pool(&db_path).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PAGE1','page','Page A',NULL,1,'PAGE1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('CHILD1','content','child','PAGE1',1,'PAGE1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('CHILD1','priority','high')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES ('CHILD1','PAGE1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Seed op_log with create_block ops so recovery has something to replay.
+        // created_at is INTEGER ms in the migrated schema (Issue #109).
+        let ts = chrono::Utc::now().timestamp_millis();
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', 1, 'h1', 'create_block', \
+             '{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"Page A\",\"parent_id\":null,\"position\":1}', \
+             ?, 'user')",
+        )
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', 2, 'h2', 'create_block', \
+             '{\"block_id\":\"RECOV1\",\"block_type\":\"content\",\"content\":\"recovered\",\"parent_id\":\"PAGE1\",\"position\":2}', \
+             ?, 'user')",
+        )
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', 3, 'h3', 'set_property', \
+             '{\"block_id\":\"RECOV1\",\"key\":\"due_date\",\"value_date\":\"2026-06-15\",\"value_text\":null,\"value_num\":null,\"value_ref\":null}', \
+             ?, 'user')",
+        )
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', 4, 'h4', 'add_tag', \
+             '{\"block_id\":\"RECOV1\",\"tag_id\":\"PAGE1\"}', \
+             ?, 'user')",
+        )
+        .bind(ts)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Step 2: simulate corruption — drop blocks.  CASCADE deletes
+        // dependent rows, but the empty tables remain with FK references
+        // to the missing blocks table, so we cannot run DML on them.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Step 3: reopen the database with init_pool — recovery should run.
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // Step 4: verify blocks were recovered from op_log.
+        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            count >= 2,
+            "blocks should be recovered: expected at least 2 rows, got {count}"
+        );
+
+        // Verify the directly-inserted page and child survived.
+        let page_exists: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM blocks WHERE id = 'PAGE1' AND block_type = 'page'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(page_exists, 1, "original page should survive recovery");
+
+        // Verify the op_log-recovered block exists with correct page_id.
+        let recov = sqlx::query("SELECT id, content, page_id FROM blocks WHERE id = 'RECOV1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let recov_id: String = recov.try_get("id").unwrap();
+        let recov_content: String = recov.try_get("content").unwrap();
+        let recov_page_id: Option<String> = recov.try_get("page_id").unwrap();
+        assert_eq!(recov_id, "RECOV1");
+        assert_eq!(recov_content, "recovered");
+        assert_eq!(
+            recov_page_id,
+            Some("PAGE1".to_string()),
+            "page_id should be computed from parent chain"
+        );
+
+        // Verify dependent tables were restored post-migration.
+        let prop_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'RECOV1' AND key = 'due_date'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(prop_count, 1, "property should be recovered");
+
+        let tag_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM block_tags WHERE block_id = 'RECOV1' AND tag_id = 'PAGE1'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tag_count, 1, "tag should be recovered");
+
+        // Verify denormalised column was backfilled.
+        let due_row = sqlx::query("SELECT due_date FROM blocks WHERE id = 'RECOV1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let due: Option<String> = due_row.try_get("due_date").unwrap();
+        assert_eq!(
+            due,
+            Some("2026-06-15".to_string()),
+            "due_date should be backfilled from properties"
         );
     }
 }
