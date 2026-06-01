@@ -21,6 +21,8 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 
+import type { BlockTypeToken } from '../lib/block-type-convert'
+
 /**
  * Per-block action callbacks consumed by SortableBlock's subcomponents.
  *
@@ -46,6 +48,8 @@ export interface BlockActions {
   onShowProperties?: ((blockId: string) => void) | undefined
   onZoomIn?: ((blockId: string) => void) | undefined
   onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
+  /** #264 — convert a block to another block type ("Turn into ▸"). */
+  onTurnInto?: ((blockId: string, blockType: BlockTypeToken) => void) | undefined
 }
 
 const BlockActionsContext = createContext<BlockActions | null>(null)

@@ -144,6 +144,92 @@ describe('useSlashCommandStructural — list, divider', () => {
   })
 })
 
+describe('useSlashCommandStructural — turn into (#264)', () => {
+  function setContent(
+    pageStore: ReturnType<typeof makeSyntheticCtx>['pageStore'],
+    content: string,
+  ): void {
+    // Mirror the heading tests above: `setState({ blocks })` funnels through
+    // the store's `setWithBlocksById` wrapper, which rebuilds the `blocksById`
+    // map that `readCurrentContent` reads from.
+    pageStore.setState({
+      blocks: pageStore.getState().blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, content } : b)),
+    })
+  }
+
+  it('turn-h2 converts a paragraph to a heading 2', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'hello world')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    expect(handler).toBeDefined()
+    await handler?.(ctx, { id: 'turn-h2', label: 'Heading 2' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '## hello world',
+    })
+  })
+
+  it('turn-paragraph strips an existing heading marker', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, '### a heading')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-paragraph', label: 'Text' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: 'a heading',
+    })
+  })
+
+  it('turn-quote wraps content in a blockquote marker', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'a thought')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-quote', label: 'Quote' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '> a thought',
+    })
+  })
+
+  it('turn-callout converts to an info callout', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'important')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-callout', label: 'Callout' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '> [!INFO] important',
+    })
+  })
+
+  it('turn-numbered-list prepends an ordered-list marker', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, pageStore } = makeSyntheticCtx()
+    setContent(pageStore, 'first')
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-numbered-list', label: 'Ordered list' })
+    expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+      blockId: 'BLOCK_1',
+      toText: '1. first',
+    })
+  })
+
+  it('ignores an unknown turn- id (no edit)', async () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx } = makeSyntheticCtx()
+    const handler = result.current.prefix.find(([p]) => p === 'turn-')?.[1]
+    await handler?.(ctx, { id: 'turn-bogus', label: 'Bogus' })
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: 'BLOCK_1' }),
+    )
+  })
+})
+
 describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quote)', () => {
   it.each(['link', 'tag', 'code', 'quote'] as const)(
     'no-ops gracefully when ctx.rovingEditor.editor is null for /%s',

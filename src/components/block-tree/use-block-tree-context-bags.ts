@@ -37,6 +37,9 @@ export interface UseBlockTreeContextBagsParams {
   onShowProperties: BlockActions['onShowProperties']
   onZoomIn: BlockActions['onZoomIn']
   onSelect: BlockActions['onSelect']
+  // #264 — optional so existing callers/tests that don't wire conversion
+  // still satisfy the params type.
+  onTurnInto?: BlockActions['onTurnInto']
 
   // ── Resolvers ────────────────────────────────────────────────────
   resolveBlockTitle: BlockResolvers['resolveBlockTitle']
@@ -65,6 +68,7 @@ export function useBlockTreeContextBags({
   onShowProperties,
   onZoomIn,
   onSelect,
+  onTurnInto,
   resolveBlockTitle,
   resolveTagName,
   resolveBlockStatus,
@@ -86,6 +90,7 @@ export function useBlockTreeContextBags({
       onShowProperties,
       onZoomIn,
       onSelect,
+      onTurnInto,
     }),
     [
       onNavigate,
@@ -102,6 +107,7 @@ export function useBlockTreeContextBags({
       onShowProperties,
       onZoomIn,
       onSelect,
+      onTurnInto,
     ],
   )
 
