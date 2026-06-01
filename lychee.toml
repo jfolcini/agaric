@@ -61,4 +61,12 @@ exclude = [
     # or transferred and no longer resolves. Archived session logs are
     # never edited, so the reference is excluded rather than rewritten.
     "^https?://github\\.com/launchbadge/sqlx/issues/3388$",
+    # slsa.dev intermittently refuses connections / fails TLS handshake from
+    # GitHub Actions runners (validate runs 26783271629 + rerun 78955874796:
+    # "TLS handshake failed" on https://slsa.dev/ then "Connection failed" on
+    # the https://slsa.dev/images/gh-badge-level3.svg SLSA badge). Same GHA
+    # reqwest+rustls flake as oxc.rs above — the site is up from browsers and
+    # `curl`. Both references (threat-model.md spec link + README badge) are
+    # non-load-bearing, so the domain is excluded rather than churned.
+    "^https?://slsa\\.dev/",
 ]
