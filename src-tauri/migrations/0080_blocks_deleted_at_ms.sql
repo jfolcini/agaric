@@ -22,7 +22,7 @@ CREATE TABLE _new_blocks (
     id             TEXT NOT NULL PRIMARY KEY,
     block_type     TEXT NOT NULL DEFAULT 'content',
     content        TEXT,
-    parent_id      TEXT REFERENCES blocks(id),
+    parent_id      TEXT REFERENCES _new_blocks(id),
     position       INTEGER,
     -- milliseconds since UNIX epoch (UTC); NULL = live. Written via now_ms().
     deleted_at     INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
@@ -30,7 +30,7 @@ CREATE TABLE _new_blocks (
     priority       TEXT,
     due_date       TEXT,
     scheduled_date TEXT,
-    page_id        TEXT REFERENCES blocks(id),
+    page_id        TEXT REFERENCES _new_blocks(id),
     CONSTRAINT page_id_self_for_pages CHECK (
         block_type != 'page' OR page_id = id
     )
