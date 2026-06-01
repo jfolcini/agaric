@@ -224,14 +224,14 @@ pub async fn rehydrate_registry(
 ///
 /// Returns the number of spaces successfully snapshotted.
 pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
-    // We snapshot under the registry lock — `export_snapshot` is a
-    // read-only Loro op, fast in absolute terms (single-MiB doc per
-    // SPIKE-REPORT.md §3) but it does hold the per-space mutex for
-    // its duration.  That's acceptable at the 5-minute snapshot
-    // cadence: the materializer's apply rate is bounded by human
-    // typing, the engine is rarely contended, and the alternative
-    // (clone the whole `HashMap`, drop the lock, snapshot each
-    // engine) would double the peak memory.
+    // Issue #153 — `snapshot_all_engines` collects an O(1) `LoroDoc`
+    // *handle* per space under the registry mutex, drops the lock, then
+    // runs each (comparatively slow) snapshot export with the lock
+    // released. The mutex therefore serialises every engine apply only
+    // for the O(spaces) handle-clone pass, not for the O(spaces x export)
+    // serialization. A `LoroDoc` clone is a reference clone (shared
+    // underlying doc), so this does NOT double peak memory — see
+    // `LoroEngineRegistry::snapshot_all_engines` for the full rationale.
     // PEND-70 C1/C2: read the watermark BEFORE acquiring the engine lock,
     // so it is a safe lower bound for every engine exported in this pass —
     // the lock-time cursor can only be >= this value, and each engine
