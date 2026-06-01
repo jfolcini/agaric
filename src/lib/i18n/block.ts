@@ -22,6 +22,12 @@ export const block: Record<string, string> = {
   'block.expandChildren': 'Expand children',
   'block.collapseTip': 'Collapse (Ctrl+.)',
   'block.expandTip': 'Expand (Ctrl+.)',
+  // D4 (#217): aria-keyshortcuts token form of the `collapseExpand` catalog
+  // binding (Ctrl + .) so assistive tech announces the shortcut — tooltips
+  // never fire on touch and the visible "(Ctrl+.)" tip is sighted-only. The
+  // key token is the UI-Events `key` value ("."), matching `toAriaKeyshortcuts`
+  // (modifier → "Control", non-modifier whitespace stripped, no code-name map).
+  'block.collapseKeyshortcuts': 'Control+.',
   'block.setTodo': 'Set as TODO',
   'block.taskCycle': 'Task: {{state}}. Click to cycle.',
   'block.setTodoTip': 'Set as TODO (Ctrl+Enter)',

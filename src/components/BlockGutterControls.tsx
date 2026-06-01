@@ -115,7 +115,15 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       label={t('block.reorderTip')}
       ariaLabel={t('block.reorder')}
       testId="drag-handle"
-      className="drag-handle cursor-grab hover:text-foreground"
+      // B2 (#217): the drag handle was fully invisible at rest (`opacity-0` from
+      // GUTTER_BUTTON_BASE), so the reorder affordance was undiscoverable until
+      // the row was hovered. Rest it at a faint `opacity-30` (and re-enable
+      // pointer events, which the base disables while hidden) so it teaches the
+      // affordance without shouting; `group-hover`/`focus` still raise it to
+      // full opacity via the base classes. Touch keeps the base behaviour
+      // (`.block-active` reveals it) — this is the desktop calm-UI compromise
+      // shared with #216-B (land once).
+      className="drag-handle cursor-grab hover:text-foreground opacity-30 pointer-events-auto"
       // B (#216): expose the keyboard-reorder shortcut to assistive tech.
       // The naming tooltip ("Reorder — Ctrl+Shift+↑/↓") already comes from
       // `block.reorderTip`; this makes the shortcut programmatically discoverable.

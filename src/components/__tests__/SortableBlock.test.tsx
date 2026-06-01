@@ -661,7 +661,10 @@ describe('SortableBlock gutter button pointer-events', () => {
     expect(deleteBtn.className).toContain('group-hover:pointer-events-auto')
   })
 
-  it('drag handle has pointer-events-none when invisible (opacity-0)', () => {
+  // B2 (#217): the desktop drag handle rests at a faint opacity-30 (with pointer
+  // events enabled) rather than the base opacity-0, so the reorder affordance is
+  // discoverable without hovering the row first; hover still raises it to full.
+  it('drag handle rests at opacity-30 with pointer events enabled (B2 discoverability)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_PE"
@@ -672,9 +675,11 @@ describe('SortableBlock gutter button pointer-events', () => {
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.className).toContain('opacity-0')
-    expect(dragHandle.className).toContain('pointer-events-none')
-    expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
+    expect(dragHandle.className).toContain('opacity-30')
+    expect(dragHandle.className).toContain('pointer-events-auto')
+    expect(dragHandle.className).not.toContain('opacity-0')
+    expect(dragHandle.className).not.toContain('pointer-events-none')
+    expect(dragHandle.className).toContain('group-hover:opacity-100')
   })
 
   it('history button has pointer-events-none when invisible (opacity-0)', () => {
@@ -1570,7 +1575,8 @@ describe('SortableBlock visibility controls', () => {
     expect(container.firstElementChild?.className).not.toContain('block-active')
   })
 
-  it('drag handle has opacity-0 class (hidden by default)', () => {
+  // B2 (#217): drag handle is faintly visible at rest (opacity-30), not hidden.
+  it('drag handle rests at opacity-30 (faintly visible, B2 discoverability)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1581,7 +1587,8 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('opacity-0')
+    expect(handle.className).toContain('opacity-30')
+    expect(handle.className).not.toContain('opacity-0')
   })
 
   it('drag handle has group-hover:opacity-100 class for hover reveal', () => {

@@ -73,7 +73,10 @@ export const editor: Record<string, string> = {
   'suggestion.hint.minChars': 'Type at least 2 characters to search',
   'suggestion.create': 'Create',
   'suggestion.footer.navigate': '↑↓ navigate',
-  'suggestion.footer.select': 'Enter to select',
+  // D6 (#217): Tab also confirms the highlighted item (suggestion-renderer
+  // maps the `suggestionAutocomplete` binding → synthetic Enter), so advertise
+  // both keys rather than implying Enter is the only way to select.
+  'suggestion.footer.select': '↵ or ⇥ select',
   'suggestion.footer.close': 'Esc to close',
   'link.opensInNewTab': '(opens in new tab)',
   'lightbox.description': 'Fullscreen preview of {{filename}}',

@@ -205,6 +205,8 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               onClick={() => onToggleCollapse?.(blockId)}
               aria-label={isCollapsed ? t('block.expandChildren') : t('block.collapseChildren')}
               aria-expanded={!isCollapsed}
+              // D4 (#217): expose the Ctrl+. collapse/expand shortcut to AT.
+              aria-keyshortcuts={t('block.collapseKeyshortcuts')}
             >
               <ChevronToggle isExpanded={!isCollapsed} size="lg" />
             </button>

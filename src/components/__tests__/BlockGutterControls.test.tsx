@@ -268,13 +268,20 @@ describe('BlockGutterControls tooltip visibility', () => {
 })
 
 describe('BlockGutterControls gutter button classes', () => {
-  it('drag handle has pointer-events-none when invisible (opacity-0)', () => {
+  // B2 (#217): the desktop drag handle rests at a faint opacity-30 (not the
+  // base opacity-0) so the reorder affordance is discoverable without a hover.
+  // twMerge resolves the conflicting classes, so the resolved className must
+  // carry opacity-30 + pointer-events-auto, NOT the base opacity-0 /
+  // pointer-events-none. group-hover:opacity-100 still raises it on hover.
+  it('drag handle rests at opacity-30 with pointer events enabled (B2 discoverability)', () => {
     renderWithTooltip(<BlockGutterControls blockId="B1" />)
 
     const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.className).toContain('opacity-0')
-    expect(dragHandle.className).toContain('pointer-events-none')
-    expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
+    expect(dragHandle.className).toContain('opacity-30')
+    expect(dragHandle.className).toContain('pointer-events-auto')
+    expect(dragHandle.className).not.toContain('opacity-0')
+    expect(dragHandle.className).not.toContain('pointer-events-none')
+    expect(dragHandle.className).toContain('group-hover:opacity-100')
   })
 
   it('delete button has pointer-events-none when invisible (opacity-0)', () => {
