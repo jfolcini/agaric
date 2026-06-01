@@ -116,4 +116,17 @@ export const editor: Record<string, string> = {
   'imageAlign.center': 'Align center',
   'imageAlign.right': 'Align right',
   'imageAlign.saveFailed': 'Could not save image alignment',
+  // #286 — emoji picker dialog (browse grid)
+  'emojiPicker.title': 'Insert emoji',
+  'emojiPicker.search': 'Search emoji',
+  'emojiPicker.grid': 'Emoji',
+  'emojiPicker.recents': 'Recents',
+  'emojiPicker.recentsRow': 'Recently used emoji',
+  'emojiPicker.skinTone': 'Skin tone',
+  'emojiPicker.skinTone.default': 'Default',
+  'emojiPicker.skinTone.light': 'Light',
+  'emojiPicker.skinTone.mediumLight': 'Medium-light',
+  'emojiPicker.skinTone.medium': 'Medium',
+  'emojiPicker.skinTone.mediumDark': 'Medium-dark',
+  'emojiPicker.skinTone.dark': 'Dark',
 }

@@ -26,6 +26,38 @@ export interface EmojiEntry {
   readonly keywords: readonly string[]
 }
 
+/**
+ * Display groups for the browse-grid `<EmojiPicker>` (#286). The inline `:`
+ * picker (#281) ignores grouping — it reads `EMOJI`/`searchEmoji` flat — so
+ * this is additive: the curated set is partitioned into these buckets purely
+ * for the categorized, sticky-header grid. Order here is the grid render
+ * order. Mirrors the `── … ──` section comments in `EMOJI` below.
+ */
+export const EMOJI_GROUPS = [
+  'Smileys & Emotion',
+  'Gestures & Body',
+  'Hearts & Symbols',
+  'Objects & Tools',
+  'Nature & Misc',
+] as const
+
+export type EmojiGroup = (typeof EMOJI_GROUPS)[number]
+
+/**
+ * The first shortcode of each section in `EMOJI`. Used by `groupedEmoji()` to
+ * partition the flat list sequentially: every entry inherits the group of the
+ * most recent boundary at or before it. Keeping the boundaries as a name map
+ * (rather than hard-coded indices) means re-ordering or inserting emoji inside
+ * a section doesn't silently mis-bucket the tail.
+ */
+const GROUP_BOUNDARIES: Readonly<Record<string, EmojiGroup>> = {
+  grinning: 'Smileys & Emotion',
+  thumbsup: 'Gestures & Body',
+  heart: 'Hearts & Symbols',
+  check: 'Objects & Tools',
+  sun: 'Nature & Misc',
+}
+
 export const EMOJI: readonly EmojiEntry[] = [
   // ── Smileys & emotion ──────────────────────────────────────────────
   { char: '\u{1F600}', name: 'grinning', keywords: ['smile', 'happy'] },
@@ -190,4 +222,32 @@ export function searchEmoji(query: string, limit = 24): EmojiEntry[] {
   return matchSorter(EMOJI as EmojiEntry[], q, {
     keys: ['name', 'keywords'],
   }).slice(0, limit)
+}
+
+export interface EmojiGroupBucket {
+  readonly group: EmojiGroup
+  readonly emoji: readonly EmojiEntry[]
+}
+
+/**
+ * Partition the flat curated `EMOJI` list into `EMOJI_GROUPS` buckets for the
+ * browse-grid. Walks the list once, switching the active group whenever an
+ * entry's `name` is a known boundary (see `GROUP_BOUNDARIES`). Entries before
+ * the first boundary (there are none today) fall into the first group. Empty
+ * groups are omitted so the grid never renders a header with no emoji.
+ */
+export function groupedEmoji(): EmojiGroupBucket[] {
+  const buckets = new Map<EmojiGroup, EmojiEntry[]>()
+  let current: EmojiGroup = EMOJI_GROUPS[0]
+  for (const entry of EMOJI) {
+    const boundary = GROUP_BOUNDARIES[entry.name]
+    if (boundary !== undefined) current = boundary
+    const bucket = buckets.get(current)
+    if (bucket === undefined) buckets.set(current, [entry])
+    else bucket.push(entry)
+  }
+  return EMOJI_GROUPS.filter((g) => buckets.has(g)).map((group) => ({
+    group,
+    emoji: buckets.get(group) ?? [],
+  }))
 }
