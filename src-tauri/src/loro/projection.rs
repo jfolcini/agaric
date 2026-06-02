@@ -661,16 +661,13 @@ pub async fn reproject_block_properties_from_engine(
     }
 
     // Reserved hot-path keys → dedicated `blocks` columns (PEND-81 §2A).
-    // Authoritative-replace: collect each reserved key's engine value
-    // (None when absent / cleared on the remote), then a single UPDATE
-    // sets all four columns at once — present keys to their value, absent
-    // keys to NULL. `todo_state`/`priority` are text; `due_date`/
-    // `scheduled_date` are date strings; the engine stores each as one
-    // string that maps directly to the column (mirrors the local
-    // `project_set_property_to_sql` routing).
-    // Reserved keys are all stored as `Str` in the engine (todo_state/
-    // priority are text; due_date/scheduled_date are date strings); render
-    // each to its string form (`Null` → column NULL).
+    // Authoritative-replace: collect each reserved key's engine value (None
+    // when absent / cleared on the remote), then a single UPDATE sets all
+    // four columns at once — present keys to their value, absent keys to
+    // NULL. All four are stored as `Str` in the engine (todo_state/priority
+    // are text; due_date/scheduled_date are date strings); render each to
+    // its string form (`Null` → column NULL), mirroring the local
+    // `project_set_property_to_sql` routing.
     let mut todo_state: Option<String> = None;
     let mut priority: Option<String> = None;
     let mut due_date: Option<String> = None;
@@ -2024,6 +2021,42 @@ mod tests {
         .await
         .expect("fetch link");
         assert_eq!(link, (Some(BLOCK_A.into()), None, None, None, None));
+    }
+
+    #[tokio::test]
+    async fn reproject_native_num_ignores_diverged_value_type_and_avoids_fk_abort() {
+        // PEND-80 Phase 4: a native `Num` routes straight to value_num,
+        // ignoring `property_definitions.value_type`. This is the safety
+        // win over the old string+value_type path: if a key is declared
+        // `ref` here (e.g. a cross-peer definition divergence) but the
+        // engine value is a native number, the old code would render "42",
+        // route it to value_ref, and hit the `value_ref REFERENCES blocks(id)`
+        // FK → abort the whole inbound-sync tx. The typed path writes
+        // value_num and never touches the FK.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await; // seeds `link` as `ref`
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![("link".to_string(), PropertyValue::Num(42.0))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("native Num under a ref-declared key must not FK-abort");
+        drop(conn);
+
+        let row: (Option<f64>, Option<String>) = sqlx::query_as(
+            "SELECT value_num, value_ref FROM block_properties \
+             WHERE block_id = ? AND key = 'link'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch link");
+        assert_eq!(
+            row,
+            (Some(42.0), None),
+            "native Num routes to value_num, never value_ref"
+        );
     }
 
     #[tokio::test]
