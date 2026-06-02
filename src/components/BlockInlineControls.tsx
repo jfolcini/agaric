@@ -3,6 +3,7 @@ import { Calendar, CalendarDays, Check, ChevronRight, Paperclip, Repeat, X } fro
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useIsMobile } from '../hooks/useIsMobile'
 import { dispatchBlockEvent } from '../lib/block-events'
 import { dueDateColor, formatCompactDate, MONTH_SHORT } from '../lib/date-utils'
 import { priorityColor } from '../lib/priority-color'
@@ -164,6 +165,13 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
 }: BlockInlineControlsProps): React.ReactElement {
   const { t } = useTranslation()
 
+  // #217 C2 (remainder): relieve inline-control density on narrow viewports.
+  // A dense block can carry priority + due + scheduled + repeat + N props +
+  // attachments; on phones that wraps badly. Show only 2 inline property chips
+  // before the `+N` overflow pill on narrow viewports (≥768px keeps 3).
+  const isMobile = useIsMobile()
+  const inlinePropLimit = isMobile ? 2 : 3
+
   // UX-308: Play a one-shot bump animation when the attachment count changes
   // (file dropped/pasted). `animKey` starts as null so the very first render
   // has no animation classes; subsequent count changes set it to the new
@@ -314,7 +322,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
 
       {filteredProperties.length > 0 && (
         <>
-          {filteredProperties.slice(0, 3).map((p) => {
+          {filteredProperties.slice(0, inlinePropLimit).map((p) => {
             const displayValue = resolveBlockTitle ? resolveBlockTitle(p.value) || p.value : p.value
             return (
               <PropertyChip
@@ -326,7 +334,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
               />
             )
           })}
-          {filteredProperties.length > 3 && (
+          {filteredProperties.length > inlinePropLimit && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -341,7 +349,7 @@ export const BlockInlineControls = React.memo(function BlockInlineControls({
                     dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
                   }}
                 >
-                  +{filteredProperties.length - 3}
+                  +{filteredProperties.length - inlinePropLimit}
                   <ChevronRight className="h-3 w-3 ml-0.5 opacity-60" aria-hidden="true" />
                 </button>
               </TooltipTrigger>
