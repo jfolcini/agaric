@@ -61,16 +61,22 @@ function emit(): void {
   for (const listener of listeners) listener()
 }
 
+// Cross-window sync: another tab/window mutating the same key fires a
+// `storage` event here; re-read and notify local subscribers. Hoisted to
+// module scope so add/removeEventListener use the SAME function reference — a
+// per-`subscribe` closure made `removeEventListener` a no-op (different
+// identity), leaking the handler and stacking duplicates across
+// subscribe/unsubscribe cycles.
+function onStorage(event: StorageEvent): void {
+  if (event.key !== null && event.key !== EMOJI_RECENTS_KEY) return
+  snapshot = readRecents()
+  emit()
+}
+
 function subscribe(listener: () => void): () => void {
+  // Attach on the 0→1 transition, detach on 1→0, both with `onStorage`.
+  if (listeners.size === 0) window.addEventListener('storage', onStorage)
   listeners.add(listener)
-  // Cross-window sync: another tab/window mutating the same key fires a
-  // `storage` event here; re-read and notify local subscribers.
-  const onStorage = (event: StorageEvent) => {
-    if (event.key !== null && event.key !== EMOJI_RECENTS_KEY) return
-    snapshot = readRecents()
-    emit()
-  }
-  if (listeners.size === 1) window.addEventListener('storage', onStorage)
   return () => {
     listeners.delete(listener)
     if (listeners.size === 0) window.removeEventListener('storage', onStorage)
