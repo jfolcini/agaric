@@ -322,6 +322,79 @@ describe('BlockGutterControls gutter button classes', () => {
   })
 })
 
+/* ── B1 (#217): multi-select checkbox affordance ────────────────── */
+
+describe('BlockGutterControls multi-select checkbox (B1, #217)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not render a checkbox when onSelect is not provided', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" />)
+    expect(screen.queryByTestId('block-select-checkbox')).not.toBeInTheDocument()
+  })
+
+  it('renders a hidden-at-rest checkbox when onSelect is provided', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} />)
+    const checkbox = screen.getByTestId('block-select-checkbox')
+    expect(checkbox).toBeInTheDocument()
+    expect(checkbox).toHaveAttribute('type', 'checkbox')
+    expect(checkbox).toHaveAttribute('aria-label', t('block.selectBlock'))
+    // Hidden at rest, revealed on row hover/focus-within.
+    expect(checkbox.className).toContain('opacity-0')
+    expect(checkbox.className).toContain('group-hover:opacity-100')
+  })
+
+  it('toggles selection via onSelect(blockId, "toggle") when changed', () => {
+    const onSelect = vi.fn()
+    renderWithTooltip(<BlockGutterControls blockId="B_SEL" onSelect={onSelect} />)
+
+    fireEvent.click(screen.getByTestId('block-select-checkbox'))
+
+    expect(onSelect).toHaveBeenCalledTimes(1)
+    expect(onSelect).toHaveBeenCalledWith('B_SEL', 'toggle')
+  })
+
+  it('reflects the selected state and forces full visibility when selected', () => {
+    renderWithTooltip(<BlockGutterControls blockId="B1" onSelect={vi.fn()} isSelected />)
+    const checkbox = screen.getByTestId('block-select-checkbox') as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
+    // When selected it is always visible (feedback), not opacity-0.
+    expect(checkbox.className).toContain('opacity-100')
+    expect(checkbox.className).not.toContain('opacity-0')
+  })
+
+  it('renders the checkbox on touch only when selected (feedback, not chrome)', () => {
+    const original = setMatchMedia(true)
+    try {
+      const { rerender } = renderWithTooltip(
+        <BlockGutterControls blockId="B1" onSelect={vi.fn()} />,
+      )
+      // Unselected on touch: checkbox is suppressed via the coarse-pointer hide class.
+      const unselected = screen.getByTestId('block-select-checkbox')
+      expect(unselected.className).toContain('[@media(pointer:coarse)]:hidden')
+      // Selected on touch: forced visible (no coarse-hide class branch).
+      rerender(
+        <TooltipProvider>
+          <BlockGutterControls blockId="B1" onSelect={vi.fn()} isSelected />
+        </TooltipProvider>,
+      )
+      const selected = screen.getByTestId('block-select-checkbox')
+      expect(selected.className).not.toContain('[@media(pointer:coarse)]:hidden')
+    } finally {
+      if (original) Object.defineProperty(window, 'matchMedia', original)
+    }
+  })
+
+  it('passes axe audit with the checkbox rendered', async () => {
+    const { container } = renderWithTooltip(
+      <BlockGutterControls blockId="B1" onSelect={vi.fn()} onDelete={vi.fn()} />,
+    )
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+})
+
 describe('BlockGutterControls accessibility', () => {
   it('passes axe audit with all buttons rendered', async () => {
     const { container } = renderWithTooltip(

@@ -641,6 +641,7 @@ export function BlockTree({
     setDatePickerOpen,
     zoomedBlockId,
     zoomToRoot,
+    zoomIn: handleZoomIn,
   })
 
   // ── Click on whitespace within block tree closes editor (UX-M9) ──

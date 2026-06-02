@@ -96,6 +96,10 @@ interface BlockGutterControlsProps {
   dragAttributes?: DraggableAttributes
   /** dnd-kit sortable `listeners` — spread onto the drag handle button. */
   dragListeners?: DraggableSyntheticListeners
+  /** Whether this block is part of the active multi-selection (B1, #217). */
+  isSelected?: boolean | undefined
+  /** Toggle this block's membership in the multi-selection (B1, #217). */
+  onSelect?: ((blockId: string, mode: 'toggle' | 'range') => void) | undefined
 }
 
 export const BlockGutterControls = React.memo(function BlockGutterControls({
@@ -104,10 +108,52 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
   onShowHistory,
   dragAttributes,
   dragListeners,
+  isSelected,
+  onSelect,
 }: BlockGutterControlsProps): React.ReactElement {
   const { t } = useTranslation()
   const isTouch = useIsTouch()
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  // B1 (#217): hover-revealed multi-select checkbox — surfaces the
+  // otherwise-invisible Ctrl/Shift+Click selection affordance. Mirrors the
+  // `TrashRowItem` checkbox pattern. It is hidden at rest and revealed on row
+  // hover / focus-within (via the shared `GUTTER_*` visibility classes), but
+  // forced fully visible whenever the block is *selected* so the checkbox
+  // doubles as selection feedback — it adds feedback, not chrome (the calm↔
+  // discoverability contract from #217). A coarse-pointer device has no hover,
+  // so the checkbox is suppressed there (the long-press context menu owns
+  // touch block-ops) and only appears once selected.
+  const selectCheckbox = onSelect ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <input
+          type="checkbox"
+          checked={isSelected ?? false}
+          onChange={() => onSelect(blockId, 'toggle')}
+          // The gutter row also handles clicks (long-press, focus); keep the
+          // checkbox's own click from bubbling into block focus/selection.
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          className={cn(
+            'block-select-checkbox flex-shrink-0 h-3.5 w-3.5 rounded border-border cursor-pointer',
+            'transition-opacity focus-ring',
+            // Hidden at rest; revealed on hover/focus-within of the row. When
+            // selected, force full visibility so it reads as "I'm selected".
+            isSelected
+              ? 'opacity-100'
+              : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 [@media(pointer:coarse)]:hidden',
+          )}
+          aria-label={t('block.selectBlock')}
+          data-testid="block-select-checkbox"
+          tabIndex={-1}
+        />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={4}>
+        {t('block.selectTip')}
+      </TooltipContent>
+    </Tooltip>
+  ) : null
 
   const dragHandle = (
     <GutterButton
@@ -171,6 +217,7 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
     })()
     return (
       <div className="flex flex-col items-end gap-1">
+        {selectCheckbox}
         {touchDragHandle}
         {hasOverflow && (
           <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
@@ -228,9 +275,10 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
     )
   }
 
-  // ── Desktop render — three inline gutter buttons (unchanged) ────
+  // ── Desktop render — checkbox + three inline gutter buttons ────
   return (
     <>
+      {selectCheckbox}
       {dragHandle}
 
       {/* History — between grip and delete */}

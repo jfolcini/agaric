@@ -79,9 +79,19 @@ function SortableBlockWrapperInner({
   properties,
 }: SortableBlockWrapperProps): React.ReactElement {
   const isFocused = focusedBlockId === block.id
-  // Show projected depth during drag for the active item's over target
+  const isActiveDragRow = activeId === block.id
+  // B3 (#217) — drag depth preview. While a drag is in progress the dragged
+  // source row used to keep its *original* depth, so only the drop indicator
+  // (which renders at `projected.depth`) hinted at where the block would land;
+  // the lifted row itself stayed put horizontally. Reflect the projected depth
+  // on the dragged row too so the indent the block will adopt is legible during
+  // the drag (it already rests at `opacity: 0.35` as a "lifted placeholder").
+  // The over-target row (`overId === block.id`) also previews projected depth
+  // so the row under the cursor shows the incoming indent.
   const projectedDepth =
-    projected && activeId && overId === block.id ? projected.depth : block.depth
+    projected && activeId && (isActiveDragRow || overId === block.id)
+      ? projected.depth
+      : block.depth
 
   // Per-id memoized ref callback — same function identity across
   // renders for a given block.id, and unobserves the exact element
@@ -138,7 +148,7 @@ function SortableBlockWrapperInner({
         blockId={block.id}
         content={block.content ?? ''}
         isFocused={isFocused}
-        depth={block.id === activeId ? projectedDepth : block.depth}
+        depth={projectedDepth}
         rovingEditor={rovingEditor}
         hasChildren={hasChildren}
         anyBlockHasChildren={anyBlockHasChildren}

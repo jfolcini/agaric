@@ -106,6 +106,8 @@ export const shortcuts: Record<string, string> = {
   'keyboard.runLastCommand': 'Re-run last palette command',
   'keyboard.category.pageEditor': 'Page Editor',
   'keyboard.condition.inPageEditor': 'When viewing a page',
+  'keyboard.zoomIn': 'Zoom in to focused block',
+  'keyboard.condition.onFocusedParentBlock': 'When a block with children is focused',
   'keyboard.zoomOut': 'Zoom out to page root',
   'keyboard.condition.whenZoomed': 'When zoomed into a block',
   'keyboard.syntax.bold': 'Bold',

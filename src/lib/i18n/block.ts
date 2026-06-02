@@ -14,6 +14,9 @@ export const block: Record<string, string> = {
   'block.reorderTouchHint': 'Press and hold to drag',
   'block.reorderKeyshortcuts': 'Control+Shift+ArrowUp Control+Shift+ArrowDown',
   'block.swipeRowDescription': 'Swipe left to delete this block',
+  // B1 (#217): hover-revealed multi-select checkbox affordance.
+  'block.selectBlock': 'Select block',
+  'block.selectTip': 'Select — Ctrl+Click to multi-select, Shift+Click for range',
   'block.delete': 'Delete block',
   'block.history': 'Block history',
   'block.moreActionsLabel': 'More block actions',

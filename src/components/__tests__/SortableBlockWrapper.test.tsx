@@ -276,6 +276,40 @@ describe('SortableBlockWrapper', () => {
     expect(lastProps?.['depth']).toBe(3)
   })
 
+  it('previews projected depth on the dragged row even when hovering a DIFFERENT block (B3, #217)', () => {
+    // The active drag row used to keep its original depth while the cursor was
+    // over another block — only the drop indicator hinted at the landing depth.
+    // B3 makes the lifted row itself reflect `projected.depth` so the indent is
+    // legible during the drag, regardless of which block is the over-target.
+    const block = makeBlock({ id: 'BLK001', depth: 0 })
+    renderInList(
+      makeProps({
+        block,
+        activeId: 'BLK001',
+        overId: 'BLK_OTHER', // hovering a different row
+        projected: { depth: 2, parentId: null, maxDepth: 5, minDepth: 0 },
+      }),
+    )
+
+    expect(sortableBlockProps).toHaveLength(1)
+    expect(sortableBlockProps[0]?.['depth']).toBe(2)
+  })
+
+  it('keeps block.depth on the dragged row when there is no projection', () => {
+    const block = makeBlock({ id: 'BLK001', depth: 1 })
+    renderInList(
+      makeProps({
+        block,
+        activeId: 'BLK001',
+        overId: 'BLK_OTHER',
+        projected: null,
+      }),
+    )
+
+    expect(sortableBlockProps).toHaveLength(1)
+    expect(sortableBlockProps[0]?.['depth']).toBe(1)
+  })
+
   it('uses block.depth when this block is not being dragged', () => {
     const block = makeBlock({ id: 'BLK001', depth: 1 })
     renderInList(
