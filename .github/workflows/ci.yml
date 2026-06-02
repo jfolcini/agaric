@@ -334,6 +334,27 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free up runner disk space
+        # The two-arch Android build (x86_64 debug + aarch64 release) plus the
+        # NDK and the Rust release `target/` trees exhausted the ~14 GB the
+        # default ubuntu-24.04 runner leaves free → "No space left on device"
+        # (run 26804729629, android-build). Reclaim the large preinstalled
+        # toolchains this job never uses BEFORE the SDK/NDK install and the
+        # builds. The preinstalled Android NDKs are removed too — `setup-android`
+        # below reinstalls the single pinned NDK this build needs. ~20-25 GB
+        # recovered; `|| true` so a missing path never fails the build.
+        run: |
+          set -x
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/share/chromium || true
+          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
