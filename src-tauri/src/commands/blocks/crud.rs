@@ -1433,6 +1433,17 @@ pub async fn purge_block_inner(
     // pages_cache (MAINT-147 (a): uniform site, keyed on page_id)
     purge_descendants_table!(tx, &block_id, "pages_cache", "page_id");
 
+    // #85 F2: capture the attachment file paths for the post-commit unlink
+    // BEFORE the rows are deleted — single-block purge previously dropped the
+    // rows but leaked the files on disk (the two bulk paths already unlink).
+    let purged_attachment_paths = sqlx::query_scalar::<_, String>(concat!(
+        crate::descendants_cte_purge!(),
+        "SELECT fs_path FROM attachments WHERE block_id IN (SELECT id FROM descendants)"
+    ))
+    .bind(&block_id)
+    .fetch_all(&mut **tx)
+    .await?;
+
     // attachments (MAINT-147 (a): uniform site)
     purge_descendants_table!(tx, &block_id, "attachments");
 
@@ -1459,6 +1470,9 @@ pub async fn purge_block_inner(
     // Commit + fire-and-forget background cache dispatch.
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
+
+    // #85 F2: unlink the purged attachment files post-commit (best-effort).
+    spawn_purged_attachment_cleanup(materializer.app_data_dir(), purged_attachment_paths);
 
     Ok(PurgeResponse {
         block_id,
@@ -1864,39 +1878,12 @@ pub async fn purge_all_deleted_inner(
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
 
-    // L-36: Post-commit attachment-file unlink runs on a blocking thread so
-    // the IPC reply is not held up by per-file `unlink` syscalls. The DB
-    // transaction has already committed at this point, so failed file deletes
-    // do not affect data correctness — the warn-logs are best-effort by
-    // design. The returned `JoinHandle` is intentionally dropped (fire-and-
-    // forget); awaiting it would defeat the point of moving the loop off the
-    // command thread.
-    tokio::task::spawn_blocking(move || {
-        for path in &attachment_rows {
-            let p = std::path::Path::new(path.as_str());
-            if p.is_absolute()
-                || p.components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-            {
-                let (path_hash, ext) = anonymize_attachment_path(path);
-                tracing::warn!(
-                    path_hash = %path_hash,
-                    extension = %ext,
-                    "skipping attachment deletion: unsafe path"
-                );
-                continue;
-            }
-            if let Err(e) = std::fs::remove_file(path) {
-                let (path_hash, ext) = anonymize_attachment_path(path);
-                tracing::warn!(
-                    path_hash = %path_hash,
-                    extension = %ext,
-                    error = %e,
-                    "failed to remove attachment file after purge"
-                );
-            }
-        }
-    });
+    // L-36 + #85 F2: post-commit attachment-file unlink on a blocking thread
+    // (the per-file `unlink` syscalls must not hold up the IPC reply; the DB tx
+    // has committed, so failures are best-effort warn-logs). Resolves paths
+    // against the materializer's `app_data_dir` — no longer a CWD-relative
+    // `remove_file`.
+    spawn_purged_attachment_cleanup(materializer.app_data_dir(), attachment_rows);
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -2324,34 +2311,10 @@ pub async fn purge_blocks_by_ids_inner(
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
-    // L-36: Post-commit attachment-file unlink runs on a blocking thread
-    // (mirrors `purge_all_deleted_inner`).
-    tokio::task::spawn_blocking(move || {
-        for path in &attachment_rows {
-            let p = std::path::Path::new(path.as_str());
-            if p.is_absolute()
-                || p.components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-            {
-                let (path_hash, ext) = anonymize_attachment_path(path);
-                tracing::warn!(
-                    path_hash = %path_hash,
-                    extension = %ext,
-                    "skipping attachment deletion: unsafe path"
-                );
-                continue;
-            }
-            if let Err(e) = std::fs::remove_file(path) {
-                let (path_hash, ext) = anonymize_attachment_path(path);
-                tracing::warn!(
-                    path_hash = %path_hash,
-                    extension = %ext,
-                    error = %e,
-                    "failed to remove attachment file after purge"
-                );
-            }
-        }
-    });
+    // L-36 + #85 F2: post-commit attachment-file unlink (mirrors
+    // `purge_all_deleted_inner`), resolved against the materializer's
+    // `app_data_dir` rather than a CWD-relative `remove_file`.
+    spawn_purged_attachment_cleanup(materializer.app_data_dir(), attachment_rows);
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -3165,6 +3128,81 @@ pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     (short_hash, extension)
+}
+
+/// Remove the on-disk files for a set of just-purged attachments.
+///
+/// #85 (PEND-76 F2): attachment `fs_path`s are stored **app-data-relative**
+/// (e.g. `attachments/<ULID>`). This resolves each against `app_data_dir`
+/// (`app_data_dir.join(fs_path)`) — the proper absolute path, matching
+/// `delete_attachment_inner` — rather than the earlier bulk paths' bare
+/// relative `remove_file`, which only worked when the process CWD happened to
+/// equal the app-data dir. All three purge paths funnel through here so the
+/// single-block purge no longer leaks files and the bulk paths stop depending
+/// on CWD.
+///
+/// Defensive: an `fs_path` that is absolute or contains a `..` component is
+/// skipped (it cannot be a legitimate app-relative attachment path and joining
+/// it could escape the attachments dir). A missing file is a no-op — the
+/// `CleanupOrphanedAttachments` GC sweep is the backstop. Pure + synchronous so
+/// it is unit-testable; the spawn wrapper handles the off-thread, post-commit,
+/// best-effort execution.
+pub(crate) fn remove_purged_attachment_files(app_data_dir: &std::path::Path, fs_paths: &[String]) {
+    for fs_path in fs_paths {
+        let p = std::path::Path::new(fs_path.as_str());
+        if p.is_absolute()
+            || p.components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            let (path_hash, ext) = anonymize_attachment_path(fs_path);
+            tracing::warn!(
+                path_hash = %path_hash,
+                extension = %ext,
+                "skipping attachment deletion: unsafe path"
+            );
+            continue;
+        }
+        let full = app_data_dir.join(p);
+        match std::fs::remove_file(&full) {
+            Ok(()) => {}
+            // Already gone (double-purge, prior GC sweep) — not an error.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                let (path_hash, ext) = anonymize_attachment_path(fs_path);
+                tracing::warn!(
+                    path_hash = %path_hash,
+                    extension = %ext,
+                    error = %e,
+                    "failed to remove attachment file after purge"
+                );
+            }
+        }
+    }
+}
+
+/// Post-commit, best-effort unlink of purged attachment files on a blocking
+/// thread (per-file `unlink` syscalls must not hold up the IPC reply; the DB
+/// tx has already committed, so failures are warn-logged only). `app_data_dir`
+/// comes from the `Materializer` (`None` when unwired, e.g. in tests) — a
+/// `None` dir or empty path list skips the spawn entirely. The `JoinHandle` is
+/// intentionally dropped (fire-and-forget).
+fn spawn_purged_attachment_cleanup(
+    app_data_dir: Option<std::path::PathBuf>,
+    fs_paths: Vec<String>,
+) {
+    if fs_paths.is_empty() {
+        return;
+    }
+    let Some(app_data_dir) = app_data_dir else {
+        tracing::debug!(
+            count = fs_paths.len(),
+            "skipping purged-attachment unlink: app_data_dir not set (GC sweep is the backstop)"
+        );
+        return;
+    };
+    tokio::task::spawn_blocking(move || {
+        remove_purged_attachment_files(&app_data_dir, &fs_paths);
+    });
 }
 
 // ===========================================================================
