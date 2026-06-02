@@ -14,7 +14,7 @@ use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::filters::{FilterPrimitive, PagesProjection, Projection};
 use crate::import;
-use crate::import::ImportResult;
+use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult};
 use crate::materializer::Materializer;
 use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
 use crate::space::SpaceScope;
@@ -513,6 +513,48 @@ pub async fn import_markdown_inner(
     filename: Option<String>,
     space_id: String,
 ) -> Result<ImportResult, AppError> {
+    // Progress-free path (MCP tools, sync replay, scripted imports, tests
+    // / benches). The Tauri command calls
+    // [`import_markdown_with_progress`] with a live channel sink instead.
+    import_markdown_with_progress(
+        pool,
+        device_id,
+        materializer,
+        content,
+        filename,
+        space_id,
+        None,
+    )
+    .await
+}
+
+/// Progress-streaming core of [`import_markdown_inner`] (#128, PEND-38 /
+/// PEND-06 Tier 3).
+///
+/// Identical semantics to [`import_markdown_inner`] (single IMMEDIATE
+/// transaction, all-or-nothing per L-30) plus an optional
+/// [`ImportProgressSink`]. When `progress` is `Some`, the function emits:
+///
+///   1. one [`ImportProgressUpdate::Started`] before any block is written,
+///   2. one [`ImportProgressUpdate::Progress`] after each block create,
+///   3. one [`ImportProgressUpdate::Complete`] **after** the transaction
+///      commits — never before, so a `Complete` event always implies the
+///      rows are durable.
+///
+/// On any error the function returns `Err` before reaching the `Complete`
+/// emit, so a consumer that sees `Started` but no `Complete` must treat
+/// the import as failed/rolled-back (matching the L-30 all-or-nothing
+/// contract). Sends are best-effort (see [`ImportProgressSink`]).
+#[instrument(skip(pool, device_id, materializer, content, progress), err)]
+pub async fn import_markdown_with_progress(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    content: String,
+    filename: Option<String>,
+    space_id: String,
+    progress: Option<&dyn ImportProgressSink>,
+) -> Result<ImportResult, AppError> {
     // PEND-35 Tier 1.1 — normalize ULID to uppercase per AGENTS.md
     // invariant #8. Mirrors `create_page_in_space_inner` so a raw String
     // arg from MCP tools / sync replay / scripted imports can never land
@@ -526,6 +568,18 @@ pub async fn import_markdown_inner(
     let page_title = filename
         .map(|f| f.trim_end_matches(".md").to_string())
         .unwrap_or_else(|| "Imported Page".to_string());
+
+    // #128 — emit `Started` with the parser's block count so the UI can
+    // render a determinate progress bar from the first event. Sent before
+    // the transaction opens; if the import later fails, the consumer sees
+    // no `Complete` and treats it as failed.
+    let blocks_total = parse_output.blocks.len() as u64;
+    if let Some(sink) = progress {
+        sink.emit(ImportProgressUpdate::Started {
+            page_title: page_title.clone(),
+            blocks_total,
+        });
+    }
 
     // --- Single IMMEDIATE transaction for entire import ---
     // MAINT-112: CommandTx couples commit + post-commit dispatch; op
@@ -628,6 +682,19 @@ pub async fn import_markdown_inner(
         tx.enqueue_background(block_op);
         parent_stack.push((block.depth, new_block.id.clone().into_string()));
 
+        // #128 — per-block progress tick. Emitted inside the loop so a
+        // large file shows forward motion; the rows are not yet committed
+        // (the `Complete` event after `commit_and_dispatch` is the
+        // durability signal).
+        if let Some(sink) = progress {
+            sink.emit(ImportProgressUpdate::Progress {
+                // `blocks_created` is a monotonically incremented counter,
+                // always >= 0 — `cast_unsigned` documents that intent.
+                blocks_done: blocks_created.cast_unsigned(),
+                blocks_total,
+            });
+        }
+
         // Set properties inside the same transaction. L-30: same
         // all-or-nothing contract as the block-create above.
         for (key, value) in &block.properties {
@@ -650,6 +717,17 @@ pub async fn import_markdown_inner(
 
     // Commit + dispatch all queued ops in FIFO order.
     tx.commit_and_dispatch(materializer).await?;
+
+    // #128 — `Complete` is emitted only after the commit succeeds, so a
+    // consumer can treat it as the "rows are durable" signal. Mirrors the
+    // returned `ImportResult` counts.
+    if let Some(sink) = progress {
+        sink.emit(ImportProgressUpdate::Complete {
+            page_title: page_title.clone(),
+            blocks_created: blocks_created.cast_unsigned(),
+            properties_set: properties_set.cast_unsigned(),
+        });
+    }
 
     Ok(ImportResult {
         page_title,
@@ -1170,13 +1248,18 @@ pub async fn export_page_markdown(
 }
 
 /// Tauri command: import a Logseq-style markdown file as a page with
-/// block hierarchy. Delegates to [`import_markdown_inner`].
+/// block hierarchy. Delegates to [`import_markdown_with_progress`].
 ///
 /// PEND-35 Tier 1.1 — `space_id` is required. The imported page is
 /// stamped with `space = ?space_id` inside the same transaction as the
 /// `CreateBlock` op, so an imported page can never exist in the op log
 /// without its space property (FEAT-3 invariant). Validation against a
 /// live space block happens TOCTOU-safe inside the same transaction.
+///
+/// #128 (PEND-38 / PEND-06 Tier 3) — `progress` streams per-block import
+/// progress to the frontend. The frontend always supplies a
+/// `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
+/// best-effort, so a dropped channel never aborts the import.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -1184,17 +1267,19 @@ pub async fn import_markdown(
     content: String,
     filename: Option<String>,
     space_id: String,
+    progress: tauri::ipc::Channel<ImportProgressUpdate>,
     pool: State<'_, WritePool>,
     device_id: State<'_, DeviceId>,
     materializer: State<'_, Materializer>,
 ) -> Result<ImportResult, AppError> {
-    import_markdown_inner(
+    import_markdown_with_progress(
         &pool.0,
         device_id.as_str(),
         &materializer,
         content,
         filename,
         space_id,
+        Some(&progress),
     )
     .await
     .map_err(sanitize_internal_error)

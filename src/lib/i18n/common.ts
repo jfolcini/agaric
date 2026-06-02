@@ -266,6 +266,7 @@ export const common: Record<string, string> = {
   'data.importSpaceNotReady': 'Select a space before importing.',
   'data.importingProgress': 'Importing file {{index}} of {{total}}: {{name}}',
   'data.importingProgressDetail': '{{blocks}} blocks · {{bytes}} processed',
+  'data.importingBlocks': 'Block {{done}} of {{total}}',
   'data.importedMessage': 'Imported {{totalBlocks}} blocks from {{fileCount}} file(s)',
   'data.exportTitle': 'Export All Pages',
   'data.exportDesc': 'Download all pages as a ZIP of Markdown files.',

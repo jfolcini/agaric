@@ -98,11 +98,18 @@ describe('DataSettingsTab', () => {
       fileInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    // PEND-35 Tier 1.1 — `importMarkdown` now takes `(content, filename,
-    // spaceId)`. Assert the active space's ULID flows through so the
-    // backend can stamp `space = ?spaceId` on the imported page.
+    // PEND-35 Tier 1.1 — `importMarkdown` takes `(content, filename,
+    // spaceId, onProgress?)`. Assert the active space's ULID flows
+    // through so the backend can stamp `space = ?spaceId` on the imported
+    // page. #128 added the 4th `onProgress` callback arg — assert it is a
+    // function so the per-block progress channel is always wired up.
     await waitFor(() => {
-      expect(mockImportMarkdown).toHaveBeenCalledWith('# Hello', 'test.md', DEFAULT_TEST_SPACE.id)
+      expect(mockImportMarkdown).toHaveBeenCalledWith(
+        '# Hello',
+        'test.md',
+        DEFAULT_TEST_SPACE.id,
+        expect.any(Function),
+      )
     })
   })
 
@@ -186,6 +193,72 @@ describe('DataSettingsTab', () => {
     await waitFor(() => {
       expect(screen.getByText(/5 blocks/)).toBeInTheDocument()
       expect(screen.getByText(/2 properties/)).toBeInTheDocument()
+    })
+  })
+
+  it('renders streamed per-block progress from the import channel (#128)', async () => {
+    // #128 (PEND-38 / PEND-06 Tier 3) — the 4th `onProgress` arg receives
+    // `started` → `progress` → `complete` events over a Channel. Drive
+    // them through the mock and assert the intra-file block bar + label
+    // reflect the stream while the import is in flight.
+    let resolveImport: (r: unknown) => void = () => {}
+    mockImportMarkdown.mockImplementationOnce(
+      (
+        _content: string,
+        _filename: string,
+        _spaceId: string,
+        onProgress?: (u: {
+          kind: string
+          blocks_total?: number
+          blocks_done?: number
+          blocks_created?: number
+          properties_set?: number
+          page_title?: string
+        }) => void,
+      ) => {
+        // Emit a started + two progress ticks synchronously so the UI
+        // updates mid-import, then hold the promise open so the
+        // in-flight progress UI stays mounted for the assertions.
+        onProgress?.({ kind: 'started', page_title: 'Big', blocks_total: 3 })
+        onProgress?.({ kind: 'progress', blocks_done: 1, blocks_total: 3 })
+        onProgress?.({ kind: 'progress', blocks_done: 2, blocks_total: 3 })
+        return new Promise((resolve) => {
+          resolveImport = resolve
+        })
+      },
+    )
+
+    render(<DataSettingsTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file = new File(['- a\n- b\n- c'], 'big.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    // The streamed `progress` events drive a determinate block bar.
+    await waitFor(() => {
+      const label = screen.getByTestId('import-block-progress')
+      expect(label).toHaveTextContent('Block 2 of 3')
+    })
+    const bar = screen.getByTestId('import-block-progress-bar') as HTMLProgressElement
+    expect(bar.value).toBe(2)
+    expect(bar.max).toBe(3)
+
+    // Resolve the import so the loop completes and unmounts the progress UI.
+    await act(async () => {
+      resolveImport({
+        page_title: 'Big',
+        blocks_created: 3,
+        properties_set: 0,
+        warnings: [],
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('import-block-progress')).not.toBeInTheDocument()
     })
   })
 

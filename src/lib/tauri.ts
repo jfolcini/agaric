@@ -21,6 +21,7 @@ export type {
   FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
+  ImportProgressUpdate,
   MoveResponse,
   PageHeading,
   PageResponse,
@@ -69,6 +70,7 @@ import type {
   FlushAllDraftsResult,
   GroupedBacklinkResponse,
   HistoryEntry,
+  ImportProgressUpdate,
   MoveResponse,
   PageHeading,
   PageResponse,
@@ -2029,13 +2031,25 @@ export interface ImportResult {
  * import button must stay disabled while the space store is not
  * bootstrapped (no active space) so this never receives an empty
  * string.
+ *
+ * `onProgress` (#128, PEND-38 / PEND-06 Tier 3) — optional. When
+ * supplied, the backend streams per-block progress over a
+ * `Channel<ImportProgressUpdate>`: one `started` event, one `progress`
+ * per block, then one `complete` after the import transaction commits.
+ * A failed import emits `started` (+ any `progress`) but no `complete`,
+ * so a consumer that never sees `complete` should treat it as failed.
+ * The channel is always created (mirroring `startSync`) even when no
+ * callback is passed; events are simply discarded.
  */
 export async function importMarkdown(
   content: string,
   filename: string | undefined,
   spaceId: string,
+  onProgress?: (update: ImportProgressUpdate) => void,
 ): Promise<ImportResult> {
-  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId))
+  const channel = new Channel<ImportProgressUpdate>()
+  if (onProgress) channel.onmessage = onProgress
+  return unwrap(await commands.importMarkdown(content, filename ?? null, spaceId, channel))
 }
 
 // ---------------------------------------------------------------------------

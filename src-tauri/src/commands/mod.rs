@@ -123,11 +123,12 @@ pub use mcp::{
 pub use pages::{
     export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
     get_page_inner, get_page_unscoped_inner, import_markdown, import_markdown_inner,
-    list_all_pages_in_space, list_all_pages_in_space_inner, list_page_aliases_by_prefix,
-    list_page_aliases_by_prefix_inner, list_page_links, list_page_links_inner, list_pages_inner,
-    list_template_page_ids_in_space, list_template_page_ids_in_space_inner, load_page_subtree,
-    load_page_subtree_inner, resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases,
-    set_page_aliases_inner, PageHeading, PageSubtreeResponse, MCP_PAGE_LIMIT_CAP,
+    import_markdown_with_progress, list_all_pages_in_space, list_all_pages_in_space_inner,
+    list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner, list_page_links,
+    list_page_links_inner, list_pages_inner, list_template_page_ids_in_space,
+    list_template_page_ids_in_space_inner, load_page_subtree, load_page_subtree_inner,
+    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
+    PageHeading, PageSubtreeResponse, MCP_PAGE_LIMIT_CAP,
 };
 pub use properties::{
     create_property_def, create_property_def_inner, delete_property, delete_property_def,

@@ -41,6 +41,69 @@ pub struct ParseOutput {
     pub warnings: Vec<String>,
 }
 
+/// Streaming progress payload for a single `import_markdown` call (#128,
+/// PEND-38 / PEND-06 Tier 3).
+///
+/// Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
+/// can render a per-block progress bar instead of a bare spinner. The
+/// enum is `Serialize` + `Type` only (no `Deserialize`) — like
+/// [`crate::sync_events::SyncProgressUpdate`], it is a one-way
+/// backend→frontend payload. Frontend consumers switch on `kind` and read
+/// the variant-specific fields.
+///
+/// Emission contract (see `import_markdown_inner`): exactly one
+/// [`Started`](ImportProgressUpdate::Started) before any block is written,
+/// one [`Progress`](ImportProgressUpdate::Progress) per block created, and
+/// exactly one [`Complete`](ImportProgressUpdate::Complete) — but ONLY
+/// after the enclosing transaction commits. A failed import emits
+/// `Started` + zero-or-more `Progress` and then NO `Complete` (the command
+/// returns `Err`), so a consumer that never sees `Complete` must treat the
+/// import as failed.
+#[derive(Debug, Clone, Serialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ImportProgressUpdate {
+    /// Emitted once, before the first block is created. `blocks_total` is
+    /// the parser's block count, so the UI can render a determinate bar
+    /// from the very first event. May be 0 for an empty / headings-only
+    /// file.
+    Started {
+        /// Title derived from the filename (or the fallback).
+        page_title: String,
+        /// Total blocks the parser produced for this file.
+        blocks_total: u64,
+    },
+    /// Emitted after each block is created inside the transaction.
+    /// `blocks_done` counts up to `blocks_total`.
+    Progress { blocks_done: u64, blocks_total: u64 },
+    /// Emitted once, AFTER the transaction commits successfully. Mirrors
+    /// the returned [`ImportResult`] counts so a consumer can render the
+    /// final state from the channel alone.
+    Complete {
+        page_title: String,
+        blocks_created: u64,
+        properties_set: u64,
+    },
+}
+
+/// Sink for [`ImportProgressUpdate`] events, decoupling the import command
+/// from Tauri so tests can capture the emitted stream without an
+/// `AppHandle` (mirrors `sync_events::SyncEventSink`).
+///
+/// Implemented for `tauri::ipc::Channel<ImportProgressUpdate>` (the
+/// production path) and for a test recorder. Sends are best-effort: a
+/// failed send (e.g. the frontend dropped the channel) is swallowed — a
+/// dead progress channel must never abort an otherwise-valid import.
+pub trait ImportProgressSink: Send + Sync {
+    fn emit(&self, update: ImportProgressUpdate);
+}
+
+impl ImportProgressSink for tauri::ipc::Channel<ImportProgressUpdate> {
+    fn emit(&self, update: ImportProgressUpdate) {
+        // Best-effort: a dropped channel must not fail the import.
+        let _ = self.send(update);
+    }
+}
+
 /// Parse Logseq-style indented markdown into a list of blocks with depth.
 ///
 /// Each line starting with `- ` (after optional indentation) is a block.
