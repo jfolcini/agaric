@@ -5,14 +5,16 @@ How persisted state stays consistent across crashes and across peers.
 
 ## CRDT convergence (the Loro engine)
 
-Every op application routes through a per-space `LoroEngine` (`src-tauri/src/loro/`). All op types except `add_attachment` / `delete_attachment` apply via Loro-native CRDT primitives (`LoroMap`, `LoroText`, `LoroList`):
+Every op application routes through a per-space `LoroEngine` (`src-tauri/src/loro/`). All op types except `add_attachment` / `delete_attachment` apply via Loro-native CRDT primitives (`LoroTree`, `LoroText`, `LoroMap`, `LoroList`):
 
-- `create_block`, `delete_block`, `restore_block`, `purge_block`, `move_block` → `LoroTree`-modelled hierarchy.
-- `edit_block` (content) → `LoroText` character-level CRDT merge.
-- `set_property`, `delete_property` → `LoroMap` per-key writes.
+- `create_block`, `delete_block`, `restore_block`, `purge_block`, `move_block` → `LoroTree`-modelled hierarchy (PEND-80 Phase 3). Each block is a tree node; its meta map holds `block_id` / `block_type` / `content` (a `LoroText`) / `position` (an `i64` sort key) / `deleted_at`. The **parent is the tree structure**, so a reparent (`move_block`) is Loro's convergent move-CRDT and a cycle-forming move is rejected deterministically (`CyclicMoveError`) — replacing the old flat-`LoroMap` + per-key-LWW `parent_id` scalar and its documented cycle/position edge cases. Soft-delete sets/clears the `deleted_at` meta (the node survives for restore + the SQL descendant-cascade derivation); `purge_block` is `tree.delete`. Sibling order stays the `i64` `position` (the SQL `ORDER BY position` key) rather than the tree's fractional index — a deliberate scope cut so the pagination cursors and frontend position arithmetic are unchanged.
+- `edit_block` (content) → `LoroText` character-level CRDT merge (the block's `content` meta).
+- `set_property`, `delete_property` → `LoroMap` per-key writes, storing each value with its **native type** (`LoroValue::Double` / `Bool` / `String`) so engine→SQL re-projection is type-lossless (PEND-80 §2.1 / Phase 4).
 - `add_tag`, `remove_tag` → `LoroList` adds/removes per-block.
 
-Concurrent writes from multiple devices converge automatically and deterministically: same inputs → identical final state on every replica. No DAG walk. No resolver. **No user-visible conflict surface.** Loro's internal Lamport ordering picks the winner for concurrent writes to the same `(block_id, key)`; the per-peer monotonic counter is the tiebreaker for same-device replays.
+Concurrent writes from multiple devices converge automatically and deterministically: same inputs → identical final state on every replica. No DAG walk. No resolver. **No user-visible conflict surface.** For the tree, concurrent reparents converge via the move-CRDT; for scalar/property/`position`/`deleted_at` writes, Loro's internal Lamport ordering picks the winner for concurrent writes to the same `(block_id, key)`; the per-peer monotonic counter is the tiebreaker for same-device replays.
+
+**The block hierarchy is the only mergeable structure that owns its own ordering invariant.** The SQL `parent_id` / `position` / `page_id` columns are *derived* from the engine tree (`parent_id` = the tree parent's `block_id`; `position` = the node's `i64` sort key; `page_id` is a pure SQL/app derivation). Enums (`property_definitions`), validation, and the soft-delete descendant cascade stay in the app + SQL layer — the engine stores only the per-block seed.
 
 **Attachments are out-of-engine.** The file blob lives in the filesystem; only the binding (`block_id` ↔ `attachment_id`) is opped. CRDT-converging file blobs would require content-addressed storage, which is out of scope.
 
@@ -35,9 +37,11 @@ The legacy three-way merge / conflict-copy model is gone (sessions 697-700):
 
 ## Loro state persistence
 
-Per-space Loro state is persisted in `loro_doc_state` (migration 0052) as the encoded `LoroDoc` snapshot. The materializer dispatches into the engine post-commit; the engine persists its state via `LoroEngine::flush`.
+Per-space Loro state is persisted in `loro_doc_state` (migration 0052) as the encoded `LoroDoc` snapshot. The materializer dispatches into the engine post-commit; the engine serialises its state via `LoroEngine::export_snapshot` (the periodic snapshot task and shutdown path call `loro::snapshot::save_all_engines`).
 
 There are two co-equal materialization targets now: the SQL primary state (`blocks`, `block_properties`, `block_tags`, …) and the Loro engine state. Both derive from the same op log; sync envelopes carry the Loro state, not the SQL projection.
+
+**Engine format version + migration (PEND-80 Phase 3).** The engine has a format version (`loro::engine::ENGINE_FORMAT_VERSION` = 2). Version 1 was the legacy flat-`LoroMap` block model; version 2 is the `LoroTree` hierarchy. A persisted v1 snapshot is migrated forward **in place** on load: `LoroEngine::import` runs `migrate_flat_blocks_to_tree`, which reads the legacy flat map, rebuilds the tree (preserving `parent_id` / `position` / `deleted_at`, dangling parents landing at the tree root), clears the legacy root, and rebuilds the `block_id → TreeID` index. It is **idempotent** — a no-op once the legacy root is empty — so it runs unconditionally on every import rather than gating on a stored version byte; the next periodic snapshot persists the v2 form. `block_properties` and `block_tags` roots are untouched by the migration (only the hierarchy moves); block content is re-seeded as a fresh `LoroText` (the op log remains the canonical replay source for fine-grained edit history). Two peers on **different** engine formats must not merge raw bytes — that protocol-version gate lives in the sync handshake (PEND-81), not here.
 
 ## Snapshots
 
