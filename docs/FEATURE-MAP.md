@@ -11,7 +11,7 @@ Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) ·
 | --- | --- | --- |
 | **Journal & agenda** | Daily / Weekly / Monthly / Agenda views over dated blocks; per-day Due / Done panels with source breakdown; projected future occurrences of repeating tasks. | [features/journal-and-agenda.md](features/journal-and-agenda.md) |
 | **Editor** | Markdown-style formatting, block operations (split, merge, indent, drag, multi-select), inline tokens (page links, block refs, tags), task management, inline query blocks. | [features/editor.md](features/editor.md) |
-| **Pickers & slash menu** | Inline pickers triggered by `[[`, `@`, `((`, `/`, `::`. The slash menu inserts tasks, dates, structure, properties, queries, repeat rules. | [features/pickers-and-slash.md](features/pickers-and-slash.md) |
+| **Pickers & slash menu** | Inline pickers triggered by `[[`, `@`, `((`, `/`, `::`. The slash menu inserts tasks, dates, structure, properties, queries, repeat rules, emoji. | [features/pickers-and-slash.md](features/pickers-and-slash.md) |
 | **Keyboard** | Every action is keyboard-reachable. Shortcuts are customisable. | [features/keyboard.md](features/keyboard.md) |
 | **Properties** | Type-aware property values (text / number / date / boolean / select / ref), built-in properties for tasks (todo state, priority, due / scheduled / completed dates), repeat-rule properties. | [features/properties.md](features/properties.md) |
 | **Tags & links** | First-class tags with hierarchy + boolean queries, ULID-anchored block / page links that survive renames, linked + unlinked backlinks, inline `{{query …}}` blocks. | [features/tags-and-links.md](features/tags-and-links.md) |

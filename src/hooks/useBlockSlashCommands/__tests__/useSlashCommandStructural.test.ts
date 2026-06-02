@@ -249,6 +249,13 @@ describe('useSlashCommandStructural — editor inserts (link/tag/query/code/quot
     result.current.exact['query']?.(ctx, { id: 'query', label: 'Query' })
     expect(openQueryBuilder).toHaveBeenCalledOnce()
   })
+
+  it('/emoji opens the browse-grid picker instead of inserting text (#286)', () => {
+    const { result } = renderHook(() => useSlashCommandStructural())
+    const { ctx, openEmojiPicker } = makeSyntheticCtx()
+    result.current.exact['emoji']?.(ctx, { id: 'emoji', label: 'Emoji' })
+    expect(openEmojiPicker).toHaveBeenCalledOnce()
+  })
 })
 
 describe('useSlashCommandStructural — table', () => {

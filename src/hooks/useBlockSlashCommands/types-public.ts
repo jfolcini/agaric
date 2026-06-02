@@ -26,6 +26,8 @@ export interface UseBlockSlashCommandsParams {
   t: TFn
   /** Open the visual query builder for the focused block (#215). */
   openQueryBuilder: () => void
+  /** Open the browse-grid emoji picker for the focused block (#286). */
+  openEmojiPicker: () => void
 }
 
 export interface UseBlockSlashCommandsReturn {

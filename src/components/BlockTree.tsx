@@ -27,6 +27,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 import { getActiveEditor, setActiveEditor } from '../editor/active-editor'
+import { insertEmojiIntoActiveEditor } from '../editor/insert-emoji'
 import type { PickerItem } from '../editor/SuggestionList'
 import { useBlockKeyboard } from '../editor/use-block-keyboard'
 import { type RovingEditorHandle, useRovingEditor } from '../editor/use-roving-editor'
@@ -71,6 +72,7 @@ import { BlockHistorySheet } from './BlockHistorySheet'
 import { BlockListRenderer } from './BlockListRenderer'
 import { BlockPropertyDrawerSheet } from './BlockPropertyDrawerSheet'
 import { BlockZoomBar } from './BlockZoomBar'
+import { EmojiPickerDialog } from './EmojiPicker'
 import { QueryBuilderModal } from './QueryBuilderModal'
 import { Skeleton } from './ui/skeleton'
 
@@ -180,6 +182,10 @@ export function BlockTree({
   // write `{{query …}}` to the block it was launched from. ──────────────
   const [queryBuilderOpen, setQueryBuilderOpen] = useState(false)
   const [queryBuilderBlockId, setQueryBuilderBlockId] = useState<string | null>(null)
+
+  // ── Emoji picker (#286): /emoji opens the browse-grid dialog; on select we
+  // insert the chosen native emoji at the caret of the focused block editor. ─
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
 
   const handleShowHistory = useCallback((blockId: string) => {
     setHistoryBlockId(blockId)
@@ -307,6 +313,19 @@ export function BlockTree({
     // method". Letting the current commit settle first avoids that.
     setTimeout(() => setQueryBuilderOpen(true), 0)
   }
+  // ── Emoji picker (#286) — /emoji opens the browse-grid dialog for the
+  // focused block. Defer mounting the focus-trapping dialog by a tick for the
+  // same reason as the query builder (avoid a flushSync-in-render warning from
+  // the editor blur flush when the dialog steals focus mid-commit). ──────────
+  const openEmojiPicker = () => {
+    setTimeout(() => setEmojiPickerOpen(true), 0)
+  }
+  // Insert the chosen native emoji at the caret via the active roving editor.
+  // The dialog dismisses itself on select (closeOnSelect default).
+  const handleEmojiSelect = useCallback((char: string) => {
+    insertEmojiIntoActiveEditor(char)
+  }, [])
+
   const handleQuerySave = async (expression: string) => {
     if (!queryBuilderBlockId) return
     try {
@@ -359,6 +378,7 @@ export function BlockTree({
     load,
     t,
     openQueryBuilder,
+    openEmojiPicker,
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
@@ -772,6 +792,13 @@ export function BlockTree({
         open={queryBuilderOpen}
         onOpenChange={setQueryBuilderOpen}
         onSave={handleQuerySave}
+      />
+
+      {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
+      <EmojiPickerDialog
+        open={emojiPickerOpen}
+        onOpenChange={setEmojiPickerOpen}
+        onSelect={handleEmojiSelect}
       />
 
       {/* History side-sheet for per-block history */}
