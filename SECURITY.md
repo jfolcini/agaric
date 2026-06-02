@@ -84,10 +84,20 @@ The repository already runs the following on every push to `main` and on every r
 
 - **CodeQL** — JavaScript/TypeScript and Rust default queries (configured under GitHub Code scanning, baseline established in commit `91073a7`).
 - **Dependabot** — npm and Cargo, with triage notes in `.nsprc` for accepted exceptions.
+- **OpenSSF Scorecard** — weekly supply-chain audit (`.github/workflows/scorecard.yml`); the public badge is in the README.
 - **`prek` hook bundle** (`prek.toml`) — `gitleaks` (committed-secret scan), `cargo-deny` (license + advisory + crate-source policy), `cargo-machete` (unused deps), `npm audit` + `better-npm-audit` against `.nsprc`, and a `license-checker` pass.
 - **`unsafe_code = "deny"`** in `src-tauri/Cargo.toml` — new `unsafe { … }` blocks fail CI before they land.
 
 A report that points at an issue already covered by one of the above is still useful — it usually means a config gap. Please mention which tool(s) you ran when filing.
+
+### Two OpenSSF Scorecard checks score 0 by design (solo-maintainer posture)
+
+For transparency, two Scorecard checks read **0** on this repository today, and both are deliberate consequences of the single-maintainer workflow rather than gaps a contributor should report:
+
+- **`Code-Review` = 0** (OSSF-2, [#144](https://github.com/jfolcini/agaric/issues/144)) — the solo maintainer pushes directly to `main` under an admin bypass on the branch ruleset, so Scorecard's rolling window of recent commits sees "0 reviewed" and floors the check. There is no per-check waiver knob for Scorecard, and "fixing" it would mean abolishing the solo-development workflow. It auto-recovers once a second contributor's reviewed PRs start landing. Full rationale: [`docs/architecture/ci-and-tooling.md`](docs/architecture/ci-and-tooling.md) § _Asymmetric branch-protection convention_.
+- **`Vulnerabilities` = 0** (OSSF-3, [#145](https://github.com/jfolcini/agaric/issues/145)) — transitive GTK3 RustSec advisories reaching us via `wry → tauri` on Linux, all waived with rationale in [`src-tauri/deny.toml`](src-tauri/deny.toml) `[advisories].ignore` and recovering when upstream completes its GTK4 migration.
+
+Neither is an in-scope finding; both have open tracking issues with explicit revisit triggers.
 
 ## Threat-model reference (for maintainers)
 
