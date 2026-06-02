@@ -127,7 +127,11 @@ export const block: Record<string, string> = {
   'blockTree.updateFailedMessage': '{{failCount}} of {{totalCount}} failed to update',
   'blockTree.setStateMessage': 'Set {{successCount}} block(s) to {{state}}',
   'blockTree.deleteFailedMessage': '{{failCount}} of {{totalCount}} failed to delete',
-  'blockTree.deletedMessage': 'Deleted {{count}} block(s)',
+  // C4 (#217): the batch delete is reversible via the page-level op-log
+  // (delete_blocks_by_ids appends one DeleteBlock op per root that
+  // undo_page_op replays). Spell out the Ctrl+Z escape hatch in the toast
+  // so the destructive action reads as recoverable.
+  'blockTree.deletedMessageUndo': 'Deleted {{count}} block(s) — Ctrl+Z to undo',
   'blockTree.setTaskStateFailed': 'Failed to set task state',
   'blockTree.linkTargetNotFound': 'Link target not found',
   'blockTree.setPriorityFailed': 'Failed to set priority',

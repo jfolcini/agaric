@@ -306,7 +306,7 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.deleteFailedMessage')
   })
 
-  it('shows success toast on success', async () => {
+  it('shows success toast advertising the undo path on success', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
 
@@ -314,7 +314,9 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
       await result.current.handleBatchDelete()
     })
 
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.deletedMessage')
+    // C4 (#217): batch delete is reversible via the page op-log, so the
+    // toast names the Ctrl+Z escape hatch instead of the bare count.
+    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.deletedMessageUndo')
   })
 
   it('resets batchDeleteConfirm after delete', async () => {
@@ -359,6 +361,43 @@ describe('useBlockMultiSelect undo notifications', () => {
 
     await act(async () => {
       await result.current.handleBatchSetTodo('TODO')
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+  })
+
+  // C4 (#217): batch delete appends DeleteBlock ops to the page op-log,
+  // so the toast advertises Ctrl+Z. We mark a new action (resetting the
+  // redo stack) so the advertised undo lands on a clean slate.
+  it('calls onNewAction after successful batch delete', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('does not call onNewAction after a batch delete when rootParentId is null', async () => {
+    const params = makeDefaultParams({ rootParentId: null })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+  })
+
+  it('does not call onNewAction after a failed batch delete', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
     })
 
     expect(onNewActionSpy).not.toHaveBeenCalled()

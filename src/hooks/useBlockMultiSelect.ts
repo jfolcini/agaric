@@ -136,6 +136,14 @@ export function useBlockMultiSelect({
         pageStore.setState((s) => ({
           blocks: s.blocks.filter((b) => !idsSet.has(b.id)),
         }))
+        // C4 (#217) — the batch delete appended DeleteBlock ops to the
+        // page op-log (one per root), so Ctrl+Z genuinely reverses it
+        // via undo_page_op. Mark a new action so the redo stack/depth
+        // reset to a clean slate (mirrors handleBatchSetTodo) and the
+        // toast below can honestly advertise the undo path.
+        if (rootParentId) {
+          useUndoStore.getState().onNewAction(rootParentId)
+        }
       } catch {
         failCount = ids.length
       }
@@ -149,13 +157,14 @@ export function useBlockMultiSelect({
           }),
         )
       } else {
-        notify.success(t('blockTree.deletedMessage', { count: successCount }))
+        // Reassure the user the destructive batch is recoverable.
+        notify.success(t('blockTree.deletedMessageUndo', { count: successCount }))
       }
     } finally {
       batchInProgressRef.current = false
       setBatchInProgress(false)
     }
-  }, [selectedBlockIds, clearSelected, t, pageStore])
+  }, [selectedBlockIds, clearSelected, rootParentId, t, pageStore])
 
   return {
     batchDeleteConfirm,
