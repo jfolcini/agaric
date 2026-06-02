@@ -1,6 +1,8 @@
-import { Plus, X } from 'lucide-react'
+import { Plus, Smile, X } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +11,8 @@ import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 
 import type { TagEntry } from '../hooks/useBlockTags'
+import { useEmojiRecents } from '../hooks/useEmojiRecents'
+import { insertEmojiIntoInput, spliceEmojiIntoText } from '../lib/insert-emoji-at-caret'
 import { EmptyState } from './EmptyState'
 
 export interface PageTagSectionProps {
@@ -37,6 +41,29 @@ export function PageTagSection({
   onCreateTag,
 }: PageTagSectionProps) {
   const { t } = useTranslation()
+  const tagInputRef = useRef<HTMLInputElement>(null)
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+  const { push: pushEmojiRecent } = useEmojiRecents()
+
+  // Insert a picked emoji into the tag-name input at the caret (or append).
+  // The input may have lost focus to the picker dialog, so fall back to a
+  // pure string splice on the controlled `tagQuery` when the live element
+  // selection is unavailable. Either way we sync the controlled value and
+  // refocus the input so typing can continue.
+  const handleTagEmojiSelect = useCallback(
+    (char: string) => {
+      pushEmojiRecent(char)
+      const el = tagInputRef.current
+      if (el && el.isConnected) {
+        const next = insertEmojiIntoInput(el, char)
+        onTagQueryChange(next)
+        requestAnimationFrame(() => el.focus())
+      } else {
+        onTagQueryChange(spliceEmojiIntoText(tagQuery, char).value)
+      }
+    },
+    [onTagQueryChange, pushEmojiRecent, tagQuery],
+  )
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -54,7 +81,16 @@ export function PageTagSection({
         </Badge>
       ))}
 
-      <Popover open={showTagPicker} onOpenChange={onTagPickerChange}>
+      <Popover
+        open={showTagPicker}
+        onOpenChange={(open) => {
+          // Keep the tag picker open while the emoji dialog has focus — the
+          // dialog is a logical child of this picker even though it portals
+          // out, so an outside-interaction close would be jarring (#286).
+          if (!open && emojiPickerOpen) return
+          onTagPickerChange(open)
+        }}
+      >
         <PopoverTrigger asChild>
           <Button
             variant="ghost"
@@ -66,18 +102,32 @@ export function PageTagSection({
           </Button>
         </PopoverTrigger>
         <MenuPopoverContent className="space-y-2 p-3" aria-label={t('pageHeader.tagPicker')}>
-          <Input
-            placeholder={t('pageHeader.searchTags')}
-            value={tagQuery}
-            onChange={(e) => onTagQueryChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && availableTags.length === 0 && tagQuery.trim()) {
-                e.preventDefault()
-                onCreateTag()
-              }
-            }}
-            aria-label={t('pageHeader.searchTagsLabel')}
-          />
+          <div className="flex items-center gap-1">
+            <Input
+              ref={tagInputRef}
+              placeholder={t('pageHeader.searchTags')}
+              value={tagQuery}
+              onChange={(e) => onTagQueryChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && availableTags.length === 0 && tagQuery.trim()) {
+                  e.preventDefault()
+                  onCreateTag()
+                }
+              }}
+              aria-label={t('pageHeader.searchTagsLabel')}
+            />
+            {/* #286 — insert an emoji into the tag name at the caret. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="shrink-0 text-muted-foreground"
+              onClick={() => setEmojiPickerOpen(true)}
+              aria-label={t('pageHeader.insertEmoji')}
+            >
+              <Smile className="h-3.5 w-3.5" />
+            </Button>
+          </div>
           <ScrollArea className="max-h-40">
             {availableTags.map((tag) => (
               <Button
@@ -106,6 +156,14 @@ export function PageTagSection({
           </ScrollArea>
         </MenuPopoverContent>
       </Popover>
+
+      {/* #286 — tag-name emoji picker. Splices the chosen emoji into the
+          tag-name input at the caret. Shared dialog primitive (#319). */}
+      <EmojiPickerDialog
+        open={emojiPickerOpen}
+        onOpenChange={setEmojiPickerOpen}
+        onSelect={handleTagEmojiSelect}
+      />
     </div>
   )
 }

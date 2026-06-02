@@ -14,6 +14,8 @@ export interface PageTitleEditorProps {
   onInput: (e: React.FormEvent<HTMLDivElement>) => void
   onBlur: () => void
   onKeyDown: (e: React.KeyboardEvent) => void
+  /** Fired on keyup so the parent can track the caret offset (#286). */
+  onKeyUp?: () => void
 }
 
 /** Check whether the title contains inline tokens that need rich rendering. */
@@ -33,6 +35,7 @@ export function PageTitleEditor({
   onInput,
   onBlur,
   onKeyDown,
+  onKeyUp,
 }: PageTitleEditorProps) {
   const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
@@ -59,6 +62,7 @@ export function PageTitleEditor({
           onBlur()
         }}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
       >
         {title}
       </div>
