@@ -41,6 +41,8 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   zoomedBlockId: string | null
   /** Exit zoom and return to the page root. */
   zoomToRoot: () => void
+  /** Zoom into the given block (D1, #217 — keyboard zoom-in). */
+  zoomIn: (blockId: string) => void
 }
 
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
@@ -62,6 +64,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     setDatePickerOpen,
     zoomedBlockId,
     zoomToRoot,
+    zoomIn,
   } = options
 
   // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
@@ -150,6 +153,30 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     document.addEventListener('keydown', handleZoomOutEscape)
     return () => document.removeEventListener('keydown', handleZoomOutEscape)
   }, [zoomedBlockId, zoomToRoot])
+
+  // ── Keyboard shortcut: zoom IN to the focused block (D1, #217) ──
+  // Mirrors the context-menu "Zoom in" action, which is gated on
+  // `hasChildren` (a leaf has nothing to zoom into). Fires only when:
+  //   - a block is focused (the zoom target)
+  //   - that block actually has children
+  //   - the binding matches (`Alt + .`, layout-stable — see catalog note)
+  // Zoom-out stays on Escape; this completes the in/out pair.
+  useEffect(() => {
+    const handleZoomInKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      if (!matchesShortcutBinding(e, 'zoomIn')) return
+      if (!focusedBlockId) return
+      if (!hasChildrenSet.has(focusedBlockId)) return
+      e.preventDefault()
+      // Flush any pending editor edits before navigating so the zoom
+      // doesn't strand an unsaved buffer (mirrors the drag/zoom-out paths).
+      handleFlush()
+      setFocused(null)
+      zoomIn(focusedBlockId)
+    }
+    document.addEventListener('keydown', handleZoomInKey)
+    return () => document.removeEventListener('keydown', handleZoomInKey)
+  }, [focusedBlockId, hasChildrenSet, zoomIn, handleFlush, setFocused])
 
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {

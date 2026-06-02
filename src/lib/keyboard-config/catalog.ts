@@ -96,6 +96,19 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
 
   // Block Tree
   {
+    // D1 (#217): zoom IN to the focused block. Zoom-out has Escape
+    // (`zoomOut` below); zoom-in was previously context-menu-only. `Alt + .`
+    // is layout-stable (Alt does not mutate `KeyboardEvent.key`, unlike
+    // `Shift + .` → `>`), free, and pairs mnemonically with the Ctrl+.
+    // collapse/expand binding. Only acts when a block is focused and that
+    // block has children (a leaf has nothing to zoom into).
+    id: 'zoomIn',
+    keys: 'Alt + .',
+    category: 'keyboard.category.blockTree',
+    description: 'keyboard.zoomIn',
+    condition: 'keyboard.condition.onFocusedParentBlock',
+  },
+  {
     id: 'zoomOut',
     keys: 'Escape',
     category: 'keyboard.category.blockTree',

@@ -33,6 +33,7 @@ function makeOptions(
     setDatePickerOpen: vi.fn(),
     zoomedBlockId: null,
     zoomToRoot: vi.fn(),
+    zoomIn: vi.fn(),
     ...overrides,
   }
 }
@@ -288,6 +289,47 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
       expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Zoom in (Alt+.) — D1 (#217)', () => {
+    it('calls zoomIn for the focused parent block when Alt+. is pressed', () => {
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set(['BLOCK_1']) })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: '.', altKey: true })
+
+      expect(opts.zoomIn).toHaveBeenCalledWith('BLOCK_1')
+      // Flushes + clears focus before navigating, like the other zoom paths.
+      expect(opts.handleFlush).toHaveBeenCalled()
+      expect(opts.setFocused).toHaveBeenCalledWith(null)
+    })
+
+    it('does not zoom in when the focused block has no children', () => {
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set() })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: '.', altKey: true })
+
+      expect(opts.zoomIn).not.toHaveBeenCalled()
+    })
+
+    it('does not zoom in when no block is focused', () => {
+      const opts = makeOptions({ focusedBlockId: null })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: '.', altKey: true })
+
+      expect(opts.zoomIn).not.toHaveBeenCalled()
+    })
+
+    it('does not zoom in on a bare Ctrl+. (collapse) without Alt', () => {
+      const opts = makeOptions({ focusedBlockId: 'BLOCK_1', hasChildrenSet: new Set(['BLOCK_1']) })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: '.', ctrlKey: true })
+
+      expect(opts.zoomIn).not.toHaveBeenCalled()
     })
   })
 

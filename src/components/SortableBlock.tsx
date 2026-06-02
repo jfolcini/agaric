@@ -313,6 +313,8 @@ function SortableBlockInner({
               onShowHistory={onShowHistory}
               dragAttributes={attributes}
               dragListeners={listeners}
+              isSelected={isSelected}
+              onSelect={onSelect}
             />
           </div>
 
