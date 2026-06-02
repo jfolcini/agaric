@@ -37,6 +37,7 @@ pub(crate) mod journal;
 pub(crate) mod link_metadata;
 pub(crate) mod logging;
 pub(crate) mod mcp;
+pub(crate) mod notifier;
 pub(crate) mod pages;
 pub(crate) mod properties;
 pub(crate) mod queries;

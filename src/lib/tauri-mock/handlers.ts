@@ -2884,6 +2884,22 @@ export const HANDLERS: Record<string, Handler> = {
   list_projected_agenda: returnEmptyPage,
 
   // ---------------------------------------------------------------------------
+  // OS notifications (FEAT-11)
+  // ---------------------------------------------------------------------------
+
+  // Mirrors `commands::notifier::notify_task` — rejects a blank title with a
+  // validation error, otherwise resolves void (the mock has no OS to dispatch
+  // to). See `src-tauri/src/commands/notifier.rs::prepare_notification`.
+  notify_task: (args) => {
+    const a = args as { notification?: { title?: unknown } }
+    const title = typeof a.notification?.title === 'string' ? a.notification.title : ''
+    if (title.trim() === '') {
+      throw { kind: 'validation', message: 'notification title must not be empty' }
+    }
+    return undefined
+  },
+
+  // ---------------------------------------------------------------------------
   // Draft autosave (F-17)
   // ---------------------------------------------------------------------------
 

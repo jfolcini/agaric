@@ -427,6 +427,16 @@ export const commands = {
 	/**  Tauri command: list undated tasks. Delegates to [`list_undated_tasks_inner`]. */
 	listUndatedTasks: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, scope })),
 	/**
+	 *  Tauri command: fire an OS notification for a due / scheduled task.
+	 *
+	 *  Validates the payload via [`prepare_notification`], then builds and
+	 *  shows the notification through `tauri-plugin-notification`.  A failure
+	 *  to dispatch (e.g. the plugin is unavailable) surfaces as
+	 *  [`AppError::InvalidOperation`]; a blank title surfaces as
+	 *  [`AppError::Validation`].
+	 */
+	notifyTask: (notification: TaskNotification) => typedError<null, AppError>(__TAURI_INVOKE("notify_task", { notification })),
+	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
 	 *  block hierarchy. Delegates to [`import_markdown_inner`].
 	 *
@@ -2395,6 +2405,27 @@ export type TagFilterExpr = {
 export type TagResponse = {
 	block_id: string,
 	tag_id: string,
+};
+
+/**
+ *  Payload describing the notification to fire for a due / scheduled task.
+ *
+ *  `title` is required and non-empty; `body` is optional (a notification
+ *  with only a title is valid on every platform).  `block_id` is carried
+ *  purely so the frontend / a future scheduler can correlate the
+ *  notification with the originating block for dedupe — it is not surfaced
+ *  to the OS.
+ */
+export type TaskNotification = {
+	/**  The notification title (e.g. the task's text). Must be non-empty. */
+	title: string,
+	/**  Optional notification body (e.g. "Due 09:00" / "Scheduled in 10m"). */
+	body?: string | null,
+	/**
+	 *  ULID of the originating block, for caller-side dedupe correlation.
+	 *  Optional — a free-form notification need not reference a block.
+	 */
+	blockId?: string | null,
 };
 
 /**  Result of an undo or redo operation. */

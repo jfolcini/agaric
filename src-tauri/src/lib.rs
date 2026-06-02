@@ -193,6 +193,8 @@ macro_rules! agaric_commands {
             $crate::commands::agenda::list_projected_agenda,
             // Undated tasks (FEAT-1)
             $crate::commands::agenda::list_undated_tasks,
+            // OS notifications for due / scheduled tasks (FEAT-11)
+            $crate::commands::notifier::notify_task,
             // Logseq/Markdown import (#660)
             $crate::commands::pages::import_markdown,
             // Attachments (F-7)
@@ -566,6 +568,13 @@ pub fn run() {
         // API used by `commands::collect_bug_report_metadata`.  Works on
         // both desktop and mobile, so no cfg gate.
         .plugin(tauri_plugin_os::init())
+        // FEAT-11: native OS notifications for due / scheduled tasks.
+        // The `notify_task` command (commands::notifier::notify_task)
+        // fires a notification through this plugin.  Cross-platform
+        // (desktop + mobile), so no `#[cfg(desktop)]` gate.  Part of the
+        // Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
+        // Updates" — move in lockstep with the other tauri-plugin-* crates.
+        .plugin(tauri_plugin_notification::init())
         // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
         // Google Calendar connector (see REVIEW-LATER § FEAT-5). The
         // plugin spawns a localhost server on demand (via

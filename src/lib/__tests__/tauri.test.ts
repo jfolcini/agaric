@@ -52,6 +52,7 @@ import {
   getBlocks,
   getCompactionStatus,
   getDeviceId,
+  ensureNotificationPermission,
   getLinkMetadata,
   getLogDir,
   getPageAliases,
@@ -87,6 +88,7 @@ import {
   queryBacklinksFiltered,
   queryByProperty,
   queryByTags,
+  notifyTask,
   quickCaptureBlock,
   readLogsForReport,
   redoPageOp,
@@ -3778,6 +3780,16 @@ vi.mock('@tauri-apps/plugin-global-shortcut', () => ({
   isRegistered: mockIsRegistered,
 }))
 
+// FEAT-11 — `ensureNotificationPermission` dynamically imports the
+// notification plugin's permission API; mock the module factory at file
+// scope so the hoisted import resolves to spies.
+const mockIsPermissionGranted = vi.fn()
+const mockRequestPermission = vi.fn()
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  isPermissionGranted: mockIsPermissionGranted,
+  requestPermission: mockRequestPermission,
+}))
+
 // Defer the import so the vi.mock above hoists ahead of it. Using a dynamic
 // import at the top of each test keeps the wrapper references fresh across
 // `vi.clearAllMocks()` runs in `beforeEach`.
@@ -3960,5 +3972,82 @@ describe('isGlobalShortcutRegistered', () => {
         get: () => originalUA,
       })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// notifyTask (FEAT-11)
+// ---------------------------------------------------------------------------
+
+describe('notifyTask', () => {
+  it('invokes notify_task with the full notification payload', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    await notifyTask({ title: 'Buy groceries', body: 'Due 09:00', blockId: '01ABC' })
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('notify_task', {
+      notification: { title: 'Buy groceries', body: 'Due 09:00', blockId: '01ABC' },
+    })
+  })
+
+  it('passes a title-only notification through unchanged', async () => {
+    mockedInvoke.mockResolvedValueOnce(null)
+
+    await notifyTask({ title: 'Standup' })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('notify_task', {
+      notification: { title: 'Standup' },
+    })
+  })
+
+  it('propagates errors from invoke', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('notify_task failed'))
+    await expect(notifyTask({ title: 'x' })).rejects.toThrow('notify_task failed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ensureNotificationPermission (FEAT-11)
+// ---------------------------------------------------------------------------
+
+describe('ensureNotificationPermission', () => {
+  beforeEach(() => {
+    mockIsPermissionGranted.mockReset()
+    mockRequestPermission.mockReset()
+  })
+
+  it('returns true without prompting when permission is already granted', async () => {
+    mockIsPermissionGranted.mockResolvedValueOnce(true)
+
+    const result = await ensureNotificationPermission()
+
+    expect(result).toBe(true)
+    expect(mockRequestPermission).not.toHaveBeenCalled()
+  })
+
+  it('requests permission and returns true when the user grants it', async () => {
+    mockIsPermissionGranted.mockResolvedValueOnce(false)
+    mockRequestPermission.mockResolvedValueOnce('granted')
+
+    const result = await ensureNotificationPermission()
+
+    expect(mockRequestPermission).toHaveBeenCalledOnce()
+    expect(result).toBe(true)
+  })
+
+  it('returns false when the user denies the permission request', async () => {
+    mockIsPermissionGranted.mockResolvedValueOnce(false)
+    mockRequestPermission.mockResolvedValueOnce('denied')
+
+    const result = await ensureNotificationPermission()
+
+    expect(result).toBe(false)
+  })
+
+  it('returns false (without throwing) when the plugin API rejects', async () => {
+    mockIsPermissionGranted.mockRejectedValueOnce(new Error('plugin unavailable'))
+
+    await expect(ensureNotificationPermission()).resolves.toBe(false)
   })
 })

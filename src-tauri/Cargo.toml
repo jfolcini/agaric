@@ -106,6 +106,14 @@ tauri-plugin-window-state = "2"
 # Used by the bug-report metadata collector (see commands/bug_report.rs).
 # Works on desktop and mobile.  Part of the Tauri plugin coupled stack.
 tauri-plugin-os = "2"
+# FEAT-11: native OS notifications for due / scheduled tasks.  The
+# `notify_task` command (see commands/notifier.rs) fires a desktop /
+# mobile notification through the plugin's builder.  Works on desktop
+# and mobile (Android 13+ needs the `POST_NOTIFICATIONS` runtime grant,
+# requested frontend-side via the plugin's permission API).  Part of the
+# Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency Updates"
+# — move in lockstep with the rest of the tauri-plugin-* crates.
+tauri-plugin-notification = "2"
 # FEAT-13: launch-on-login support.  Settings → General → "Launch on
 # login" toggle drives the plugin's `enable()` / `disable()` /
 # `isEnabled()` IPC.  Plumbing per OS lives upstream (XDG autostart
