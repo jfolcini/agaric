@@ -344,6 +344,157 @@ describe('AttachmentRenderer', () => {
     expect(wrapper.getAttribute('tabindex')).toBe('0')
   })
 
+  // ---- #294 item 6: inline drag-to-resize ----
+
+  /**
+   * jsdom has no layout engine, so wire up the minimum the resize math reads:
+   * the image row's content width (clientWidth, padding resolves to 0 without a
+   * stylesheet) and pointer-capture no-ops on the handle.
+   */
+  function primeResize(handle: HTMLElement, container: HTMLElement, rowWidth: number): void {
+    const section = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
+    Object.defineProperty(section, 'clientWidth', { configurable: true, value: rowWidth })
+    ;(handle as unknown as { setPointerCapture: () => void }).setPointerCapture = vi.fn()
+    ;(handle as unknown as { releasePointerCapture: () => void }).releasePointerCapture = vi.fn()
+  }
+
+  it('renders a pointer-only, aria-hidden resize handle on images (#294 item 6)', async () => {
+    render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    expect(handle.getAttribute('aria-hidden')).toBe('true')
+    expect(handle.getAttribute('title')).toBe('Drag to resize image')
+  })
+
+  it('does not render a resize handle for non-image attachments', () => {
+    render(
+      <AttachmentRenderer
+        {...baseProps}
+        attachments={[
+          makeAttachment({ id: 'att-pdf', filename: 'doc.pdf', mime_type: 'application/pdf' }),
+        ]}
+      />,
+    )
+    expect(screen.queryByTestId('image-resize-handle')).not.toBeInTheDocument()
+  })
+
+  it('left-aligned: the right handle tracks the right edge (x=100 of 200 → 50%)', async () => {
+    const onImageWidthChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="left"
+        imageWidth="100"
+        onImageWidthChange={onImageWidthChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    primeResize(handle, container, 200)
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 100, pointerId: 1 })
+    expect(screen.getByTestId('image-resize-live')).toHaveTextContent('50%')
+
+    fireEvent.pointerUp(handle, { clientX: 100, pointerId: 1 })
+    expect(onImageWidthChange).toHaveBeenCalledWith('50')
+    expect(mockedSetProperty).toHaveBeenCalledWith({
+      blockId: 'B1',
+      key: 'image_width',
+      valueText: '50',
+    })
+    // Live readout is gone once the drag ends.
+    expect(screen.queryByTestId('image-resize-live')).not.toBeInTheDocument()
+  })
+
+  it('center-aligned (default): width grows symmetrically (x=150 of 200 → 50%)', async () => {
+    const onImageWidthChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="center"
+        imageWidth="100"
+        onImageWidthChange={onImageWidthChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    primeResize(handle, container, 200)
+
+    // Centre is at x=100; the right edge at x=150 means a 50px half-width → 50%.
+    fireEvent.pointerDown(handle, { clientX: 150, pointerId: 1 })
+    fireEvent.pointerMove(handle, { clientX: 150, pointerId: 1 })
+    expect(screen.getByTestId('image-resize-live')).toHaveTextContent('50%')
+    fireEvent.pointerUp(handle, { clientX: 150, pointerId: 1 })
+    expect(onImageWidthChange).toHaveBeenCalledWith('50')
+  })
+
+  it('right-aligned: the handle moves to the left edge (x=50 of 200 → 75%)', async () => {
+    const onImageWidthChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="right"
+        imageWidth="100"
+        onImageWidthChange={onImageWidthChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    // Right alignment places the handle on the left corner.
+    expect(handle.className).toContain('left-1')
+    primeResize(handle, container, 200)
+
+    // Right edge pinned at x=200; left edge at x=50 → 150px width → 75%.
+    fireEvent.pointerDown(handle, { clientX: 50, pointerId: 1 })
+    fireEvent.pointerUp(handle, { clientX: 50, pointerId: 1 })
+    expect(onImageWidthChange).toHaveBeenCalledWith('75')
+  })
+
+  it('snaps a near-edge drag to the closest preset (70% → 75%)', async () => {
+    const onImageWidthChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="left"
+        imageWidth="100"
+        onImageWidthChange={onImageWidthChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    primeResize(handle, container, 200)
+
+    fireEvent.pointerDown(handle, { clientX: 140, pointerId: 1 }) // 70%
+    fireEvent.pointerUp(handle, { clientX: 140, pointerId: 1 })
+    expect(onImageWidthChange).toHaveBeenCalledWith('75')
+  })
+
+  it('does not persist when the drag snaps back to the current width', async () => {
+    const onImageWidthChange = vi.fn()
+    const { container } = render(
+      <AttachmentRenderer
+        {...baseProps}
+        imageAlignment="left"
+        imageWidth="50"
+        onImageWidthChange={onImageWidthChange}
+        attachments={[makeAttachment()]}
+      />,
+    )
+    await screen.findByRole('img')
+    const handle = screen.getByTestId('image-resize-handle')
+    primeResize(handle, container, 200)
+
+    fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1 }) // 50% — unchanged
+    fireEvent.pointerUp(handle, { clientX: 100, pointerId: 1 })
+    expect(onImageWidthChange).not.toHaveBeenCalled()
+    expect(mockedSetProperty).not.toHaveBeenCalled()
+  })
+
   // ---- #212 item 3: captions / alt-text ----
 
   it('uses the filename as alt when there is no caption', async () => {
