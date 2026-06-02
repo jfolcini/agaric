@@ -107,6 +107,27 @@ describe('BlockListRenderer', () => {
     expect(screen.queryByTestId('empty-state')).not.toBeInTheDocument()
   })
 
+  it('renders drag indent guides only during a drag, one per indent boundary (#290 B4)', () => {
+    const blocks = [
+      makeBlock({ id: 'A', depth: 0 }),
+      makeBlock({ id: 'B', depth: 1 }),
+      makeBlock({ id: 'C', depth: 2 }),
+    ]
+    // No active drag → no guides.
+    const { rerender } = render(
+      <BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, activeId: null })} />,
+    )
+    expect(screen.queryByTestId('drag-indent-guides')).not.toBeInTheDocument()
+
+    // Drag active → guides appear, one line per boundary up to maxDepth+1 (=3),
+    // decorative (aria-hidden) and non-interactive.
+    rerender(<BlockListRenderer {...makeProps({ visibleItems: blocks, blocks, activeId: 'A' })} />)
+    const guides = screen.getByTestId('drag-indent-guides')
+    expect(guides.getAttribute('aria-hidden')).toBe('true')
+    expect(guides.className).toContain('pointer-events-none')
+    expect(guides.querySelectorAll('span')).toHaveLength(3)
+  })
+
   it('does not render empty state when blocks exist', () => {
     const blocks = [makeBlock({ id: 'BLK001' })]
     render(<BlockListRenderer {...makeProps({ visibleItems: blocks, blocks })} />)

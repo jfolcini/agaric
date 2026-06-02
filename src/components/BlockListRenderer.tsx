@@ -159,47 +159,91 @@ export function BlockListRenderer({
     [visibleItems],
   )
 
+  // B4 (#290) — deepest currently-visible indent level; the drag-time indent
+  // guides draw a boundary at each level up to one past it (so the next-deeper
+  // drop target is also hinted).
+  const maxDepth = useMemo(
+    () => visibleItems.reduce((m, b) => Math.max(m, b.depth), 0),
+    [visibleItems],
+  )
+
   return (
     <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
       {blocks.length === 0 && !loading ? (
         <EmptyState message={rootParentId ? t('blockTree.emptyPage') : t('blockTree.noBlocks')} />
       ) : (
-        <ul
-          className="block-tree list-none m-0 p-0 space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
-          data-testid="block-tree"
-          aria-label={t('blockTree.treeLabel')}
-          onPointerDown={onContainerPointerDown}
-        >
-          {visibleItems.map((block) => {
-            const aria = siblingAriaProps.get(block.id)
-            return (
-              <SortableBlockWrapper
-                key={block.id}
-                block={block}
-                focusedBlockId={focusedBlockId}
-                isSelected={selectedBlockIds.includes(block.id)}
-                projected={projected}
-                activeId={activeId}
-                overId={overId}
-                viewport={viewport}
-                rovingEditor={rovingEditor}
-                hasChildren={hasChildrenSet.has(block.id)}
-                anyBlockHasChildren={anyBlockHasChildren}
-                isCollapsed={collapsedIds.has(block.id)}
-                isAnimating={animatingBlockIds.has(block.id)}
-                siblingSetsize={aria?.setsize}
-                siblingPosinset={aria?.posinset}
-                properties={blockProperties[block.id]}
-              />
-            )
-          })}
-          {/* Sentinel droppable zone for dropping after last block */}
-          {!loading && visibleItems.length > 0 && (
-            <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
-          )}
-        </ul>
+        <div className="relative">
+          {/* B4 (#290): faint indent-boundary guides during a drag so the
+              20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
+              width is legible. Behind the rows (z-0) and pointer-events-none. */}
+          {activeId !== null && <DragIndentGuides levels={maxDepth + 1} />}
+          <ul
+            className="block-tree relative z-10 list-none m-0 p-0 space-y-0.5 [@media(pointer:coarse)]:space-y-1.5"
+            data-testid="block-tree"
+            aria-label={t('blockTree.treeLabel')}
+            onPointerDown={onContainerPointerDown}
+          >
+            {visibleItems.map((block) => {
+              const aria = siblingAriaProps.get(block.id)
+              return (
+                <SortableBlockWrapper
+                  key={block.id}
+                  block={block}
+                  focusedBlockId={focusedBlockId}
+                  isSelected={selectedBlockIds.includes(block.id)}
+                  projected={projected}
+                  activeId={activeId}
+                  overId={overId}
+                  viewport={viewport}
+                  rovingEditor={rovingEditor}
+                  hasChildren={hasChildrenSet.has(block.id)}
+                  anyBlockHasChildren={anyBlockHasChildren}
+                  isCollapsed={collapsedIds.has(block.id)}
+                  isAnimating={animatingBlockIds.has(block.id)}
+                  siblingSetsize={aria?.setsize}
+                  siblingPosinset={aria?.posinset}
+                  properties={blockProperties[block.id]}
+                />
+              )
+            })}
+            {/* Sentinel droppable zone for dropping after last block */}
+            {!loading && visibleItems.length > 0 && (
+              <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
+            )}
+          </ul>
+        </div>
       )}
     </SortableContext>
+  )
+}
+
+// ── Drag indent guides (B4 / #290) ─────────────────────────────────────
+
+/**
+ * Faint full-height vertical guides at each indent boundary, shown only while
+ * a drag is in progress. They make the 20px `DEAD_ZONE_PX` (the horizontal
+ * slop before an indent level changes — see `tree-utils.getProjection`) read
+ * as a deliberate snap-to-grid rather than laggy tracking, and teach the
+ * indent width. Aligned to `--indent-width` so they sit exactly where each
+ * depth's content begins (`SortableBlock` pads by `--indent-width * depth`).
+ * Decorative: `aria-hidden`, `pointer-events-none`, painted behind the rows.
+ */
+function DragIndentGuides({ levels }: { levels: number }): React.ReactElement | null {
+  if (levels <= 0) return null
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="drag-indent-guides"
+      className="pointer-events-none absolute inset-0 z-0"
+    >
+      {Array.from({ length: levels }, (_, i) => i + 1).map((level) => (
+        <span
+          key={level}
+          className="absolute inset-y-0 w-px bg-primary/15"
+          style={{ left: `calc(var(--indent-width) * ${level})` }}
+        />
+      ))}
+    </div>
   )
 }
 
