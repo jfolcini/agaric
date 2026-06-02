@@ -1275,7 +1275,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
     .bind("photo.png")
     .bind(1024_i64)
     .bind("/tmp/photo.png")
-    .bind(&att_ts)
+    .bind(att_ts)
     .execute(&pool)
     .await
     .unwrap();
@@ -1397,7 +1397,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     .bind("photo.png")
     .bind(1024_i64)
     .bind("/tmp/photo.png")
-    .bind(&att_ts)
+    .bind(att_ts)
     .execute(&pool)
     .await
     .unwrap();
@@ -1440,7 +1440,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     .unwrap();
 
     sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
-        .bind(&del_ts)
+        .bind(del_ts)
         .bind(att_id)
         .execute(&pool)
         .await
@@ -1645,7 +1645,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .bind("photo.png")
     .bind(1024_i64)
     .bind("/tmp/photo.png")
-    .bind(&att_ts)
+    .bind(att_ts)
     .execute(&pool)
     .await
     .unwrap();
@@ -1683,7 +1683,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     .unwrap();
 
     sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
-        .bind(&del_ts)
+        .bind(del_ts)
         .bind(att_id)
         .execute(&pool)
         .await

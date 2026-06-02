@@ -789,7 +789,12 @@ mod tests {
 
         // 3 soft-deleted blocks in SPACE_A.
         for (i, id) in ["TRSH_A1", "TRSH_A2", "TRSH_A3"].iter().enumerate() {
-            insert_deleted_page(&pool, id, 1_738_368_000_000 + (i as i64) * 86_400_000).await;
+            insert_deleted_page(
+                &pool,
+                id,
+                1_738_368_000_000 + i64::try_from(i).unwrap() * 86_400_000,
+            )
+            .await;
             assign_to_space(&pool, id, SPACE_A_ID).await;
         }
 
@@ -815,13 +820,23 @@ mod tests {
 
         // 2 soft-deleted blocks in SPACE_A.
         for (i, id) in ["TRSH_A1", "TRSH_A2"].iter().enumerate() {
-            insert_deleted_page(&pool, id, 1_738_368_000_000 + (i as i64) * 86_400_000).await;
+            insert_deleted_page(
+                &pool,
+                id,
+                1_738_368_000_000 + i64::try_from(i).unwrap() * 86_400_000,
+            )
+            .await;
             assign_to_space(&pool, id, SPACE_A_ID).await;
         }
 
         // 3 soft-deleted blocks in SPACE_B — must not appear when counting SPACE_A.
         for (i, id) in ["TRSH_B1", "TRSH_B2", "TRSH_B3"].iter().enumerate() {
-            insert_deleted_page(&pool, id, 1_740_787_200_000 + (i as i64) * 86_400_000).await;
+            insert_deleted_page(
+                &pool,
+                id,
+                1_740_787_200_000 + i64::try_from(i).unwrap() * 86_400_000,
+            )
+            .await;
             assign_to_space(&pool, id, SPACE_B_ID).await;
         }
 

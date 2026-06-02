@@ -481,7 +481,7 @@ fn ts_for(n: usize) -> i64 {
     assert!(h < 24, "harness chain too long for single-day timestamps");
     // #109 Phase 2: op_log.created_at is INTEGER epoch-ms.
     // 2025-01-15T00:00:00Z = 1_736_899_200_000; one minute = 60_000 ms.
-    1_736_899_200_000 + (total_minutes as i64) * 60_000
+    1_736_899_200_000 + i64::try_from(total_minutes).unwrap() * 60_000
 }
 
 /// Generate a fresh ULID pool, resolve the sketch chain into well-formed

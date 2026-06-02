@@ -520,10 +520,7 @@ async fn list_trash_with_cascade_deleted_page_returns_only_root_and_restores_des
 
     // Restoring via the root brings descendants back.
     let root = get_block_inner(&pool, "UX243_PG".into()).await.unwrap();
-    let deleted_at_ref = root
-        .deleted_at
-        .clone()
-        .expect("root has deleted_at timestamp");
+    let deleted_at_ref = root.deleted_at.expect("root has deleted_at timestamp");
     let resp = restore_block_inner(&pool, DEV, &mat, "UX243_PG".into(), deleted_at_ref)
         .await
         .unwrap();

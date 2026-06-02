@@ -48,7 +48,7 @@ async fn full_lifecycle_create_edit_delete_restore_edit() {
     let deleted = delete_block_inner(&pool, DEV, &mat, bid.clone().into())
         .await
         .unwrap();
-    let deleted_ts = deleted.deleted_at.clone();
+    let deleted_ts = deleted.deleted_at;
     settle(&mat).await;
 
     let row = get_block_inner(&pool, bid.clone().into()).await.unwrap();

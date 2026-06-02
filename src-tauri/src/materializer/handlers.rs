@@ -3881,7 +3881,7 @@ mod engine_path_tests {
         let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
             .await
             .expect("append delete");
-        let deleted_at_ref = delete_record.created_at.clone();
+        let deleted_at_ref = delete_record.created_at;
         let mut tx = pool.begin().await.expect("begin1");
         super::apply_op_tx(&mut tx, &delete_record)
             .await
@@ -3899,7 +3899,7 @@ mod engine_path_tests {
         // Now restore.
         let restore_payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_ID),
-            deleted_at_ref: deleted_at_ref.clone(),
+            deleted_at_ref,
         });
         let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore_payload)
             .await

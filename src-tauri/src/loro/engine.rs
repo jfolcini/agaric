@@ -175,9 +175,20 @@ const FIELD_DELETED_AT: &str = "deleted_at";
 /// [`LoroEngine::migrate_flat_blocks_to_tree`], which is idempotent (a
 /// no-op once the legacy [`LEGACY_BLOCKS_ROOT`] map is empty), so the
 /// migration runs unconditionally on every import rather than gating on a
-/// stored version byte. Two peers on different engine formats must not
-/// merge raw bytes during a rollout — that protocol-version gate lives in
-/// the sync handshake (PEND-81), not here; the maintainer does not sync today.
+/// stored version byte.
+///
+/// ## Cross-peer migration convergence
+///
+/// Loro mints tree-node identity (`TreeID`) from the local peer, not from
+/// the domain `block_id`, so if **two** peers each migrate the *same*
+/// legacy v1 snapshot independently they create divergent nodes for the
+/// same `block_id` that both survive a later merge. [`LoroEngine::import`]
+/// converges this with [`LoroEngine::dedupe_block_nodes`] — a deterministic
+/// post-import pass (keep the `min` `TreeID` per `block_id`, every peer
+/// computes the identical survivor set) — so a v1→v2 rollout across already-
+/// synced devices is safe. A future protocol-version handshake (PEND-81)
+/// may additionally gate raw-byte merges across *different* formats; the
+/// maintainer does not sync today.
 pub const ENGINE_FORMAT_VERSION: u32 = 2;
 
 /// Read-back projection of a block's state from the Loro doc.
@@ -463,28 +474,137 @@ impl LoroEngine {
         out
     }
 
-    /// Rebuild [`Self::index`] from the tree's node meta. Called after any
-    /// `import` (remote ops may have created nodes the incremental index
-    /// never saw). O(N_nodes); cold path. Includes soft-deleted nodes
-    /// (their meta still carries a `block_id`) but excludes hard-purged
-    /// ones (Loro removes them from `nodes()`).
-    fn rebuild_index(&mut self) {
+    /// The live (non-hard-purged) tree nodes paired with their `block_id`
+    /// (read from node meta). The single forest-walk primitive shared by
+    /// [`Self::rebuild_index`], [`Self::count_alive_blocks`], and
+    /// [`Self::dedupe_block_nodes`].
+    ///
+    /// Uses `get_nodes(false)` — the live forest under the tree root — so
+    /// historically hard-purged tombstones (which Loro keeps under its
+    /// Deleted root and which `nodes()` would return) are **never iterated**.
+    /// Soft-deleted blocks keep a normal tree parent (only their `deleted_at`
+    /// meta is set), so they remain reachable from the root and ARE included
+    /// here; transitively-deleted descendants of a hard-purged node sit under
+    /// the Deleted root and are correctly excluded.
+    fn live_nodes_with_block_id(&self) -> Vec<(TreeID, String)> {
         let tree = self.tree();
+        tree.get_nodes(false)
+            .into_iter()
+            .filter_map(|n| {
+                let meta = tree.get_meta(n.id).ok()?;
+                let bid = read_string(&meta, FIELD_BLOCK_ID).ok()?;
+                Some((n.id, bid))
+            })
+            .collect()
+    }
+
+    /// Rebuild [`Self::index`] from the tree's live node meta and drop any
+    /// now-resolved/dead [`Self::pending_parent`] intents. Called after any
+    /// `import` (remote ops may have created nodes the incremental index
+    /// never saw). O(N_live); cold path.
+    fn rebuild_index(&mut self) {
         let mut index = HashMap::new();
-        for node in tree.nodes() {
-            // `nodes()` includes hard-purged (tree-deleted) nodes; skip them
-            // so a purged block does not reappear in the index after import.
-            if tree.is_node_deleted(&node).unwrap_or(true) {
-                continue;
-            }
-            let Ok(meta) = tree.get_meta(node) else {
-                continue;
-            };
-            if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
-                index.insert(bid, node);
-            }
+        for (node, bid) in self.live_nodes_with_block_id() {
+            index.insert(bid, node);
         }
         self.index = index;
+        self.reconcile_pending_parent();
+    }
+
+    /// Drop stale [`Self::pending_parent`] intents after the index was
+    /// rebuilt from an import. An entry is stale once the child no longer
+    /// exists in the engine, or the child is already parented under a real
+    /// (non-root) node — in either case re-firing `attach_pending_children`
+    /// later would act on out-of-date intent. Entries whose intended parent
+    /// is *still* absent are kept (the safety net is still pending).
+    fn reconcile_pending_parent(&mut self) {
+        if self.pending_parent.is_empty() {
+            return;
+        }
+        let tree = self.tree();
+        let index = &self.index;
+        self.pending_parent.retain(|child, _intended| {
+            let Some(&child_node) = index.get(child) else {
+                return false; // child gone (purged / never landed) → drop
+            };
+            // Already attached to a real parent (a converged remote reparent
+            // satisfied the intent) → drop.
+            !matches!(tree.parent(child_node), Some(TreeParentId::Node(_)))
+        });
+    }
+
+    /// Converge duplicate tree nodes that share a `block_id`.
+    ///
+    /// This can only arise when two peers each migrated the **same** legacy
+    /// flat-map snapshot independently: their `tree.create` ops mint
+    /// divergent `TreeID`s (Loro has no content-based node identity), both
+    /// survive the merge, and the doc ends up with >1 live node per
+    /// `block_id`. Without this pass that state never converges (double
+    /// counts, split subtrees, nondeterministic index resolution).
+    ///
+    /// Every peer computes the **identical** survivor set — the `min`
+    /// `TreeID` per `block_id`, a total order stable across peers — and the
+    /// identical reparent + delete ops, so the dedup itself is convergent.
+    /// The duplicate subtrees were migrated from identical legacy data, so
+    /// the surviving node carries equivalent scalars/content. Fast-paths to a
+    /// no-op (one cheap forest walk) when there are no duplicates — the
+    /// overwhelmingly common case.
+    fn dedupe_block_nodes(&mut self) -> Result<(), AppError> {
+        let mut groups: HashMap<String, Vec<TreeID>> = HashMap::new();
+        for (node, bid) in self.live_nodes_with_block_id() {
+            groups.entry(bid).or_default().push(node);
+        }
+        if groups.values().all(|nodes| nodes.len() <= 1) {
+            return Ok(()); // no duplicates — common fast path
+        }
+
+        // Deterministic survivor per block_id: the min TreeID (a total order
+        // identical on every peer, so all peers keep the same node).
+        let survivor: HashMap<String, TreeID> = groups
+            .iter()
+            .map(|(bid, nodes)| (bid.clone(), nodes.iter().copied().min().unwrap()))
+            .collect();
+
+        let tree = self.tree();
+        // Reparent each survivor under its parent-block's survivor so the
+        // kept forest is internally consistent before we delete the losers
+        // (a survivor may currently sit under a *loser* copy of its parent).
+        for (bid, &snode) in &survivor {
+            let target = match self.parent_block_id_of(snode)? {
+                Some(parent_bid) => match survivor.get(&parent_bid) {
+                    Some(&pnode) => TreeParentId::Node(pnode),
+                    None => TreeParentId::Root,
+                },
+                None => TreeParentId::Root,
+            };
+            if tree.parent(snode) != Some(target) {
+                if let Err(e) = tree.mov(snode, target) {
+                    if !is_cyclic_move(&e) {
+                        return Err(AppError::Validation(format!(
+                            "loro: dedupe reparent {bid}: {e}"
+                        )));
+                    }
+                }
+            }
+        }
+        // Delete every non-survivor node (whole loser subtrees; no survivor
+        // is parented under a loser anymore after the pass above).
+        let mut removed = 0usize;
+        for (bid, nodes) in &groups {
+            let keep = survivor[bid];
+            for &n in nodes {
+                if n != keep {
+                    let _ = tree.delete(n);
+                    removed += 1;
+                }
+            }
+        }
+        self.doc.commit();
+        tracing::warn!(
+            removed,
+            "loro: deduped duplicate migrated tree nodes (independent-migration convergence)",
+        );
+        Ok(())
     }
 
     /// Insert a block into the block-hierarchy [`LoroTree`].
@@ -511,13 +631,19 @@ impl LoroEngine {
             self.write_node_scalars(&meta, block_id, block_type, position)?;
             let content_text =
                 block_map_get_text(&meta, FIELD_CONTENT, block_id, "re-create content")?;
-            content_text
-                .splice(0, content_text.len_unicode(), content)
-                .map_err(|e| {
-                    AppError::Validation(format!(
-                        "loro: re-create block {block_id}: rewrite content: {e}"
-                    ))
-                })?;
+            // Only rewrite content when it actually changed — a replay-heal
+            // re-applies a `CreateBlock` the snapshot already reflects, and an
+            // unconditional full delete+reinsert would churn the LoroText op
+            // history (larger snapshots, needless concurrent-merge surface).
+            if content_text.to_string() != content {
+                content_text
+                    .splice(0, content_text.len_unicode(), content)
+                    .map_err(|e| {
+                        AppError::Validation(format!(
+                            "loro: re-create block {block_id}: rewrite content: {e}"
+                        ))
+                    })?;
+            }
             if let Err(e) = tree.mov(node, parent) {
                 tracing::warn!(block_id, error = %e, "re-create: reparent skipped");
             }
@@ -706,6 +832,14 @@ impl LoroEngine {
     /// purged out from under it) we **log and skip the reparent** rather
     /// than fail the whole apply — the position update still lands.
     ///
+    /// An **unknown** `new_parent_id` (a target not yet in the engine — an
+    /// out-of-order replayed/remote move) does NOT detach the node to root:
+    /// the reparent is skipped (the node keeps its current parent) and the
+    /// intent is recorded in [`Self::pending_parent`] so it re-fires when the
+    /// parent appears. Yanking a node to root on a *move* would be
+    /// data-destructive vs the prior tree state (unlike a create, which had
+    /// no prior home). `None` is an explicit move to top-level (root).
+    ///
     /// Sibling order is the `i64` [`FIELD_POSITION`] meta value (LWW),
     /// which the SQL projection reads as the `ORDER BY position` key — see
     /// the [`LoroEngine`] type docstring for why the tree's fractional
@@ -728,19 +862,44 @@ impl LoroEngine {
                 AppError::Validation(format!("loro: move block {block_id}: set position: {e}"))
             })?;
 
-        let parent = self.resolve_parent(block_id, new_parent_id);
-        match self.tree().mov(node, parent) {
-            Ok(()) => {}
-            Err(e) if is_cyclic_move(&e) => {
-                tracing::warn!(
-                    block_id, error = %e,
-                    "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
-                );
-            }
-            Err(e) => {
-                return Err(AppError::Validation(format!(
-                    "loro: move block {block_id}: tree.mov: {e}"
-                )));
+        // Resolve the reparent target. An unknown parent → skip the reparent
+        // (keep the current parent) rather than detach to root.
+        let target = match new_parent_id {
+            None => Some(TreeParentId::Root),
+            Some(pid) => match self.node_for(pid) {
+                Some(parent_node) => {
+                    self.pending_parent.remove(block_id);
+                    Some(TreeParentId::Node(parent_node))
+                }
+                None => {
+                    self.pending_parent
+                        .insert(block_id.to_string(), pid.to_string());
+                    tracing::warn!(
+                        block_id, parent_id = %pid,
+                        "move block: parent not yet in engine; keeping current parent (pending)",
+                    );
+                    None
+                }
+            },
+        };
+        // The position write above is in the pending transaction; every
+        // return path commits it so it can never leak into a later op's
+        // commit (Loro auto-commit has no rollback).
+        if let Some(target) = target {
+            match self.tree().mov(node, target) {
+                Ok(()) => {}
+                Err(e) if is_cyclic_move(&e) => {
+                    tracing::warn!(
+                        block_id, error = %e,
+                        "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
+                    );
+                }
+                Err(e) => {
+                    self.doc.commit();
+                    return Err(AppError::Validation(format!(
+                        "loro: move block {block_id}: tree.mov: {e}"
+                    )));
+                }
             }
         }
         self.doc.commit();
@@ -1329,7 +1488,7 @@ impl LoroEngine {
         let Some(children) = tree.children(TreeParentId::Node(parent_node)) else {
             return Ok(Vec::new());
         };
-        let mut rows: Vec<(i64, String)> = Vec::new();
+        let mut rows: Vec<(i64, String)> = Vec::with_capacity(children.len());
         for child in children {
             let meta = tree.get_meta(child).map_err(|e| {
                 AppError::Validation(format!("loro: list_children_walk: get_meta: {e}"))
@@ -1351,17 +1510,12 @@ impl LoroEngine {
     pub fn count_alive_blocks(&self) -> Result<usize, AppError> {
         let tree = self.tree();
         let mut alive = 0usize;
-        // `get_nodes(false)` returns the live (non-purged) forest; a
-        // soft-deleted node is still live in the tree, so filter on the
-        // `deleted_at` meta.
-        for node in tree.nodes() {
-            // `nodes()` includes purged-then-resurrected edge nodes only if
-            // present; guard with is_node_deleted to skip hard-purged ones.
-            if tree.is_node_deleted(&node).unwrap_or(true) {
-                continue;
-            }
+        // `get_nodes(false)` is the live (non-hard-purged) forest, so no
+        // tombstone walk; a soft-deleted node is still live in the tree, so
+        // filter it out on the `deleted_at` meta.
+        for node in tree.get_nodes(false) {
             let meta = tree
-                .get_meta(node)
+                .get_meta(node.id)
                 .map_err(|e| AppError::Validation(format!("loro: count_alive: get_meta: {e}")))?;
             if read_deleted_at_meta(&meta, "count_alive")?.is_none() {
                 alive += 1;
@@ -1410,16 +1564,19 @@ impl LoroEngine {
     /// other Loro export mode) into this doc.
     ///
     /// After importing, runs the flat-map→tree migration (a no-op once the
-    /// legacy root is empty) and rebuilds the `block_id → TreeID` index —
-    /// the imported bytes may have created tree nodes the incremental index
-    /// never saw, and (on a format rollout) may have carried legacy
-    /// flat-map block data.
+    /// legacy root is empty), converges any duplicate migrated nodes (a
+    /// no-op unless two peers migrated the same legacy snapshot
+    /// independently — see [`Self::dedupe_block_nodes`]), and rebuilds the
+    /// `block_id → TreeID` index — the imported bytes may have created tree
+    /// nodes the incremental index never saw, and (on a format rollout) may
+    /// have carried legacy flat-map block data.
     pub fn import(&mut self, bytes: &[u8]) -> Result<(), AppError> {
         self.doc
             .import(bytes)
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import: {e}")))?;
         self.migrate_flat_blocks_to_tree()?;
+        self.dedupe_block_nodes()?;
         self.rebuild_index();
         Ok(())
     }
@@ -1471,6 +1628,7 @@ impl LoroEngine {
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
         self.migrate_flat_blocks_to_tree()?;
+        self.dedupe_block_nodes()?;
         self.rebuild_index();
 
         // Enumerate every live block_id **parent-before-child** (pre-order
@@ -1575,16 +1733,12 @@ impl LoroEngine {
         // block_id (a partial-tree doc, or a cross-format merge before the
         // PEND-81 handshake gates it), do NOT create a duplicate node —
         // reuse the existing one. Keeps the migration idempotent against a
-        // mixed legacy+tree doc, not just an empty-legacy one.
-        for node in tree.nodes() {
-            if tree.is_node_deleted(&node).unwrap_or(true) {
-                continue;
-            }
-            if let Ok(meta) = tree.get_meta(node) {
-                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
-                    id_to_node.insert(bid, node);
-                }
-            }
+        // mixed legacy+tree doc, not just an empty-legacy one. (Two peers
+        // that each migrate the same legacy snapshot independently still mint
+        // divergent nodes that collide only after a later merge — those are
+        // converged by `dedupe_block_nodes` on import.)
+        for (node, bid) in self.live_nodes_with_block_id() {
+            id_to_node.insert(bid, node);
         }
 
         // Pass 1 — create every node under root with its scalars + content.
@@ -2819,5 +2973,101 @@ mod tree_tests {
         let a = e.read_block("A").unwrap().unwrap();
         assert_eq!(a.parent_id, None, "reparent skipped (would be a cycle)");
         assert_eq!(a.position, 99, "position update still landed");
+    }
+
+    /// A move whose `new_parent_id` is not (yet) in the engine must NOT
+    /// detach the node to root — it keeps its current parent (the position
+    /// still lands), and the intent is recorded so a later create of the
+    /// parent re-attaches it.
+    #[test]
+    fn move_to_unknown_parent_keeps_current_parent_then_attaches() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("P", "page", "", None, 0).unwrap();
+        e.apply_create_block("X", "content", "", Some("P"), 1)
+            .unwrap();
+        // Move X under a parent that does not exist yet.
+        e.apply_move_block("X", Some("ghost"), 9).unwrap();
+        let x = e.read_block("X").unwrap().unwrap();
+        assert_eq!(
+            x.parent_id.as_deref(),
+            Some("P"),
+            "unknown parent must not detach X to root",
+        );
+        assert_eq!(x.position, 9, "position update still landed");
+
+        // The parent appears → the pending intent re-attaches X.
+        e.apply_create_block("ghost", "content", "", None, 0)
+            .unwrap();
+        assert_eq!(
+            e.read_block("X").unwrap().unwrap().parent_id.as_deref(),
+            Some("ghost"),
+            "X re-attaches once its intended parent is created",
+        );
+    }
+
+    /// **Independent-migration convergence (review 🔴).** Two peers each
+    /// migrate the *same* legacy v1 flat-map snapshot independently — their
+    /// `tree.create` ops mint divergent `TreeID`s for the same `block_id`.
+    /// After exchanging snapshots, `dedupe_block_nodes` (run on import) must
+    /// converge both peers to a single node per block: identical alive
+    /// counts, no duplicate children, same derived parentage.
+    #[test]
+    fn independent_migration_of_same_snapshot_converges() {
+        // A shared legacy v1 snapshot (flat-map model): page + two children.
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            let write = |id: &str, parent: Option<&str>, position: i64| {
+                let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
+                bm.insert(FIELD_BLOCK_TYPE, LoroValue::from("content"))
+                    .unwrap();
+                let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
+                t.insert(0, id).unwrap();
+                bm.insert(
+                    FIELD_PARENT_ID,
+                    match parent {
+                        Some(p) => LoroValue::from(p),
+                        None => LoroValue::Null,
+                    },
+                )
+                .unwrap();
+                bm.insert(FIELD_POSITION, LoroValue::from(position))
+                    .unwrap();
+            };
+            write("page", None, 0);
+            write("c1", Some("page"), 1);
+            write("c2", Some("page"), 2);
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+
+        // Two peers migrate the SAME snapshot independently → divergent nodes.
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.import(&legacy_bytes).unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        b.import(&legacy_bytes).unwrap();
+
+        // Exchange snapshots both ways — duplicates appear, then converge.
+        let a_snap = a.export_snapshot().unwrap();
+        let b_snap = b.export_snapshot().unwrap();
+        a.import(&b_snap).unwrap();
+        b.import(&a_snap).unwrap();
+
+        for (name, e) in [("A", &a), ("B", &b)] {
+            assert_eq!(
+                e.count_alive_blocks().unwrap(),
+                3,
+                "peer {name}: must converge to 3 blocks, not double-count duplicates",
+            );
+            assert_eq!(
+                e.list_children_walk("page").unwrap(),
+                vec!["c1".to_string(), "c2".to_string()],
+                "peer {name}: page has exactly two children, no duplicates",
+            );
+            assert_eq!(e.read_parent("c1").unwrap().as_deref(), Some("page"));
+            assert_eq!(e.read_parent("c2").unwrap().as_deref(), Some("page"));
+        }
+        // Both peers agree on c1's parent (single converged node).
+        assert_eq!(a.read_parent("c1").unwrap(), b.read_parent("c1").unwrap());
     }
 }

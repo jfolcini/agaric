@@ -879,6 +879,17 @@ mod tests {
     }
     use tempfile::TempDir;
 
+    /// The five typed `block_properties` value columns, in canonical
+    /// `value_text, value_num, value_date, value_ref, value_bool` order —
+    /// used as the `query_as` row type in the projection tests.
+    type PropValueColumns = (
+        Option<String>,
+        Option<f64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    );
+
     const BLOCK_A: &str = "01HZ00000000000000000000A1";
     const BLOCK_B: &str = "01HZ00000000000000000000B2";
     const TAG_C: &str = "01HZ00000000000000000000C3";
@@ -1867,13 +1878,7 @@ mod tests {
         drop(conn);
 
         // text → value_text only.
-        let note: (
-            Option<String>,
-            Option<f64>,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-        ) = sqlx::query_as(
+        let note: PropValueColumns = sqlx::query_as(
             "SELECT value_text, value_num, value_date, value_ref, value_bool \
                  FROM block_properties WHERE block_id = ? AND key = 'note'",
         )
@@ -2006,21 +2011,16 @@ mod tests {
             .expect("reproject");
         drop(conn);
 
-        let link: (
-            Option<String>,
-            Option<String>,
-            Option<f64>,
-            Option<String>,
-            Option<i64>,
-        ) = sqlx::query_as(
-            "SELECT value_ref, value_text, value_num, value_date, value_bool \
+        let link: PropValueColumns = sqlx::query_as(
+            "SELECT value_text, value_num, value_date, value_ref, value_bool \
                  FROM block_properties WHERE block_id = ? AND key = 'link'",
         )
         .bind(BLOCK_A)
         .fetch_one(&pool)
         .await
         .expect("fetch link");
-        assert_eq!(link, (Some(BLOCK_A.into()), None, None, None, None));
+        // ref value lands in value_ref (4th canonical column).
+        assert_eq!(link, (None, None, None, Some(BLOCK_A.into()), None));
     }
 
     #[tokio::test]
