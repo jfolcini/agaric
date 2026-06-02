@@ -121,7 +121,7 @@ impl AdvGraph {
     async fn insert(&self, pool: &SqlitePool) {
         let n = self.len();
         for (i, node) in self.nodes.iter().enumerate() {
-            let seq = (i + 1) as i64;
+            let seq = i64::try_from(i + 1).unwrap();
             let (op_type, payload) = if i == 0 {
                 (
                     "create_block",
@@ -183,7 +183,7 @@ fn adversarial_graph_strategy() -> impl Strategy<Value = AdvGraph> {
 // graph is fully well-formed — exactly the shape `find_lca` walks in
 // production after a real edit history.
 async fn insert_valid_linear_chain(pool: &SqlitePool, len: usize) {
-    for seq in 1..=len as i64 {
+    for seq in 1..=i64::try_from(len).unwrap() {
         let (op_type, payload) = if seq == 1 {
             (
                 "create_block",
@@ -275,7 +275,7 @@ proptest! {
 
             let n = graph.len();
             for i in 0..n {
-                let start = (ADV_DEVICE.to_string(), (i + 1) as i64);
+                let start = (ADV_DEVICE.to_string(), i64::try_from(i + 1).unwrap());
                 // No early-exit predicate: walk the whole chain.
                 let outcome = walk_edit_chain(&pool, &start, false, |_, _| false).await;
                 match outcome {
@@ -314,8 +314,8 @@ proptest! {
             // nextest slow-timeout: sample a diagonal + a shifted diagonal.
             for i in 0..n {
                 for j in [i, (i + 1) % n, (i + n / 2) % n] {
-                    let a = (ADV_DEVICE.to_string(), (i + 1) as i64);
-                    let b = (ADV_DEVICE.to_string(), (j + 1) as i64);
+                    let a = (ADV_DEVICE.to_string(), i64::try_from(i + 1).unwrap());
+                    let b = (ADV_DEVICE.to_string(), i64::try_from(j + 1).unwrap());
                     // Just assert it returns (does not hang / panic). The
                     // commutativity property is asserted on valid chains
                     // below, where the result is well-defined.
@@ -389,7 +389,7 @@ proptest! {
             insert_valid_linear_chain(&pool, len).await;
 
             // Walk from each node; ancestors of seq s are s-1, s-2, …, 1.
-            for s in 1..=len as i64 {
+            for s in 1..=i64::try_from(len).unwrap() {
                 let start = (ADV_DEVICE.to_string(), s);
                 let outcome = walk_edit_chain(&pool, &start, false, |_, _| false)
                     .await

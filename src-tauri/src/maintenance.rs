@@ -554,7 +554,7 @@ mod tests {
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
              VALUES ('BBBB', 'content', 'recently soft-deleted', NULL, 2, ?)",
         )
-        .bind(&recent_deleted_at)
+        .bind(recent_deleted_at)
         .execute(&pool)
         .await
         .unwrap();
@@ -592,7 +592,7 @@ mod tests {
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
              VALUES ('AGED', 'content', 'aged tombstone', NULL, 1, ?)",
         )
-        .bind(&aged_deleted_at)
+        .bind(aged_deleted_at)
         .execute(&pool)
         .await
         .unwrap();
@@ -600,7 +600,7 @@ mod tests {
             "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
              VALUES ('REC0', 'content', 'recent tombstone', NULL, 2, ?)",
         )
-        .bind(&recent_deleted_at)
+        .bind(recent_deleted_at)
         .execute(&pool)
         .await
         .unwrap();

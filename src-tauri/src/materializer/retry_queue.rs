@@ -1595,7 +1595,7 @@ mod tests {
              WHERE next_attempt_at <= ? \
              ORDER BY next_attempt_at ASC LIMIT ?",
         )
-        .bind(&now)
+        .bind(now)
         .bind(limit)
         .fetch_all(&pool)
         .await

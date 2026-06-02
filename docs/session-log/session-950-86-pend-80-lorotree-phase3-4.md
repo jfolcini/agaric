@@ -83,3 +83,14 @@ soft-deleted, deterministic cycle rejection, soft-delete/restore/purge lifecycle
 replay-idempotent create, flat-map → tree migration round-trip (dangling parent +
 soft-delete + idempotency + re-export), two-device concurrent-reparent / concurrent-purge
 convergence, purge-parent-prunes-descendants.
+
+### Review-driven fixes (round 2)
+
+A multi-subagent code review of the PR surfaced two findings that change the risk picture; both are fixed in this PR:
+
+- **🔴 Independent-migration convergence.** Loro mints tree-node identity from the local peer, so two already-synced peers that each migrate the *same* v1 snapshot independently created divergent nodes for the same `block_id` that both survived a later merge (double counts, split subtrees, nondeterministic index). Added `dedupe_block_nodes` (run on every `import`): deterministic survivor = `min` `TreeID` per `block_id`, reparent survivors under their parent-block's survivor, delete the losers — every peer computes the identical ops, so it converges. New test `independent_migration_of_same_snapshot_converges` (verified it fails without the dedup). The v1→v2 upgrade path is now safe across synced devices.
+- **🟠 Typed-engine efficacy.** `merge/mod.rs::engine_apply` (the post-commit engine dispatch, which runs *last*) still stringified `value_num`/`value_bool` and overwrote the native value written by `apply_set_property_via_loro` — so in production the engine never held native `Num`/`Bool`, defeating Phase 4's lossless re-projection and re-exposing the FK-abort hazard. Converted that path to build a native `PropertyValue` and call `apply_set_property_typed`, mirroring the handlers path.
+
+Also fixed (review 🟡/🟢): `apply_move_block` now commits on every return path (no leaked-position write) and no longer detaches a node to root on an unknown parent (keeps current parent + records the pending intent); `count_alive_blocks`/`rebuild_index` iterate the live forest via `get_nodes(false)` (no purged-tombstone walk) through a shared `live_nodes_with_block_id` helper; `rebuild_index` reconciles stale `pending_parent` intents; the create re-apply path skips the content splice when content is unchanged (no replay-heal churn). Docs (`ENGINE_FORMAT_VERSION`, `crdt-and-recovery.md`) updated to describe the convergent dedup. Follow-up issue #332 tracks removing the v1 engine + migration path (target 2026-07-02).
+
+Cleared **all** `cargo clippy --all-targets -- -D warnings` warnings (36 pre-existing test-code lints: `clone_on_copy`, `needless_borrow`, `cast_possible_wrap`/`truncation`, complex-type). Full suite green (4097 passed).

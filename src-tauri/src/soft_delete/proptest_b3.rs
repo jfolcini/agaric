@@ -321,14 +321,14 @@ proptest! {
             // (all of which were active pre-delete, so all get stamped).
             let expected_marked = tree.active_subtree(&root);
             prop_assert_eq!(
-                count as usize,
+                usize::try_from(count).unwrap(),
                 expected_marked.len(),
                 "cascade count must equal the active-subtree size from the independent oracle"
             );
 
             let restored = restore_block(&pool, &mat, &root, ts).await.unwrap();
             prop_assert_eq!(
-                restored as usize,
+                usize::try_from(restored).unwrap(),
                 expected_marked.len(),
                 "restore must clear exactly the cohort the cascade stamped"
             );

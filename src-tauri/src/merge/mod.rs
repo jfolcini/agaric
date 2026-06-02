@@ -99,18 +99,33 @@ pub(crate) fn engine_apply(
                 .map(|_| ())
         }
         crate::op::OpPayload::SetProperty(p) => {
-            // Spike's engine accepts string values; production
-            // SetProperty has multiple typed columns.  Stringify the
-            // single set field to fit the spike's surface.
-            let value: Option<String> = p
-                .value_text
-                .clone()
-                .or_else(|| p.value_num.map(|n| n.to_string()))
-                .or_else(|| p.value_date.clone())
-                .or_else(|| p.value_ref.clone())
-                .or_else(|| p.value_bool.map(|b| b.to_string()));
+            // PEND-80 §2.1: store the value with its NATIVE type so the
+            // engine is type-lossless. This must mirror
+            // `materializer::handlers::apply_set_property_via_loro` exactly,
+            // because that path runs first (inside the apply tx) and *this*
+            // post-commit engine-dispatch runs last — a divergent (e.g.
+            // stringified) encoding here would silently overwrite the native
+            // value, defeating the lossless engine→SQL re-projection
+            // (Phase 4). `value_num`→`Num`, `value_bool`→`Bool`; text/date/
+            // ref are strings (disambiguated at projection by
+            // `property_definitions.value_type`); no field set ⇒ explicit
+            // clear (`Null`).
+            use crate::loro::engine::PropertyValue;
+            let value = if let Some(v) = &p.value_text {
+                PropertyValue::Str(v.clone())
+            } else if let Some(v) = p.value_num {
+                PropertyValue::Num(v)
+            } else if let Some(v) = &p.value_date {
+                PropertyValue::Str(v.clone())
+            } else if let Some(v) = &p.value_ref {
+                PropertyValue::Str(v.clone())
+            } else if let Some(b) = p.value_bool {
+                PropertyValue::Bool(b)
+            } else {
+                PropertyValue::Null
+            };
             engine
-                .apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())
+                .apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
                 .map(|_| ())
         }
         crate::op::OpPayload::AddTag(p) => engine

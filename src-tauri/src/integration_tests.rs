@@ -153,7 +153,7 @@ async fn create_edit_delete_restore_produces_sequential_ops_with_valid_hashes() 
     let deleted = delete_block_inner(&pool, DEV, &mat, block_id.clone().into())
         .await
         .unwrap();
-    let deleted_at = deleted.deleted_at.clone();
+    let deleted_at = deleted.deleted_at;
     settle_bg_tasks(&mat).await;
 
     restore_block_inner(&pool, DEV, &mat, block_id.clone().into(), deleted_at)
@@ -578,18 +578,14 @@ async fn cascade_delete_marks_three_levels_with_same_timestamp() {
     let del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
-    let cascade_ts = del.deleted_at.clone();
+    let cascade_ts = del.deleted_at;
 
     let p = get_block_inner(&pool, parent.id.clone()).await.unwrap();
     let c = get_block_inner(&pool, child.id).await.unwrap();
     let g = get_block_inner(&pool, grandchild.id).await.unwrap();
 
-    assert_eq!(p.deleted_at, Some(cascade_ts.clone()), "parent deleted");
-    assert_eq!(
-        c.deleted_at,
-        Some(cascade_ts.clone()),
-        "child cascade-deleted"
-    );
+    assert_eq!(p.deleted_at, Some(cascade_ts), "parent deleted");
+    assert_eq!(c.deleted_at, Some(cascade_ts), "child cascade-deleted");
     assert_eq!(g.deleted_at, Some(cascade_ts), "grandchild cascade-deleted");
 }
 
@@ -609,21 +605,21 @@ async fn restore_after_cascade_preserves_independently_deleted_child() {
     let child1_del = delete_block_inner(&pool, DEV, &mat, child1.id.clone())
         .await
         .unwrap();
-    let child1_ts = child1_del.deleted_at.clone();
+    let child1_ts = child1_del.deleted_at;
     settle_bg_tasks(&mat).await;
 
     // Delete parent (cascades to child2 only; child1 already deleted)
     let parent_del = delete_block_inner(&pool, DEV, &mat, parent.id.clone())
         .await
         .unwrap();
-    let cascade_ts = parent_del.deleted_at.clone();
+    let cascade_ts = parent_del.deleted_at;
     settle_bg_tasks(&mat).await;
 
     // child1 keeps its own timestamp
     let c1 = get_block_inner(&pool, child1.id.clone()).await.unwrap();
     assert_eq!(
         c1.deleted_at,
-        Some(child1_ts.clone()),
+        Some(child1_ts),
         "child1 retains independent delete timestamp"
     );
 

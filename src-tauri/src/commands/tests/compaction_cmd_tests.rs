@@ -138,7 +138,7 @@ async fn compact_op_log_cmd_deletes_old_ops() {
         r#"{{"block_id":"{}","block_type":"content","content":"recent block","parent_id":null,"position":6}}"#,
         recent_block_id
     ))
-    .bind(&recent_ts)
+    .bind(recent_ts)
     .execute(&pool)
     .await
     .unwrap();
@@ -291,7 +291,7 @@ async fn compact_op_log_returns_real_deleted_count_l42() {
         r#"{{"block_id":"{}","block_type":"content","content":"recent block","parent_id":null,"position":{}}}"#,
         recent_block_id, n_old + 1
     ))
-    .bind(&recent_ts)
+    .bind(recent_ts)
     .execute(&pool)
     .await
     .unwrap();
