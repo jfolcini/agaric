@@ -45,6 +45,7 @@ import {
   Replace,
   Search,
   Signal,
+  Smile,
   StickyNote,
   Strikethrough,
   Tag,
@@ -254,6 +255,17 @@ export const SLASH_COMMANDS: PickerItem[] = [
     label: 'ATTACH — Attach file to block',
     category: 'slashCommand.categories.references',
     icon: Paperclip,
+  },
+  {
+    // #286 — the browse-grid emoji picker. The inline `:` typeahead (#281)
+    // handles fast keyboard insertion of a known shortcode; `/emoji` opens
+    // the searchable categorized dialog for when you don't know it. Both
+    // share the same dataset + Recents store. Opening the dialog is handled
+    // by `openEmojiPicker` (mirrors `/query` → `openQueryBuilder`).
+    id: 'emoji',
+    label: 'EMOJI — Insert emoji from picker',
+    category: 'slashCommand.categories.references',
+    icon: Smile,
   },
 ]
 

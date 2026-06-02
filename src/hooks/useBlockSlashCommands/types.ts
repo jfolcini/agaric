@@ -41,6 +41,8 @@ export interface SlashCommandContext {
   openTemplatePicker: () => Promise<void>
   /** Open the visual query builder (#215) pre-populated for the focused block. */
   openQueryBuilder: () => void
+  /** Open the browse-grid emoji picker (#286); on select it inserts at the caret. */
+  openEmojiPicker: () => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

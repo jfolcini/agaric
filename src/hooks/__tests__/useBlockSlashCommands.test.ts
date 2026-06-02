@@ -82,6 +82,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCo
     load: vi.fn(async () => {}),
     t: vi.fn((key: string) => key) as unknown as TFunction,
     openQueryBuilder: vi.fn(),
+    openEmojiPicker: vi.fn(),
     ...overrides,
   }
 }

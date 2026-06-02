@@ -96,6 +96,10 @@ export function useSlashCommandStructural(): SlashHandlerTables {
         // #215 — open the visual builder pre-populated instead of dumping raw
         // `{{query …}}` syntax; the builder inserts the generated expression.
         query: (ctx) => ctx.openQueryBuilder(),
+        // #286 — open the browse-grid emoji picker; on select it inserts the
+        // chosen native emoji at the caret (same active-editor insertContent
+        // path the command palette uses for `[[Page]]` links).
+        emoji: (ctx) => ctx.openEmojiPicker(),
         callout: (ctx) => handleCallout(ctx, 'info'),
         // #264 — the bare `/turn` parent is a label that surfaces the
         // `turn-*` conversion options inline in the menu; selecting it
