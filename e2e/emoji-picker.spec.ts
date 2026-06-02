@@ -26,7 +26,11 @@ test.describe('Inline emoji picker — `:` trigger (#130)', () => {
 
     const popup = page.locator('[data-testid="suggestion-popup"]')
     await expect(popup).toBeVisible()
-    await expect(popup.locator('[data-testid="suggestion-item"]', { hasText: 'joy' })).toBeVisible()
+    // The full emoji set (#286) returns several `joy*` matches (joy, joy_cat,
+    // joystick…); `joy` ranks first, which is the item Enter selects below.
+    await expect(
+      popup.locator('[data-testid="suggestion-item"]', { hasText: 'joy' }).first(),
+    ).toBeVisible()
 
     await page.keyboard.press('Enter')
 
