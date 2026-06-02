@@ -72,6 +72,7 @@ vi.mock('lucide-react', () => ({
   Redo2: () => <svg data-testid="redo2-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
   Settings2: () => <svg data-testid="settings2-icon" />,
+  Smile: (props: Record<string, unknown>) => <svg data-testid="smile-icon" {...props} />,
   Star: (props: Record<string, unknown>) => <svg data-testid="star-icon" {...props} />,
   StickyNote: () => <svg data-testid="sticky-note-icon" />,
   Tag: () => <svg data-testid="tag-icon" />,
@@ -86,6 +87,18 @@ vi.mock('lucide-react', () => ({
 // Mock announcer (UX-282) — track screen-reader announcements per outcome
 vi.mock('../../lib/announcer', () => ({
   announce: vi.fn(),
+}))
+
+// Stub the heavy <EmojiPickerDialog> (virtualized grid) with a minimal shell
+// that exposes a button firing `onSelect`, so the page-title emoji-insert
+// handler can be driven deterministically (#286).
+vi.mock('@/components/EmojiPicker', () => ({
+  EmojiPickerDialog: ({ open, onSelect }: { open: boolean; onSelect: (char: string) => void }) =>
+    open ? (
+      <button type="button" data-testid="mock-emoji-pick" onClick={() => onSelect('\u{1F680}')}>
+        pick
+      </button>
+    ) : null,
 }))
 
 import { toast } from 'sonner'
@@ -257,6 +270,31 @@ describe('PageHeader title editing', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
         blockId: 'PAGE_1',
         toText: 'New Title',
+      })
+    })
+  })
+
+  it('renders an Insert emoji affordance in the title row', () => {
+    setupTagMock([])
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="My Page" />)
+
+    expect(screen.getByRole('button', { name: /insert emoji/i })).toBeInTheDocument()
+  })
+
+  it('appends a picked emoji to the title and persists via edit_block', async () => {
+    const user = userEvent.setup()
+    setupTagMock([])
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Notes" />)
+
+    // No caret captured (title never focused) → handler appends at end.
+    await user.click(screen.getByRole('button', { name: /insert emoji/i }))
+    await user.click(screen.getByTestId('mock-emoji-pick'))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'PAGE_1',
+        toText: 'Notes\u{1F680}',
       })
     })
   })

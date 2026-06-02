@@ -8,7 +8,20 @@ import { PageTagSection } from '../PageTagSection'
 
 vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
+  Smile: (props: Record<string, unknown>) => <svg data-testid="smile-icon" {...props} />,
   X: () => <svg data-testid="x-icon" />,
+}))
+
+// Stub the heavy <EmojiPickerDialog> (virtualized grid) with a minimal shell
+// that surfaces `open` + a button to fire `onSelect`, so we can drive the
+// surface-integration handler deterministically (#286).
+vi.mock('@/components/EmojiPicker', () => ({
+  EmojiPickerDialog: ({ open, onSelect }: { open: boolean; onSelect: (char: string) => void }) =>
+    open ? (
+      <button type="button" data-testid="mock-emoji-pick" onClick={() => onSelect('\u{1F680}')}>
+        pick
+      </button>
+    ) : null,
 }))
 
 const TAG_1: TagEntry = { id: 'TAG_1', name: 'urgent' }
@@ -269,6 +282,57 @@ describe('PageTagSection UX-1 / UX-2', () => {
 
     const createBtn = screen.getByRole('button', { name: /Create "newtag"/i })
     expect(createBtn.className).toContain('focus-ring-visible')
+  })
+})
+
+describe('PageTagSection emoji insert (#286)', () => {
+  it('renders an Insert emoji affordance in the tag picker', () => {
+    render(<PageTagSection {...defaultProps} showTagPicker={true} allTags={[]} />)
+
+    expect(screen.getByRole('button', { name: /insert emoji/i })).toBeInTheDocument()
+  })
+
+  it('splices the picked emoji into the tag-name input at the caret', async () => {
+    const onTagQueryChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <PageTagSection
+        {...defaultProps}
+        showTagPicker={true}
+        tagQuery="ab"
+        allTags={[]}
+        onTagQueryChange={onTagQueryChange}
+      />,
+    )
+
+    // Caret at end of "ab" (the controlled input renders value="ab").
+    const input = screen.getByLabelText<HTMLInputElement>('Search tags')
+    input.setSelectionRange(2, 2)
+
+    await user.click(screen.getByRole('button', { name: /insert emoji/i }))
+    await user.click(screen.getByTestId('mock-emoji-pick'))
+
+    expect(onTagQueryChange).toHaveBeenCalledWith('ab\u{1F680}')
+  })
+
+  it('keeps the tag picker open while the emoji dialog is open', async () => {
+    const onTagPickerChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <PageTagSection
+        {...defaultProps}
+        showTagPicker={true}
+        allTags={[]}
+        onTagPickerChange={onTagPickerChange}
+      />,
+    )
+
+    await user.click(screen.getByRole('button', { name: /insert emoji/i }))
+    // The emoji dialog is open; a close request on the underlying tag popover
+    // must be suppressed (no onTagPickerChange(false)).
+    expect(onTagPickerChange).not.toHaveBeenCalledWith(false)
   })
 })
 

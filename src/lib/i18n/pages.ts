@@ -67,6 +67,7 @@ export const pages: Record<string, string> = {
   'pageHeader.done': 'Done',
   'pageHeader.edit': 'Edit',
   'pageHeader.removeAlias': 'Remove alias {{alias}}',
+  'pageHeader.insertEmoji': 'Insert emoji',
   'pageHeader.addTag': 'Add tag',
   'pageHeader.removeTag': 'Remove tag {{name}}',
   'pageHeader.searchTags': 'Search or create tag...',

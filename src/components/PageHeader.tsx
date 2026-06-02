@@ -5,21 +5,24 @@
  * and a tag badge row with an inline tag picker popover.
  */
 
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Smile } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { PageQuickActions } from '@/components/PageQuickActions'
 import { Breadcrumb, type BreadcrumbCrumb } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 import { useBlockTags } from '../hooks/useBlockTags'
+import { useEmojiRecents } from '../hooks/useEmojiRecents'
 import { usePageAliases } from '../hooks/usePageAliases'
 import { usePageDeleteAction } from '../hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '../hooks/usePageTemplateMeta'
@@ -81,6 +84,12 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // --- Title editing ---
   const titleRef = useRef<HTMLDivElement>(null)
   const [editableTitle, setEditableTitle] = useState(title)
+  // Caret offset (JS string index) within the title's plain text, captured
+  // while the title is focused so the emoji picker can splice at the caret
+  // even after focus moves to the dialog. Falls back to end-of-text.
+  const titleCaretRef = useRef<number | null>(null)
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+  const { push: pushEmojiRecent } = useEmojiRecents()
   const [tagQuery, setTagQuery] = useState('')
   const [showTagPicker, setShowTagPicker] = useState(false)
   const [forceTagSection, setForceTagSection] = useState(false)
@@ -304,18 +313,51 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     }
   }, [title])
 
-  const handleTitleInput = useCallback((e: React.FormEvent<HTMLDivElement>) => {
-    setEditableTitle(e.currentTarget.textContent ?? '')
+  // Read the caret offset within the title contentEditable as a plain-text
+  // index. In edit mode the title is a single text node, so the collapsed
+  // selection's `startOffset` is the JS string index; returns null when the
+  // selection is outside the title or unavailable.
+  const readTitleCaret = useCallback((): number | null => {
+    const el = titleRef.current
+    if (!el) return null
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0) return null
+    const range = sel.getRangeAt(0)
+    if (!el.contains(range.startContainer)) return null
+    return range.startOffset
   }, [])
 
-  const handleTitleBlur = useCallback(async () => {
-    const newTitle = editableTitle.trim()
-    if (!newTitle) {
-      setEditableTitle(title)
-      if (titleRef.current) titleRef.current.textContent = title
-      return
-    }
-    if (newTitle !== title) {
+  // Only overwrite the stored caret when a live offset is readable — on blur
+  // the selection is gone (`readTitleCaret` → null) and we must keep the last
+  // in-edit caret so a subsequent emoji insert lands where the user left off.
+  const captureTitleCaret = useCallback(() => {
+    const caret = readTitleCaret()
+    if (caret !== null) titleCaretRef.current = caret
+  }, [readTitleCaret])
+
+  const handleTitleInput = useCallback(
+    (e: React.FormEvent<HTMLDivElement>) => {
+      setEditableTitle(e.currentTarget.textContent ?? '')
+      captureTitleCaret()
+    },
+    [captureTitleCaret],
+  )
+
+  const handleTitleKeyUp = useCallback(() => {
+    captureTitleCaret()
+  }, [captureTitleCaret])
+
+  // Persist a new title through the same IPC + store-sync path the blur
+  // handler uses. Reverts on empty/failure. Shared by blur and emoji insert.
+  const persistTitle = useCallback(
+    async (next: string): Promise<void> => {
+      const newTitle = next.trim()
+      if (!newTitle) {
+        setEditableTitle(title)
+        if (titleRef.current) titleRef.current.textContent = title
+        return
+      }
+      if (newTitle === title) return
       try {
         await editBlock(pageId, newTitle)
         useUndoStore.getState().onNewAction(pageId)
@@ -330,8 +372,35 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         setEditableTitle(title)
         if (titleRef.current) titleRef.current.textContent = title
       }
-    }
-  }, [editableTitle, title, pageId, t])
+    },
+    [title, pageId, t],
+  )
+
+  const handleTitleBlur = useCallback(async () => {
+    captureTitleCaret()
+    await persistTitle(editableTitle)
+  }, [editableTitle, persistTitle, captureTitleCaret])
+
+  // Insert a picked emoji into the title at the last-known caret (or append)
+  // and persist immediately — the title contentEditable has already blurred
+  // (the picker button stole focus), so there is no blur to save on.
+  const handleTitleEmojiSelect = useCallback(
+    (char: string) => {
+      pushEmojiRecent(char)
+      const caret = titleCaretRef.current
+      const { value, caret: nextCaret } = spliceEmojiIntoText(
+        editableTitle,
+        char,
+        caret ?? editableTitle.length,
+        caret ?? editableTitle.length,
+      )
+      setEditableTitle(value)
+      titleCaretRef.current = nextCaret
+      if (titleRef.current) titleRef.current.textContent = value
+      void persistTitle(value)
+    },
+    [editableTitle, persistTitle, pushEmojiRecent],
+  )
 
   const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -390,7 +459,20 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
               onInput={handleTitleInput}
               onBlur={handleTitleBlur}
               onKeyDown={handleTitleKeyDown}
+              onKeyUp={handleTitleKeyUp}
             />
+            {/* #286 — insert a native emoji into the page title at the caret.
+                Opens the shared <EmojiPickerDialog>; the title contentEditable
+                blurs (saving any pending edit) before the picker opens, so the
+                handler splices at the last-known caret and persists itself. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setEmojiPickerOpen(true)}
+              aria-label={t('pageHeader.insertEmoji')}
+            >
+              <Smile className="h-4 w-4" />
+            </Button>
             {/* PEND-68 Part A — unified star + dedicated delete affordance.
                 The kebab below KEEPS its "Delete page" item as a secondary
                 path; both routes call `requestDelete()` on the shared
@@ -479,6 +561,14 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
           page" item route through `usePageDeleteAction.requestDelete`, so
           only this dialog mounts. */}
       {deleteConfirmDialog}
+
+      {/* #286 — page-title emoji picker. Inserts the chosen emoji at the
+          title caret and persists. Shared dialog primitive (#319). */}
+      <EmojiPickerDialog
+        open={emojiPickerOpen}
+        onOpenChange={setEmojiPickerOpen}
+        onSelect={handleTitleEmojiSelect}
+      />
     </>
   )
 }
