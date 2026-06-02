@@ -503,12 +503,12 @@ function App() {
              */}
             <TabBar />
             {/*
-             * PEND-68 Part B: desktop-only quick-access bar — fixed
-             * destinations cluster (Pages / Tags / Graph / Search) plus the
-             * MRU recents scroller. Mounted between the hoisted TabBar above
-             * and the ViewHeaderOutletSlot below. Mobile gate lives inside
-             * the component (hidden on `useIsMobile()` — the mobile
-             * bottom-nav already covers destinations).
+             * PEND-68 Part B (#83 recents-only): desktop-only quick-access
+             * bar — the MRU recents scroller. The former destinations cluster
+             * (Pages / Tags / Graph / Search) was removed (#83) as it
+             * duplicated the left sidebar. Mounted between the hoisted TabBar
+             * above and the ViewHeaderOutletSlot below. Returns null on mobile
+             * (`useIsMobile()`) and on desktop when there are no recents.
              */}
             <QuickAccessBar />
             {/*

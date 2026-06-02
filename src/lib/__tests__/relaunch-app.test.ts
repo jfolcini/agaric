@@ -28,25 +28,12 @@ describe('relaunchApp', () => {
     expect(mockRelaunch).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to window.location.reload when plugin import fails', async () => {
-    vi.doMock('@tauri-apps/plugin-process', () => {
-      throw new Error('Module not available')
-    })
-    const reloadMock = vi.fn()
-    Object.defineProperty(window, 'location', {
-      value: { ...window.location, reload: reloadMock },
-      writable: true,
-    })
-    vi.doMock('@/lib/logger', () => ({
-      logger: { warn: vi.fn(), error: vi.fn() },
-    }))
-    const { relaunchApp } = await import('../relaunch-app')
-
-    await relaunchApp()
-
-    expect(reloadMock).toHaveBeenCalledTimes(1)
-  })
-
+  // NOTE: there is intentionally no "plugin import fails" test. `relaunch`
+  // is now imported statically (it shares the entry chunk with
+  // `useUpdateCheck`'s deliberate pre-fetch — see `relaunch-app.ts`), and
+  // `@tauri-apps/plugin-process` is pure JS that always imports. The real
+  // degradation path is a failing `relaunch()` *call* with no Tauri backend,
+  // covered by the test below.
   it('falls back to window.location.reload when relaunch() rejects', async () => {
     vi.doMock('@tauri-apps/plugin-process', () => ({ relaunch: mockRelaunch }))
     mockRelaunch.mockRejectedValueOnce(new Error('IPC failure'))

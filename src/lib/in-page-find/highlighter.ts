@@ -9,8 +9,14 @@
  *  - `find-match-current` — the single match at the current index;
  *    drawn with a stronger accent so the user can spot the cursor.
  *
- * Styling lives in `src/index.css` under the `::highlight(find-match)` /
- * `::highlight(find-match-current)` selectors.
+ * Styling is injected at runtime by {@link ensureHighlightStyles} (once,
+ * the first time a supported browser paints) rather than living in
+ * `src/index.css`. The `::highlight()` pseudo is a valid Custom Highlight
+ * API selector, but the build's CSS minifier (lightningcss) doesn't
+ * recognise it and emits a spurious "not a valid pseudo-element" warning
+ * on every build; keeping the rules with the feature that owns them, and
+ * out of the statically-minified stylesheet, removes that warning without
+ * touching the global CSS pipeline.
  *
  * ## Graceful degradation
  *
@@ -25,6 +31,53 @@ import type { FindMatch } from './matcher'
 
 const HIGHLIGHT_ALL = 'find-match'
 const HIGHLIGHT_CURRENT = 'find-match-current'
+
+/**
+ * Styles for the two named highlights. Injected once at runtime (see the
+ * module docstring for why these don't live in `src/index.css`). Uses the
+ * same accent contrast pair as `.search-result-mark` so search-result and
+ * in-page-find highlighting share a visual language. The current-match
+ * pseudo wins on overlap because it's registered after the all-matches
+ * highlight and carries the heavier (underlined) style. `::highlight()`
+ * paints over text without inserting boxes, so there's no reflow as the
+ * match set changes while typing.
+ */
+const HIGHLIGHT_STYLES = `
+::highlight(${HIGHLIGHT_ALL}) {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}
+::highlight(${HIGHLIGHT_CURRENT}) {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+`
+
+let stylesInjected = false
+
+/**
+ * Inject {@link HIGHLIGHT_STYLES} into `<head>` exactly once. Idempotent
+ * across calls (module flag) and across hot-reloads / duplicate module
+ * instances (a `data-` attribute marker). No-op when there's no `document`
+ * (non-DOM environments); callers already gate on {@link isSupported}.
+ */
+function ensureHighlightStyles(): void {
+  if (stylesInjected) return
+  const doc = (globalThis as { document?: Document }).document
+  if (!doc?.head) return
+  if (doc.querySelector('style[data-in-page-find]')) {
+    stylesInjected = true
+    return
+  }
+  const style = doc.createElement('style')
+  style.setAttribute('data-in-page-find', '')
+  style.textContent = HIGHLIGHT_STYLES
+  doc.head.appendChild(style)
+  stylesInjected = true
+}
 
 interface HighlightLike {
   add(range: Range): unknown
@@ -95,6 +148,11 @@ export function paint(matches: FindMatch[], currentIndex: number): void {
   const registry = getRegistry()
   const Ctor = getHighlightCtor()
   if (!registry || !Ctor) return
+
+  // Inject the highlight styles on first paint (idempotent). Done here,
+  // after the support guard, so unsupported environments never touch the
+  // DOM and the rules stay out of the statically-minified stylesheet.
+  ensureHighlightStyles()
 
   // Always rebuild from scratch — `Highlight.clear()` then `add()` per
   // range is the documented pattern, and the cost is O(N) DOM-free.

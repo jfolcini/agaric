@@ -1771,10 +1771,10 @@ describe('App', () => {
     })
   })
 
-  // PEND-68 Part B: the QuickAccessBar mounts between the hoisted TabBar and
-  // the ViewHeaderOutletSlot. Renders whenever EITHER the destinations zone
-  // (a hard-coded allowlist of 4 entries) OR the recents zone is non-empty —
-  // on desktop this is effectively always-on. Mobile stays hidden.
+  // PEND-68 Part B (#83 recents-only): the QuickAccessBar mounts between the
+  // hoisted TabBar and the ViewHeaderOutletSlot. It renders whenever the
+  // recents zone is non-empty; with no recents it returns null. Mobile stays
+  // hidden.
   describe('PEND-68 quick-access bar', () => {
     it('mounts between TabBar and ViewHeaderOutletSlot in the shell', async () => {
       // Seed two recent pages and render from a non-editor view so the
@@ -1873,10 +1873,9 @@ describe('App', () => {
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    // PEND-68 render-gate change: the bar now renders whenever EITHER zone
-    // is non-empty. Destinations is a 4-entry constant, so the desktop bar
-    // is effectively always present even when there are zero recents.
-    it('still renders on desktop when recentPages is empty (destinations zone)', async () => {
+    // #83 recents-only render gate: with no recents the bar returns null
+    // (the former always-present destinations zone was removed).
+    it('does not render on desktop when recentPages is empty', async () => {
       useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
 
       render(<App />)
@@ -1884,8 +1883,7 @@ describe('App', () => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
       })
 
-      expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
-      expect(screen.getByTestId('quick-access-destinations')).toBeInTheDocument()
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
   })
 
