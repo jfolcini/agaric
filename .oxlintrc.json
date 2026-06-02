@@ -68,6 +68,7 @@
     "**/src-tauri/gen",
     "**/.sqlx",
     "src/lib/bindings.ts",
+    "src/editor/emoji-data.generated.ts",
     "**/coverage",
     "public/pdf.worker.min.mjs"
   ]
