@@ -1045,7 +1045,56 @@ pub async fn request_and_receive_files(
             );
             break;
         }
-        let msg: SyncMessage = conn.recv_json().await?;
+        // M-47 (#317): the top-of-loop check above only observes a cancel
+        // that is *already* visible when we re-enter the loop. If the peer
+        // has also cancelled and will therefore never send the next
+        // message, a bare `conn.recv_json().await` would block until the
+        // connection closes (up to the nextest 60s timeout — the source of
+        // the flake). Poll cancel while we wait for the next message: wrap
+        // the receive in a short timeout and re-check `cancel` on each
+        // elapsed tick. A message that arrives within the interval is
+        // handled exactly as before — only the *waiting* becomes
+        // cancel-aware, so the normal (non-cancel) path is unchanged.
+        //
+        // 150ms is short enough to abort promptly on the rare cancel race
+        // yet long enough that, on the common path where the next message
+        // is already in flight, we wake at most a handful of times per
+        // multi-gigabyte transfer (no busy-polling).
+        const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+        let msg: SyncMessage = loop {
+            match tokio::time::timeout(CANCEL_POLL_INTERVAL, conn.recv_json()).await {
+                Ok(Ok(msg)) => break msg,
+                Ok(Err(e)) => {
+                    // The receive itself failed. If we're cancelling, a
+                    // peer that has also cancelled may simply drop the
+                    // connection instead of sending another message; that
+                    // surfaces here as a recv error (e.g. "connection
+                    // reset"). Treat it as a clean cancel-driven stop —
+                    // we already hold the files we ACKed — rather than a
+                    // transfer failure. Only when *not* cancelling do we
+                    // propagate the error so the daemon retries.
+                    if cancel.load(Ordering::Acquire) {
+                        tracing::info!(
+                            files_received = stats.files_received,
+                            error = %e,
+                            "M-47: peer connection ended while cancelling; aborting receive cleanly"
+                        );
+                        return Ok(stats);
+                    }
+                    return Err(e);
+                }
+                Err(_elapsed) => {
+                    if cancel.load(Ordering::Acquire) {
+                        tracing::info!(
+                            files_received = stats.files_received,
+                            "M-47: cancel observed while waiting for next message; aborting receive"
+                        );
+                        return Ok(stats);
+                    }
+                    // Not cancelled — keep waiting for the next message.
+                }
+            }
+        };
         match msg {
             SyncMessage::FileOffer {
                 attachment_id,

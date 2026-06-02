@@ -1707,15 +1707,28 @@ async fn inmem_responder_bidirectional_no_files() {
 
 // ── M-47: cancel signal breaks file transfer between files ────────────
 
-/// M-47: when `cancel` is set during file 1's transfer, the receiver
-/// must complete file 1 (already in flight) but break out before
-/// reading file 2's `FileOffer`. We rely on the receiver's cancel
-/// check at the **top** of every loop iteration: cancel is set by
-/// the mock responder *during* iteration 1 (between send_json
-/// `FileOffer1` and send_binary), which means iteration 2 starts
-/// AFTER `cancel.store(true)` has happened (because the receiver's
-/// recv_binary blocks for the binary that comes after the store).
-/// The implementation aborts cleanly without writing file 2.
+/// M-47 (#317): when `cancel` is set after file 1's transfer, the
+/// receiver must keep file 1 (already received + ACKed) but break out
+/// before processing file 2.
+///
+/// Ordering is made deterministic to kill the prior flake: the mock
+/// responder sends `FileOffer1` + file1 binary, then **receives ACK1**,
+/// and only THEN stores `cancel = true`. Because the store is causally
+/// after ACK1 (which the receiver sends at the *end* of iteration 1),
+/// the receiver provably enters iteration 1 with `cancel == false`,
+/// fully processes file 1, and observes the cancel no earlier than
+/// iteration 2. The responder then sends NOTHING further, so the
+/// receiver breaks via either the top-of-loop check (if the store is
+/// already visible) or the cancel-aware wait in `request_and_receive_files`
+/// (#317 fix): a bare `recv_json` would otherwise block forever here
+/// because the peer never sends another message.
+///
+/// (The old version stored cancel *between* `FileOffer1` and the file1
+/// binary and claimed a happens-before against iteration 1's top check.
+/// That claim was false — both merely happened after `FileRequest` — so
+/// under scheduling pressure the receiver could break at iteration 1's
+/// top before consuming file1, leaving the responder blocked on ACK1
+/// until the nextest timeout. That was the bug.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     use std::sync::Arc;
@@ -1727,7 +1740,11 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     let file1: &[u8] = b"first file body content for M-47 test";
     let file2: &[u8] = b"second file body - should NOT be received after cancel";
     let hash1 = blake3::hash(file1).to_hex().to_string();
-    let hash2 = blake3::hash(file2).to_hex().to_string();
+    // file2's hash is intentionally unused: file2 is never offered to the
+    // receiver (the responder stops after ACK1), so there is no FileOffer2
+    // to carry a blake3_hash. file2's *bytes* are still used to size its
+    // attachment row so the receiver requests it (and we assert it never
+    // lands on disk).
 
     // Two attachment rows: both missing on disk so the receiver
     // requests both. Names chosen to be obviously distinguishable.
@@ -1751,14 +1768,11 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_responder = cancel.clone();
 
-    // Mock responder: drives the protocol manually, sets `cancel`
-    // synchronously between `FileOffer1` and `send_binary(file1)`.
-    // This guarantees the receiver's iteration 2 (after ACK1) reads
-    // a `cancel == true` flag — there is no race because the
-    // store-release happens before the binary is even on the wire,
-    // and the receiver cannot reach iteration 2's load-acquire
-    // without first finishing iteration 1's body (recv_binary,
-    // write, send ACK).
+    // Mock responder: drives the protocol manually. It sets `cancel`
+    // only AFTER receiving ACK1, so the cancel store is causally after
+    // the receiver has finished iteration 1 (recv_binary, write, ACK).
+    // The receiver therefore cannot observe cancel before iteration 2,
+    // and `files_received` is deterministically 1.
     let responder_task = tokio::spawn(async move {
         // 1. Receive FileRequest for both files. `find_missing_attachments`
         //    fans the per-row metadata probe through `buffer_unordered(16)`
@@ -1788,16 +1802,12 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
             .await
             .unwrap();
 
-        // 3. M-47: store cancel BEFORE sending binary. The receiver
-        //    is now blocked in recv_binary; once the binary arrives
-        //    and iteration 1's body finishes, iteration 2's
-        //    cancel.load() sees the store-released `true`.
-        cancel_responder.store(true, Ordering::Release);
-
-        // 4. Send file 1 binary — receiver completes iteration 1.
+        // 3. Send file 1 binary — receiver processes iteration 1.
         server_conn.send_binary(file1).await.unwrap();
 
-        // 5. Receive ACK for file 1.
+        // 4. Receive ACK for file 1. The receiver sends this at the END
+        //    of iteration 1, so everything below is causally after the
+        //    receiver fully processed file 1.
         let ack: SyncMessage = server_conn.recv_json().await.unwrap();
         assert!(
             matches!(
@@ -1807,22 +1817,19 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
             "M-47: receiver must ACK file 1 before observing cancel; got {ack:?}"
         );
 
-        // 6. Try to send file 2 — the receiver SHOULD have broken
-        //    out at iteration 2's cancel check, so these sends
-        //    will hit a closed connection. We swallow errors
-        //    (broken pipe is the success case).
-        let _ = server_conn
-            .send_json(&SyncMessage::FileOffer {
-                attachment_id: "ATT_M47_2".into(),
-                size_bytes: u64::try_from(file2.len())
-                    .expect("invariant: test fixture file size fits in u64"),
-                blake3_hash: hash2.clone(),
-            })
-            .await;
-        let _ = server_conn.send_binary(file2).await;
-        let _ = server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
-            .await;
+        // 5. M-47 (#317): store cancel ONLY after ACK1. This makes the
+        //    cancel observation deterministic — the receiver has provably
+        //    completed iteration 1, so it can only see cancel at/after
+        //    iteration 2's start.
+        cancel_responder.store(true, Ordering::Release);
+
+        // 6. Send NOTHING further. file2 (`hash2`) must never be offered:
+        //    the receiver breaks at iteration 2 — either at the top-of-loop
+        //    cancel check (store already visible) or via the cancel-aware
+        //    wait in `request_and_receive_files` (#317). Sending a second
+        //    FileOffer here would reintroduce a race, so we deliberately
+        //    leave the connection idle until the receiver returns and the
+        //    test drops it.
     });
 
     // Initiator (receiver) side: run the production code path.
