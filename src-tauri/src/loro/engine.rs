@@ -241,7 +241,7 @@ impl PropertyValue {
 
     /// Lossy string view for the legacy string-returning read paths and
     /// parity/debug callers. `Null` → `None`.
-    fn as_legacy_string(&self) -> Option<String> {
+    pub(crate) fn as_legacy_string(&self) -> Option<String> {
         match self {
             PropertyValue::Str(s) => Some(s.clone()),
             PropertyValue::Num(n) => Some(n.to_string()),
