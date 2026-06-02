@@ -3070,4 +3070,247 @@ mod tree_tests {
         // Both peers agree on c1's parent (single converged node).
         assert_eq!(a.read_parent("c1").unwrap(), b.read_parent("c1").unwrap());
     }
+
+    // --- migration robustness: helpers + edge-case coverage -------------
+
+    /// Write one legacy (v1 flat-map) block directly under
+    /// [`LEGACY_BLOCKS_ROOT`], the way the pre-Phase-3 engine wrote it.
+    fn legacy_write_block(
+        blocks: &LoroMap,
+        id: &str,
+        btype: &str,
+        content: &str,
+        parent: Option<&str>,
+        position: i64,
+    ) {
+        let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
+        bm.insert(FIELD_BLOCK_TYPE, LoroValue::from(btype)).unwrap();
+        let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
+        t.insert(0, content).unwrap();
+        bm.insert(
+            FIELD_PARENT_ID,
+            match parent {
+                Some(p) => LoroValue::from(p),
+                None => LoroValue::Null,
+            },
+        )
+        .unwrap();
+        bm.insert(FIELD_POSITION, LoroValue::from(position))
+            .unwrap();
+    }
+
+    /// Write a raw property under [`BLOCK_PROPERTIES_ROOT`] (the root the
+    /// migration must leave untouched).
+    fn legacy_write_property(doc: &LoroDoc, block_id: &str, key: &str, value: LoroValue) {
+        let props_root: LoroMap = doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let block_props: LoroMap = match props_root.get(block_id) {
+            Some(voc) => voc.into_container().unwrap().into_map().unwrap(),
+            None => props_root
+                .insert_container(block_id, LoroMap::new())
+                .unwrap(),
+        };
+        block_props.insert(key, value).unwrap();
+    }
+
+    /// Write a raw tag under [`BLOCK_TAGS_ROOT`] (also untouched by migration).
+    fn legacy_write_tag(doc: &LoroDoc, block_id: &str, tag_id: &str) {
+        let tags_root: LoroMap = doc.get_map(BLOCK_TAGS_ROOT);
+        let list: LoroList = match tags_root.get(block_id) {
+            Some(voc) => voc.into_container().unwrap().into_list().unwrap(),
+            None => tags_root
+                .insert_container(block_id, LoroList::new())
+                .unwrap(),
+        };
+        list.push(LoroValue::from(tag_id)).unwrap();
+    }
+
+    /// **Migration must not lose properties or tags.** They live in
+    /// independent roots the migration never touches; this pins that a v1
+    /// snapshot carrying both round-trips them through the tree migration.
+    #[test]
+    fn migration_preserves_properties_and_tags() {
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            legacy_write_block(&blocks, "p", "page", "P", None, 0);
+            legacy_write_block(&blocks, "b", "content", "B", Some("p"), 1);
+            // Native typed + string properties, plus two tags, on `b`.
+            legacy_write_property(&doc, "b", "effort", LoroValue::Double(2.5));
+            legacy_write_property(&doc, "b", "done", LoroValue::Bool(true));
+            legacy_write_property(&doc, "b", "note", LoroValue::from("hi"));
+            legacy_write_tag(&doc, "b", "TAG_X");
+            legacy_write_tag(&doc, "b", "TAG_Y");
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+
+        let mut e = LoroEngine::new();
+        e.import(&legacy_bytes).unwrap();
+
+        // Hierarchy migrated.
+        assert_eq!(e.read_parent("b").unwrap().as_deref(), Some("p"));
+        assert_eq!(e.count_alive_blocks().unwrap(), 2);
+
+        // Properties survived with their native types.
+        let mut props = e.read_all_properties_typed("b").unwrap();
+        props.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            props,
+            vec![
+                ("done".to_string(), PropertyValue::Bool(true)),
+                ("effort".to_string(), PropertyValue::Num(2.5)),
+                ("note".to_string(), PropertyValue::Str("hi".to_string())),
+            ]
+        );
+
+        // Tags survived.
+        let mut tags = e.read_tags("b").unwrap();
+        tags.sort();
+        assert_eq!(tags, vec!["TAG_X".to_string(), "TAG_Y".to_string()]);
+    }
+
+    /// Migration of a deeply nested chain (4 levels) recovers each block's
+    /// parent from the rebuilt tree.
+    #[test]
+    fn migration_preserves_deep_nesting() {
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            legacy_write_block(&blocks, "a", "page", "A", None, 0);
+            legacy_write_block(&blocks, "b", "content", "B", Some("a"), 0);
+            legacy_write_block(&blocks, "c", "content", "C", Some("b"), 0);
+            legacy_write_block(&blocks, "d", "content", "D", Some("c"), 0);
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+        let mut e = LoroEngine::new();
+        e.import(&legacy_bytes).unwrap();
+        assert_eq!(e.read_parent("a").unwrap(), None);
+        assert_eq!(e.read_parent("b").unwrap().as_deref(), Some("a"));
+        assert_eq!(e.read_parent("c").unwrap().as_deref(), Some("b"));
+        assert_eq!(e.read_parent("d").unwrap().as_deref(), Some("c"));
+        assert_eq!(e.count_alive_blocks().unwrap(), 4);
+    }
+
+    /// **Dedup at depth.** Two peers migrate the same *nested* v1 snapshot
+    /// (root → mid → leaf, leaf carrying a property) independently; after a
+    /// snapshot exchange the dedup must converge to a single node per block
+    /// with the deep parentage intact, the property preserved, and both
+    /// peers in agreement.
+    #[test]
+    fn dedupe_converges_nested_subtrees_and_preserves_properties() {
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            legacy_write_block(&blocks, "root", "page", "R", None, 0);
+            legacy_write_block(&blocks, "mid", "content", "M", Some("root"), 0);
+            legacy_write_block(&blocks, "leaf", "content", "L", Some("mid"), 0);
+            legacy_write_property(&doc, "leaf", "effort", LoroValue::Double(7.0));
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.import(&legacy_bytes).unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        b.import(&legacy_bytes).unwrap();
+
+        let a_snap = a.export_snapshot().unwrap();
+        let b_snap = b.export_snapshot().unwrap();
+        a.import(&b_snap).unwrap();
+        b.import(&a_snap).unwrap();
+
+        for (name, e) in [("A", &a), ("B", &b)] {
+            assert_eq!(
+                e.count_alive_blocks().unwrap(),
+                3,
+                "peer {name}: nested duplicates must converge to 3 blocks",
+            );
+            assert_eq!(e.read_parent("mid").unwrap().as_deref(), Some("root"));
+            assert_eq!(
+                e.read_parent("leaf").unwrap().as_deref(),
+                Some("mid"),
+                "peer {name}: deep parentage survives dedup",
+            );
+            assert_eq!(
+                e.list_children_walk("mid").unwrap(),
+                vec!["leaf".to_string()]
+            );
+            assert_eq!(
+                e.read_all_properties_typed("leaf").unwrap(),
+                vec![("effort".to_string(), PropertyValue::Num(7.0))],
+                "peer {name}: leaf property survives dedup",
+            );
+        }
+        assert_eq!(
+            a.read_parent("leaf").unwrap(),
+            b.read_parent("leaf").unwrap()
+        );
+    }
+
+    /// **Mixed legacy+tree doc (review Finding 4).** When the doc already
+    /// carries a tree node for a block_id (e.g. a partial-tree doc or a
+    /// cross-format merge), the migration reuses it rather than minting a
+    /// duplicate, and still migrates the genuinely-new legacy blocks.
+    #[test]
+    fn migration_reuses_existing_tree_node_no_duplicate() {
+        // Engine already has a tree node for X (created the v2 way).
+        let mut e = LoroEngine::new();
+        e.apply_create_block("X", "content", "x-tree", None, 0)
+            .unwrap();
+
+        // A legacy v1 snapshot carrying X (again) plus a new block Y under X.
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            legacy_write_block(&blocks, "X", "content", "x-legacy", None, 0);
+            legacy_write_block(&blocks, "Y", "content", "y-legacy", Some("X"), 1);
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+        e.import(&legacy_bytes).unwrap();
+
+        // No duplicate X (still exactly 2 live blocks: X + Y), Y attached.
+        assert_eq!(e.count_alive_blocks().unwrap(), 2);
+        assert_eq!(e.read_parent("Y").unwrap().as_deref(), Some("X"));
+        assert_eq!(e.list_children_walk("X").unwrap(), vec!["Y".to_string()]);
+        // The pre-existing tree node's content is authoritative (not the
+        // legacy copy) — the migration skipped re-creating X.
+        assert_eq!(e.read_block("X").unwrap().unwrap().content, "x-tree");
+    }
+
+    /// `rebuild_index` (run on import) drops a stale `pending_parent` intent
+    /// once the child is already attached to a real parent in the imported
+    /// tree, so a later create of the (unrelated) intended parent cannot
+    /// re-fire and mis-reparent it. Uses a single shared node (no block_id
+    /// collision) moved by a peer — the realistic way the intent resolves.
+    #[test]
+    fn import_reconciles_stale_pending_parent() {
+        // E creates `p`, then `c` referencing an absent parent `ghost` →
+        // `c` is parked at root and pending_parent[c] = ghost.
+        let mut e = LoroEngine::with_peer_id("DEV-E").unwrap();
+        e.apply_create_block("p", "page", "P", None, 0).unwrap();
+        e.apply_create_block("c", "content", "C", Some("ghost"), 0)
+            .unwrap();
+        assert_eq!(e.read_parent("c").unwrap(), None, "c parked at root");
+
+        // Peer F shares E's tree (same TreeIDs) and moves `c` under `p`.
+        let mut f = LoroEngine::with_peer_id("DEV-F").unwrap();
+        f.import(&e.export_snapshot().unwrap()).unwrap();
+        f.apply_move_block("c", Some("p"), 0).unwrap();
+
+        // E imports F's move → `c` is now under the real parent `p`, so the
+        // stale `ghost` intent must be reconciled away by rebuild_index.
+        e.import(&f.export_snapshot().unwrap()).unwrap();
+        assert_eq!(e.read_parent("c").unwrap().as_deref(), Some("p"));
+
+        // Creating `ghost` now must NOT steal `c` back (intent was dropped).
+        e.apply_create_block("ghost", "content", "G", None, 9)
+            .unwrap();
+        assert_eq!(
+            e.read_parent("c").unwrap().as_deref(),
+            Some("p"),
+            "reconciled pending intent must not re-fire",
+        );
+    }
 }
