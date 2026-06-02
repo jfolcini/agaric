@@ -783,6 +783,28 @@ async fn recover_derived_state_from_op_log(
                     .and_then(serde_json::Value::as_bool)
                     .map(|b| if b { 1i64 } else { 0i64 });
 
+                // A `SetProperty` with NO value set is an explicit *clear*
+                // (value = None) — the live projection represents a cleared
+                // property as row-absent, never an all-NULL row. Inserting
+                // the all-NULL row here would violate the `exactly_one_value`
+                // CHECK (migration 0062, which requires exactly one value
+                // column non-NULL) and abort startup with a (275) panic.
+                // Replay it as a DELETE so the LWW order is preserved: a
+                // clear removes any prior value for this (block_id, key).
+                let value_count = i32::from(value_text.is_some())
+                    + i32::from(value_num.is_some())
+                    + i32::from(value_date.is_some())
+                    + i32::from(value_ref.is_some())
+                    + i32::from(value_bool.is_some());
+                if value_count == 0 {
+                    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                        .bind(block_id)
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await?;
+                    continue;
+                }
+
                 // Guard the two FK columns (block_id, value_ref → blocks(id)).
                 // An op may reference a block that was purged or created on
                 // another device and is absent from the local op_log, so
@@ -2231,5 +2253,73 @@ mod tests {
             bad_tags, 0,
             "tags referencing a missing block must be skipped"
         );
+    }
+
+    /// Regression: a `set_property` op that CLEARS a value (all `value_*`
+    /// fields null — e.g. un-setting `todo_state`) must be replayed as a
+    /// row-removal, not an all-NULL INSERT. The all-NULL row violates the
+    /// `exactly_one_value` CHECK (migration 0062) and previously panicked
+    /// the whole app at startup with `(275) CHECK constraint failed:
+    /// exactly_one_value` while recovering derived tables from the op_log.
+    #[tokio::test]
+    async fn init_pool_recovery_handles_clear_property_op() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        let ts = chrono::Utc::now().timestamp_millis();
+
+        let ops: &[(i64, &str, &str)] = &[
+            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}"),
+            (2, "create_block", "{\"block_id\":\"B1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            // Set todo_state, then CLEAR it (the all-NULL op that crashed boot).
+            (3, "set_property", "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":\"DOING\"}"),
+            (4, "set_property", "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":null,\"value_num\":null,\"value_date\":null,\"value_ref\":null,\"value_bool\":null}"),
+            // An unrelated property that stays set — must survive the recovery.
+            (5, "set_property", "{\"block_id\":\"B1\",\"key\":\"priority\",\"value_text\":\"high\"}"),
+        ];
+        for (seq, op_type, payload) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Drop blocks so the empty-derived-tables recovery runs on reopen.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        // Must NOT panic with the exactly_one_value CHECK — the regression.
+        let pool = init_pool(&db_path)
+            .await
+            .expect("recovery must replay a clear-property op as a delete, not crash");
+
+        // Cleared property is row-absent.
+        let todo: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'todo_state'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(todo, 0, "a cleared property must not be re-inserted");
+
+        // The still-set property survives.
+        let prio: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'priority'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(prio, 1, "an unrelated set property must still be recovered");
     }
 }
