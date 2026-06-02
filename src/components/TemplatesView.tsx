@@ -264,18 +264,30 @@ export function TemplatesView(): React.ReactElement {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    {tpl.isJournalTemplate && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Badge tone="secondary" className="shrink-0 text-xs">
-                              {t('templates.journalIndicator')}
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent>{t('templates.journalTooltip')}</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
+                    {/* #215 — scope badge. Every template carries a scope
+                        indicator so a journal template is distinguishable from
+                        a regular page template at a glance. Journal templates
+                        keep the `secondary` tone; page templates use the calmer
+                        `outline` tone so the journal flag stays the louder one. */}
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge
+                            tone={tpl.isJournalTemplate ? 'secondary' : 'outline'}
+                            className="shrink-0 text-xs"
+                          >
+                            {tpl.isJournalTemplate
+                              ? t('templates.journalIndicator')
+                              : t('templates.pageIndicator')}
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {tpl.isJournalTemplate
+                            ? t('templates.journalTooltip')
+                            : t('templates.pageTooltip')}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                     <Button
                       variant="ghost"
                       size="icon-xs"

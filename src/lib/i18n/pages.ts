@@ -85,6 +85,12 @@ export const pages: Record<string, string> = {
   'templates.empty': 'No templates yet. Mark a page as a template to see it here.',
   'templates.search': 'Search templates…',
   'templates.journalIndicator': 'Journal template',
+  // #215 — scope badge: every template now carries a scope indicator beside
+  // its title so a journal template is distinguishable from a regular page
+  // template before opening it. Journal templates keep `journalIndicator`;
+  // all other templates show `pageIndicator`.
+  'templates.pageIndicator': 'Page template',
+  'templates.pageTooltip': 'A page template — inserting it creates a new page from this content.',
   'templates.navigateLabel': 'Open template {{name}}',
   'templates.removeTemplateLabel': 'Remove template status from {{name}}',
   'templates.noSearchResults': 'No templates match your search.',
