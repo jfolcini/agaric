@@ -236,23 +236,21 @@ jobs:
           cargo sqlx prepare --check -- --tests
 
   # ---------------------------------------------------------------------------
-  # vitest — frontend unit + integration suite, sharded 3-ways (PEND-39 C3).
-  # Each shard pays its own jsdom-env-setup cost, so near-linear scaling.
+  # vitest — frontend unit + integration suite (PEND-86: single job).
+  # Previously a 3-shard matrix + a separate merge job; consolidated into one
+  # full-suite run. Three ~3-min shards in parallel cost three runner slots and
+  # still needed a 4th (merge) job, while the critical path was gated by the
+  # 16-min cargo-tests long pole anyway. One full run (~8-9 min with v8
+  # coverage) frees two runner slots, drops the merge job, and produces the
+  # coverage report directly — no cross-shard istanbul merge to maintain.
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — per-shard wall-clock 2.2 min max (run 25966040732, n=1
-    # post-PEND-39-split). +50% headroom + 5-min floor → 5 min. All three
-    # shards now run with `--coverage` so the post-shards merge job has
-    # complete data to aggregate; v8 instrumentation adds ~2 min per
-    # shard, so each cell gets the 8-min budget that was previously
-    # shard-1-only.
-    timeout-minutes: 8
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
+    # PEND-41 R1 — full-suite wall-clock was ~3×2.2 min of test work split
+    # across shards; run as one job that's ~6-7 min of tests + ~2 min v8
+    # instrumentation. +50% headroom → 15 min.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -267,18 +265,18 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
-      - name: Vitest (shard ${{ matrix.shard }}/3, with coverage)
-        # Every shard runs with `--coverage` writing into a per-shard
-        # output directory; the `vitest-coverage` job below downloads
-        # all three and merges them into a unified summary. Thresholds
-        # in `vitest.config.ts` apply to FULL-suite runs; on a partial
-        # shard ~⅔ of the codebase is unreached by design, so we
-        # override each threshold to 0 here — the gate runs against the
-        # merged report, not against individual shards.
+      - name: Vitest (full suite, with coverage)
+        # Full-suite run writes the coverage summary directly to
+        # `coverage-merged/` (the artifact name kept for downstream
+        # tooling). Thresholds are overridden to 0 here to preserve the
+        # prior behaviour — the old 3-shard pipeline never enforced the
+        # `vitest.config.ts` thresholds in CI either (the merge job only
+        # rendered a summary). Coverage stays informational; tightening to
+        # the configured 80/75 gate is a separate follow-up.
         run: |
-          npx vitest run --shard ${{ matrix.shard }}/3 \
+          npx vitest run \
             --coverage \
-            --coverage.reportsDirectory=coverage-shard-${{ matrix.shard }} \
+            --coverage.reportsDirectory=coverage-merged \
             --coverage.reporter=json \
             --coverage.reporter=json-summary \
             --coverage.thresholds.lines=0 \
@@ -286,70 +284,11 @@ jobs:
             --coverage.thresholds.statements=0 \
             --coverage.thresholds.branches=0
 
-      - name: Upload shard coverage artifact
-        # Each shard's raw coverage-final.json is what `merge-vitest-coverage.mjs`
-        # consumes via `istanbul-lib-coverage`'s CoverageMap.merge() — the
-        # canonical way to combine v8/istanbul-shape JSONs without
-        # double-counting overlapping lines. The merge job below picks
-        # all three up as a single download.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: vitest-coverage-shard-${{ matrix.shard }}
-          path: coverage-shard-${{ matrix.shard }}/coverage-final.json
-          if-no-files-found: error
-          retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  # vitest-coverage — merge the three vitest shards' coverage maps into one,
-  # render a step-summary table, and re-upload the aggregate so downstream
-  # tooling (future Codecov, gh-pages badge, etc.) can consume a single artifact.
-  # `if: !cancelled()` runs even if a shard failed — partial coverage is
-  # better than no coverage when a single shard's tests went red.
-  # ---------------------------------------------------------------------------
-  vitest-coverage:
-    runs-on: ubuntu-24.04
-    needs: vitest
-    if: ${{ !cancelled() && needs.vitest.result != 'cancelled' }}
-    # PEND-41 R1 — pure download + node merge + jq render. No instrumentation,
-    # no test execution. 5-min budget is generous.
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install npm dependencies
-        # `merge-vitest-coverage.mjs` depends on `istanbul-lib-coverage`
-        # (transitive via `@vitest/coverage-v8`). `npm ci` brings the
-        # full devDependency tree so the script can resolve it.
-        run: npm ci
-
-      - name: Download per-shard coverage artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: vitest-coverage-shard-*
-          path: ./coverage-shards
-          merge-multiple: false
-
-      - name: Merge coverage maps
-        id: merge
-        run: |
-          node scripts/merge-vitest-coverage.mjs \
-            coverage-shards/vitest-coverage-shard-1/coverage-final.json \
-            coverage-shards/vitest-coverage-shard-2/coverage-final.json \
-            coverage-shards/vitest-coverage-shard-3/coverage-final.json
-
-      - name: Coverage summary (merged)
+      - name: Coverage summary
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
         run: |
           {
-            echo "## Coverage (merged across vitest shards)"
+            echo "## Coverage (vitest, full suite)"
             echo
             echo "| Metric | % | Covered / Total |"
             echo "| --- | --- | --- |"
@@ -361,15 +300,13 @@ jobs:
               "| Branches   | \(.branches.pct)% | \(.branches.covered) / \(.branches.total) |"
             ' coverage-merged/coverage-summary.json
             echo
-            echo "_Thresholds in \`vitest.config.ts\`: lines/functions/statements >= 80%, branches >= 75%._"
-            echo "_Merged from 3 vitest shards via \`scripts/merge-vitest-coverage.mjs\` (istanbul-lib-coverage CoverageMap.merge)._"
+            echo "_Thresholds in \`vitest.config.ts\`: lines/functions/statements >= 80%, branches >= 75% (informational — not gated in CI)._"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload merged coverage artifact
-        # The merged artifact is what downstream Codecov / badge tooling
-        # would consume. Retained 30 days (vs 7 for the per-shard
-        # inputs) because cross-run trend comparisons live longer than
-        # the inputs that produced them.
+      - name: Upload coverage artifact
+        # Kept the `vitest-coverage-merged` name so any downstream Codecov /
+        # badge tooling that referenced it keeps working after the merge
+        # job was removed.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: vitest-coverage-merged
@@ -457,13 +394,21 @@ jobs:
   # ---------------------------------------------------------------------------
   cargo-tests:
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — observed wall-clock 22.6 min (run 25966040732, 2026-05-16,
-    # n=1 post-PEND-39-split). Slowest single validate job; cargo nextest
-    # dominates. +50% headroom + round up → 35 min. cargo-llvm-cov adds
-    # ~30% instrumentation overhead on top of plain nextest, so bump to
-    # 45 min to keep the headroom margin. Tighten back to 35 once we have
-    # n>=5 instrumented runs to size against.
-    timeout-minutes: 45
+    # PEND-86: split into a 2-shard matrix via nextest `--partition count:N/2`.
+    # The single-job full suite + llvm-cov was the ~16-min critical-path long
+    # pole; sharding halves the test+instrument time per cell (each shard
+    # compiles the instrumented tree once — the compile isn't halved, but the
+    # test+coverage execution is — so expect ~9-11 min/cell). Each shard emits
+    # a PARTIAL lcov + json summary; the `cargo-coverage` job below merges
+    # them. Coverage stays informational (not gated) — see that job.
+    # PEND-41 R1 — pre-split observed wall-clock 22.6 min (run 25966040732).
+    # Per-shard is roughly half the test work on the same compile; keep a
+    # generous 35-min budget until we have instrumented per-shard samples.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -551,49 +496,90 @@ jobs:
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
-      - name: Cargo test (nextest, full suite, with llvm-cov)
+      - name: Cargo test (nextest, shard ${{ matrix.shard }}/2, with llvm-cov)
         working-directory: src-tauri
-        # `--lcov --output-path coverage.lcov` writes the canonical lcov
-        # report for downstream consumers; `--json --summary-only` to a
-        # second path drives the step-summary table without re-reading
-        # the lcov. `--no-fail-fast` mirrors plain `nextest`'s behaviour
-        # (don't abort the suite on first failure) so the coverage map
-        # we produce is the same shape regardless of pass/fail.
+        # Run THIS shard's deterministic partition under llvm-cov, then emit a
+        # PARTIAL lcov for the lines this shard's tests exercised. The
+        # `cargo-coverage` job below unions the two partials. `--partition
+        # count:N/2` is nextest's stable hash partition (forwarded through
+        # `cargo llvm-cov nextest`). `--no-fail-fast` mirrors plain nextest so
+        # the coverage map shape is pass/fail-independent.
         run: |
-          cargo llvm-cov nextest --profile ci --no-fail-fast --no-report
-          cargo llvm-cov report --lcov --output-path coverage.lcov
-          cargo llvm-cov report --json --summary-only --output-path coverage-summary.json
+          cargo llvm-cov nextest --profile ci --no-fail-fast \
+            --partition count:${{ matrix.shard }}/2 --no-report
+          cargo llvm-cov report --lcov \
+            --output-path coverage-${{ matrix.shard }}.lcov
 
-      - name: Coverage summary (rust)
-        if: hashFiles('src-tauri/coverage-summary.json') != ''
-        working-directory: src-tauri
+      - name: Upload shard coverage artifact
+        # Partial lcov for this shard. Retained 7 days — the merged artifact
+        # the `cargo-coverage` job publishes is the long-lived one.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-coverage-shard-${{ matrix.shard }}
+          path: src-tauri/coverage-${{ matrix.shard }}.lcov
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # cargo-coverage — union-merge the two cargo-tests shards' partial lcov
+  # reports into the canonical `rust-coverage-lcov` artifact + a step-summary.
+  # INFORMATIONAL: deliberately NOT in `validate-all`'s needs, so a merge
+  # hiccup (or an lcov-tool quirk) never gates a push — exactly like the
+  # vitest coverage was non-gating. `if: !cancelled()` so partial coverage
+  # still publishes if a shard went red.
+  # ---------------------------------------------------------------------------
+  cargo-coverage:
+    runs-on: ubuntu-24.04
+    needs: cargo-tests
+    if: ${{ !cancelled() && needs.cargo-tests.result != 'cancelled' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install lcov
+        run: sudo apt-get update && sudo apt-get install -y lcov
+
+      - name: Download shard coverage artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: rust-coverage-shard-*
+          path: ./rust-coverage-shards
+          merge-multiple: true
+
+      - name: Union-merge the shard lcovs
+        # `lcov --add-tracefile` takes the union of covered lines across the
+        # two partition reports — the correct combine (concatenation would
+        # duplicate records). `--ignore-errors` keeps the merge resilient to
+        # llvm-cov/lcov-2.x format strictness; this job is non-gating so a
+        # merge that still fails surfaces here without blocking the gate.
+        run: |
+          set -euo pipefail
+          lcov --ignore-errors inconsistent,unused,empty,format \
+            --add-tracefile rust-coverage-shards/coverage-1.lcov \
+            --add-tracefile rust-coverage-shards/coverage-2.lcov \
+            --output-file coverage.lcov
+
+      - name: Coverage summary (rust, merged)
+        if: hashFiles('coverage.lcov') != ''
         run: |
           {
-            echo "## Coverage (rust, full suite via cargo-llvm-cov)"
+            echo "## Coverage (rust, merged across 2 cargo-tests shards)"
             echo
-            echo "| Metric | % | Covered / Total |"
-            echo "| --- | --- | --- |"
-            jq -r '
-              .data[0].totals |
-              "| Lines      | \(.lines.percent)% | \(.lines.covered) / \(.lines.count) |",
-              "| Functions  | \(.functions.percent)% | \(.functions.covered) / \(.functions.count) |",
-              "| Regions    | \(.regions.percent)% | \(.regions.covered) / \(.regions.count) |"
-            ' coverage-summary.json
+            echo '```'
+            lcov --summary coverage.lcov 2>&1 | grep -E 'lines|functions' || true
+            echo '```'
             echo
-            echo "_LLVM source-based coverage (\`cargo llvm-cov\` over \`cargo nextest run --profile ci\`)._"
+            echo "_LLVM source-based coverage; the two nextest partitions' lcovs union-merged via \`lcov --add-tracefile\`._"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload rust coverage artifact
-        # lcov is the canonical interchange format (Codecov, coveralls,
-        # VSCode coverage gutters, lcov-summary tooling all consume it).
-        # Retained 30 days for cross-run trend comparison.
+      - name: Upload merged rust coverage artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        if: hashFiles('src-tauri/coverage.lcov') != ''
+        if: hashFiles('coverage.lcov') != ''
         with:
           name: rust-coverage-lcov
-          path: |
-            src-tauri/coverage.lcov
-            src-tauri/coverage-summary.json
+          path: coverage.lcov
           if-no-files-found: error
           retention-days: 30
 
