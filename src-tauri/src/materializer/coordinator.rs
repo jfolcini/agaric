@@ -312,6 +312,15 @@ impl Materializer {
         }
     }
 
+    /// The resolved app-data directory, if `set_app_data_dir` has run (always
+    /// in production via `lib.rs` setup; typically `None` in unit tests that
+    /// construct `Materializer::new(pool)` without wiring). Attachment
+    /// `fs_path`s are app-data-relative, so callers that unlink attachment
+    /// files (e.g. the purge paths, #85 F2) resolve them against this.
+    pub fn app_data_dir(&self) -> Option<PathBuf> {
+        self.app_data_dir.get().cloned()
+    }
+
     /// FEAT-5i — return whether a `GcalConnectorHandle` is wired.
     ///
     /// Local command handlers peek this flag before taking the

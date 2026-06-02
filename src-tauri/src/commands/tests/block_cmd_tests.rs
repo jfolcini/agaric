@@ -1238,6 +1238,97 @@ async fn purge_block_physically_removes_from_db() {
     );
 }
 
+// #85 F2 — single-block purge must unlink attachment FILES, not just rows.
+#[test]
+fn remove_purged_attachment_files_unlinks_safe_paths_only() {
+    use crate::commands::blocks::crud::remove_purged_attachment_files;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("attachments")).unwrap();
+    std::fs::write(root.join("attachments/a.png"), b"x").unwrap();
+    std::fs::write(root.join("attachments/b.pdf"), b"y").unwrap();
+    // A file the parent-escaping path WOULD reach — proves we never touch it.
+    let outside = root.join("secret.txt");
+    std::fs::write(&outside, b"keep").unwrap();
+
+    remove_purged_attachment_files(
+        root,
+        &[
+            "attachments/a.png".to_string(),
+            "attachments/b.pdf".to_string(),
+            "../secret.txt".to_string(), // parent-escape → skipped
+            "/etc/agaric-should-not-touch".to_string(), // absolute → skipped, no panic
+            "attachments/already-gone.png".to_string(), // missing → no-op, no panic
+        ],
+    );
+
+    assert!(
+        !root.join("attachments/a.png").exists(),
+        "safe relative path unlinked"
+    );
+    assert!(
+        !root.join("attachments/b.pdf").exists(),
+        "safe relative path unlinked"
+    );
+    assert!(
+        outside.exists(),
+        "parent-escaping path must be skipped, not followed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_unlinks_attachment_files() {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // The unlink resolves fs_path against the materializer's app_data_dir.
+    let app_data_dir = dir.path().to_path_buf();
+    mat.set_app_data_dir(app_data_dir.clone());
+
+    insert_block(&pool, "PURGEATT", "content", "doomed", None, Some(1)).await;
+
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let file_rel = "attachments/PURGEATT.png";
+    std::fs::write(app_data_dir.join(file_rel), b"img").unwrap();
+    add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        &app_data_dir,
+        "PURGEATT".into(),
+        "doomed.png".into(),
+        "image/png".into(),
+        3,
+        file_rel.into(),
+    )
+    .await
+    .unwrap();
+
+    // Soft-delete then purge (purge requires a prior soft-delete).
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PURGEATT")
+        .await
+        .unwrap();
+    purge_block_inner(&pool, DEV, &mat, "PURGEATT".into())
+        .await
+        .unwrap();
+
+    // The post-commit unlink is fire-and-forget on a blocking thread; poll.
+    let target = app_data_dir.join(file_rel);
+    let mut gone = false;
+    for _ in 0..100 {
+        if !target.exists() {
+            gone = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        gone,
+        "single-block purge must unlink the attachment file from disk (#85 F2)"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn purge_block_nonexistent_returns_not_found() {
     let (pool, _dir) = test_pool().await;
