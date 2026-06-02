@@ -57,7 +57,7 @@
 //!    measurement (see SPIKE-REPORT.md §4.2).  Phase 1 builds against
 //!    one engine.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use loro::{
     ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroText, LoroTree, LoroTreeError,
@@ -441,6 +441,26 @@ impl LoroEngine {
                 AppError::Validation(format!("loro: node {block_id}: set position: {e}"))
             })?;
         Ok(())
+    }
+
+    /// Collect the `block_id`s of a node and all its (live) descendants,
+    /// via pre-order DFS over `tree.children`. Used by purge to prune the
+    /// whole subtree from the index before `tree.delete` orphans it.
+    fn collect_subtree_block_ids(&self, root: TreeID) -> Vec<String> {
+        let tree = self.tree();
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if let Ok(meta) = tree.get_meta(node) {
+                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
+                    out.push(bid);
+                }
+            }
+            if let Some(children) = tree.children(TreeParentId::Node(node)) {
+                stack.extend(children);
+            }
+        }
+        out
     }
 
     /// Rebuild [`Self::index`] from the tree's node meta. Called after any
@@ -948,11 +968,23 @@ impl LoroEngine {
     /// or never created), all deletions are no-ops.
     pub fn apply_purge_block(&mut self, block_id: &str) -> Result<(), AppError> {
         if let Some(node) = self.node_for(block_id) {
+            // The purge command emits a single `PurgeBlock` op for the seed
+            // and SQL-cascades its descendants — it does *not* fan a purge
+            // op per descendant to the engine. `tree.delete(seed)` orphans
+            // the seed's children under Loro's Deleted root (they become
+            // transitively `is_node_deleted`), so they vanish from the live
+            // tree but linger in `self.index`. Collect the whole subtree's
+            // block_ids *before* deleting and prune them, so the local read
+            // surface (`read_block`, `count_alive_blocks`) matches the SQL
+            // cascade and the post-`import` `rebuild_index` state.
+            let subtree_ids = self.collect_subtree_block_ids(node);
             self.tree().delete(node).map_err(|e| {
                 AppError::Validation(format!("loro: purge block {block_id}: tree.delete: {e}"))
             })?;
-            self.index.remove(block_id);
-            self.pending_parent.remove(block_id);
+            for bid in subtree_ids {
+                self.index.remove(&bid);
+                self.pending_parent.remove(&bid);
+            }
         }
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         if props_root.get(block_id).is_some() {
@@ -1534,9 +1566,32 @@ impl LoroEngine {
 
         let tree = self.tree();
         let mut id_to_node: HashMap<String, TreeID> = HashMap::new();
+        // Block_ids whose node was freshly created by *this* migration; only
+        // these are reparented in Pass 2 (a pre-existing tree node's parent
+        // is authoritative and must not be rewritten from legacy data).
+        let mut created_ids: HashSet<String> = HashSet::new();
+
+        // Defence (Finding 4): if the doc already carries a tree node for a
+        // block_id (a partial-tree doc, or a cross-format merge before the
+        // PEND-81 handshake gates it), do NOT create a duplicate node —
+        // reuse the existing one. Keeps the migration idempotent against a
+        // mixed legacy+tree doc, not just an empty-legacy one.
+        for node in tree.nodes() {
+            if tree.is_node_deleted(&node).unwrap_or(true) {
+                continue;
+            }
+            if let Ok(meta) = tree.get_meta(node) {
+                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
+                    id_to_node.insert(bid, node);
+                }
+            }
+        }
 
         // Pass 1 — create every node under root with its scalars + content.
         for b in &blocks {
+            if id_to_node.contains_key(&b.block_id) {
+                continue; // already present as a tree node — skip duplicate.
+            }
             let node = tree.create(TreeParentId::Root).map_err(|e| {
                 AppError::Validation(format!("loro: migrate: create node {}: {e}", b.block_id))
             })?;
@@ -1565,21 +1620,31 @@ impl LoroEngine {
                     })?;
             }
             id_to_node.insert(b.block_id.clone(), node);
+            created_ids.insert(b.block_id.clone());
         }
 
-        // Pass 2 — reparent children whose parent exists in the flat map.
+        // Pass 2 — reparent freshly-created children whose parent exists.
         for b in &blocks {
+            if !created_ids.contains(&b.block_id) {
+                continue; // pre-existing node — its tree parent is authoritative.
+            }
             if let Some(parent_id) = &b.parent_id {
                 if let (Some(&node), Some(&parent_node)) =
                     (id_to_node.get(&b.block_id), id_to_node.get(parent_id))
                 {
-                    tree.mov(node, TreeParentId::Node(parent_node))
-                        .map_err(|e| {
-                            AppError::Validation(format!(
+                    if let Err(e) = tree.mov(node, TreeParentId::Node(parent_node)) {
+                        if is_cyclic_move(&e) {
+                            tracing::warn!(
+                                block_id = %b.block_id, parent_id = %parent_id,
+                                "migrate: cyclic reparent skipped",
+                            );
+                        } else {
+                            return Err(AppError::Validation(format!(
                                 "loro: migrate: reparent {} under {}: {e}",
                                 b.block_id, parent_id
-                            ))
-                        })?;
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -2695,5 +2760,64 @@ mod tree_tests {
         b.import(&a.export_snapshot().unwrap()).unwrap();
         assert!(b.read_block("k").unwrap().is_none());
         assert_eq!(b.list_children_walk("root").unwrap(), Vec::<String>::new());
+    }
+
+    /// Purging a parent (the command emits ONE PurgeBlock op for the seed,
+    /// SQL-cascades the rest) prunes the whole subtree from the engine read
+    /// surface — a descendant is no longer readable as a stray live root
+    /// block (review Finding 1). And it converges across a snapshot exchange.
+    #[test]
+    fn purge_parent_prunes_descendants_from_read_surface() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("p", "page", "P", None, 0).unwrap();
+        a.apply_create_block("c", "content", "C", Some("p"), 0)
+            .unwrap();
+        a.apply_create_block("g", "content", "G", Some("c"), 0)
+            .unwrap();
+        assert_eq!(a.count_alive_blocks().unwrap(), 3);
+
+        // Purge the seed only (mirrors the command's single-op cascade).
+        a.apply_purge_block("p").unwrap();
+
+        // Seed and both descendants are gone from the local read surface —
+        // not lingering as orphaned live root blocks.
+        assert!(a.read_block("p").unwrap().is_none());
+        assert!(a.read_block("c").unwrap().is_none());
+        assert!(a.read_block("g").unwrap().is_none());
+        assert_eq!(a.count_alive_blocks().unwrap(), 0);
+
+        // Converges to a peer that shares the same tree (imported from A
+        // BEFORE the purge, so the nodes share TreeIDs) and then imports the
+        // purge.
+        let mut a2 = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a2.apply_create_block("p", "page", "P", None, 0).unwrap();
+        a2.apply_create_block("c", "content", "C", Some("p"), 0)
+            .unwrap();
+        a2.apply_create_block("g", "content", "G", Some("c"), 0)
+            .unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        b.import(&a2.export_snapshot().unwrap()).unwrap();
+        assert_eq!(b.count_alive_blocks().unwrap(), 3);
+        // A2 purges the seed; B imports the purge.
+        a2.apply_purge_block("p").unwrap();
+        b.import(&a2.export_snapshot().unwrap()).unwrap();
+        assert!(b.read_block("c").unwrap().is_none());
+        assert!(b.read_block("g").unwrap().is_none());
+        assert_eq!(b.count_alive_blocks().unwrap(), 0);
+    }
+
+    /// A cyclic move that also carries a new position lands the position
+    /// update but skips the reparent (review Finding 5).
+    #[test]
+    fn cyclic_move_lands_position_not_reparent() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("A", "content", "", None, 5).unwrap();
+        e.apply_create_block("B", "content", "", Some("A"), 0)
+            .unwrap();
+        // Move A under its own child B at position 99 — cyclic.
+        e.apply_move_block("A", Some("B"), 99).unwrap();
+        let a = e.read_block("A").unwrap().unwrap();
+        assert_eq!(a.parent_id, None, "reparent skipped (would be a cycle)");
+        assert_eq!(a.position, 99, "position update still landed");
     }
 }
