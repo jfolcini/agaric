@@ -3467,6 +3467,8 @@ mod engine_path_tests {
         // The engine path reads the Loro state global; install it for
         // the test.
         let _state = crate::loro::shared::install_for_test();
+        // PEND-80 Phase 3: the parent page must exist in the engine tree.
+        seed_page_via_loro(&pool).await;
 
         let payload = OpPayload::CreateBlock(CreateBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_ID),
@@ -3613,7 +3615,33 @@ mod engine_path_tests {
     /// MoveBlock loro-path tests), then set `page_id` so subsequent
     /// `resolve_block_space` calls walk to the page's space property.
     /// Mirrors the inline pattern used in the EditBlock test.
+    /// Create the PAGE_ID node in the Loro engine (not just SQL). PEND-80
+    /// Phase 3: the block hierarchy is a LoroTree, so a child's parent must
+    /// exist in the engine for `read_block` to derive its `parent_id`.
+    /// Production always creates pages through the op-log → engine; the
+    /// `fresh_pool_with_page` SQL-only shortcut does not, so the
+    /// engine-path tests seed the page node here. Idempotent in SQL
+    /// (`INSERT OR IGNORE` — the row already exists).
+    async fn seed_page_via_loro(pool: &SqlitePool) {
+        let create_page = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(PAGE_ID),
+            block_type: "page".into(),
+            parent_id: None,
+            position: Some(0),
+            content: "page-content".into(),
+        });
+        let record = crate::op_log::append_local_op(pool, DEVICE_ID, create_page)
+            .await
+            .expect("append create page");
+        let mut tx = pool.begin().await.expect("begin");
+        super::apply_op_tx(&mut tx, &record)
+            .await
+            .expect("apply create page");
+        tx.commit().await.expect("commit");
+    }
+
     async fn seed_block_via_loro(pool: &SqlitePool) {
+        seed_page_via_loro(pool).await;
         let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_ID),
             block_type: "content".into(),
