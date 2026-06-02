@@ -286,7 +286,7 @@ pub async fn apply_remote(
             let mut guard = registry.for_space(&space_id, device_id)?;
             let engine = guard.engine_mut();
             let snap = engine.read_block(block_id.as_str())?;
-            let props = engine.read_all_properties(block_id.as_str())?;
+            let props = engine.read_all_properties_typed(block_id.as_str())?;
             (snap, props)
         };
         project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot_opt.as_ref()).await?;

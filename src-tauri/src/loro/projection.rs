@@ -502,8 +502,9 @@ pub async fn project_block_full_to_sql(
 /// [`project_block_full_to_sql`] deliberately touches only the core
 /// `blocks` columns, so remote `SetProperty` / `DeleteProperty` changes
 /// would otherwise never reach SQL.  `apply_remote` calls this helper
-/// per changed block with the engine's post-import property snapshot
-/// (`props`, from [`crate::loro::engine::LoroEngine::read_all_properties`]).
+/// per changed block with the engine's post-import **typed** property
+/// snapshot (`props`, from
+/// [`crate::loro::engine::LoroEngine::read_all_properties_typed`]).
 ///
 /// ## Authoritative-replace semantics
 ///
@@ -514,18 +515,21 @@ pub async fn project_block_full_to_sql(
 /// remote is absent from `props`, so the stale SQL row is swept by the
 /// up-front DELETE and never re-inserted.
 ///
-/// ## Typed-column routing
+/// ## Typed-column routing (PEND-80 Phase 4)
 ///
-/// The engine compresses each value to a single string (or explicit
-/// null); the SQL types are recovered from `property_definitions.value_type`
-/// (defaulting to `"text"` if the key has no definition row).  The
-/// `value: Option<String>` is routed into exactly one typed column per
-/// the value type; the others stay NULL.  An explicit-null value
-/// (`None`), or a `number` whose string fails to parse, routes to no
-/// column — and since `block_properties` has an `exactly_one_value`
-/// CHECK (migration 0062) that forbids an all-NULL row, such a value is
-/// represented as row-absent (no INSERT; the up-front DELETE already
-/// cleared any prior row), matching "cleared property" semantics.
+/// The engine stores each value as a native [`PropertyValue`]
+/// (`Num`/`Bool`/`Str`/`Null`), so numbers and booleans route **directly**
+/// to `value_num` / `value_bool` with no string round-trip — the engine is
+/// type-lossless end-to-end. A `Str` covers text/date/ref/select (all
+/// `LoroValue::String` in Loro per the §8 Q5 encoding); only that case
+/// consults `property_definitions.value_type` (defaulting to `"text"`) to
+/// pick the column, and it still tolerates a legacy pre-§2.1 `Str`-encoded
+/// number/boolean. An explicit `Null` (cleared), or a `number`-typed `Str`
+/// whose text fails to parse, routes to no column — and since
+/// `block_properties` has an `exactly_one_value` CHECK (migration 0062)
+/// that forbids an all-NULL row, such a value is represented as row-absent
+/// (no INSERT; the up-front DELETE already cleared any prior row), matching
+/// "cleared property" semantics.
 ///
 /// ## Reserved keys → hot-path `blocks` columns (PEND-81 §2A)
 ///
@@ -551,8 +555,9 @@ pub async fn project_block_full_to_sql(
 pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
     block_id: &crate::ulid::BlockId,
-    props: &[(String, Option<String>)],
+    props: &[(String, crate::loro::engine::PropertyValue)],
 ) -> Result<(), AppError> {
+    use crate::loro::engine::PropertyValue;
     // Authoritative replace: clear all existing rows first so remote
     // deletes (absent from `props`) are swept and never re-inserted.
     //
@@ -581,38 +586,46 @@ pub async fn reproject_block_properties_from_engine(
             continue;
         }
 
-        // Recover the SQL type from the property definition; default to
-        // "text" for an undefined key (warn once so a missing definition
-        // is observable without spamming the log per-property).
-        let value_type: String = sqlx::query_scalar!(
-            "SELECT value_type FROM property_definitions WHERE key = ?",
-            key
-        )
-        .fetch_optional(&mut *conn)
-        .await?
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                key = %key,
-                block_id = %block_id.as_str(),
-                "reproject_block_properties_from_engine: no property_definitions row; \
-                 defaulting to 'text'"
-            );
-            "text".to_string()
-        });
-
-        // Route the single string value into exactly one typed column.
         let mut value_text: Option<&str> = None;
         let mut value_num: Option<f64> = None;
         let mut value_date: Option<&str> = None;
         let mut value_ref: Option<&str> = None;
         let mut value_bool: Option<i64> = None;
-        match value_type.as_str() {
-            "number" => value_num = value.as_deref().and_then(|s| s.parse::<f64>().ok()),
-            "boolean" => value_bool = value.as_deref().map(|s| i64::from(s == "true")),
-            "date" => value_date = value.as_deref(),
-            "ref" => value_ref = value.as_deref(),
-            // "select" | "text" | anything unrecognised → text column.
-            _ => value_text = value.as_deref(),
+        match value {
+            // Native typed values route straight to their column — no string
+            // round-trip and no `property_definitions` lookup needed.
+            PropertyValue::Num(n) => value_num = Some(*n),
+            PropertyValue::Bool(b) => value_bool = Some(i64::from(*b)),
+            PropertyValue::Null => { /* cleared → row-absent (handled below) */ }
+            // A String value is text/date/ref/select (or a legacy pre-§2.1
+            // Str-encoded number/bool); recover the SQL column from the
+            // property definition, defaulting to "text" for an undefined key
+            // (warn so a missing definition is observable).
+            PropertyValue::Str(s) => {
+                let value_type: String = sqlx::query_scalar!(
+                    "SELECT value_type FROM property_definitions WHERE key = ?",
+                    key
+                )
+                .fetch_optional(&mut *conn)
+                .await?
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        key = %key,
+                        block_id = %block_id.as_str(),
+                        "reproject_block_properties_from_engine: no property_definitions row; \
+                         defaulting to 'text'"
+                    );
+                    "text".to_string()
+                });
+                match value_type.as_str() {
+                    "number" => value_num = s.parse::<f64>().ok(),
+                    "boolean" => value_bool = Some(i64::from(s == "true")),
+                    "date" => value_date = Some(s.as_str()),
+                    "ref" => value_ref = Some(s.as_str()),
+                    // "select" | "text" | anything unrecognised → text column.
+                    _ => value_text = Some(s.as_str()),
+                }
+            }
         }
 
         // The `block_properties.exactly_one_value` CHECK (migration 0062)
@@ -655,16 +668,19 @@ pub async fn reproject_block_properties_from_engine(
     // `scheduled_date` are date strings; the engine stores each as one
     // string that maps directly to the column (mirrors the local
     // `project_set_property_to_sql` routing).
-    let mut todo_state: Option<&str> = None;
-    let mut priority: Option<&str> = None;
-    let mut due_date: Option<&str> = None;
-    let mut scheduled_date: Option<&str> = None;
+    // Reserved keys are all stored as `Str` in the engine (todo_state/
+    // priority are text; due_date/scheduled_date are date strings); render
+    // each to its string form (`Null` → column NULL).
+    let mut todo_state: Option<String> = None;
+    let mut priority: Option<String> = None;
+    let mut due_date: Option<String> = None;
+    let mut scheduled_date: Option<String> = None;
     for (key, value) in props {
         match key.as_str() {
-            "todo_state" => todo_state = value.as_deref(),
-            "priority" => priority = value.as_deref(),
-            "due_date" => due_date = value.as_deref(),
-            "scheduled_date" => scheduled_date = value.as_deref(),
+            "todo_state" => todo_state = value.as_legacy_string(),
+            "priority" => priority = value.as_legacy_string(),
+            "due_date" => due_date = value.as_legacy_string(),
+            "scheduled_date" => scheduled_date = value.as_legacy_string(),
             _ => {}
         }
     }
@@ -855,9 +871,15 @@ pub async fn reproject_block_deleted_at_from_engine(
 mod tests {
     use super::*;
     use crate::db::init_pool;
+    use crate::loro::engine::PropertyValue;
     use crate::op::SetPropertyPayload;
     use crate::ulid::BlockId;
     use sqlx::SqlitePool;
+
+    /// Test helper: a `Str`-valued engine property.
+    fn pv(s: &str) -> PropertyValue {
+        PropertyValue::Str(s.to_string())
+    }
     use tempfile::TempDir;
 
     const BLOCK_A: &str = "01HZ00000000000000000000A1";
@@ -1833,11 +1855,13 @@ mod tests {
         seed_block_and_property_defs(&pool).await;
 
         let bid = BlockId::from_trusted(BLOCK_A);
+        // Native typed values (PEND-80 Phase 4): Num/Bool route directly to
+        // value_num/value_bool with no string round-trip or value_type lookup.
         let props = vec![
-            ("note".to_string(), Some("hello".to_string())),
-            ("effort".to_string(), Some("2.5".to_string())),
-            ("done".to_string(), Some("true".to_string())),
-            ("due".to_string(), Some("2026-01-01".to_string())),
+            ("note".to_string(), pv("hello")),
+            ("effort".to_string(), PropertyValue::Num(2.5)),
+            ("done".to_string(), PropertyValue::Bool(true)),
+            ("due".to_string(), pv("2026-01-01")),
         ];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props)
@@ -1911,7 +1935,7 @@ mod tests {
         .unwrap();
 
         let bid = BlockId::from_trusted(BLOCK_A);
-        let props = vec![("mystery".to_string(), Some("raw".to_string()))];
+        let props = vec![("mystery".to_string(), pv("raw"))];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props)
             .await
@@ -1948,8 +1972,8 @@ mod tests {
         // New engine state: only `note`, plus a reserved key that must
         // be skipped.  `stale` is absent → must be deleted.
         let props = vec![
-            ("note".to_string(), Some("kept".to_string())),
-            ("todo_state".to_string(), Some("DOING".to_string())),
+            ("note".to_string(), pv("kept")),
+            ("todo_state".to_string(), pv("DOING")),
         ];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props)
@@ -1978,7 +2002,7 @@ mod tests {
 
         // value_ref has a FK to blocks(id); point at the seeded BLOCK_A.
         let bid = BlockId::from_trusted(BLOCK_A);
-        let props = vec![("link".to_string(), Some(BLOCK_A.to_string()))];
+        let props = vec![("link".to_string(), pv(BLOCK_A))];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props)
             .await
@@ -2023,8 +2047,8 @@ mod tests {
 
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![
-            ("note".to_string(), None), // explicit null (cleared)
-            ("effort".to_string(), Some("not-a-number".to_string())), // number that won't parse
+            ("note".to_string(), PropertyValue::Null), // explicit null (cleared)
+            ("effort".to_string(), pv("not-a-number")), // number-typed Str that won't parse
         ];
         let mut conn = pool.acquire().await.expect("acquire");
         // Must NOT error (no CHECK violation, no tx abort).
@@ -2055,10 +2079,10 @@ mod tests {
 
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![
-            ("todo_state".to_string(), Some("DOING".to_string())),
-            ("priority".to_string(), Some("A".to_string())),
-            ("due_date".to_string(), Some("2026-02-01".to_string())),
-            ("scheduled_date".to_string(), Some("2026-01-15".to_string())),
+            ("todo_state".to_string(), pv("DOING")),
+            ("priority".to_string(), pv("A")),
+            ("due_date".to_string(), pv("2026-02-01")),
+            ("scheduled_date".to_string(), pv("2026-01-15")),
         ];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props)
@@ -2110,8 +2134,8 @@ mod tests {
 
         // Sync 1 — todo_state + due_date present.
         let props1 = vec![
-            ("todo_state".to_string(), Some("TODO".to_string())),
-            ("due_date".to_string(), Some("2026-03-03".to_string())),
+            ("todo_state".to_string(), pv("TODO")),
+            ("due_date".to_string(), pv("2026-03-03")),
         ];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props1)
@@ -2120,7 +2144,7 @@ mod tests {
         drop(conn);
 
         // Sync 2 — both absent (cleared on remote).
-        let props2: Vec<(String, Option<String>)> = vec![];
+        let props2: Vec<(String, PropertyValue)> = vec![];
         let mut conn = pool.acquire().await.expect("acquire");
         reproject_block_properties_from_engine(&mut conn, &bid, &props2)
             .await
