@@ -57,7 +57,7 @@
 //!    measurement (see SPIKE-REPORT.md §4.2).  Phase 1 builds against
 //!    one engine.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use loro::{
     ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroText, LoroTree, LoroTreeError,
@@ -109,10 +109,11 @@ pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
 /// -> `LoroMap<block_id, BlockData>`, where `BlockData` carried the
 /// `parent_id`/`position` scalars directly).
 ///
-/// Retained **only** so [`LoroEngine::migrate_flat_blocks_to_tree`] can read
-/// an old-format snapshot and rebuild it as a [`LoroTree`]. No live read or
-/// write path touches this root anymore — the block hierarchy is the tree at
-/// [`BLOCKS_TREE_ROOT`].
+/// Retained **only** as the v1-detection sentinel for
+/// [`LoroEngine::reject_legacy_v1_snapshot`] (#332): a v2 doc never carries a
+/// non-empty `blocks` map, so a non-empty one means a stray v1 snapshot, which
+/// is now rejected loudly rather than migrated. No read/write path touches this
+/// root — the block hierarchy is the tree at [`BLOCKS_TREE_ROOT`].
 const LEGACY_BLOCKS_ROOT: &str = "blocks";
 
 /// Top-level [`LoroTree`] key holding the block hierarchy (PEND-80 Phase 3).
@@ -156,39 +157,22 @@ const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
 /// Acceptable: typical blocks carry <10 tags.
 const BLOCK_TAGS_ROOT: &str = "block_tags";
 
-// Field keys inside a tree node's meta map (and, for `FIELD_PARENT_ID`,
-// inside the legacy flat-map blocks during migration).  Kept as &'static
-// str constants so the round-trip read path uses the same key strings the
-// writer used.
+// Field keys inside a tree node's meta map.  Kept as &'static str constants
+// so the round-trip read path uses the same key strings the writer used.
 const FIELD_BLOCK_ID: &str = "block_id";
 const FIELD_BLOCK_TYPE: &str = "block_type";
 const FIELD_CONTENT: &str = "content";
-/// Only present in the **legacy** flat-map model; the tree derives the
-/// parent from its structure. Read by the migration path, never written.
-const FIELD_PARENT_ID: &str = "parent_id";
 const FIELD_POSITION: &str = "position";
 const FIELD_DELETED_AT: &str = "deleted_at";
 
-/// Engine on-disk format version. `1` = the legacy flat-map block model;
-/// `2` = the [`LoroTree`] block hierarchy (PEND-80 Phase 3). Persisted
-/// snapshots are migrated forward on load by
-/// [`LoroEngine::migrate_flat_blocks_to_tree`], which is idempotent (a
-/// no-op once the legacy [`LEGACY_BLOCKS_ROOT`] map is empty), so the
-/// migration runs unconditionally on every import rather than gating on a
-/// stored version byte.
-///
-/// ## Cross-peer migration convergence
-///
-/// Loro mints tree-node identity (`TreeID`) from the local peer, not from
-/// the domain `block_id`, so if **two** peers each migrate the *same*
-/// legacy v1 snapshot independently they create divergent nodes for the
-/// same `block_id` that both survive a later merge. [`LoroEngine::import`]
-/// converges this with [`LoroEngine::dedupe_block_nodes`] — a deterministic
-/// post-import pass (keep the `min` `TreeID` per `block_id`, every peer
-/// computes the identical survivor set) — so a v1→v2 rollout across already-
-/// synced devices is safe. A future protocol-version handshake (PEND-81)
-/// may additionally gate raw-byte merges across *different* formats; the
-/// maintainer does not sync today.
+/// Engine on-disk format version. `1` = the legacy flat-map block model
+/// (no longer supported); `2` = the [`LoroTree`] block hierarchy (PEND-80
+/// Phase 3). The v1→v2 forward-migration was retired in #332 once every
+/// persisted snapshot had been re-saved as v2; [`LoroEngine::import`] now
+/// rejects a stray v1 snapshot loudly via
+/// [`LoroEngine::reject_legacy_v1_snapshot`] instead of migrating it. A future
+/// protocol-version handshake (PEND-81) may gate raw-byte merges across
+/// formats; the maintainer does not sync today.
 pub const ENGINE_FORMAT_VERSION: u32 = 2;
 
 /// Read-back projection of a block's state from the Loro doc.
@@ -476,8 +460,7 @@ impl LoroEngine {
 
     /// The live (non-hard-purged) tree nodes paired with their `block_id`
     /// (read from node meta). The single forest-walk primitive shared by
-    /// [`Self::rebuild_index`], [`Self::count_alive_blocks`], and
-    /// [`Self::dedupe_block_nodes`].
+    /// [`Self::rebuild_index`] and [`Self::count_alive_blocks`].
     ///
     /// Uses `get_nodes(false)` — the live forest under the tree root — so
     /// historically hard-purged tombstones (which Loro keeps under its
@@ -532,81 +515,6 @@ impl LoroEngine {
             !matches!(tree.parent(child_node), Some(TreeParentId::Node(_)))
         });
     }
-
-    /// Converge duplicate tree nodes that share a `block_id`.
-    ///
-    /// This can only arise when two peers each migrated the **same** legacy
-    /// flat-map snapshot independently: their `tree.create` ops mint
-    /// divergent `TreeID`s (Loro has no content-based node identity), both
-    /// survive the merge, and the doc ends up with >1 live node per
-    /// `block_id`. Without this pass that state never converges (double
-    /// counts, split subtrees, nondeterministic index resolution).
-    ///
-    /// Every peer computes the **identical** survivor set — the `min`
-    /// `TreeID` per `block_id`, a total order stable across peers — and the
-    /// identical reparent + delete ops, so the dedup itself is convergent.
-    /// The duplicate subtrees were migrated from identical legacy data, so
-    /// the surviving node carries equivalent scalars/content. Fast-paths to a
-    /// no-op (one cheap forest walk) when there are no duplicates — the
-    /// overwhelmingly common case.
-    fn dedupe_block_nodes(&mut self) -> Result<(), AppError> {
-        let mut groups: HashMap<String, Vec<TreeID>> = HashMap::new();
-        for (node, bid) in self.live_nodes_with_block_id() {
-            groups.entry(bid).or_default().push(node);
-        }
-        if groups.values().all(|nodes| nodes.len() <= 1) {
-            return Ok(()); // no duplicates — common fast path
-        }
-
-        // Deterministic survivor per block_id: the min TreeID (a total order
-        // identical on every peer, so all peers keep the same node).
-        let survivor: HashMap<String, TreeID> = groups
-            .iter()
-            .map(|(bid, nodes)| (bid.clone(), nodes.iter().copied().min().unwrap()))
-            .collect();
-
-        let tree = self.tree();
-        // Reparent each survivor under its parent-block's survivor so the
-        // kept forest is internally consistent before we delete the losers
-        // (a survivor may currently sit under a *loser* copy of its parent).
-        for (bid, &snode) in &survivor {
-            let target = match self.parent_block_id_of(snode)? {
-                Some(parent_bid) => match survivor.get(&parent_bid) {
-                    Some(&pnode) => TreeParentId::Node(pnode),
-                    None => TreeParentId::Root,
-                },
-                None => TreeParentId::Root,
-            };
-            if tree.parent(snode) != Some(target) {
-                if let Err(e) = tree.mov(snode, target) {
-                    if !is_cyclic_move(&e) {
-                        return Err(AppError::Validation(format!(
-                            "loro: dedupe reparent {bid}: {e}"
-                        )));
-                    }
-                }
-            }
-        }
-        // Delete every non-survivor node (whole loser subtrees; no survivor
-        // is parented under a loser anymore after the pass above).
-        let mut removed = 0usize;
-        for (bid, nodes) in &groups {
-            let keep = survivor[bid];
-            for &n in nodes {
-                if n != keep {
-                    let _ = tree.delete(n);
-                    removed += 1;
-                }
-            }
-        }
-        self.doc.commit();
-        tracing::warn!(
-            removed,
-            "loro: deduped duplicate migrated tree nodes (independent-migration convergence)",
-        );
-        Ok(())
-    }
-
     /// Insert a block into the block-hierarchy [`LoroTree`].
     ///
     /// Idempotent under op-log replay: if the `block_id` already has a node
@@ -1563,20 +1471,16 @@ impl LoroEngine {
     /// Import bytes previously produced by `export_snapshot` (or any
     /// other Loro export mode) into this doc.
     ///
-    /// After importing, runs the flat-map→tree migration (a no-op once the
-    /// legacy root is empty), converges any duplicate migrated nodes (a
-    /// no-op unless two peers migrated the same legacy snapshot
-    /// independently — see [`Self::dedupe_block_nodes`]), and rebuilds the
-    /// `block_id → TreeID` index — the imported bytes may have created tree
-    /// nodes the incremental index never saw, and (on a format rollout) may
-    /// have carried legacy flat-map block data.
+    /// After importing, rejects any legacy v1 (flat-map) snapshot
+    /// (#332 — the v1→v2 migration was retired once all snapshots were on
+    /// v2) and rebuilds the `block_id → TreeID` index — the imported bytes
+    /// may have created tree nodes the incremental index never saw.
     pub fn import(&mut self, bytes: &[u8]) -> Result<(), AppError> {
         self.doc
             .import(bytes)
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import: {e}")))?;
-        self.migrate_flat_blocks_to_tree()?;
-        self.dedupe_block_nodes()?;
+        self.reject_legacy_v1_snapshot()?;
         self.rebuild_index();
         Ok(())
     }
@@ -1627,8 +1531,7 @@ impl LoroEngine {
             .import(bytes)
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
-        self.migrate_flat_blocks_to_tree()?;
-        self.dedupe_block_nodes()?;
+        self.reject_legacy_v1_snapshot()?;
         self.rebuild_index();
 
         // Enumerate every live block_id **parent-before-child** (pre-order
@@ -1659,161 +1562,27 @@ impl LoroEngine {
         Ok(out)
     }
 
-    /// Migrate a legacy flat-map block model (engine format 1) into the
-    /// [`LoroTree`] (format 2) **in place** within this doc. Idempotent:
-    /// once the legacy [`LEGACY_BLOCKS_ROOT`] map is empty (already
-    /// migrated, or a fresh tree-format engine) this is a no-op, so it runs
-    /// unconditionally on every [`Self::import`].
+    /// Reject a legacy v1 (flat-map) snapshot loudly (#332).
     ///
-    /// Preserves `block_properties` + `block_tags` (untouched — only the
-    /// hierarchy moves). Block content is re-created as a fresh `LoroText`
-    /// in node meta (its fine-grained edit history does not carry over —
-    /// acceptable: the op_log is the canonical, replay-able history and the
-    /// content *value* is preserved). Parent links are reconstructed in a
-    /// second pass so a child whose parent appears later still attaches;
-    /// a dangling parent (absent from the flat map) leaves the child at the
-    /// tree root.
-    pub fn migrate_flat_blocks_to_tree(&mut self) -> Result<(), AppError> {
+    /// PEND-80 Phase 3 (#331) moved the block hierarchy from a flat
+    /// [`LEGACY_BLOCKS_ROOT`] `LoroMap` (format 1) to the [`BLOCKS_TREE_ROOT`]
+    /// [`LoroTree`] (format 2), migrating old snapshots forward on every
+    /// import. #332 retired that migration once every persisted snapshot had
+    /// been re-saved as v2. A v2 doc never carries a non-empty legacy `blocks`
+    /// map, so a non-empty one means a stray v1 snapshot — fail loudly with a
+    /// clear error rather than silently producing an empty tree (downgrade to a
+    /// pre-#332 build to migrate the data forward first).
+    fn reject_legacy_v1_snapshot(&self) -> Result<(), AppError> {
         let legacy: LoroMap = self.doc.get_map(LEGACY_BLOCKS_ROOT);
-        if legacy.is_empty() {
-            return Ok(());
+        if !legacy.is_empty() {
+            return Err(AppError::Validation(format!(
+                "loro: import: legacy v1 (flat-map) snapshot detected ({} block(s) under \
+                 the deprecated `{}` root). The v1->v2 migration was removed in #332; open \
+                 this data with a pre-#332 build first to migrate it forward.",
+                legacy.len(),
+                LEGACY_BLOCKS_ROOT,
+            )));
         }
-
-        // Snapshot the legacy entries first (read fully before mutating).
-        struct LegacyBlock {
-            block_id: String,
-            block_type: String,
-            content: String,
-            parent_id: Option<String>,
-            position: i64,
-            deleted_at: Option<String>,
-        }
-        let mut blocks: Vec<LegacyBlock> = Vec::with_capacity(legacy.len());
-        let mut read_err: Option<AppError> = None;
-        legacy.for_each(|key, voc| {
-            if read_err.is_some() {
-                return;
-            }
-            let parse = (|| -> Result<LegacyBlock, AppError> {
-                let block_map = voc
-                    .into_container()
-                    .map_err(|_| {
-                        AppError::Validation(format!("loro: migrate: block {key} not a container"))
-                    })?
-                    .into_map()
-                    .map_err(|_| {
-                        AppError::Validation(format!("loro: migrate: block {key} not a LoroMap"))
-                    })?;
-                Ok(LegacyBlock {
-                    block_id: key.to_string(),
-                    block_type: read_string(&block_map, FIELD_BLOCK_TYPE)?,
-                    content: read_text(&block_map, FIELD_CONTENT)?,
-                    parent_id: read_optional_string(&block_map, FIELD_PARENT_ID)?,
-                    position: read_i64(&block_map, FIELD_POSITION)?,
-                    deleted_at: read_deleted_at_meta(&block_map, key)?,
-                })
-            })();
-            match parse {
-                Ok(b) => blocks.push(b),
-                Err(e) => read_err = Some(e),
-            }
-        });
-        if let Some(e) = read_err {
-            return Err(e);
-        }
-
-        let tree = self.tree();
-        let mut id_to_node: HashMap<String, TreeID> = HashMap::new();
-        // Block_ids whose node was freshly created by *this* migration; only
-        // these are reparented in Pass 2 (a pre-existing tree node's parent
-        // is authoritative and must not be rewritten from legacy data).
-        let mut created_ids: HashSet<String> = HashSet::new();
-
-        // Defence (Finding 4): if the doc already carries a tree node for a
-        // block_id (a partial-tree doc, or a cross-format merge before the
-        // PEND-81 handshake gates it), do NOT create a duplicate node —
-        // reuse the existing one. Keeps the migration idempotent against a
-        // mixed legacy+tree doc, not just an empty-legacy one. (Two peers
-        // that each migrate the same legacy snapshot independently still mint
-        // divergent nodes that collide only after a later merge — those are
-        // converged by `dedupe_block_nodes` on import.)
-        for (node, bid) in self.live_nodes_with_block_id() {
-            id_to_node.insert(bid, node);
-        }
-
-        // Pass 1 — create every node under root with its scalars + content.
-        for b in &blocks {
-            if id_to_node.contains_key(&b.block_id) {
-                continue; // already present as a tree node — skip duplicate.
-            }
-            let node = tree.create(TreeParentId::Root).map_err(|e| {
-                AppError::Validation(format!("loro: migrate: create node {}: {e}", b.block_id))
-            })?;
-            let meta = tree.get_meta(node).map_err(|e| {
-                AppError::Validation(format!("loro: migrate: get_meta {}: {e}", b.block_id))
-            })?;
-            self.write_node_scalars(&meta, &b.block_id, &b.block_type, b.position)?;
-            let content_text: LoroText = meta
-                .insert_container(FIELD_CONTENT, LoroText::new())
-                .map_err(|e| {
-                    AppError::Validation(format!(
-                        "loro: migrate: content container {}: {e}",
-                        b.block_id
-                    ))
-                })?;
-            content_text.insert(0, &b.content).map_err(|e| {
-                AppError::Validation(format!("loro: migrate: content {}: {e}", b.block_id))
-            })?;
-            if let Some(ts) = &b.deleted_at {
-                meta.insert(FIELD_DELETED_AT, LoroValue::from(ts.as_str()))
-                    .map_err(|e| {
-                        AppError::Validation(format!(
-                            "loro: migrate: deleted_at {}: {e}",
-                            b.block_id
-                        ))
-                    })?;
-            }
-            id_to_node.insert(b.block_id.clone(), node);
-            created_ids.insert(b.block_id.clone());
-        }
-
-        // Pass 2 — reparent freshly-created children whose parent exists.
-        for b in &blocks {
-            if !created_ids.contains(&b.block_id) {
-                continue; // pre-existing node — its tree parent is authoritative.
-            }
-            if let Some(parent_id) = &b.parent_id {
-                if let (Some(&node), Some(&parent_node)) =
-                    (id_to_node.get(&b.block_id), id_to_node.get(parent_id))
-                {
-                    if let Err(e) = tree.mov(node, TreeParentId::Node(parent_node)) {
-                        if is_cyclic_move(&e) {
-                            tracing::warn!(
-                                block_id = %b.block_id, parent_id = %parent_id,
-                                "migrate: cyclic reparent skipped",
-                            );
-                        } else {
-                            return Err(AppError::Validation(format!(
-                                "loro: migrate: reparent {} under {}: {e}",
-                                b.block_id, parent_id
-                            )));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Clear the legacy flat map so the migration is a no-op next time.
-        for b in &blocks {
-            let _ = legacy.delete(&b.block_id);
-        }
-
-        self.index = id_to_node;
-        self.doc.commit();
-        tracing::info!(
-            migrated = blocks.len(),
-            "loro: migrated flat-map blocks to LoroTree (engine format 1 → 2)",
-        );
         Ok(())
     }
 
@@ -1935,18 +1704,6 @@ fn read_deleted_at_meta(meta: &LoroMap, block_id: &str) -> Result<Option<String>
                 ))),
             }
         }
-    }
-}
-
-fn read_optional_string(map: &LoroMap, key: &str) -> Result<Option<String>, AppError> {
-    let value = read_value(map, key)?
-        .ok_or_else(|| AppError::Validation(format!("loro: missing key {key}")))?;
-    match value {
-        LoroValue::Null => Ok(None),
-        LoroValue::String(s) => Ok(Some((*s).clone())),
-        other => Err(AppError::Validation(format!(
-            "loro: key {key}: expected String|Null, got {other:?}"
-        ))),
     }
 }
 
@@ -2773,96 +2530,6 @@ mod tree_tests {
         assert_eq!(e.count_alive_blocks().unwrap(), 2);
         assert_eq!(e.list_children_walk("P").unwrap(), vec!["X".to_string()]);
     }
-
-    /// Build a **legacy flat-map** snapshot (engine format 1) the way the
-    /// pre-Phase-3 engine wrote it, import it (which migrates), and assert
-    /// the tree-derived read surface recovers every field losslessly, the
-    /// legacy root is cleared, and the migration is idempotent.
-    #[test]
-    fn migrate_flat_map_to_tree_round_trips() {
-        // Write a flat-map doc directly under LEGACY_BLOCKS_ROOT.
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            let write = |id: &str,
-                         btype: &str,
-                         content: &str,
-                         parent: Option<&str>,
-                         position: i64,
-                         deleted: Option<&str>| {
-                let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
-                bm.insert(FIELD_BLOCK_TYPE, LoroValue::from(btype)).unwrap();
-                let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
-                t.insert(0, content).unwrap();
-                bm.insert(
-                    FIELD_PARENT_ID,
-                    match parent {
-                        Some(p) => LoroValue::from(p),
-                        None => LoroValue::Null,
-                    },
-                )
-                .unwrap();
-                bm.insert(FIELD_POSITION, LoroValue::from(position))
-                    .unwrap();
-                if let Some(d) = deleted {
-                    bm.insert(FIELD_DELETED_AT, LoroValue::from(d)).unwrap();
-                }
-            };
-            write("page", "page", "P", None, 0, None);
-            write("a", "content", "A", Some("page"), 1, None);
-            write(
-                "b",
-                "content",
-                "B",
-                Some("page"),
-                2,
-                Some("2025-01-01T00:00:00Z"),
-            );
-            write("c", "content", "C", Some("a"), 1, None);
-            // Dangling parent: parent id not present in the flat map.
-            write("orphan", "content", "O", Some("ghost"), 5, None);
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-
-        let mut e = LoroEngine::new();
-        e.import(&legacy_bytes).unwrap();
-
-        // Fields recovered losslessly.
-        let a = e.read_block("a").unwrap().unwrap();
-        assert_eq!(a.parent_id.as_deref(), Some("page"));
-        assert_eq!(a.position, 1);
-        assert_eq!(a.content, "A");
-        assert_eq!(a.block_type, "content");
-
-        assert_eq!(e.read_parent("c").unwrap().as_deref(), Some("a"));
-        assert!(e.read_deleted("b").unwrap());
-        assert_eq!(
-            e.read_deleted_at("b").unwrap().as_deref(),
-            Some("2025-01-01T00:00:00Z")
-        );
-        // page(alive) + a + c + orphan = 4 alive; b is soft-deleted.
-        assert_eq!(e.count_alive_blocks().unwrap(), 4);
-        // page's live children, position-ordered, excluding deleted b.
-        assert_eq!(e.list_children_walk("page").unwrap(), vec!["a".to_string()]);
-        // Dangling parent → child left at the tree root (parent recovered None).
-        assert_eq!(e.read_parent("orphan").unwrap(), None);
-
-        // Legacy root cleared → migration is a no-op the second time.
-        e.migrate_flat_blocks_to_tree().unwrap();
-        assert_eq!(e.count_alive_blocks().unwrap(), 4);
-
-        // The migrated (tree-format) snapshot round-trips into a fresh engine.
-        let tree_bytes = e.export_snapshot().unwrap();
-        let mut e2 = LoroEngine::new();
-        e2.import(&tree_bytes).unwrap();
-        assert_eq!(
-            e2.read_block("c").unwrap().unwrap().parent_id.as_deref(),
-            Some("a")
-        );
-        assert_eq!(e2.count_alive_blocks().unwrap(), 4);
-    }
-
     /// Two devices concurrently reparent the same node to different
     /// parents; after exchanging snapshots both converge on the **same**
     /// parent (Loro's move-CRDT), not a per-key-LWW split. This is the
@@ -3004,281 +2671,6 @@ mod tree_tests {
             "X re-attaches once its intended parent is created",
         );
     }
-
-    /// **Independent-migration convergence (review 🔴).** Two peers each
-    /// migrate the *same* legacy v1 flat-map snapshot independently — their
-    /// `tree.create` ops mint divergent `TreeID`s for the same `block_id`.
-    /// After exchanging snapshots, `dedupe_block_nodes` (run on import) must
-    /// converge both peers to a single node per block: identical alive
-    /// counts, no duplicate children, same derived parentage.
-    #[test]
-    fn independent_migration_of_same_snapshot_converges() {
-        // A shared legacy v1 snapshot (flat-map model): page + two children.
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            let write = |id: &str, parent: Option<&str>, position: i64| {
-                let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
-                bm.insert(FIELD_BLOCK_TYPE, LoroValue::from("content"))
-                    .unwrap();
-                let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
-                t.insert(0, id).unwrap();
-                bm.insert(
-                    FIELD_PARENT_ID,
-                    match parent {
-                        Some(p) => LoroValue::from(p),
-                        None => LoroValue::Null,
-                    },
-                )
-                .unwrap();
-                bm.insert(FIELD_POSITION, LoroValue::from(position))
-                    .unwrap();
-            };
-            write("page", None, 0);
-            write("c1", Some("page"), 1);
-            write("c2", Some("page"), 2);
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-
-        // Two peers migrate the SAME snapshot independently → divergent nodes.
-        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
-        a.import(&legacy_bytes).unwrap();
-        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
-        b.import(&legacy_bytes).unwrap();
-
-        // Exchange snapshots both ways — duplicates appear, then converge.
-        let a_snap = a.export_snapshot().unwrap();
-        let b_snap = b.export_snapshot().unwrap();
-        a.import(&b_snap).unwrap();
-        b.import(&a_snap).unwrap();
-
-        for (name, e) in [("A", &a), ("B", &b)] {
-            assert_eq!(
-                e.count_alive_blocks().unwrap(),
-                3,
-                "peer {name}: must converge to 3 blocks, not double-count duplicates",
-            );
-            assert_eq!(
-                e.list_children_walk("page").unwrap(),
-                vec!["c1".to_string(), "c2".to_string()],
-                "peer {name}: page has exactly two children, no duplicates",
-            );
-            assert_eq!(e.read_parent("c1").unwrap().as_deref(), Some("page"));
-            assert_eq!(e.read_parent("c2").unwrap().as_deref(), Some("page"));
-        }
-        // Both peers agree on c1's parent (single converged node).
-        assert_eq!(a.read_parent("c1").unwrap(), b.read_parent("c1").unwrap());
-    }
-
-    // --- migration robustness: helpers + edge-case coverage -------------
-
-    /// Write one legacy (v1 flat-map) block directly under
-    /// [`LEGACY_BLOCKS_ROOT`], the way the pre-Phase-3 engine wrote it.
-    fn legacy_write_block(
-        blocks: &LoroMap,
-        id: &str,
-        btype: &str,
-        content: &str,
-        parent: Option<&str>,
-        position: i64,
-    ) {
-        let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
-        bm.insert(FIELD_BLOCK_TYPE, LoroValue::from(btype)).unwrap();
-        let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
-        t.insert(0, content).unwrap();
-        bm.insert(
-            FIELD_PARENT_ID,
-            match parent {
-                Some(p) => LoroValue::from(p),
-                None => LoroValue::Null,
-            },
-        )
-        .unwrap();
-        bm.insert(FIELD_POSITION, LoroValue::from(position))
-            .unwrap();
-    }
-
-    /// Write a raw property under [`BLOCK_PROPERTIES_ROOT`] (the root the
-    /// migration must leave untouched).
-    fn legacy_write_property(doc: &LoroDoc, block_id: &str, key: &str, value: LoroValue) {
-        let props_root: LoroMap = doc.get_map(BLOCK_PROPERTIES_ROOT);
-        let block_props: LoroMap = match props_root.get(block_id) {
-            Some(voc) => voc.into_container().unwrap().into_map().unwrap(),
-            None => props_root
-                .insert_container(block_id, LoroMap::new())
-                .unwrap(),
-        };
-        block_props.insert(key, value).unwrap();
-    }
-
-    /// Write a raw tag under [`BLOCK_TAGS_ROOT`] (also untouched by migration).
-    fn legacy_write_tag(doc: &LoroDoc, block_id: &str, tag_id: &str) {
-        let tags_root: LoroMap = doc.get_map(BLOCK_TAGS_ROOT);
-        let list: LoroList = match tags_root.get(block_id) {
-            Some(voc) => voc.into_container().unwrap().into_list().unwrap(),
-            None => tags_root
-                .insert_container(block_id, LoroList::new())
-                .unwrap(),
-        };
-        list.push(LoroValue::from(tag_id)).unwrap();
-    }
-
-    /// **Migration must not lose properties or tags.** They live in
-    /// independent roots the migration never touches; this pins that a v1
-    /// snapshot carrying both round-trips them through the tree migration.
-    #[test]
-    fn migration_preserves_properties_and_tags() {
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            legacy_write_block(&blocks, "p", "page", "P", None, 0);
-            legacy_write_block(&blocks, "b", "content", "B", Some("p"), 1);
-            // Native typed + string properties, plus two tags, on `b`.
-            legacy_write_property(&doc, "b", "effort", LoroValue::Double(2.5));
-            legacy_write_property(&doc, "b", "done", LoroValue::Bool(true));
-            legacy_write_property(&doc, "b", "note", LoroValue::from("hi"));
-            legacy_write_tag(&doc, "b", "TAG_X");
-            legacy_write_tag(&doc, "b", "TAG_Y");
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-
-        let mut e = LoroEngine::new();
-        e.import(&legacy_bytes).unwrap();
-
-        // Hierarchy migrated.
-        assert_eq!(e.read_parent("b").unwrap().as_deref(), Some("p"));
-        assert_eq!(e.count_alive_blocks().unwrap(), 2);
-
-        // Properties survived with their native types.
-        let mut props = e.read_all_properties_typed("b").unwrap();
-        props.sort_by(|a, b| a.0.cmp(&b.0));
-        assert_eq!(
-            props,
-            vec![
-                ("done".to_string(), PropertyValue::Bool(true)),
-                ("effort".to_string(), PropertyValue::Num(2.5)),
-                ("note".to_string(), PropertyValue::Str("hi".to_string())),
-            ]
-        );
-
-        // Tags survived.
-        let mut tags = e.read_tags("b").unwrap();
-        tags.sort();
-        assert_eq!(tags, vec!["TAG_X".to_string(), "TAG_Y".to_string()]);
-    }
-
-    /// Migration of a deeply nested chain (4 levels) recovers each block's
-    /// parent from the rebuilt tree.
-    #[test]
-    fn migration_preserves_deep_nesting() {
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            legacy_write_block(&blocks, "a", "page", "A", None, 0);
-            legacy_write_block(&blocks, "b", "content", "B", Some("a"), 0);
-            legacy_write_block(&blocks, "c", "content", "C", Some("b"), 0);
-            legacy_write_block(&blocks, "d", "content", "D", Some("c"), 0);
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-        let mut e = LoroEngine::new();
-        e.import(&legacy_bytes).unwrap();
-        assert_eq!(e.read_parent("a").unwrap(), None);
-        assert_eq!(e.read_parent("b").unwrap().as_deref(), Some("a"));
-        assert_eq!(e.read_parent("c").unwrap().as_deref(), Some("b"));
-        assert_eq!(e.read_parent("d").unwrap().as_deref(), Some("c"));
-        assert_eq!(e.count_alive_blocks().unwrap(), 4);
-    }
-
-    /// **Dedup at depth.** Two peers migrate the same *nested* v1 snapshot
-    /// (root → mid → leaf, leaf carrying a property) independently; after a
-    /// snapshot exchange the dedup must converge to a single node per block
-    /// with the deep parentage intact, the property preserved, and both
-    /// peers in agreement.
-    #[test]
-    fn dedupe_converges_nested_subtrees_and_preserves_properties() {
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            legacy_write_block(&blocks, "root", "page", "R", None, 0);
-            legacy_write_block(&blocks, "mid", "content", "M", Some("root"), 0);
-            legacy_write_block(&blocks, "leaf", "content", "L", Some("mid"), 0);
-            legacy_write_property(&doc, "leaf", "effort", LoroValue::Double(7.0));
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-
-        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
-        a.import(&legacy_bytes).unwrap();
-        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
-        b.import(&legacy_bytes).unwrap();
-
-        let a_snap = a.export_snapshot().unwrap();
-        let b_snap = b.export_snapshot().unwrap();
-        a.import(&b_snap).unwrap();
-        b.import(&a_snap).unwrap();
-
-        for (name, e) in [("A", &a), ("B", &b)] {
-            assert_eq!(
-                e.count_alive_blocks().unwrap(),
-                3,
-                "peer {name}: nested duplicates must converge to 3 blocks",
-            );
-            assert_eq!(e.read_parent("mid").unwrap().as_deref(), Some("root"));
-            assert_eq!(
-                e.read_parent("leaf").unwrap().as_deref(),
-                Some("mid"),
-                "peer {name}: deep parentage survives dedup",
-            );
-            assert_eq!(
-                e.list_children_walk("mid").unwrap(),
-                vec!["leaf".to_string()]
-            );
-            assert_eq!(
-                e.read_all_properties_typed("leaf").unwrap(),
-                vec![("effort".to_string(), PropertyValue::Num(7.0))],
-                "peer {name}: leaf property survives dedup",
-            );
-        }
-        assert_eq!(
-            a.read_parent("leaf").unwrap(),
-            b.read_parent("leaf").unwrap()
-        );
-    }
-
-    /// **Mixed legacy+tree doc (review Finding 4).** When the doc already
-    /// carries a tree node for a block_id (e.g. a partial-tree doc or a
-    /// cross-format merge), the migration reuses it rather than minting a
-    /// duplicate, and still migrates the genuinely-new legacy blocks.
-    #[test]
-    fn migration_reuses_existing_tree_node_no_duplicate() {
-        // Engine already has a tree node for X (created the v2 way).
-        let mut e = LoroEngine::new();
-        e.apply_create_block("X", "content", "x-tree", None, 0)
-            .unwrap();
-
-        // A legacy v1 snapshot carrying X (again) plus a new block Y under X.
-        let legacy_bytes = {
-            let doc = LoroDoc::new();
-            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
-            legacy_write_block(&blocks, "X", "content", "x-legacy", None, 0);
-            legacy_write_block(&blocks, "Y", "content", "y-legacy", Some("X"), 1);
-            doc.commit();
-            doc.export(ExportMode::Snapshot).unwrap()
-        };
-        e.import(&legacy_bytes).unwrap();
-
-        // No duplicate X (still exactly 2 live blocks: X + Y), Y attached.
-        assert_eq!(e.count_alive_blocks().unwrap(), 2);
-        assert_eq!(e.read_parent("Y").unwrap().as_deref(), Some("X"));
-        assert_eq!(e.list_children_walk("X").unwrap(), vec!["Y".to_string()]);
-        // The pre-existing tree node's content is authoritative (not the
-        // legacy copy) — the migration skipped re-creating X.
-        assert_eq!(e.read_block("X").unwrap().unwrap().content, "x-tree");
-    }
-
     /// `rebuild_index` (run on import) drops a stale `pending_parent` intent
     /// once the child is already attached to a real parent in the imported
     /// tree, so a later create of the (unrelated) intended parent cannot
@@ -3312,5 +2704,37 @@ mod tree_tests {
             Some("p"),
             "reconciled pending intent must not re-fire",
         );
+    }
+
+    /// #332: a persisted v1 (flat-map) snapshot is now rejected loudly on
+    /// import — the v1→v2 migration was retired, so a stray v1 snapshot must
+    /// error with a clear message rather than silently yield an empty tree.
+    #[test]
+    fn import_rejects_legacy_v1_flat_map_snapshot() {
+        // Hand-build a raw doc carrying the deprecated v1 `blocks` flat map.
+        let doc = LoroDoc::new();
+        let blocks: LoroMap = doc.get_map(LEGACY_BLOCKS_ROOT);
+        let bm: LoroMap = blocks.insert_container("k", LoroMap::new()).unwrap();
+        bm.insert(FIELD_BLOCK_TYPE, LoroValue::from("content"))
+            .unwrap();
+        bm.insert(FIELD_POSITION, LoroValue::from(0_i64)).unwrap();
+        doc.commit();
+        let bytes = doc.export(ExportMode::Snapshot).unwrap();
+
+        let mut e = LoroEngine::new();
+        match e.import(&bytes).unwrap_err() {
+            AppError::Validation(m) => assert!(
+                m.contains("v1") && m.contains("flat-map"),
+                "expected a v1-rejection message, got: {m}"
+            ),
+            other => panic!("expected Validation error, got {other:?}"),
+        }
+
+        // The guard is not a false-positive: a clean v2 snapshot imports fine.
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("x", "content", "X", None, 0).unwrap();
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        assert_eq!(b.count_alive_blocks().unwrap(), 1);
     }
 }
