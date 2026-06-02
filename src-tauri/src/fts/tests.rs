@@ -5214,22 +5214,33 @@ async fn partitioned_empty_space_returns_empty_partitions() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn partitioned_giant_space_completes_within_1s() {
-    // 10k-block fixture; assert the partitioned scan completes inside
-    // a measured-local × headroom ceiling. Primarily a regression catch
-    // for accidental N+1 query patterns in the partition composer.
+    // 10k-block fixture. PRIMARY assertion is CORRECTNESS (the
+    // partitioned scan returns the right capped result set). A loose
+    // wall-clock ceiling is retained ONLY as a coarse N+1-regression
+    // tripwire — NOT as a tight SLO. See issue #333: the old 300ms bound
+    // flaked under concurrent CI load even though the query is ~17× faster.
     //
-    // Measured locally (debug build, warm SQLite cache, 4-thread tokio
-    // runtime, 10k content-block fixture under a single seeded page,
-    // FTS5 trigram index rebuilt before search) across three back-to-
-    // back runs: 57.3 / 49.9 / 48.2 / 52.1 ms. Worst observed = 57ms.
+    // Measured distribution (issue #333, debug build, warm SQLite cache,
+    // 4-thread tokio runtime, 10k content-block fixture, FTS5 trigram
+    // index warmed by the no-op query below), 18 back-to-back idle runs
+    // via `cargo nextest run --no-capture`:
     //
-    // The 1000ms test-name ceiling comes from the PEND-71 plan
-    // checklist. Internally the assertion is set to **300ms** (≈ 5x
-    // worst-observed warm), which is well above the noise floor but
-    // still tight enough to catch an N+1 regression (which would push
-    // wall-time into the seconds range). If a future CI runner under
-    // load drifts past 300ms the bound can be relaxed without changing
-    // the test's intent — record the new measurement in this comment.
+    //   55.4 55.5 56.1 56.1 56.4 56.4 56.6 56.8 56.8 57.0 58.1 58.4
+    //   59.4 59.9 61.1 61.3 63.7 ms  (min 55.4, p50 ≈ 56.8, max 63.7)
+    //
+    // The query is firmly in the ~55-64ms band — three orders of
+    // magnitude under the 1000ms in the test name (PEND-71 checklist).
+    // It is NOT near-budget, so per "measure, don't imagine" we keep the
+    // perf budget here (case (a)) rather than moving it to a bench: there
+    // is no real perf concern to track, only a regression to guard.
+    //
+    // The ceiling is set to **750ms** ≈ 12× the worst observed idle
+    // (63.7ms). That absorbs the heavy scheduling jitter a loaded CI box
+    // adds to a debug-build wall-clock measurement (the #333 flake) while
+    // still tripping on an actual N+1 pattern, which would issue a query
+    // per matched row (10k rows) and blow well past one second. If a
+    // future runner drifts past 750ms, RE-MEASURE the distribution (don't
+    // just bump the number) and record it here.
     let (pool, _dir) = test_pool().await;
     seed_giant_fixture(&pool, 10_000).await;
 
@@ -5259,12 +5270,16 @@ async fn partitioned_giant_space_completes_within_1s() {
     .expect("giant-space partitioned search must succeed");
     let elapsed = start.elapsed();
 
+    // Coarse N+1 tripwire only — NOT a tight SLO. 750ms ≈ 12× worst idle
+    // (63.7ms measured, see header). Load-tolerant by design (#333).
     assert!(
-        elapsed < std::time::Duration::from_millis(300),
-        "giant-space partitioned search must complete under 300ms \
-         (saw {elapsed:?}). Locally measured ~50-57ms warm; 300ms = \
-         ~5x worst-observed × CI variance headroom. A regression that \
-         pushes this past 300ms is almost certainly an N+1 pattern."
+        elapsed < std::time::Duration::from_millis(750),
+        "giant-space partitioned search must complete under 750ms \
+         (saw {elapsed:?}). Measured idle ~55-64ms (#333); 750ms is a \
+         coarse N+1-regression tripwire with generous CI-load headroom, \
+         not an SLO. A regression past 750ms is almost certainly an N+1 \
+         pattern (a per-row query over the 10k-block fixture). If a loaded \
+         runner legitimately drifts past this, RE-MEASURE before bumping."
     );
     // Sanity — the partitioned IPC must return at least the cap from
     // the unrestricted partition (10k matching rows, cap = 10).

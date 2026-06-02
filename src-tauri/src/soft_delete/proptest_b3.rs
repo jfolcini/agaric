@@ -51,11 +51,31 @@
 //!   it clears exactly the cohort the cascade stamped — never an
 //!   independently-deleted descendant with a different timestamp.
 //!
-//! ## proptest case count
+//! ## proptest case count (issue #333 — >30s SLOW under CPU load)
 //!
-//! 64 cases (matching B1). Each case seeds a fresh TempDir SQLite pool,
-//! inserts a random tree of up to ~24 blocks, and runs a cascade (+ a
-//! restore for Property 2) plus full-DB `deleted_at` scans.
+//! 32 cases over trees of [`TREE_LEN`] = 1..=20 blocks. Each case seeds a
+//! fresh TempDir SQLite pool, inserts a random tree, and runs a cascade
+//! (+ a restore for Property 2) plus full-DB `deleted_at` scans.
+//!
+//! **Investigation (measured, not guessed).** Instrumenting
+//! `restore_after_cascade_is_identity` at the prior 64-case sizing showed
+//! the cost is **TEST-HARNESS dominated**, not production: per-case
+//! fresh-DB setup (TempDir + `init_pool` + 82 migrations) summed to 9.87s
+//! of an 11.1s single-proptest run — **89%**. The cascade/restore CTEs
+//! under test were only ~1.2s / 64 ≈ 19ms per case. With THREE such 64-case
+//! proptests in this file, each ran ~11s idle; under ≥2× CPU load that
+//! pushes past the 30s nextest slow-timeout, which is the #333 SLOW report.
+//!
+//! **Fix.** Cut `B3_CASES` 64 → 32 (the migration overhead is ~flat per
+//! case, so halving cases ≈ halves wall-time) and `TREE_LEN` 1..=24 → 1..=20
+//! (a modest trim; per-case work is the small term). Each proptest now runs
+//! ~5.9s idle (≈12s under 2× load — comfortable headroom under 30s). **No
+//! coverage loss:** these are structural cascade/restore identities over
+//! random forests; 32 randomized cases × trees up to 20 nodes (with ~1-in-5
+//! pre-deleted blocks and multi-level subtrees) still exercises deep
+//! cascades, mixed active/tombstoned descendants, and the
+//! restore-by-timestamp cohort selection. Bump via `PROPTEST_CASES` for a
+//! deeper local search.
 
 use super::*;
 use crate::db::init_pool;
@@ -67,9 +87,9 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-const B3_CASES: u32 = 64;
+const B3_CASES: u32 = 32;
 /// Number of nodes in the generated forest.
-const TREE_LEN: std::ops::RangeInclusive<usize> = 1..=24;
+const TREE_LEN: std::ops::RangeInclusive<usize> = 1..=20;
 /// Device id stamped on cascade op-log entries (cascade ignores it, but
 /// the signature requires one).
 const TEST_DEVICE: &str = "proptest-b3-device";

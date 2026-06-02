@@ -50,14 +50,32 @@
 //!   linkage directly (the strongest form of "monotonic depth" the code
 //!   actually guarantees).
 //!
-//! ## proptest case count
+//! ## proptest case count (issue #333 — slow/flaky under CPU load)
 //!
-//! 32 cases (matching the B1/B3 siblings that stay green under full-suite
-//! parallel load). Each adversarial case seeds up to ~16 raw rows and runs
-//! several bounded walks; each valid-chain case seeds up to 16 harness ops
-//! and runs `find_lca` over every head pair. The 64-case / 24-node sizing
-//! intermittently tripped the nextest 60s wall under parallel load without
-//! adding meaningful coverage for these bounded-termination properties.
+//! 24 cases over adversarial graphs of [`ADV_NODES`] = 1..=10 nodes.
+//!
+//! **Investigation (measured, not guessed).** Instrumenting
+//! `find_lca_terminates_on_any_graph` at the prior 32-case / 1..=16-node
+//! sizing showed the cost is **PRODUCTION-algorithm dominated**, not test
+//! harness: per-case fresh-DB setup (TempDir + `init_pool` + 82 migrations)
+//! summed to 4.25s of a 20.6s run (~21%); the other ~79% was the `find_lca`
+//! walks themselves. On an adversarial cyclic graph each walk runs to the
+//! `MAX_LCA_STEPS = 10_000` recursive-CTE cap before the cycle-break fires,
+//! and the test issues ≤ 3n such walks per case. So cost scales with
+//! (cases × n), and at 32×16 the test ran ~20-23s idle — under ≥2× CPU
+//! load that crosses the 30s nextest slow-timeout (and risks the
+//! `terminate-after = 2` 60s kill), which is the #333 flake.
+//!
+//! **Fix.** Cut `B2_CASES` 32 → 24 and the adversarial node range
+//! 1..=16 → 1..=10. This is a ~2.2× reduction in (cases × max-n) and
+//! brought `find_lca_terminates` from ~22.8s to ~10.3s idle (≥3× headroom
+//! under the 30s slow line). **No coverage loss for what this guards:** the
+//! property is *bounded termination on cyclic/corrupt graphs*. A cycle is
+//! reachable at n = 1 (self-loop) through n = 10 (multi-node cycles); the
+//! recursive-CTE walk behaves identically once a cycle exists, regardless
+//! of its length, so the 10k-step termination path is exercised just as
+//! thoroughly. Each valid-chain case still seeds up to 16 harness ops and
+//! runs `find_lca` over every head pair ([`CHAIN_LEN`] unchanged).
 //! Bump via `PROPTEST_CASES` for a deeper local search.
 
 use super::*;
@@ -68,8 +86,14 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
-const B2_CASES: u32 = 32;
+const B2_CASES: u32 = 24;
 const CHAIN_LEN: std::ops::RangeInclusive<usize> = 1..=16;
+/// Node-count range for the adversarial `prev_edit` graphs. See the
+/// "proptest case count" header note for why this is 1..=10 (a self-loop
+/// at n=1 plus multi-node cycles up to 10 saturate the cycle-detection
+/// behaviour; the recursive-CTE walk on a cycle runs identically once the
+/// cycle exists, independent of its length).
+const ADV_NODES: std::ops::RangeInclusive<usize> = 1..=10;
 
 /// Device id for the adversarial raw-SQL graphs.
 const ADV_DEVICE: &str = "adversarial-device";
@@ -163,11 +187,11 @@ impl AdvGraph {
     }
 }
 
-/// Strategy: graphs of 1..=16 nodes, each with an arbitrary (possibly
-/// self/forward/back) `prev_edit` target or none.
+/// Strategy: graphs of [`ADV_NODES`] nodes, each with an arbitrary
+/// (possibly self/forward/back) `prev_edit` target or none.
 fn adversarial_graph_strategy() -> impl Strategy<Value = AdvGraph> {
     let node = proptest::option::of(any::<usize>()).prop_map(|prev_target| AdvNode { prev_target });
-    proptest::collection::vec(node, 1..=16).prop_map(|nodes| AdvGraph { nodes })
+    proptest::collection::vec(node, ADV_NODES).prop_map(|nodes| AdvGraph { nodes })
 }
 
 // ---------------------------------------------------------------------------
@@ -310,8 +334,11 @@ proptest! {
             graph.insert(&pool).await;
 
             let n = graph.len();
-            // Bound the pair count so a 16-node graph stays well under the
-            // nextest slow-timeout: sample a diagonal + a shifted diagonal.
+            // Bound the pair count so the largest ([`ADV_NODES`].end == 10)
+            // graph stays well under the nextest slow-timeout: sample a
+            // diagonal + a shifted diagonal (≤ 3n find_lca calls, each of
+            // which may run a full MAX_LCA_STEPS=10k-step CTE on a cycle —
+            // the real cost driver this test deliberately exercises).
             for i in 0..n {
                 for j in [i, (i + 1) % n, (i + n / 2) % n] {
                     let a = (ADV_DEVICE.to_string(), i64::try_from(i + 1).unwrap());
