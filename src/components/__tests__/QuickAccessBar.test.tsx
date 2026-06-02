@@ -1,19 +1,12 @@
 /**
- * Tests for QuickAccessBar (PEND-68 Part B).
+ * Tests for QuickAccessBar (PEND-68 Part B; #83 recents-only).
  *
- * Two zones, one nav element:
- *  - Destinations cluster (Pages / Tags / Graph / Search), with active state
- *    + `aria-current="page"` and `setView` dispatch.
- *  - Recents scroller (existing PEND-32 behaviour — kept verbatim).
- *
- * Coverage:
- *  - Renders even when recents is empty (new render gate: destinations is a
- *    4-entry constant so the bar is effectively always present on desktop).
- *  - Destination click → `setView(view)`.
- *  - Active destination carries `aria-current="page"`.
- *  - Keyboard traversal spans destinations → recents with wrap.
+ * One nav element holding the recents scroller (the former destinations
+ * cluster was removed in #83 — it duplicated the left sidebar). Coverage:
+ *  - Render gate: desktop with recents renders; no recents → null; mobile → null.
+ *  - Currently-open page excluded from recents.
  *  - Recents zone preserves all FEAT-9 / PEND-19 / PEND-32 / UX-256 behaviour.
- *  - Mobile → null.
+ *  - Roving tabindex over the recents (wrap, horizontal-only).
  *  - axe clean.
  */
 
@@ -26,7 +19,7 @@ import { useIsMobile } from '../../hooks/useIsMobile'
 import { useNavigationStore } from '../../stores/navigation'
 import { useRecentPagesStore } from '../../stores/recent-pages'
 import { useTabsStore } from '../../stores/tabs'
-import { QUICK_NAV_DESTINATIONS, QuickAccessBar } from '../QuickAccessBar'
+import { QuickAccessBar } from '../QuickAccessBar'
 
 vi.mock('../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
@@ -56,7 +49,7 @@ function clearActiveTab() {
   })
 }
 
-/** Helper: scope a query to the recents scroller viewport (excludes destinations). */
+/** Helper: scope a query to the recents scroller viewport. */
 function getRecentsZone(): HTMLElement {
   const bar = screen.getByTestId('quick-access-bar')
   const viewport = bar.querySelector('[data-slot="scroll-area-viewport"]')
@@ -74,31 +67,36 @@ beforeEach(() => {
 
 describe('QuickAccessBar', () => {
   // ---------------------------------------------------------------------------
-  // Render gate (PEND-68 change-of-behaviour)
+  // Render gate (recents-only)
   // ---------------------------------------------------------------------------
 
   describe('render gate', () => {
-    it('renders on desktop even when recents is empty (destinations always non-empty)', () => {
+    it('renders on desktop when there are recents', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
       render(<QuickAccessBar />)
       expect(screen.getByTestId('quick-access-bar')).toBeInTheDocument()
-      expect(screen.getByTestId('quick-access-destinations')).toBeInTheDocument()
     })
 
-    it('renders all 4 destination chips', () => {
-      render(<QuickAccessBar />)
-      const dest = screen.getByTestId('quick-access-destinations')
-      const chips = within(dest).getAllByRole('button')
-      expect(chips).toHaveLength(QUICK_NAV_DESTINATIONS.length)
-      expect(chips).toHaveLength(4)
-    })
-
-    it('hides on mobile', () => {
-      mockedUseIsMobile.mockReturnValue(true)
+    it('returns null on desktop when there are no recents', () => {
       render(<QuickAccessBar />)
       expect(screen.queryByTestId('quick-access-bar')).toBeNull()
     })
 
-    it('still excludes the currently-open page from the recents zone', () => {
+    it('hides on mobile', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      useRecentPagesStore.getState().recordVisit({ pageId: 'A', title: 'Alpha' })
+      render(<QuickAccessBar />)
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
+    })
+
+    it('returns null when the only recent is the currently-open page', () => {
+      useRecentPagesStore.getState().recordVisit({ pageId: 'B', title: 'Bravo' })
+      seedTab('B', 'Bravo')
+      render(<QuickAccessBar />)
+      expect(screen.queryByTestId('quick-access-bar')).toBeNull()
+    })
+
+    it('excludes the currently-open page from the recents zone', () => {
       const { recordVisit } = useRecentPagesStore.getState()
       recordVisit({ pageId: 'A', title: 'Alpha' })
       recordVisit({ pageId: 'B', title: 'Bravo' })
@@ -114,88 +112,6 @@ describe('QuickAccessBar', () => {
       expect(labels).toContain('Alpha')
       expect(labels).toContain('Charlie')
       expect(labels).not.toContain('Bravo')
-    })
-  })
-
-  // ---------------------------------------------------------------------------
-  // Destinations cluster
-  // ---------------------------------------------------------------------------
-
-  describe('destinations', () => {
-    it('renders icon + label for each destination (sidebar.* labels)', () => {
-      render(<QuickAccessBar />)
-      expect(screen.getByRole('button', { name: 'Pages' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Tags' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Graph' })).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Search' })).toBeInTheDocument()
-    })
-
-    it('clicking a destination calls setView with the right view', async () => {
-      const user = userEvent.setup()
-      const setViewSpy = vi.fn()
-      useNavigationStore.setState({ setView: setViewSpy })
-
-      render(<QuickAccessBar />)
-
-      await user.click(screen.getByRole('button', { name: 'Tags' }))
-      expect(setViewSpy).toHaveBeenCalledTimes(1)
-      expect(setViewSpy).toHaveBeenCalledWith('tags')
-
-      await user.click(screen.getByRole('button', { name: 'Graph' }))
-      expect(setViewSpy).toHaveBeenCalledTimes(2)
-      expect(setViewSpy).toHaveBeenLastCalledWith('graph')
-    })
-
-    it('flags the active destination with aria-current="page"', () => {
-      useNavigationStore.setState({ currentView: 'tags' })
-      render(<QuickAccessBar />)
-
-      const tags = screen.getByRole('button', { name: 'Tags' })
-      const pages = screen.getByRole('button', { name: 'Pages' })
-
-      expect(tags).toHaveAttribute('aria-current', 'page')
-      expect(pages).not.toHaveAttribute('aria-current')
-    })
-
-    it('active destination chip carries data-active="true" (palette hook)', () => {
-      useNavigationStore.setState({ currentView: 'search' })
-      render(<QuickAccessBar />)
-
-      const search = screen.getByRole('button', { name: 'Search' })
-      expect(search.getAttribute('data-active')).toBe('true')
-
-      const pages = screen.getByRole('button', { name: 'Pages' })
-      expect(pages.getAttribute('data-active')).toBeNull()
-    })
-
-    it('updates aria-current when currentView changes', () => {
-      useNavigationStore.setState({ currentView: 'pages' })
-      const { rerender } = render(<QuickAccessBar />)
-
-      expect(screen.getByRole('button', { name: 'Pages' })).toHaveAttribute('aria-current', 'page')
-
-      useNavigationStore.setState({ currentView: 'graph' })
-      rerender(<QuickAccessBar />)
-
-      expect(screen.getByRole('button', { name: 'Graph' })).toHaveAttribute('aria-current', 'page')
-      expect(screen.getByRole('button', { name: 'Pages' })).not.toHaveAttribute('aria-current')
-    })
-
-    it('destination click does NOT route through openInNewTab even with Ctrl', () => {
-      // Views aren't tabs — Ctrl+click on a destination still just switches view.
-      const setViewSpy = vi.fn()
-      const openInNewTabSpy = vi.fn()
-      useNavigationStore.setState({ setView: setViewSpy })
-      useTabsStore.setState({ openInNewTab: openInNewTabSpy })
-
-      render(<QuickAccessBar />)
-
-      const pages = screen.getByRole('button', { name: 'Pages' })
-      fireEvent.click(pages, { ctrlKey: true })
-
-      expect(setViewSpy).toHaveBeenCalledTimes(1)
-      expect(setViewSpy).toHaveBeenCalledWith('pages')
-      expect(openInNewTabSpy).not.toHaveBeenCalled()
     })
   })
 
@@ -334,10 +250,10 @@ describe('QuickAccessBar', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Keyboard model spans destinations → recents
+  // Keyboard model over the recents
   // ---------------------------------------------------------------------------
 
-  describe('keyboard navigation across zones', () => {
+  describe('keyboard navigation', () => {
     function seedTwoRecents() {
       const { recordVisit } = useRecentPagesStore.getState()
       // MRU: after seeding A, B the store holds [Bravo, Alpha].
@@ -345,72 +261,38 @@ describe('QuickAccessBar', () => {
       recordVisit({ pageId: 'B', title: 'Bravo' })
     }
 
-    it('roving tabindex: exactly one chip in the Tab sequence across both zones', () => {
+    it('roving tabindex: exactly one chip in the Tab sequence', () => {
       seedTwoRecents()
       render(<QuickAccessBar />)
 
       const bar = screen.getByTestId('quick-access-bar')
       const allChips = within(bar).getAllByRole('button')
-      // 4 destinations + 2 recents
-      expect(allChips).toHaveLength(6)
+      expect(allChips).toHaveLength(2)
 
       const focusable = allChips.filter((c) => c.getAttribute('tabindex') === '0')
       const unfocusable = allChips.filter((c) => c.getAttribute('tabindex') === '-1')
       expect(focusable).toHaveLength(1)
-      expect(unfocusable).toHaveLength(5)
+      expect(unfocusable).toHaveLength(1)
     })
 
-    it('ArrowRight traverses destinations → recents in order', async () => {
+    it('ArrowRight traverses the recents in order', async () => {
       const user = userEvent.setup()
       seedTwoRecents()
       render(<QuickAccessBar />)
 
       const bar = screen.getByTestId('quick-access-bar')
       const allChips = within(bar).getAllByRole('button')
-      // Order: [Pages, Tags, Graph, Search, Bravo, Alpha]
-      expect(allChips.map((c) => c.textContent)).toEqual([
-        'Pages',
-        'Tags',
-        'Graph',
-        'Search',
-        'Bravo',
-        'Alpha',
-      ])
+      // Order: [Bravo, Alpha] (MRU).
+      expect(allChips.map((c) => c.textContent)).toEqual(['Bravo', 'Alpha'])
 
-      // Tab onto the first chip (the destination "Pages").
       await user.tab()
-      expect(document.activeElement).toBe(allChips[0])
+      expect(document.activeElement).toBe(allChips[0]) // Bravo
 
       await user.keyboard('{ArrowRight}')
-      expect(document.activeElement).toBe(allChips[1]) // Tags
-
-      await user.keyboard('{ArrowRight}{ArrowRight}')
-      expect(document.activeElement).toBe(allChips[3]) // Search (last destination)
-
-      await user.keyboard('{ArrowRight}')
-      // Crosses zone boundary into recents.
-      expect(document.activeElement).toBe(allChips[4]) // Bravo
+      expect(document.activeElement).toBe(allChips[1]) // Alpha
     })
 
-    it('ArrowRight wraps from the last recent back to the first destination', async () => {
-      const user = userEvent.setup()
-      seedTwoRecents()
-      render(<QuickAccessBar />)
-
-      const bar = screen.getByTestId('quick-access-bar')
-      const allChips = within(bar).getAllByRole('button')
-
-      // Advance to the last item (Alpha — index 5).
-      await user.tab()
-      for (let i = 0; i < 5; i++) await user.keyboard('{ArrowRight}')
-      expect(document.activeElement).toBe(allChips[5])
-
-      // One more ArrowRight wraps to the first destination (Pages).
-      await user.keyboard('{ArrowRight}')
-      expect(document.activeElement).toBe(allChips[0])
-    })
-
-    it('ArrowLeft from the first destination wraps to the last recent', async () => {
+    it('ArrowRight wraps from the last recent back to the first', async () => {
       const user = userEvent.setup()
       seedTwoRecents()
       render(<QuickAccessBar />)
@@ -419,62 +301,55 @@ describe('QuickAccessBar', () => {
       const allChips = within(bar).getAllByRole('button')
 
       await user.tab()
-      expect(document.activeElement).toBe(allChips[0]) // Pages
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(allChips[1]) // Alpha (last)
+
+      await user.keyboard('{ArrowRight}')
+      expect(document.activeElement).toBe(allChips[0]) // wraps to Bravo
+    })
+
+    it('ArrowLeft from the first recent wraps to the last', async () => {
+      const user = userEvent.setup()
+      seedTwoRecents()
+      render(<QuickAccessBar />)
+
+      const bar = screen.getByTestId('quick-access-bar')
+      const allChips = within(bar).getAllByRole('button')
+
+      await user.tab()
+      expect(document.activeElement).toBe(allChips[0]) // Bravo
 
       await user.keyboard('{ArrowLeft}')
-      expect(document.activeElement).toBe(allChips[5]) // Alpha (last recent)
+      expect(document.activeElement).toBe(allChips[1]) // Alpha (last)
     })
 
-    it('Enter on a focused destination calls setView, not navigateToPage', async () => {
+    it('Enter on a focused recent calls navigateToPage', async () => {
       const user = userEvent.setup()
-      const setViewSpy = vi.fn()
       const navigateSpy = vi.fn()
-      useNavigationStore.setState({ setView: setViewSpy })
       useTabsStore.setState({ navigateToPage: navigateSpy })
 
       seedTwoRecents()
       render(<QuickAccessBar />)
 
-      // Focus the first destination (Pages — index 0).
+      // Focus the first recent (Bravo).
       await user.tab()
-      await user.keyboard('{Enter}')
-
-      expect(setViewSpy).toHaveBeenCalledTimes(1)
-      expect(setViewSpy).toHaveBeenCalledWith('pages')
-      expect(navigateSpy).not.toHaveBeenCalled()
-    })
-
-    it('Enter on a focused recent calls navigateToPage, not setView', async () => {
-      const user = userEvent.setup()
-      const setViewSpy = vi.fn()
-      const navigateSpy = vi.fn()
-      useNavigationStore.setState({ setView: setViewSpy })
-      useTabsStore.setState({ navigateToPage: navigateSpy })
-
-      seedTwoRecents()
-      render(<QuickAccessBar />)
-
-      // Focus the first recent — 4 ArrowRights past the destinations.
-      await user.tab()
-      await user.keyboard('{ArrowRight}{ArrowRight}{ArrowRight}{ArrowRight}')
-      // Now on Bravo (index 4 = first recent).
       await user.keyboard('{Enter}')
 
       expect(navigateSpy).toHaveBeenCalledTimes(1)
       expect(navigateSpy).toHaveBeenCalledWith('B', 'Bravo')
-      expect(setViewSpy).not.toHaveBeenCalled()
     })
 
-    it('Space activates the same as Enter (dispatches by item kind)', async () => {
+    it('Space activates the same as Enter', async () => {
       const user = userEvent.setup()
-      const setViewSpy = vi.fn()
-      useNavigationStore.setState({ setView: setViewSpy })
+      const navigateSpy = vi.fn()
+      useTabsStore.setState({ navigateToPage: navigateSpy })
 
+      seedTwoRecents()
       render(<QuickAccessBar />)
       await user.tab()
       await user.keyboard(' ')
 
-      expect(setViewSpy).toHaveBeenCalledWith('pages')
+      expect(navigateSpy).toHaveBeenCalledWith('B', 'Bravo')
     })
 
     it('ArrowUp / ArrowDown are no-ops (horizontal mode)', async () => {
@@ -745,19 +620,7 @@ describe('QuickAccessBar', () => {
   // ---------------------------------------------------------------------------
 
   describe('a11y', () => {
-    it('has no axe violations when only destinations render', async () => {
-      const { container } = render(<QuickAccessBar />)
-
-      await waitFor(
-        async () => {
-          const results = await axe(container)
-          expect(results).toHaveNoViolations()
-        },
-        { timeout: 5000 },
-      )
-    })
-
-    it('has no axe violations when both zones render', async () => {
+    it('has no axe violations when recents render', async () => {
       const { recordVisit } = useRecentPagesStore.getState()
       recordVisit({ pageId: 'A', title: 'Alpha' })
       recordVisit({ pageId: 'B', title: 'Bravo' })

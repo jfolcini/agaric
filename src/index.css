@@ -906,6 +906,85 @@
   color: var(--muted-foreground);
 }
 
+/* Callout (typed blockquote) styles inside the editor.
+ *
+ * A callout is a blockquote carrying `data-callout-type` (set by the
+ * CalloutBlockquote extension, src/editor/extensions/callout-blockquote.ts).
+ * The view-mode look lives in RichContentRenderer/marks/blockquote.tsx
+ * (`renderCalloutBlock`): a coloured left border + tinted background +
+ * rounded right corner + a bold, coloured type label header. The generic
+ * `.ProseMirror blockquote` rule above only gave it a plain grey border and
+ * muted text, so a focused/editable callout looked nothing like the rendered
+ * one. These rules mirror the view-mode container + label so a callout reads
+ * the same whether you're editing it or reading it (same parity pattern as
+ * the editor table/mark rules above). The label is a non-editable `::before`
+ * pseudo-element so it never enters the ProseMirror document. */
+.ProseMirror blockquote[data-callout-type] {
+  border-left-width: 3px;
+  border-left-style: solid;
+  /* Default to the `note` palette so an unknown callout type degrades to the
+   * same look as the view-mode fallback (CALLOUT_CONFIG[t] ?? note); the
+   * per-type rules below override these for the known types. */
+  border-left-color: var(--alert-note-border);
+  background-color: var(--alert-note);
+  padding: 0.5rem 1rem; /* py-2 px-4 — matches view-mode pl-4 py-2 */
+  border-top-right-radius: 0.375rem; /* rounded-r-md */
+  border-bottom-right-radius: 0.375rem;
+  color: var(--foreground);
+}
+
+/* Bold, coloured type label rendered above the callout body, matching the
+ * view-mode header. (The view-mode header also shows a lucide icon; the
+ * editor omits it because injecting React iconography into a ProseMirror
+ * node-view is out of scope for a CSS-only parity fix.) */
+.ProseMirror blockquote[data-callout-type]::before {
+  content: attr(data-callout-type);
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  text-transform: capitalize;
+  pointer-events: none;
+  user-select: none;
+}
+
+.ProseMirror blockquote[data-callout-type='info'] {
+  border-left-color: var(--alert-info-border);
+  background-color: var(--alert-info);
+}
+.ProseMirror blockquote[data-callout-type='info']::before {
+  color: var(--alert-info-foreground);
+}
+.ProseMirror blockquote[data-callout-type='warning'] {
+  border-left-color: var(--alert-warning-border);
+  background-color: var(--alert-warning);
+}
+.ProseMirror blockquote[data-callout-type='warning']::before {
+  color: var(--alert-warning-foreground);
+}
+.ProseMirror blockquote[data-callout-type='tip'] {
+  border-left-color: var(--alert-tip-border);
+  background-color: var(--alert-tip);
+}
+.ProseMirror blockquote[data-callout-type='tip']::before {
+  color: var(--alert-tip-foreground);
+}
+.ProseMirror blockquote[data-callout-type='error'] {
+  border-left-color: var(--alert-error-border);
+  background-color: var(--alert-error);
+}
+.ProseMirror blockquote[data-callout-type='error']::before {
+  color: var(--alert-error-foreground);
+}
+.ProseMirror blockquote[data-callout-type='note'] {
+  border-left-color: var(--alert-note-border);
+  background-color: var(--alert-note);
+}
+.ProseMirror blockquote[data-callout-type='note']::before {
+  color: var(--alert-note-foreground);
+}
+
 /* Heading styles inside the editor */
 .ProseMirror h1 {
   @apply text-2xl font-bold;
@@ -1639,36 +1718,12 @@
 
 /* ── PEND-52: in-page find — CSS Custom Highlight Registry pseudos ───────────
  *
- * The find toolbar (`src/components/InPageFind.tsx`) paints matches via
- * the CSS Custom Highlight API (`CSS.highlights.set('find-match', …)`).
- * Each match is a `Range` registered under one of two named highlights:
- *
- *   - `find-match`         — every match.
- *   - `find-match-current` — the single current match (cursor target).
- *
- * Styling uses the same accent contrast pair documented on
- * `.search-result-mark` (above) so the two surfaces — search results
- * snippet highlighting and in-page find — share a visual language.
- *
- * The current-match pseudo wins on overlap because we register it AFTER
- * the all-matches highlight; in cases where browsers respect priority,
- * the higher `priority` value (set to 1 by default by the Highlight ctor
- * when called via `new Highlight(...)` with explicit priority) wins. We
- * don't set priority explicitly — both highlights stack and the current-
- * match style is heavier, so the visual is unambiguous either way.
- *
- * No layout impact: ::highlight() pseudos paint over text without
- * inserting boxes; they don't trigger reflow when the highlight set
- * changes during typing.
+ * The `::highlight(find-match)` / `::highlight(find-match-current)` rules used
+ * to live here, but lightningcss (the build's CSS minifier) does not recognise
+ * the valid Custom Highlight API `::highlight()` pseudo-element and warned on
+ * every build. The styles now live with the feature that owns them and are
+ * injected at runtime — see `ensureHighlightStyles` in
+ * `src/lib/in-page-find/highlighter.ts`. They use the same accent contrast
+ * pair as `.search-result-mark` (above) so the two surfaces share a visual
+ * language.
  */
-::highlight(find-match) {
-  background-color: var(--accent);
-  color: var(--accent-foreground);
-}
-::highlight(find-match-current) {
-  background-color: var(--primary);
-  color: var(--primary-foreground);
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 2px;
-}
