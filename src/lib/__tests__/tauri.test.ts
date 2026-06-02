@@ -3095,6 +3095,10 @@ describe('importMarkdown', () => {
       content: '# Title\n\nBody',
       filename: 'my-page.md',
       spaceId: 'SPACE_A',
+      // #128 — the wrapper always passes a `Channel<ImportProgressUpdate>`
+      // for progress streaming (mirroring `startSync`), even when no
+      // `onProgress` callback is supplied.
+      progress: expect.anything(),
     })
     expect(result).toEqual(expected)
   })
@@ -3113,7 +3117,29 @@ describe('importMarkdown', () => {
       content: 'hello',
       filename: null,
       spaceId: 'SPACE_A',
+      progress: expect.anything(),
     })
+  })
+
+  it('forwards streamed progress events to the onProgress callback (#128)', async () => {
+    // #128 (PEND-38 / PEND-06 Tier 3) — when `onProgress` is supplied the
+    // wrapper wires it to `channel.onmessage`. Capture the Channel the
+    // wrapper hands to `invoke`, push a `started` event through it, and
+    // assert the callback fires.
+    let capturedChannel: { onmessage?: (u: unknown) => void } | undefined
+    mockedInvoke.mockImplementationOnce(async (_cmd, args) => {
+      capturedChannel = (args as Record<string, unknown>)['progress'] as {
+        onmessage?: (u: unknown) => void
+      }
+      return { page_title: 'X', blocks_created: 0, properties_set: 0, warnings: [] }
+    })
+
+    const onProgress = vi.fn()
+    await importMarkdown('- a', 'x.md', 'SPACE_A', onProgress)
+
+    const event = { kind: 'started', page_title: 'X', blocks_total: 1 }
+    capturedChannel?.onmessage?.(event)
+    expect(onProgress).toHaveBeenCalledWith(event)
   })
 })
 

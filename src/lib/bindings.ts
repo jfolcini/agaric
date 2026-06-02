@@ -428,15 +428,20 @@ export const commands = {
 	listUndatedTasks: (cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<PageResponse<BlockRow>, AppError>(__TAURI_INVOKE("list_undated_tasks", { cursor, limit, scope })),
 	/**
 	 *  Tauri command: import a Logseq-style markdown file as a page with
-	 *  block hierarchy. Delegates to [`import_markdown_inner`].
+	 *  block hierarchy. Delegates to [`import_markdown_with_progress`].
 	 *
 	 *  PEND-35 Tier 1.1 — `space_id` is required. The imported page is
 	 *  stamped with `space = ?space_id` inside the same transaction as the
 	 *  `CreateBlock` op, so an imported page can never exist in the op log
 	 *  without its space property (FEAT-3 invariant). Validation against a
 	 *  live space block happens TOCTOU-safe inside the same transaction.
+	 *
+	 *  #128 (PEND-38 / PEND-06 Tier 3) — `progress` streams per-block import
+	 *  progress to the frontend. The frontend always supplies a
+	 *  `Channel<ImportProgressUpdate>` (mirroring `start_sync`); sends are
+	 *  best-effort, so a dropped channel never aborts the import.
 	 */
-	importMarkdown: (content: string, filename: string | null, spaceId: string) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId })),
+	importMarkdown: (content: string, filename: string | null, spaceId: string, progress: Channel<ImportProgressUpdate>) => typedError<ImportResult, AppError>(__TAURI_INVOKE("import_markdown", { content, filename, spaceId, progress })),
 	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
 	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
@@ -1311,6 +1316,50 @@ export type HistoryEntry = {
 	/**  Epoch-ms (op_log.created_at is INTEGER since migration 0079). */
 	created_at: number,
 };
+
+/**
+ *  Streaming progress payload for a single `import_markdown` call (#128,
+ *  PEND-38 / PEND-06 Tier 3).
+ *
+ *  Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
+ *  can render a per-block progress bar instead of a bare spinner. The
+ *  enum is `Serialize` + `Type` only (no `Deserialize`) — like
+ *  [`crate::sync_events::SyncProgressUpdate`], it is a one-way
+ *  backend→frontend payload. Frontend consumers switch on `kind` and read
+ *  the variant-specific fields.
+ *
+ *  Emission contract (see `import_markdown_inner`): exactly one
+ *  [`Started`](ImportProgressUpdate::Started) before any block is written,
+ *  one [`Progress`](ImportProgressUpdate::Progress) per block created, and
+ *  exactly one [`Complete`](ImportProgressUpdate::Complete) — but ONLY
+ *  after the enclosing transaction commits. A failed import emits
+ *  `Started` + zero-or-more `Progress` and then NO `Complete` (the command
+ *  returns `Err`), so a consumer that never sees `Complete` must treat the
+ *  import as failed.
+ */
+export type ImportProgressUpdate =
+/**
+ *  Emitted once, before the first block is created. `blocks_total` is
+ *  the parser's block count, so the UI can render a determinate bar
+ *  from the very first event. May be 0 for an empty / headings-only
+ *  file.
+ */
+{ kind: "started";
+/**  Title derived from the filename (or the fallback). */
+page_title: string;
+/**  Total blocks the parser produced for this file. */
+blocks_total: number } |
+/**
+ *  Emitted after each block is created inside the transaction.
+ *  `blocks_done` counts up to `blocks_total`.
+ */
+{ kind: "progress"; blocks_done: number; blocks_total: number } |
+/**
+ *  Emitted once, AFTER the transaction commits successfully. Mirrors
+ *  the returned [`ImportResult`] counts so a consumer can render the
+ *  final state from the channel alone.
+ */
+{ kind: "complete"; page_title: string; blocks_created: number; properties_set: number };
 
 /**  Result of parsing a markdown file. */
 export type ImportResult = {

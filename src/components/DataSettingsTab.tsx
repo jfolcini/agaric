@@ -58,6 +58,12 @@ export function DataSettingsTab(): React.ReactElement {
   // between file-index ticks.
   const [blocksProcessed, setBlocksProcessed] = useState(0)
   const [bytesProcessed, setBytesProcessed] = useState(0)
+  // #128 (PEND-38 / PEND-06 Tier 3) — per-block progress streamed from the
+  // backend over a Channel for the file currently being imported. Lets a
+  // single large file show forward motion (blocks N of M) instead of a
+  // stalled file-level bar. Reset at the start of each file.
+  const [currentFileBlocksDone, setCurrentFileBlocksDone] = useState(0)
+  const [currentFileBlocksTotal, setCurrentFileBlocksTotal] = useState(0)
   const [exporting, setExporting] = useState(false)
   // PEND-35 Tier 1.1 — stable id wires the disabled-button's
   // `aria-describedby` to the visible `t('data.importSpaceNotReady')`
@@ -102,9 +108,29 @@ export function DataSettingsTab(): React.ReactElement {
       for (const [i, file] of fileArray.entries()) {
         setCurrentFileIndex(i + 1)
         setCurrentFileName(file.name)
+        // #128 — reset per-block progress for the new file.
+        setCurrentFileBlocksDone(0)
+        setCurrentFileBlocksTotal(0)
         try {
           const content = await file.text()
-          const result = await importMarkdown(content, file.name, activeSpaceId)
+          const result = await importMarkdown(content, file.name, activeSpaceId, (update) => {
+            // #128 — drive the intra-file block bar from the streamed
+            // events. `complete` arrives after the backend commits; we
+            // leave the bar full and let the file-loop advance.
+            switch (update.kind) {
+              case 'started':
+                setCurrentFileBlocksDone(0)
+                setCurrentFileBlocksTotal(update.blocks_total)
+                break
+              case 'progress':
+                setCurrentFileBlocksDone(update.blocks_done)
+                setCurrentFileBlocksTotal(update.blocks_total)
+                break
+              case 'complete':
+                setCurrentFileBlocksDone(update.blocks_created)
+                break
+            }
+          })
           totalBlocks += result.blocks_created
           totalProps += result.properties_set
           allWarnings.push(...result.warnings)
@@ -130,6 +156,8 @@ export function DataSettingsTab(): React.ReactElement {
       setCurrentFileIndex(null)
       setCurrentFileName('')
       setTotalFiles(0)
+      setCurrentFileBlocksDone(0)
+      setCurrentFileBlocksTotal(0)
       setImporting(false)
 
       if (totalBlocks > 0) {
@@ -268,6 +296,31 @@ export function DataSettingsTab(): React.ReactElement {
                 value={currentFileIndex}
                 max={totalFiles}
               />
+              {/* #128 (PEND-38 / PEND-06 Tier 3) — intra-file per-block
+                  progress streamed over a Channel. Shown only once the
+                  backend reports a block count (>0) for the current file,
+                  so a small / headings-only file doesn't flash an empty
+                  bar. Gives forward motion within a single large file. */}
+              {currentFileBlocksTotal > 0 && (
+                <>
+                  <p
+                    className="text-xs text-muted-foreground mt-1"
+                    data-testid="import-block-progress"
+                    aria-live="polite"
+                  >
+                    {t('data.importingBlocks', {
+                      done: currentFileBlocksDone,
+                      total: currentFileBlocksTotal,
+                    })}
+                  </p>
+                  <progress
+                    className="w-full h-1 mt-1"
+                    data-testid="import-block-progress-bar"
+                    value={currentFileBlocksDone}
+                    max={currentFileBlocksTotal}
+                  />
+                </>
+              )}
             </>
           )}
           {importResult && (

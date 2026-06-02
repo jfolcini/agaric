@@ -1275,6 +1275,197 @@ async fn import_markdown_empty_content() {
     mat.shutdown();
 }
 
+// ======================================================================
+// #128 (PEND-38 / PEND-06 Tier 3) — import progress streaming
+// ======================================================================
+
+/// Test recorder for [`ImportProgressUpdate`] events, mirroring
+/// `sync_events::RecordingEventSink`. Captures the emitted stream so a
+/// test can assert the `Started` → `Progress`* → `Complete` contract
+/// without a Tauri `Channel`.
+#[derive(Default)]
+struct RecordingImportSink(std::sync::Mutex<Vec<crate::import::ImportProgressUpdate>>);
+
+impl crate::import::ImportProgressSink for RecordingImportSink {
+    fn emit(&self, update: crate::import::ImportProgressUpdate) {
+        self.0.lock().unwrap().push(update);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_emits_started_progress_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let sink = RecordingImportSink::default();
+    // 4 blocks: Block 1, Child 1, Child 2, Block 2 (matches the
+    // happy-path test above).
+    let content = "- Block 1\n  - Child 1\n  - Child 2\n- Block 2";
+    let result = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("Streamed.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 4);
+
+    let events = sink.0.lock().unwrap().clone();
+    // 1 Started + 4 Progress + 1 Complete = 6 events.
+    assert_eq!(events.len(), 6, "expected Started + 4 Progress + Complete");
+
+    match &events[0] {
+        U::Started {
+            page_title,
+            blocks_total,
+        } => {
+            assert_eq!(page_title, "Streamed");
+            assert_eq!(*blocks_total, 4, "Started carries the parser block count");
+        }
+        other => panic!("first event must be Started, got {other:?}"),
+    }
+
+    // The four middle events count up 1..=4, all carrying blocks_total=4.
+    for (i, ev) in events[1..5].iter().enumerate() {
+        match ev {
+            U::Progress {
+                blocks_done,
+                blocks_total,
+            } => {
+                assert_eq!(*blocks_done, (i + 1) as u64, "Progress counts up");
+                assert_eq!(*blocks_total, 4);
+            }
+            other => panic!("event {} must be Progress, got {other:?}", i + 1),
+        }
+    }
+
+    match events.last().unwrap() {
+        U::Complete {
+            page_title,
+            blocks_created,
+            properties_set,
+        } => {
+            assert_eq!(page_title, "Streamed");
+            assert_eq!(*blocks_created, 4, "Complete mirrors ImportResult counts");
+            assert_eq!(*properties_set, 0);
+        }
+        other => panic!("last event must be Complete, got {other:?}"),
+    }
+
+    mat.shutdown();
+}
+
+/// Empty content: exactly one `Started` (blocks_total=0), zero `Progress`,
+/// and one `Complete`. The UI must still get a terminal event so it can
+/// dismiss the progress bar even when nothing was imported.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_progress_empty_file_started_then_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let sink = RecordingImportSink::default();
+    import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        "".into(),
+        Some("Empty.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(&sink),
+    )
+    .await
+    .unwrap();
+
+    let events = sink.0.lock().unwrap().clone();
+    assert_eq!(events.len(), 2, "Started + Complete, no Progress");
+    assert!(
+        matches!(
+            &events[0],
+            U::Started {
+                blocks_total: 0,
+                ..
+            }
+        ),
+        "Started must report blocks_total=0 for an empty file, got {:?}",
+        events[0]
+    );
+    assert!(
+        matches!(
+            &events[1],
+            U::Complete {
+                blocks_created: 0,
+                ..
+            }
+        ),
+        "Complete must report blocks_created=0, got {:?}",
+        events[1]
+    );
+
+    mat.shutdown();
+}
+
+/// A failed import (unknown space) emits NO events at all because the
+/// space validation happens *before* the `Started` emit... actually
+/// `Started` is emitted before the tx opens, so a space-validation
+/// failure still yields `Started` but never `Complete`. Assert that
+/// contract: a consumer that sees `Started` without a trailing `Complete`
+/// must treat the import as failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_progress_failure_emits_no_complete() {
+    use crate::import::ImportProgressUpdate as U;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    // Deliberately do NOT mark any block as a space, so the in-tx
+    // `is_space='true'` validation fails and the import rolls back.
+    ensure_test_space(&pool).await;
+
+    let sink = RecordingImportSink::default();
+    let res = import_markdown_with_progress(
+        &pool,
+        DEV,
+        &mat,
+        "- Block 1\n- Block 2".into(),
+        Some("Fails.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(&sink),
+    )
+    .await;
+    assert!(res.is_err(), "import into a non-space must fail");
+
+    let events = sink.0.lock().unwrap().clone();
+    // `Started` fires before the tx opens; the failure happens at the
+    // in-tx space check, so no `Progress` and no `Complete`.
+    assert_eq!(
+        events.len(),
+        1,
+        "only Started before the validation failure"
+    );
+    assert!(
+        matches!(&events[0], U::Started { .. }),
+        "the single event must be Started, got {:?}",
+        events[0]
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, U::Complete { .. })),
+        "a failed import must never emit Complete"
+    );
+
+    mat.shutdown();
+}
+
 /// P-19: Verify that `import_markdown_inner` runs all block + property
 /// writes inside a single transaction by checking that:
 /// 1. All blocks are present in the DB after a successful import.
