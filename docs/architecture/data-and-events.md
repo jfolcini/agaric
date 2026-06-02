@@ -27,7 +27,7 @@ One `blocks` table covers every entity. The `block_type` column discriminates:
 | `page` | A page (also nestable; pages may contain pages). |
 | `tag` | A tag (a first-class entity with its own page). |
 
-Tree shape: `parent_id` + 1-based integer `position` among siblings. Batch-renumber on insert; **fractional indexing was rejected** (precision drift, lack of stable comparator across devices).
+Tree shape: `parent_id` + 1-based integer `position` among siblings. Batch-renumber on insert; **fractional indexing was rejected** (precision drift, lack of stable comparator across devices) — the SQL `position` stays an `i64`. Since PEND-80 Phase 3 the mergeable hierarchy lives in the Loro engine as a `LoroTree` (convergent moves, cycle-safety); the SQL `parent_id` / `position` columns are *derived* from it (`parent_id` = the tree parent's `block_id`, `position` = the node's `i64` sort key) and keep the same shape, so pagination cursors and the frontend's position arithmetic are unchanged. See [crdt-and-recovery.md](crdt-and-recovery.md) § CRDT convergence.
 
 All inter-block references are ULID-keyed:
 
