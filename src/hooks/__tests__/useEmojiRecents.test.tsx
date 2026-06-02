@@ -4,7 +4,7 @@
 // useLocalStoragePreference.test.tsx).
 
 import { act, renderHook } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clearEmojiRecents,
@@ -98,5 +98,38 @@ describe('useEmojiRecents', () => {
     const { result } = renderHook(() => useEmojiRecents())
     act(() => pushEmojiRecent('\u{1F389}'))
     expect(result.current.recents[0]).toBe('\u{1F389}')
+  })
+
+  // Regression: the `subscribe` storage-listener must not leak with
+  // OVERLAPPING subscribers. The bug (PR #319 review) created a fresh
+  // `onStorage` closure per subscribe but only the first attached; the last
+  // unsubscribe called `removeEventListener` with a *different* closure
+  // identity, so it silently no-op'd and leaked the originally-attached
+  // handler. Two concurrently-mounted hooks expose the mismatch (sequential
+  // mount/unmount pairs would each match their own closure and hide it).
+  it('detaches the same storage listener it attached (no leak with overlapping subscribers)', () => {
+    const added = vi.spyOn(window, 'addEventListener')
+    const removed = vi.spyOn(window, 'removeEventListener')
+    try {
+      const a = renderHook(() => useEmojiRecents())
+      const b = renderHook(() => useEmojiRecents()) // overlapping: listeners size 2
+      a.unmount() // size 1 → no detach
+      b.unmount() // size 0 → detach
+
+      const storageAdds = added.mock.calls.filter(([type]) => type === 'storage')
+      const storageRemoves = removed.mock.calls.filter(([type]) => type === 'storage')
+      // Exactly one attach (first subscriber) and one detach (last leaving)...
+      expect(storageAdds).toHaveLength(1)
+      expect(storageRemoves).toHaveLength(1)
+      // ...and the detach must target the very function that was attached, or
+      // the handler leaks. This assertion fails on the pre-fix per-closure code.
+      const attached = storageAdds[0]?.[1]
+      const detached = storageRemoves[0]?.[1]
+      expect(attached).toBeTypeOf('function')
+      expect(detached).toBe(attached)
+    } finally {
+      added.mockRestore()
+      removed.mockRestore()
+    }
   })
 })
