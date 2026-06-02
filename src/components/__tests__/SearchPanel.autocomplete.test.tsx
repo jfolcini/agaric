@@ -259,10 +259,17 @@ describe('SearchPanel autocomplete (PEND-60 Phase 1)', () => {
     const listboxId = input.getAttribute('aria-controls')
     expect(listboxId).toBeTruthy()
     expect(popover.querySelector(`#${listboxId}`)).not.toBeNull()
-    const activeId = input.getAttribute('aria-activedescendant')
-    expect(activeId).toBeTruthy()
-    const active = document.getElementById(activeId ?? '')
-    expect(active?.getAttribute('aria-selected')).toBe('true')
+    // Wait for the initial highlight to settle before snapshotting it: the
+    // popover's selected id can still shift while the async result list
+    // finalises, so capturing it synchronously here races the ArrowDown step
+    // below (the captured `activeId` could equal the post-keydown id under
+    // parallel-suite load). waitFor pins it to the stabilised selection.
+    let activeId: string | null = null
+    await waitFor(() => {
+      activeId = input.getAttribute('aria-activedescendant')
+      expect(activeId).toBeTruthy()
+      expect(document.getElementById(activeId ?? '')?.getAttribute('aria-selected')).toBe('true')
+    })
 
     // Moving the highlight updates aria-activedescendant to the new id.
     fireEvent.keyDown(input, { key: 'ArrowDown' })
