@@ -1,19 +1,22 @@
 /**
- * Skin-tone (Fitzpatrick) support for the curated emoji set (#286).
+ * Skin-tone (Fitzpatrick) support for the emoji set (#286).
  *
- * The curated `EMOJI` list (src/editor/emoji-data.ts) stores plain base
- * codepoints. A subset — hands / body / person emoji — accept one of the five
+ * A subset of emoji — hands / body / person glyphs — accept one of the five
  * Fitzpatrick skin-tone modifiers (U+1F3FB–U+1F3FF). Appending a modifier to a
  * base that supports it yields the toned variant (e.g. 👍 + 🏽 → 👍🏽). Bases
  * that do NOT support modifiers (a yellow smiley, an object) must be left
  * untouched — appending a modifier there renders as the base followed by a
  * stray colour swatch.
  *
- * Rather than ship the full Unicode `emoji-zwj-sequences` table (out of scope
- * for the curated set), we enumerate the modifier-capable bases that actually
- * exist in our dataset. Keep this in sync when the curated gestures/body
- * section gains entries.
+ * The set of tonable bases is derived from the generated dataset's `skin`
+ * flag (`src/editor/emoji-data.ts`), which the build-time generator sets only
+ * for emoji where a naive modifier append reproduces emojibase's own light-skin
+ * variant — i.e. exactly the cases this append-based `applySkinTone` handles
+ * correctly (ZWJ sequences are excluded). Membership ignores the variation
+ * selector so a caller's `🖐️`/`🖐` and `👍️`/`👍` forms all resolve.
  */
+
+import { EMOJI } from '@/editor/emoji-data'
 
 /**
  * The five Fitzpatrick modifiers, light → dark, plus the "default" (none).
@@ -31,35 +34,22 @@ export const SKIN_TONES = [
 
 export type SkinToneId = (typeof SKIN_TONES)[number]['id']
 
+/** Strip every variation selector so toned/untoned forms compare equal. */
+function stripVariationSelector(char: string): string {
+  return char.replace(/\u{FE0F}/gu, '')
+}
+
 /**
- * Base emoji (as stored in `EMOJI`) that accept a Fitzpatrick modifier. These
- * are the hand / body / person glyphs present in our curated dataset. A
- * variation selector (`\u{FE0F}`) is stripped before applying the modifier
- * because the modifier itself supplies the emoji presentation.
+ * Tonable base glyphs (variation-selector-stripped) sourced from the dataset's
+ * `skin` flag. Built once at module load.
  */
-const TONABLE_BASES: ReadonlySet<string> = new Set([
-  '\u{1F44D}', // thumbsup
-  '\u{1F44E}', // thumbsdown
-  '\u{1F44F}', // clap
-  '\u{1F64F}', // pray
-  '\u{1F44C}', // ok_hand
-  '\u{1F4AA}', // muscle
-  '\u{1F44B}', // wave
-  '\u{1F91E}', // crossed_fingers
-  '\u{270C}\u{FE0F}', // v
-  '\u{1F590}\u{FE0F}', // raised_hand
-  '\u{1F926}', // facepalm
-  '\u{1F937}', // shrug
-  '\u{1F64C}', // raised_hands
-  '\u{1F447}', // point_down
-  '\u{1F446}', // point_up
-  '\u{1F449}', // point_right
-  '\u{1F448}', // point_left
-])
+const TONABLE_BASES: ReadonlySet<string> = new Set(
+  EMOJI.filter((e) => e.skin).map((e) => stripVariationSelector(e.char)),
+)
 
 /** Whether `char` accepts a Fitzpatrick skin-tone modifier. */
 export function supportsSkinTone(char: string): boolean {
-  return TONABLE_BASES.has(char)
+  return TONABLE_BASES.has(stripVariationSelector(char))
 }
 
 /**

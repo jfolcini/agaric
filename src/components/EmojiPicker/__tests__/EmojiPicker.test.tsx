@@ -8,20 +8,28 @@ import { clearEmojiRecents, pushEmojiRecent } from '@/hooks/useEmojiRecents'
 import { EmojiPicker } from '../EmojiPicker'
 
 // jsdom/happy-dom collapse the zero-height scroll container to zero virtual
-// rows; mirror the PageBrowser/AgendaResults mock so every row renders and
-// content/role queries see the full grid.
+// rows. Mirror the PageBrowser/AgendaResults mock, but render only a bounded
+// window of rows (like the real virtualizer) so the full ~1900-emoji set
+// doesn't mount 1900 buttons per render and grind the suite to a halt. The
+// window is wide enough to include the first few category headers; tests that
+// need a far-down emoji (e.g. rocket) search for it first.
+const MOCK_WINDOW = 80
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
+    const visible = Math.min(opts.count, MOCK_WINDOW)
     let start = 0
-    const items = sizes.map((size, index) => {
+    const items = Array.from({ length: visible }, (_, index) => {
+      const size = opts.estimateSize(index)
       const item = { index, key: index, start, size, end: start + size }
       start += size
       return item
     })
+    // Total size still reflects the full count so the spacer height is honest.
+    let total = 0
+    for (let i = 0; i < opts.count; i++) total += opts.estimateSize(i)
     return {
       getVirtualItems: () => items,
-      getTotalSize: () => start,
+      getTotalSize: () => total,
       scrollToIndex: vi.fn(),
       scrollToOffset: vi.fn(),
       measureElement: vi.fn(),
@@ -51,14 +59,49 @@ describe('<EmojiPicker>', () => {
   it('renders the categorized grid with group headers', () => {
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     expect(screen.getByRole('grid', { name: /emoji/i })).toBeInTheDocument()
-    expect(screen.getByText('Smileys & Emotion')).toBeInTheDocument()
-    expect(screen.getByText('Gestures & Body')).toBeInTheDocument()
+    // The first group appears twice: the inline header row and the sticky pin.
+    expect(screen.getAllByText('Smileys & Emotion').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('People & Body')).toBeInTheDocument()
+  })
+
+  it('pins the current group as a sticky label, hidden while searching', async () => {
+    const user = userEvent.setup()
+    render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    expect(screen.getByTestId('emoji-sticky-group')).toHaveTextContent('Smileys & Emotion')
+    await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
+    expect(screen.queryByTestId('emoji-sticky-group')).not.toBeInTheDocument()
+  })
+
+  it('roves focus across grid cells with arrow keys and selects with Enter', async () => {
+    const user = userEvent.setup()
+    const onSelect = vi.fn()
+    render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
+    const grid = screen.getByRole('grid', { name: /emoji/i })
+    const cells = within(grid).getAllByRole('gridcell')
+    // Exactly one cell is tabbable (roving tabindex); it's the first emoji.
+    const tabbable = cells.filter((c) => c.getAttribute('tabindex') === '0')
+    expect(tabbable).toHaveLength(1)
+    expect(tabbable[0]).toHaveAttribute('aria-label', 'grinning')
+
+    tabbable[0]?.focus()
+    await user.keyboard('{ArrowRight}')
+    // Focus moved to the next cell, which is now the sole tabbable one.
+    const nowTabbable = within(grid)
+      .getAllByRole('gridcell')
+      .filter((c) => c.getAttribute('tabindex') === '0')
+    expect(nowTabbable).toHaveLength(1)
+    expect(nowTabbable[0]).toHaveFocus()
+    // Enter on the focused button selects it natively.
+    await user.keyboard('{Enter}')
+    expect(onSelect).toHaveBeenCalledTimes(1)
   })
 
   it('fires onSelect with the chosen emoji char', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
+    // rocket lives in the Travel group (far down the full set); search to it.
+    await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
     await user.click(screen.getByRole('gridcell', { name: 'rocket' }))
     expect(onSelect).toHaveBeenCalledWith('\u{1F680}')
   })
@@ -78,6 +121,7 @@ describe('<EmojiPicker>', () => {
     const onSelect = vi.fn()
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
     await user.click(screen.getByRole('radio', { name: /^dark$/i }))
+    await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'thumbsup')
     await user.click(screen.getByRole('gridcell', { name: 'thumbsup' }))
     expect(onSelect).toHaveBeenCalledWith('\u{1F44D}\u{1F3FF}')
   })

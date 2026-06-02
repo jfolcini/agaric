@@ -19,6 +19,9 @@ extend-exclude = [
     "dist/",
     # tauri-specta auto-generated; regenerated on every Rust type change.
     "src/lib/bindings.ts",
+    # Generated from emojibase-data (`npm run gen:emoji`); its emoji keywords
+    # include foreign words (hashi), brand terms (strat), and upstream typos.
+    "src/editor/emoji-data.generated.ts",
     # sqlx offline cache — checksums + serialized query AST, not prose.
     ".sqlx/",
     # Append-only dev journal; free-form notes, not user-facing copy.
