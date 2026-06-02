@@ -17,6 +17,27 @@ export const IMAGE_WIDTH_PRESETS = [
   { label: 'imageResize.full', value: '100' },
 ] as const
 
+/** Numeric preset widths, the shared source of truth for resize snapping. */
+export const IMAGE_WIDTH_PRESET_VALUES = IMAGE_WIDTH_PRESETS.map((p) => Number(p.value))
+
+/**
+ * Snap a free-form width percentage (e.g. from inline drag-to-resize, #294
+ * item 6) to the nearest configured preset, returned as the same string form
+ * stored in the `image_width` property. Ties resolve to the smaller preset.
+ */
+export function snapToPreset(pct: number): string {
+  let best = IMAGE_WIDTH_PRESET_VALUES[0]
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const preset of IMAGE_WIDTH_PRESET_VALUES) {
+    const dist = Math.abs(preset - pct)
+    if (dist < bestDist) {
+      bestDist = dist
+      best = preset
+    }
+  }
+  return String(best)
+}
+
 /** Alignment options (#212 item 4). Default is `center`. */
 export type ImageAlignment = 'left' | 'center' | 'right'
 

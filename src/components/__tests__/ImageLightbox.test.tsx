@@ -11,7 +11,7 @@
  *  - axe(container) a11y audit
  */
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -207,6 +207,93 @@ describe('ImageLightbox', () => {
       )
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ---- #294 item 7: zoom / pan ----
+  describe('zoom and pan', () => {
+    it('starts at 100% (no badge, scale(1))', () => {
+      renderLightbox()
+      expect(screen.queryByTestId('lightbox-zoom-badge')).not.toBeInTheDocument()
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
+    })
+
+    it('the "+" key zooms in and reveals the zoom badge', () => {
+      renderLightbox()
+      fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+      expect(screen.getByTestId('lightbox-zoom-badge')).toHaveTextContent('125%')
+    })
+
+    it('the "-" key zooms back out and the "0" key resets to 100%', () => {
+      renderLightbox()
+      fireEvent.keyDown(window, { key: '+' })
+      fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.5)')
+      fireEvent.keyDown(window, { key: '-' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+      fireEvent.keyDown(window, { key: '0' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
+      expect(screen.queryByTestId('lightbox-zoom-badge')).not.toBeInTheDocument()
+    })
+
+    it('does not zoom below 100%', () => {
+      renderLightbox()
+      fireEvent.keyDown(window, { key: '-' })
+      fireEvent.keyDown(window, { key: '-' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
+    })
+
+    it('clamps zoom at the 400% maximum', () => {
+      renderLightbox()
+      for (let i = 0; i < 20; i++) fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(4)')
+      expect(screen.getByTestId('lightbox-zoom-badge')).toHaveTextContent('400%')
+    })
+
+    it('arrow keys pan (not navigate) while zoomed in', () => {
+      const onIndexChange = renderLightbox({ index: 1 })
+      fireEvent.keyDown(window, { key: '+' })
+      fireEvent.keyDown(window, { key: 'ArrowRight' })
+      fireEvent.keyDown(window, { key: 'ArrowLeft' })
+      // Zoomed: arrows pan the image, so navigation must not fire.
+      expect(onIndexChange).not.toHaveBeenCalled()
+    })
+
+    it('arrow keys navigate again once zoom is reset', () => {
+      const onIndexChange = renderLightbox({ index: 1 })
+      fireEvent.keyDown(window, { key: '+' })
+      fireEvent.keyDown(window, { key: '0' })
+      fireEvent.keyDown(window, { key: 'ArrowRight' })
+      expect(onIndexChange).toHaveBeenCalledWith(2)
+    })
+
+    it('wheel up zooms in', () => {
+      renderLightbox()
+      fireEvent.wheel(screen.getByTestId('lightbox-image'), { deltaY: -100 })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+    })
+
+    it('resets zoom when navigating to another image', () => {
+      function Harness(): React.ReactElement {
+        const [index, setIndex] = React.useState(0)
+        return (
+          <ImageLightbox
+            images={IMAGES}
+            index={index}
+            onIndexChange={setIndex}
+            open
+            onOpenChange={noop}
+          />
+        )
+      }
+      render(<Harness />)
+      fireEvent.keyDown(window, { key: '+' })
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
+      // Reset zoom, then navigate; the new image should be back at 100%.
+      fireEvent.keyDown(window, { key: '0' })
+      fireEvent.click(screen.getByTestId('lightbox-next'))
+      expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1)')
     })
   })
 })

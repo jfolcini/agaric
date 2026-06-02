@@ -15,11 +15,21 @@
  */
 
 import { ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react'
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '../lib/utils'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
+
+/** Zoom bounds and step for lightbox zoom/pan (#294 item 7). */
+const ZOOM_MIN = 1
+const ZOOM_MAX = 4
+const ZOOM_STEP = 0.25
+/** Pixels panned per arrow-key press while zoomed in. */
+const PAN_KEY_STEP = 60
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value))
 
 export interface LightboxImage {
   src: string
@@ -73,22 +83,153 @@ export function ImageLightbox({
     if (safeIndex < count - 1) onIndexChange(safeIndex + 1)
   }, [safeIndex, count, onIndexChange])
 
-  // ArrowLeft/ArrowRight navigation while the lightbox is open. Escape is
-  // handled by Radix Dialog. Listener is only attached when open + multiple.
+  // Zoom/pan state (#294 item 7). `zoom` is a scale factor (1 = fit); `pan` is
+  // the translation in CSS px applied before the scale. Both reset whenever the
+  // displayed image or open state changes.
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
+  // Pointer-drag anchor: pointer + pan position captured at pointerdown.
+  const dragOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null)
+  const zoomed = zoom > ZOOM_MIN
+
+  // Clamp a pan offset so the (scaled) image can't be dragged entirely off the
+  // viewport — at most half the overflow in each axis. Reads the rendered image
+  // size, which is unaffected by the CSS transform.
+  const clampPan = useCallback((p: { x: number; y: number }, z: number) => {
+    const img = imgRef.current
+    if (!img || z <= ZOOM_MIN) return { x: 0, y: 0 }
+    const maxX = (img.clientWidth * (z - 1)) / 2
+    const maxY = (img.clientHeight * (z - 1)) / 2
+    return { x: clamp(p.x, -maxX, maxX), y: clamp(p.y, -maxY, maxY) }
+  }, [])
+
+  const zoomBy = useCallback((delta: number) => {
+    setZoom((z) => clamp(Number((z + delta).toFixed(2)), ZOOM_MIN, ZOOM_MAX))
+  }, [])
+
+  const resetZoom = useCallback(() => {
+    setZoom(ZOOM_MIN)
+    setPan({ x: 0, y: 0 })
+  }, [])
+
+  const panBy = useCallback(
+    (dx: number, dy: number) => {
+      setPan((p) => clampPan({ x: p.x + dx, y: p.y + dy }, zoom))
+    },
+    [clampPan, zoom],
+  )
+
+  // Re-clamp pan whenever the zoom changes (e.g. zooming back out recenters).
   useEffect(() => {
-    if (!open || !hasMultiple) return
+    setPan((p) => clampPan(p, zoom))
+  }, [zoom, clampPan])
+
+  // Reset zoom/pan when the displayed image or open state changes.
+  useEffect(() => {
+    resetZoom()
+  }, [safeIndex, open, resetZoom])
+
+  // Keyboard: +/-/0 zoom always; arrows pan when zoomed, else navigate the set.
+  // Escape is handled by Radix Dialog. Listener attaches whenever open.
+  useEffect(() => {
+    if (!open) return
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        goPrev()
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        goNext()
+      switch (e.key) {
+        case '+':
+        case '=':
+          e.preventDefault()
+          zoomBy(ZOOM_STEP)
+          break
+        case '-':
+        case '_':
+          e.preventDefault()
+          zoomBy(-ZOOM_STEP)
+          break
+        case '0':
+          e.preventDefault()
+          resetZoom()
+          break
+        case 'ArrowLeft':
+          if (zoomed) {
+            e.preventDefault()
+            panBy(PAN_KEY_STEP, 0)
+          } else if (hasMultiple) {
+            e.preventDefault()
+            goPrev()
+          }
+          break
+        case 'ArrowRight':
+          if (zoomed) {
+            e.preventDefault()
+            panBy(-PAN_KEY_STEP, 0)
+          } else if (hasMultiple) {
+            e.preventDefault()
+            goNext()
+          }
+          break
+        case 'ArrowUp':
+          if (zoomed) {
+            e.preventDefault()
+            panBy(0, PAN_KEY_STEP)
+          }
+          break
+        case 'ArrowDown':
+          if (zoomed) {
+            e.preventDefault()
+            panBy(0, -PAN_KEY_STEP)
+          }
+          break
+        default:
+          break
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, hasMultiple, goPrev, goNext])
+  }, [open, hasMultiple, zoomed, goPrev, goNext, zoomBy, resetZoom, panBy])
+
+  // Wheel-to-zoom — chrome-free and centred on the current view (#294 item 7).
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      e.preventDefault()
+      zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)
+    },
+    [zoomBy],
+  )
+
+  // Pointer drag-to-pan, active only while zoomed in.
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!zoomed) return
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      dragOrigin.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y }
+      setDragging(true)
+    },
+    [zoomed, pan.x, pan.y],
+  )
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      const origin = dragOrigin.current
+      if (!origin) return
+      setPan(
+        clampPan(
+          { x: origin.panX + (e.clientX - origin.x), y: origin.panY + (e.clientY - origin.y) },
+          zoom,
+        ),
+      )
+    },
+    [clampPan, zoom],
+  )
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    if (!dragOrigin.current) return
+    dragOrigin.current = null
+    setDragging(false)
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+  }, [])
 
   if (!current) return null
 
@@ -107,16 +248,38 @@ export function ImageLightbox({
           {t('lightbox.description', { filename: current.alt })}
         </DialogDescription>
 
+        {/* oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- when zoomed the image is the pan surface (pointer drag) and wheel zoom target; activation stays on the close/nav buttons */}
         <img
           key={current.src}
+          ref={imgRef}
           src={current.src}
           alt={current.alt}
           className={cn(
-            'max-w-[90vw] max-h-[90vh] object-contain',
-            !reducedMotion && 'transition-opacity',
+            'max-w-[90vw] max-h-[90vh] object-contain touch-none select-none',
+            !reducedMotion && !dragging && 'transition-transform',
+            zoomed && (dragging ? 'cursor-grabbing' : 'cursor-grab'),
           )}
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+          }}
+          onWheel={handleWheel}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          draggable={false}
           data-testid="lightbox-image"
         />
+
+        {zoomed && (
+          <span
+            className="absolute top-4 left-4 rounded-md bg-black/60 px-2 py-1 text-xs text-white/80"
+            data-testid="lightbox-zoom-badge"
+            aria-live="polite"
+          >
+            {t('lightbox.zoom', { percent: Math.round(zoom * 100) })}
+          </span>
+        )}
 
         {current.caption && (
           <p

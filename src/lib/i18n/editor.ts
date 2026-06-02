@@ -88,6 +88,8 @@ export const editor: Record<string, string> = {
   'lightbox.previous': 'Previous image',
   'lightbox.next': 'Next image',
   'lightbox.counter': '{{current}} of {{total}}',
+  // #294 item 7 — zoom/pan readout badge (shown only while zoomed in).
+  'lightbox.zoom': '{{percent}}% — +/− zoom, 0 reset, drag/arrows to pan',
   'imageResize.toolbar': 'Image size',
   'imageResize.small': 'Small (25%)',
   'imageResize.medium': 'Medium (50%)',
@@ -114,6 +116,8 @@ export const editor: Record<string, string> = {
   'attachment.toggleResizeToolbar': 'Toggle resize toolbar',
   // FIL-008 (#218 item 6) — discoverability hint that the image is resizable.
   'attachment.resizeHint': 'Resize image — hover or focus to open the toolbar',
+  // #294 item 6 — inline drag-to-resize corner handle.
+  'attachment.resizeHandle': 'Drag to resize image',
   'imageResize.saveFailed': 'Could not save image size',
   // #212 item 3 — captions / alt-text
   'imageCaption.placeholder': 'Add a caption…',

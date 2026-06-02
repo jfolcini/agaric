@@ -18,8 +18,10 @@ import {
   DEFAULT_IMAGE_ALIGNMENT,
   type ImageAlignment,
   IMAGE_ALIGNMENTS,
+  IMAGE_WIDTH_PRESET_VALUES,
   IMAGE_WIDTH_PRESETS,
   ImageResizeToolbar,
+  snapToPreset,
 } from '../ImageResizeToolbar'
 
 /**
@@ -176,5 +178,38 @@ describe('ImageResizeToolbar', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // ---- #294 item 6: drag-to-resize snapping ----
+
+  describe('snapToPreset', () => {
+    it('exposes the numeric preset values matching the labelled presets', () => {
+      expect(IMAGE_WIDTH_PRESET_VALUES).toEqual([25, 50, 75, 100])
+    })
+
+    it('returns the exact preset when the value already matches', () => {
+      expect(snapToPreset(25)).toBe('25')
+      expect(snapToPreset(50)).toBe('50')
+      expect(snapToPreset(75)).toBe('75')
+      expect(snapToPreset(100)).toBe('100')
+    })
+
+    it('snaps an arbitrary percent to the nearest preset', () => {
+      expect(snapToPreset(30)).toBe('25')
+      expect(snapToPreset(40)).toBe('50')
+      expect(snapToPreset(60)).toBe('50')
+      expect(snapToPreset(70)).toBe('75')
+      expect(snapToPreset(90)).toBe('100')
+    })
+
+    it('clamps below/above the preset range to the closest endpoint', () => {
+      expect(snapToPreset(5)).toBe('25')
+      expect(snapToPreset(140)).toBe('100')
+    })
+
+    it('resolves an exact tie to the smaller preset', () => {
+      // 37.5 is equidistant from 25 and 50 — first-wins keeps the smaller one.
+      expect(snapToPreset(37.5)).toBe('25')
+    })
   })
 })
