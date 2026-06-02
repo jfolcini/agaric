@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { t } from '../../lib/i18n'
@@ -571,6 +571,56 @@ describe('BlockInlineControls', () => {
       renderControls(makeProps({ filteredProperties: fourProps }))
       const overflow = screen.getByTestId('property-overflow')
       expect(overflow.getAttribute('aria-label')).toContain('Ctrl+Shift+P')
+    })
+  })
+
+  // #217 C2 (remainder): on narrow viewports the inline-property limit drops
+  // from 3 to 2 so dense blocks (priority + dates + repeat + props) wrap less.
+  // `useIsMobile` seeds its initial state from `window.innerWidth`, so each
+  // case sets the width before render.
+  describe('responsive inline-property threshold (#217 C2)', () => {
+    const threeProps = [
+      { key: 'a', value: 'v1' },
+      { key: 'b', value: 'v2' },
+      { key: 'c', value: 'v3' },
+    ]
+    const originalInnerWidth = window.innerWidth
+
+    afterEach(() => {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: originalInnerWidth,
+      })
+    })
+
+    function setViewportWidth(width: number) {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        writable: true,
+        value: width,
+      })
+    }
+
+    it('shows 3 inline property chips before +N on a wide viewport', () => {
+      setViewportWidth(1024)
+      renderControls(makeProps({ filteredProperties: threeProps }))
+      expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
+      expect(screen.getByTestId('property-chip-b')).toBeInTheDocument()
+      expect(screen.getByTestId('property-chip-c')).toBeInTheDocument()
+      // Exactly 3 props → no overflow on desktop.
+      expect(screen.queryByTestId('property-overflow')).not.toBeInTheDocument()
+    })
+
+    it('shows only 2 inline property chips and a +1 overflow on a narrow viewport', () => {
+      setViewportWidth(375)
+      renderControls(makeProps({ filteredProperties: threeProps }))
+      expect(screen.getByTestId('property-chip-a')).toBeInTheDocument()
+      expect(screen.getByTestId('property-chip-b')).toBeInTheDocument()
+      // Third prop is collapsed into the overflow pill on mobile.
+      expect(screen.queryByTestId('property-chip-c')).not.toBeInTheDocument()
+      const overflow = screen.getByTestId('property-overflow')
+      expect(overflow).toHaveTextContent('+1')
     })
   })
 
