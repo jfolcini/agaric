@@ -529,6 +529,76 @@ describe('TemplatesView', () => {
     })
   })
 
+  it('shows a page-template scope badge for non-journal templates', async () => {
+    // #215 — every template carries a scope badge. T1 is a plain template
+    // (page scope); T2 is also a journal template. Both must show a badge:
+    // T1 → "Page template", T2 → "Journal template" (T2 is NOT a page badge).
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string }
+        if (params.key === 'template') {
+          return {
+            items: [makeTemplate('T1', 'Meeting Notes'), makeTemplate('T2', 'Daily Journal')],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+        }
+        if (params.key === 'journal-template') {
+          return {
+            items: [makeTemplate('T2', 'Daily Journal')],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+        }
+        return emptyPage
+      }
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+
+    await screen.findByText('Meeting Notes')
+
+    // The non-journal template shows a single "Page template" badge.
+    const pageBadges = screen.getAllByText('Page template')
+    expect(pageBadges).toHaveLength(1)
+    // The journal template keeps its own badge (and is not double-badged).
+    expect(screen.getByText('Journal template')).toBeInTheDocument()
+  })
+
+  it('shows tooltip on page-template badge hover', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'query_by_property') {
+        const params = args as { key: string }
+        if (params.key === 'template') {
+          return {
+            items: [makeTemplate('T1', 'Meeting Notes')],
+            next_cursor: null,
+            has_more: false,
+            total_count: null,
+          }
+        }
+        return emptyPage
+      }
+      return emptyPage
+    })
+
+    render(<TemplatesView />)
+
+    const badge = await screen.findByText('Page template')
+    await user.hover(badge)
+
+    await waitFor(() => {
+      const tooltipElements = screen.getAllByText(
+        'A page template — inserting it creates a new page from this content.',
+      )
+      expect(tooltipElements.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
   it('has no a11y violations', async () => {
     mockedInvoke.mockResolvedValue(emptyPage)
 
