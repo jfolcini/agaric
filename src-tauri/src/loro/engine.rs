@@ -155,6 +155,63 @@ pub struct BlockSnapshot {
     pub position: i64,
 }
 
+/// A property value as the engine stores it natively (PEND-80 §2.1).
+///
+/// `Num`/`Bool` are persisted as native `LoroValue::Double`/`Bool` so the
+/// engine is type-lossless; `Str` covers text/date/ref/select (all
+/// `LoroValue::String` in Loro — disambiguated at the SQL projection by
+/// `property_definitions.value_type`; this is the encoding chosen for the
+/// open PEND-80 §8 Q5, kept reversible and migration-free). `Null` is an
+/// explicit clear, distinct from a key being absent.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyValue {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+    Null,
+}
+
+impl PropertyValue {
+    /// Native `LoroValue` to persist in the engine.
+    fn to_loro(&self) -> LoroValue {
+        match self {
+            PropertyValue::Str(s) => LoroValue::from(s.as_str()),
+            PropertyValue::Num(n) => LoroValue::Double(*n),
+            PropertyValue::Bool(b) => LoroValue::Bool(*b),
+            PropertyValue::Null => LoroValue::Null,
+        }
+    }
+
+    /// Recover a `PropertyValue` from a stored `LoroValue`. Accepts every
+    /// scalar the engine may hold — including legacy `String`-encoded
+    /// numbers/bools written before §2.1 (they stay `Str` and are recovered
+    /// by `value_type` at projection, so this is fully back-compatible and
+    /// needs no snapshot migration).
+    fn from_loro(v: LoroValue) -> Result<PropertyValue, AppError> {
+        match v {
+            LoroValue::Null => Ok(PropertyValue::Null),
+            LoroValue::String(s) => Ok(PropertyValue::Str((*s).clone())),
+            LoroValue::Double(n) => Ok(PropertyValue::Num(n)),
+            LoroValue::I64(i) => Ok(PropertyValue::Num(i as f64)),
+            LoroValue::Bool(b) => Ok(PropertyValue::Bool(b)),
+            other => Err(AppError::Validation(format!(
+                "loro: property value expected scalar, got {other:?}"
+            ))),
+        }
+    }
+
+    /// Lossy string view for the legacy string-returning read paths and
+    /// parity/debug callers. `Null` → `None`.
+    fn as_legacy_string(&self) -> Option<String> {
+        match self {
+            PropertyValue::Str(s) => Some(s.clone()),
+            PropertyValue::Num(n) => Some(n.to_string()),
+            PropertyValue::Bool(b) => Some(b.to_string()),
+            PropertyValue::Null => None,
+        }
+    }
+}
+
 /// Production-side wrapper around a `LoroDoc`.  Owns one document per
 /// space (per SPIKE-REPORT.md §4.1 — per-space-doc design).
 pub struct LoroEngine {
@@ -438,16 +495,16 @@ impl LoroEngine {
         Ok(())
     }
 
-    /// Mirrors `SetProperty` — string values only at this stage,
-    /// matching the spike's day-3 corpus port.  Stored under
-    /// `block_properties` keyed by block_id then property key.  LWW
-    /// per `(block_id, key)`.  `value = None` writes an explicit Null
-    /// (clear), distinct from "key absent".
-    pub fn apply_set_property(
+    /// Mirrors `SetProperty`, storing a native typed value (PEND-80 §2.1):
+    /// `Num`→`Double`, `Bool`→`Bool`, `Str`→`String`, `Null`→explicit clear.
+    /// Stored under `block_properties` keyed by block_id then property key.
+    /// LWW per `(block_id, key)`. `PropertyValue::Null` writes an explicit
+    /// Null (clear), distinct from "key absent".
+    pub fn apply_set_property_typed(
         &mut self,
         block_id: &str,
         key: &str,
-        value: Option<&str>,
+        value: &PropertyValue,
     ) -> Result<(), AppError> {
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         // Re-using an attached container is fine; `insert_container`
@@ -474,17 +531,30 @@ impl LoroEngine {
                     ))
                 })?,
         };
-        let v = match value {
-            Some(s) => LoroValue::from(s),
-            None => LoroValue::Null,
-        };
-        block_props.insert(key, v).map_err(|e| {
+        block_props.insert(key, value.to_loro()).map_err(|e| {
             AppError::Validation(format!(
                 "loro: set_property block {block_id} key {key}: {e}"
             ))
         })?;
         self.doc.commit();
         Ok(())
+    }
+
+    /// String-valued `SetProperty` shim for legacy callers / parity paths.
+    /// `value = None` writes an explicit Null (clear). Prefer
+    /// [`apply_set_property_typed`] on the write path so numbers and booleans
+    /// are stored natively rather than flattened to a string.
+    pub fn apply_set_property(
+        &mut self,
+        block_id: &str,
+        key: &str,
+        value: Option<&str>,
+    ) -> Result<(), AppError> {
+        let v = match value {
+            Some(s) => PropertyValue::Str(s.to_string()),
+            None => PropertyValue::Null,
+        };
+        self.apply_set_property_typed(block_id, key, &v)
     }
 
     /// Mirrors `DeleteProperty` — removes the `(block_id, key)` entry
@@ -737,13 +807,9 @@ impl LoroEngine {
                 "loro: read_property {block_id}/{key} expected scalar"
             ))
         })?;
-        match value {
-            LoroValue::Null => Ok(Some(None)),
-            LoroValue::String(s) => Ok(Some(Some((*s).clone()))),
-            other => Err(AppError::Validation(format!(
-                "loro: read_property {block_id}/{key} expected String|Null, got {other:?}"
-            ))),
-        }
+        // Tolerate native typed values (§2.1): Num/Bool render to their string
+        // form for this legacy string-returning path; Null → explicit clear.
+        Ok(Some(PropertyValue::from_loro(value)?.as_legacy_string()))
     }
 
     /// Read back every property of a block as `(key, value)` pairs.
@@ -793,17 +859,65 @@ impl LoroEngine {
                 return;
             }
             match value_voc.into_value() {
-                Ok(LoroValue::Null) => out.push((key.to_string(), None)),
-                Ok(LoroValue::String(s)) => out.push((key.to_string(), Some((*s).clone()))),
-                Ok(other) => {
-                    err = Some(AppError::Validation(format!(
-                        "loro: read_all_properties {block_id}/{key} \
-                         expected String|Null, got {other:?}"
-                    )));
-                }
+                // §2.1: accept every scalar, rendering Num/Bool to string for
+                // this legacy string-returning path (Null → cleared/None).
+                Ok(v) => match PropertyValue::from_loro(v) {
+                    Ok(pv) => out.push((key.to_string(), pv.as_legacy_string())),
+                    Err(e) => err = Some(e),
+                },
                 Err(_) => {
                     err = Some(AppError::Validation(format!(
                         "loro: read_all_properties {block_id}/{key} expected scalar"
+                    )));
+                }
+            }
+        });
+        if let Some(e) = err {
+            return Err(e);
+        }
+        Ok(out)
+    }
+
+    /// Typed variant of [`read_all_properties`] (PEND-80 §2.1): returns each
+    /// value as a native [`PropertyValue`] so the SQL projection can route
+    /// `Num`/`Bool` without consulting `property_definitions`. Used by the
+    /// inbound re-projection path and the unified state-projection (Phase 4).
+    /// Returns an empty `Vec` when the block has never had any properties.
+    pub fn read_all_properties_typed(
+        &self,
+        block_id: &str,
+    ) -> Result<Vec<(String, PropertyValue)>, AppError> {
+        let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
+        let Some(voc) = props_root.get(block_id) else {
+            return Ok(Vec::new());
+        };
+        let block_props: LoroMap = voc
+            .into_container()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_all_properties_typed block {block_id} props slot is not a container"
+                ))
+            })?
+            .into_map()
+            .map_err(|_| {
+                AppError::Validation(format!(
+                    "loro: read_all_properties_typed block {block_id} props is not a LoroMap"
+                ))
+            })?;
+        let mut out: Vec<(String, PropertyValue)> = Vec::with_capacity(block_props.len());
+        let mut err: Option<AppError> = None;
+        block_props.for_each(|key, value_voc| {
+            if err.is_some() {
+                return;
+            }
+            match value_voc.into_value() {
+                Ok(v) => match PropertyValue::from_loro(v) {
+                    Ok(pv) => out.push((key.to_string(), pv)),
+                    Err(e) => err = Some(e),
+                },
+                Err(_) => {
+                    err = Some(AppError::Validation(format!(
+                        "loro: read_all_properties_typed {block_id}/{key} expected scalar"
                     )));
                 }
             }
@@ -1367,6 +1481,59 @@ fn tags_get_or_create_list(
 #[cfg(test)]
 mod tests {
     use super::peer_id_from_device_id;
+
+    // PEND-80 §2.1: the engine stores property values with their native type
+    // (Num/Bool) and round-trips them losslessly via `read_all_properties_typed`,
+    // while the legacy string path stays back-compatible.
+    #[test]
+    fn typed_property_values_round_trip() {
+        use super::{LoroEngine, PropertyValue};
+        let mut e = LoroEngine::new();
+        e.apply_set_property_typed("B1", "count", &PropertyValue::Num(3.5))
+            .unwrap();
+        e.apply_set_property_typed("B1", "done", &PropertyValue::Bool(true))
+            .unwrap();
+        e.apply_set_property_typed("B1", "title", &PropertyValue::Str("hi".into()))
+            .unwrap();
+        e.apply_set_property_typed("B1", "cleared", &PropertyValue::Null)
+            .unwrap();
+
+        let mut typed = e.read_all_properties_typed("B1").unwrap();
+        typed.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            typed,
+            vec![
+                ("cleared".to_string(), PropertyValue::Null),
+                ("count".to_string(), PropertyValue::Num(3.5)),
+                ("done".to_string(), PropertyValue::Bool(true)),
+                ("title".to_string(), PropertyValue::Str("hi".to_string())),
+            ]
+        );
+
+        // Legacy string read renders Num/Bool to their string form and a Null
+        // clear to None — back-compatible with the value_type-routed projection.
+        let mut legacy = e.read_all_properties("B1").unwrap();
+        legacy.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            legacy,
+            vec![
+                ("cleared".to_string(), None),
+                ("count".to_string(), Some("3.5".to_string())),
+                ("done".to_string(), Some("true".to_string())),
+                ("title".to_string(), Some("hi".to_string())),
+            ]
+        );
+
+        // The string shim still works and stores a String value.
+        e.apply_set_property("B1", "note", Some("x")).unwrap();
+        assert_eq!(
+            e.read_all_properties_typed("B1")
+                .unwrap()
+                .into_iter()
+                .find(|(k, _)| k == "note"),
+            Some(("note".to_string(), PropertyValue::Str("x".to_string())))
+        );
+    }
 
     #[test]
     fn peer_id_from_device_id_is_deterministic() {

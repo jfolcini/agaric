@@ -1629,23 +1629,27 @@ async fn apply_set_property_via_loro(
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
-        // The engine flattens to a single string for the property
-        // value; pick the first non-None typed field as the
-        // representative. The typed shape is preserved in SQL via the
-        // typed columns — the projection reads those off the payload
-        // directly.
-        let value_str: Option<String> = if let Some(v) = &p.value_text {
-            Some(v.clone())
+        // PEND-80 §2.1: store the value with its native type so the engine is
+        // type-lossless (`value_num`→`Num`, `value_bool`→`Bool`); text/date/ref
+        // are all strings, disambiguated at the SQL projection by
+        // `property_definitions.value_type`. No typed field set ⇒ explicit
+        // clear (`Null`). The typed SQL columns are still written from the
+        // payload directly by `project_set_property_to_sql` below.
+        use crate::loro::engine::PropertyValue;
+        let value = if let Some(v) = &p.value_text {
+            PropertyValue::Str(v.clone())
         } else if let Some(v) = p.value_num {
-            Some(v.to_string())
+            PropertyValue::Num(v)
         } else if let Some(v) = &p.value_date {
-            Some(v.clone())
+            PropertyValue::Str(v.clone())
         } else if let Some(v) = &p.value_ref {
-            Some(v.clone())
+            PropertyValue::Str(v.clone())
+        } else if let Some(b) = p.value_bool {
+            PropertyValue::Bool(b)
         } else {
-            p.value_bool.map(|b| b.to_string())
+            PropertyValue::Null
         };
-        engine.apply_set_property(p.block_id.as_str(), &p.key, value_str.as_deref())?;
+        engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
         drop(guard);
     }
 
