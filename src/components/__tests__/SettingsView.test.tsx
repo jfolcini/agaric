@@ -179,11 +179,11 @@ describe('SettingsView', () => {
     })
   })
 
-  it('renders with 10 tabs', () => {
+  it('renders with 11 tabs', () => {
     render(<SettingsView />)
 
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(10)
+    expect(tabs).toHaveLength(11)
     expect(tabs[0]).toHaveTextContent(t('settings.tabGeneral'))
     expect(tabs[1]).toHaveTextContent(t('settings.tabProperties'))
     expect(tabs[2]).toHaveTextContent(t('settings.tabAppearance'))
@@ -193,7 +193,8 @@ describe('SettingsView', () => {
     expect(tabs[6]).toHaveTextContent(t('settings.tabSync'))
     expect(tabs[7]).toHaveTextContent(t('settings.tabAgentAccess'))
     expect(tabs[8]).toHaveTextContent(t('settings.tabGoogleCalendar'))
-    expect(tabs[9]).toHaveTextContent(t('settings.tabHelp'))
+    expect(tabs[9]).toHaveTextContent(t('settings.tabNotifications'))
+    expect(tabs[10]).toHaveTextContent(t('settings.tabHelp'))
   })
 
   it('Google Calendar tab renders the GoogleCalendarSettingsTab panel', async () => {
@@ -204,6 +205,16 @@ describe('SettingsView', () => {
     await user.click(gcalTab)
     expect(gcalTab).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('google-calendar-settings-tab')).toBeInTheDocument()
+  })
+
+  it('Notifications tab renders the NotificationsTab panel', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    const notificationsTab = screen.getByRole('tab', { name: t('settings.tabNotifications') })
+    await user.click(notificationsTab)
+    expect(notificationsTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('notifications-enabled-switch')).toBeInTheDocument()
   })
 
   it('Help tab dispatches BUG_REPORT_EVENT on click', async () => {

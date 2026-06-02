@@ -42,6 +42,7 @@ import { AppearanceTab } from './settings/AppearanceTab'
 import { EditorTab } from './settings/EditorTab'
 import { GeneralTab } from './settings/GeneralTab'
 import { HelpTab } from './settings/HelpTab'
+import { NotificationsTab } from './settings/NotificationsTab'
 
 // DataSettingsTab drags in `jszip` (~135 kB) for "Export as ZIP". The tab
 // is rarely opened, so defer the import until the user clicks it (PERF-24).
@@ -59,6 +60,7 @@ type SettingsTab =
   | 'sync'
   | 'agent'
   | 'google-calendar'
+  | 'notifications'
   | 'help'
 
 const TAB_IDS: SettingsTab[] = [
@@ -71,6 +73,7 @@ const TAB_IDS: SettingsTab[] = [
   'sync',
   'agent',
   'google-calendar',
+  'notifications',
   'help',
 ]
 
@@ -111,6 +114,7 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
   sync: 'settings.tabSync',
   agent: 'settings.tabAgentAccess',
   'google-calendar': 'settings.tabGoogleCalendar',
+  notifications: 'settings.tabNotifications',
   help: 'settings.tabHelp',
 }
 
@@ -221,6 +225,8 @@ export function SettingsView(): React.ReactElement {
         {activeTab === 'agent' && <AgentAccessSettingsTab />}
 
         {activeTab === 'google-calendar' && <GoogleCalendarSettingsTab />}
+
+        {activeTab === 'notifications' && <NotificationsTab />}
 
         {activeTab === 'help' && (
           <HelpTab onReportBugClick={() => dispatchBugReport({ message: '' })} />

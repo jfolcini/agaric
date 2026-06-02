@@ -51,6 +51,25 @@ export const settings: Record<string, string> = {
   'quickCapture.successToast': "Captured to today's journal",
   'quickCapture.failureToast': "Couldn't save quick capture",
   'settings.tabHelp': 'Help',
+  'settings.tabNotifications': 'Notifications',
+  'notifications.title': 'Notifications',
+  'notifications.description':
+    'Surface due and scheduled tasks as native OS notifications. Enable notifications, grant the OS permission, then send a test to confirm they reach you.',
+  'notifications.enableLabel': 'Enable notifications',
+  'notifications.enableDescription':
+    'When on, Agaric may show native notifications for upcoming tasks. Turn off to silence all notifications without revoking the OS permission.',
+  'notifications.permissionLabel': 'OS permission',
+  'notifications.permissionDescription':
+    'On Android 13+ a one-time permission grant is required. On desktop the grant is automatic — use the test below to confirm.',
+  'notifications.requestPermissionButton': 'Request permission',
+  'notifications.permissionGranted': 'Notification permission granted',
+  'notifications.permissionDenied': 'Notification permission was not granted',
+  'notifications.sendTestButton': 'Send test notification',
+  'notifications.testDisabledHint': 'Enable notifications above to send a test.',
+  'notifications.testTitle': 'Agaric test notification',
+  'notifications.testBody': 'If you can see this, notifications are working.',
+  'notifications.testSent': 'Test notification sent',
+  'notifications.testFailed': 'Could not send the test notification',
   'bugReport.title': 'Report a bug',
   'bugReport.description':
     'Your report is never sent automatically. Review what will be shared, optionally attach logs, then open a prefilled GitHub issue.',
