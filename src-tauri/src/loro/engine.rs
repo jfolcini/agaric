@@ -57,7 +57,12 @@
 //!    measurement (see SPIKE-REPORT.md §4.2).  Phase 1 builds against
 //!    one engine.
 
-use loro::{ExportMode, LoroDoc, LoroList, LoroMap, LoroText, LoroValue, PeerID, VersionVector};
+use std::collections::HashMap;
+
+use loro::{
+    ExportMode, LoroDoc, LoroError, LoroList, LoroMap, LoroText, LoroTree, LoroTreeError,
+    LoroValue, PeerID, TreeID, TreeParentId, VersionVector,
+};
 
 use crate::error::AppError;
 
@@ -99,11 +104,30 @@ pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
     xxhash_rust::xxh3::xxh3_64(device_id.as_bytes())
 }
 
-/// Top-level LoroMap key holding the per-block sub-maps.
+/// **Legacy** top-level LoroMap key holding the per-block sub-maps from
+/// the pre-PEND-80-Phase-3 flat-map engine model (`loro_doc.getMap("blocks")`
+/// -> `LoroMap<block_id, BlockData>`, where `BlockData` carried the
+/// `parent_id`/`position` scalars directly).
 ///
-/// Mirrors the data shape decision in SPIKE-REPORT.md §4.1:
-/// `loro_doc.getMap("blocks")` -> `LoroMap<block_id, BlockData>`.
-const BLOCKS_ROOT: &str = "blocks";
+/// Retained **only** so [`LoroEngine::migrate_flat_blocks_to_tree`] can read
+/// an old-format snapshot and rebuild it as a [`LoroTree`]. No live read or
+/// write path touches this root anymore — the block hierarchy is the tree at
+/// [`BLOCKS_TREE_ROOT`].
+const LEGACY_BLOCKS_ROOT: &str = "blocks";
+
+/// Top-level [`LoroTree`] key holding the block hierarchy (PEND-80 Phase 3).
+///
+/// Each block is a tree node (`TreeID`); the node's **meta map**
+/// (`tree.get_meta(node)`) carries the scalar fields ([`FIELD_BLOCK_ID`],
+/// [`FIELD_BLOCK_TYPE`], [`FIELD_CONTENT`] as a `LoroText`, [`FIELD_POSITION`],
+/// [`FIELD_DELETED_AT`]). Parent = the tree parent (convergent, cycle-safe
+/// move-CRDT); sibling order is the `i64` [`FIELD_POSITION`] sort key (kept as
+/// the SQL projection's `ORDER BY position` key — see the type-level docstring
+/// on [`LoroEngine`] for why the tree's fractional index is *not* the SQL
+/// order). Soft-delete sets/clears [`FIELD_DELETED_AT`] (the node survives in
+/// the tree for restore + the SQL descendant-cascade derivation); purge calls
+/// `tree.delete` (hard remove).
+const BLOCKS_TREE_ROOT: &str = "blocks_tree";
 
 /// Top-level LoroMap key holding per-block properties.  Each value is
 /// a `LoroMap<key, value>` with LWW semantics — overwriting a key on
@@ -132,14 +156,29 @@ const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
 /// Acceptable: typical blocks carry <10 tags.
 const BLOCK_TAGS_ROOT: &str = "block_tags";
 
-// Field keys inside a per-block LoroMap.  Kept as &'static str
-// constants so the round-trip read path uses the same key strings
-// the writer used.
+// Field keys inside a tree node's meta map (and, for `FIELD_PARENT_ID`,
+// inside the legacy flat-map blocks during migration).  Kept as &'static
+// str constants so the round-trip read path uses the same key strings the
+// writer used.
+const FIELD_BLOCK_ID: &str = "block_id";
 const FIELD_BLOCK_TYPE: &str = "block_type";
 const FIELD_CONTENT: &str = "content";
+/// Only present in the **legacy** flat-map model; the tree derives the
+/// parent from its structure. Read by the migration path, never written.
 const FIELD_PARENT_ID: &str = "parent_id";
 const FIELD_POSITION: &str = "position";
 const FIELD_DELETED_AT: &str = "deleted_at";
+
+/// Engine on-disk format version. `1` = the legacy flat-map block model;
+/// `2` = the [`LoroTree`] block hierarchy (PEND-80 Phase 3). Persisted
+/// snapshots are migrated forward on load by
+/// [`LoroEngine::migrate_flat_blocks_to_tree`], which is idempotent (a
+/// no-op once the legacy [`LEGACY_BLOCKS_ROOT`] map is empty), so the
+/// migration runs unconditionally on every import rather than gating on a
+/// stored version byte. Two peers on different engine formats must not
+/// merge raw bytes during a rollout — that protocol-version gate lives in
+/// the sync handshake (PEND-81), not here; the maintainer does not sync today.
+pub const ENGINE_FORMAT_VERSION: u32 = 2;
 
 /// Read-back projection of a block's state from the Loro doc.
 ///
@@ -214,8 +253,46 @@ impl PropertyValue {
 
 /// Production-side wrapper around a `LoroDoc`.  Owns one document per
 /// space (per SPIKE-REPORT.md §4.1 — per-space-doc design).
+///
+/// ## Block hierarchy: [`LoroTree`] (PEND-80 Phase 3)
+///
+/// Blocks are a [`LoroTree`] at [`BLOCKS_TREE_ROOT`]. `create`/`move`/
+/// `delete`/`purge` map to tree ops; the parent is the tree structure, so
+/// the engine gets Loro's **move-CRDT convergence and deterministic cycle
+/// rejection** ([`loro::TreeID`] moves that would form a cycle fail with
+/// `CyclicMoveError` locally and are resolved deterministically on merge)
+/// for free, replacing the old per-key-LWW `parent_id` scalar and the
+/// hand-rolled cycle/position edge-case handling.
+///
+/// **Sibling order stays the `i64` [`FIELD_POSITION`] sort key**, *not* the
+/// tree's fractional index. This is a deliberate scoping decision for Phase
+/// 3: the SQL `position` column, its `ORDER BY position, id` pagination
+/// cursors, and the frontend's sparse-integer position arithmetic
+/// (`midpointPosition`, indent → `1`, etc.) are kept byte-for-byte
+/// unchanged, so this change carries zero blast radius into the query/UI
+/// layers and does not take on §3a's "open risk #1" (ordinal stability
+/// under concurrent sibling inserts). Convergent fractional-index *reorder*
+/// is a future refinement; the headline wins (convergent reparent +
+/// cycle-safety) land now.
+///
+/// ## `block_id ↔ TreeID` indirection
+///
+/// Tree ops take `TreeID`s but the domain identity is the ULID `block_id`
+/// (stored in node meta under [`FIELD_BLOCK_ID`]). [`Self::index`] caches
+/// the `block_id → TreeID` map: it is maintained incrementally on the local
+/// `apply_*` write path and rebuilt wholesale from node meta after any
+/// `import` (see [`Self::rebuild_index`]).
 pub struct LoroEngine {
     doc: LoroDoc,
+    /// `block_id` (ULID) → `TreeID` lookup. A derived cache of the tree's
+    /// node-meta `block_id`s — authoritative source is the tree itself.
+    index: HashMap<String, TreeID>,
+    /// `block_id → intended parent block_id` for nodes whose parent was not
+    /// yet present in the engine when the create/move was applied (e.g.
+    /// out-of-order replay). Attached to the real parent once it appears.
+    /// Essentially never populated in practice (op-log replay is seq-ordered
+    /// and the UI creates parents first) — a correctness safety net.
+    pending_parent: HashMap<String, String>,
 }
 
 impl LoroEngine {
@@ -225,6 +302,8 @@ impl LoroEngine {
     pub fn new() -> Self {
         Self {
             doc: LoroDoc::new(),
+            index: HashMap::new(),
+            pending_parent: HashMap::new(),
         }
     }
 
@@ -246,7 +325,11 @@ impl LoroEngine {
                 "loro: set_peer_id from device_id {device_id} failed: {e}"
             ))
         })?;
-        Ok(Self { doc })
+        Ok(Self {
+            doc,
+            index: HashMap::new(),
+            pending_parent: HashMap::new(),
+        })
     }
 
     /// Read back the engine's current Loro peer id.  Useful for
@@ -263,7 +346,133 @@ impl LoroEngine {
         self.doc.commit();
     }
 
-    /// Insert a block into the doc under the `"blocks"` root LoroMap.
+    // -----------------------------------------------------------------
+    // Tree helpers (PEND-80 Phase 3). The block hierarchy is a LoroTree
+    // at BLOCKS_TREE_ROOT; these centralise node lookup + meta access so
+    // the apply_*/read_* paths share one source of truth.
+    // -----------------------------------------------------------------
+
+    /// The block-hierarchy [`LoroTree`] handle (attached to the doc).
+    fn tree(&self) -> LoroTree {
+        self.doc.get_tree(BLOCKS_TREE_ROOT)
+    }
+
+    /// Resolve a `block_id` to its `TreeID` via the in-memory index.
+    fn node_for(&self, block_id: &str) -> Option<TreeID> {
+        self.index.get(block_id).copied()
+    }
+
+    /// Resolve the requested parent into a [`TreeParentId`]:
+    /// `None` → tree root; `Some(pid)` present in the index → that node;
+    /// `Some(pid)` *absent* → tree root **and** record `block_id`'s
+    /// intended parent in [`Self::pending_parent`] so it is re-attached
+    /// when `pid` later appears.
+    fn resolve_parent(&mut self, block_id: &str, parent_id: Option<&str>) -> TreeParentId {
+        match parent_id {
+            None => TreeParentId::Root,
+            Some(pid) => match self.node_for(pid) {
+                Some(parent_node) => {
+                    self.pending_parent.remove(block_id);
+                    TreeParentId::Node(parent_node)
+                }
+                None => {
+                    self.pending_parent
+                        .insert(block_id.to_string(), pid.to_string());
+                    TreeParentId::Root
+                }
+            },
+        }
+    }
+
+    /// After a node for `parent_block_id` becomes available, re-parent any
+    /// orphans that were waiting for it (best-effort; cycle-forming moves
+    /// are logged and skipped).
+    fn attach_pending_children(&mut self, parent_block_id: &str) {
+        let waiting: Vec<String> = self
+            .pending_parent
+            .iter()
+            .filter(|(_, intended)| intended.as_str() == parent_block_id)
+            .map(|(child, _)| child.clone())
+            .collect();
+        if waiting.is_empty() {
+            return;
+        }
+        let Some(parent_node) = self.node_for(parent_block_id) else {
+            return;
+        };
+        let tree = self.tree();
+        for child in waiting {
+            if let Some(child_node) = self.node_for(&child) {
+                match tree.mov(child_node, TreeParentId::Node(parent_node)) {
+                    Ok(()) => {
+                        self.pending_parent.remove(&child);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            child, parent_block_id, error = %e,
+                            "attach_pending_children: reparent failed; leaving orphan under root",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Write the scalar fields into a tree node's meta map (block_type,
+    /// position, and the `block_id` back-reference). Used by create +
+    /// migration.
+    fn write_node_scalars(
+        &self,
+        meta: &LoroMap,
+        block_id: &str,
+        block_type: &str,
+        position: i64,
+    ) -> Result<(), AppError> {
+        meta.insert(FIELD_BLOCK_ID, LoroValue::from(block_id))
+            .map_err(|e| {
+                AppError::Validation(format!("loro: node {block_id}: set block_id meta: {e}"))
+            })?;
+        meta.insert(FIELD_BLOCK_TYPE, LoroValue::from(block_type))
+            .map_err(|e| {
+                AppError::Validation(format!("loro: node {block_id}: set block_type: {e}"))
+            })?;
+        meta.insert(FIELD_POSITION, LoroValue::from(position))
+            .map_err(|e| {
+                AppError::Validation(format!("loro: node {block_id}: set position: {e}"))
+            })?;
+        Ok(())
+    }
+
+    /// Rebuild [`Self::index`] from the tree's node meta. Called after any
+    /// `import` (remote ops may have created nodes the incremental index
+    /// never saw). O(N_nodes); cold path. Includes soft-deleted nodes
+    /// (their meta still carries a `block_id`) but excludes hard-purged
+    /// ones (Loro removes them from `nodes()`).
+    fn rebuild_index(&mut self) {
+        let tree = self.tree();
+        let mut index = HashMap::new();
+        for node in tree.nodes() {
+            // `nodes()` includes hard-purged (tree-deleted) nodes; skip them
+            // so a purged block does not reappear in the index after import.
+            if tree.is_node_deleted(&node).unwrap_or(true) {
+                continue;
+            }
+            let Ok(meta) = tree.get_meta(node) else {
+                continue;
+            };
+            if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
+                index.insert(bid, node);
+            }
+        }
+        self.index = index;
+    }
+
+    /// Insert a block into the block-hierarchy [`LoroTree`].
+    ///
+    /// Idempotent under op-log replay: if the `block_id` already has a node
+    /// (re-applied `CreateBlock`), the scalars/content/parent are updated in
+    /// place rather than erroring — the boot heal re-runs ops that the
+    /// snapshot already reflects.
     pub fn apply_create_block(
         &mut self,
         block_id: &str,
@@ -272,33 +481,45 @@ impl LoroEngine {
         parent_id: Option<&str>,
         position: i64,
     ) -> Result<(), AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-
-        // Each block lives in its own LoroMap nested under `blocks`.
-        // `insert_container` returns the *attached* handle — that's
-        // the one whose mutations end up in the doc's oplog.
-        let block_map: LoroMap =
-            blocks
-                .insert_container(block_id, LoroMap::new())
+        // Re-apply path: node exists — update meta + content, reparent.
+        if let Some(node) = self.node_for(block_id) {
+            let parent = self.resolve_parent(block_id, parent_id);
+            let tree = self.tree();
+            let meta = tree.get_meta(node).map_err(|e| {
+                AppError::Validation(format!("loro: re-create block {block_id}: get_meta: {e}"))
+            })?;
+            self.write_node_scalars(&meta, block_id, block_type, position)?;
+            let content_text =
+                block_map_get_text(&meta, FIELD_CONTENT, block_id, "re-create content")?;
+            content_text
+                .splice(0, content_text.len_unicode(), content)
                 .map_err(|e| {
                     AppError::Validation(format!(
-                        "loro: create block {block_id}: insert_container: {e}"
+                        "loro: re-create block {block_id}: rewrite content: {e}"
                     ))
                 })?;
+            if let Err(e) = tree.mov(node, parent) {
+                tracing::warn!(block_id, error = %e, "re-create: reparent skipped");
+            }
+            self.doc.commit();
+            return Ok(());
+        }
 
-        block_map
-            .insert(FIELD_BLOCK_TYPE, LoroValue::from(block_type))
-            .map_err(|e| {
-                AppError::Validation(format!(
-                    "loro: create block {block_id}: set block_type: {e}"
-                ))
-            })?;
+        let parent = self.resolve_parent(block_id, parent_id);
+        let tree = self.tree();
+        let node = tree.create(parent).map_err(|e| {
+            AppError::Validation(format!("loro: create block {block_id}: tree.create: {e}"))
+        })?;
+        let meta = tree.get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: create block {block_id}: get_meta: {e}"))
+        })?;
+        self.write_node_scalars(&meta, block_id, block_type, position)?;
 
         // `content` is a LoroText container, not a scalar — that's
         // the headline win of the migration (character-level merge).
         // `LoroText::insert` takes Unicode-scalar offsets per
         // SPIKE-REPORT.md §4.3 / notebook Q10.
-        let content_text: LoroText = block_map
+        let content_text: LoroText = meta
             .insert_container(FIELD_CONTENT, LoroText::new())
             .map_err(|e| {
                 AppError::Validation(format!(
@@ -311,20 +532,8 @@ impl LoroEngine {
             ))
         })?;
 
-        let parent_value = match parent_id {
-            Some(p) => LoroValue::from(p),
-            None => LoroValue::Null,
-        };
-        block_map
-            .insert(FIELD_PARENT_ID, parent_value)
-            .map_err(|e| {
-                AppError::Validation(format!("loro: create block {block_id}: set parent_id: {e}"))
-            })?;
-        block_map
-            .insert(FIELD_POSITION, LoroValue::from(position))
-            .map_err(|e| {
-                AppError::Validation(format!("loro: create block {block_id}: set position: {e}"))
-            })?;
+        self.index.insert(block_id.to_string(), node);
+        self.attach_pending_children(block_id);
 
         // commit() flushes the implicit transaction so the change is
         // visible to subsequent reads + included in any export.
@@ -466,31 +675,54 @@ impl LoroEngine {
         Ok(())
     }
 
-    /// Reparent / re-position a block.  LWW per (block, key) — two
-    /// devices reparenting to different parents resolve to the
-    /// later-Lamport-ts write, with the loser's intent dropped (per
-    /// SPIKE-REPORT.md §4.2 + Q5 — documented expected CRDT semantics).
+    /// Reparent / re-position a block on the [`LoroTree`].
+    ///
+    /// The reparent is `tree.mov` — Loro's **move-CRDT**: concurrent
+    /// reparents of the same node converge deterministically across peers
+    /// (not per-key LWW), and a move that would form a cycle (target into
+    /// its own descendant) fails with `CyclicMoveError`. The command layer
+    /// already rejects cycles up-front, so a local move never hits that;
+    /// for a replayed/remote op that *would* (corruption, or an ancestor
+    /// purged out from under it) we **log and skip the reparent** rather
+    /// than fail the whole apply — the position update still lands.
+    ///
+    /// Sibling order is the `i64` [`FIELD_POSITION`] meta value (LWW),
+    /// which the SQL projection reads as the `ORDER BY position` key — see
+    /// the [`LoroEngine`] type docstring for why the tree's fractional
+    /// index is not the SQL order.
     pub fn apply_move_block(
         &mut self,
         block_id: &str,
         new_parent_id: Option<&str>,
         new_position: i64,
     ) -> Result<(), AppError> {
-        let block_map = self.get_block_map(block_id, "move block")?;
-        let parent_value = match new_parent_id {
-            Some(p) => LoroValue::from(p),
-            None => LoroValue::Null,
-        };
-        block_map
-            .insert(FIELD_PARENT_ID, parent_value)
-            .map_err(|e| {
-                AppError::Validation(format!("loro: move block {block_id}: set parent_id: {e}"))
-            })?;
-        block_map
-            .insert(FIELD_POSITION, LoroValue::from(new_position))
+        let node = self.node_for(block_id).ok_or_else(|| {
+            AppError::Validation(format!("loro: move block: block {block_id} not found"))
+        })?;
+        // Update the position sort key on the node meta.
+        let meta = self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: move block {block_id}: get_meta: {e}"))
+        })?;
+        meta.insert(FIELD_POSITION, LoroValue::from(new_position))
             .map_err(|e| {
                 AppError::Validation(format!("loro: move block {block_id}: set position: {e}"))
             })?;
+
+        let parent = self.resolve_parent(block_id, new_parent_id);
+        match self.tree().mov(node, parent) {
+            Ok(()) => {}
+            Err(e) if is_cyclic_move(&e) => {
+                tracing::warn!(
+                    block_id, error = %e,
+                    "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
+                );
+            }
+            Err(e) => {
+                return Err(AppError::Validation(format!(
+                    "loro: move block {block_id}: tree.mov: {e}"
+                )));
+            }
+        }
         self.doc.commit();
         Ok(())
     }
@@ -682,13 +914,13 @@ impl LoroEngine {
         // `apply_restore_block_tx`'s UPDATE-matching-zero-rows
         // semantics. A RestoreBlock op for a block purged on a peer
         // must not propagate as a hard error.
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        if blocks.get(block_id).is_none() {
+        let Some(node) = self.node_for(block_id) else {
             return Ok(());
-        }
-        let block_map = self.get_block_map(block_id, "restore block")?;
-        block_map
-            .insert(FIELD_DELETED_AT, LoroValue::Null)
+        };
+        let meta = self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: restore block {block_id}: get_meta: {e}"))
+        })?;
+        meta.insert(FIELD_DELETED_AT, LoroValue::Null)
             .map_err(|e| {
                 AppError::Validation(format!(
                     "loro: restore block {block_id}: clear deleted_at: {e}"
@@ -698,25 +930,29 @@ impl LoroEngine {
         Ok(())
     }
 
-    /// Mirrors `PurgeBlock` — hard-deletes the block from the
-    /// `blocks` LoroMap entirely, plus its `block_properties` and
-    /// `block_tags` entries (matches the SQL purge cascade in
+    /// Mirrors `PurgeBlock` — hard-removes the block's tree node
+    /// (`tree.delete`), plus its `block_properties` and `block_tags`
+    /// entries (matches the SQL purge cascade in
     /// `materializer/handlers.rs::apply_purge_block_tx`).
     ///
     /// Note: this engine is per-block-id only — it does NOT walk
     /// descendants.  The materializer's purge cascade enumerates the
     /// descendant set via the recursive CTE and dispatches one
     /// `PurgeBlock` per descendant; each descendant's own apply call
-    /// reaches this method. Per-block scope is correct.
+    /// reaches this method. (LoroTree's own `delete` drops a purged
+    /// node's children from the visible tree, but we still dispatch one
+    /// op per descendant so each descendant's properties/tags are purged
+    /// and its SQL row removed.) Per-block scope is correct.
     ///
     /// Idempotent: if the block is already absent (concurrent purge,
-    /// or never created), all three deletions are no-ops.
+    /// or never created), all deletions are no-ops.
     pub fn apply_purge_block(&mut self, block_id: &str) -> Result<(), AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        if blocks.get(block_id).is_some() {
-            blocks.delete(block_id).map_err(|e| {
-                AppError::Validation(format!("loro: purge block {block_id}: blocks.delete: {e}"))
+        if let Some(node) = self.node_for(block_id) {
+            self.tree().delete(node).map_err(|e| {
+                AppError::Validation(format!("loro: purge block {block_id}: tree.delete: {e}"))
             })?;
+            self.index.remove(block_id);
+            self.pending_parent.remove(block_id);
         }
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
         if props_root.get(block_id).is_some() {
@@ -738,29 +974,40 @@ impl LoroEngine {
         Ok(())
     }
 
+    /// Derive a node's parent `block_id` from the tree structure.
+    /// `Ok(None)` for a tree root (top-level block), a deleted/uncreated
+    /// parent, or a missing node. The parent's `block_id` is read back
+    /// from the parent node's meta.
+    fn parent_block_id_of(&self, node: TreeID) -> Result<Option<String>, AppError> {
+        match self.tree().parent(node) {
+            Some(TreeParentId::Node(parent_node)) => {
+                let parent_meta = self.tree().get_meta(parent_node).map_err(|e| {
+                    AppError::Validation(format!("loro: parent_block_id_of: get_meta: {e}"))
+                })?;
+                Ok(Some(read_string(&parent_meta, FIELD_BLOCK_ID)?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Read a block back from the doc.  Returns `Ok(None)` when the
     /// block_id is absent.  Returns `Err(AppError::Validation)` when
-    /// a key is present but its value has the wrong shape (writer /
-    /// reader mismatch — should fail loudly).
+    /// a meta field is present but has the wrong shape (writer / reader
+    /// mismatch — should fail loudly). `parent_id` is derived from the
+    /// tree structure; `position` from the node-meta sort key.
     pub fn read_block(&self, block_id: &str) -> Result<Option<BlockSnapshot>, AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        let Some(block_value) = blocks.get(block_id) else {
+        let Some(node) = self.node_for(block_id) else {
             return Ok(None);
         };
-
-        let container = block_value.into_container().map_err(|_| {
-            AppError::Validation(format!("loro: block {block_id} value is not a container"))
-        })?;
-        let block_map: LoroMap = container.into_map().map_err(|_| {
-            AppError::Validation(format!("loro: block {block_id} container is not a LoroMap"))
+        let block_map = self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: read_block {block_id}: get_meta: {e}"))
         })?;
 
         let block_type = read_string(&block_map, FIELD_BLOCK_TYPE)
             .map_err(|e| ctx_err(&e, &format!("block {block_id}: block_type")))?;
         let content = read_text(&block_map, FIELD_CONTENT)
             .map_err(|e| ctx_err(&e, &format!("block {block_id}: content")))?;
-        let parent_id = read_optional_string(&block_map, FIELD_PARENT_ID)
-            .map_err(|e| ctx_err(&e, &format!("block {block_id}: parent_id")))?;
+        let parent_id = self.parent_block_id_of(node)?;
         let position = read_i64(&block_map, FIELD_POSITION)
             .map_err(|e| ctx_err(&e, &format!("block {block_id}: position")))?;
 
@@ -928,11 +1175,14 @@ impl LoroEngine {
         Ok(out)
     }
 
-    /// Read the current parent_id scalar of a block.  Returns
-    /// `Ok(None)` if the slot is null, `Err` if the block is missing.
+    /// Read the current parent `block_id`, derived from the tree
+    /// structure. `Ok(None)` for a top-level block, `Err` if the block
+    /// is missing from the engine.
     pub fn read_parent(&self, block_id: &str) -> Result<Option<String>, AppError> {
-        let block_map = self.get_block_map(block_id, "read parent")?;
-        read_optional_string(&block_map, FIELD_PARENT_ID)
+        let node = self.node_for(block_id).ok_or_else(|| {
+            AppError::Validation(format!("loro: read parent: block {block_id} not found"))
+        })?;
+        self.parent_block_id_of(node)
     }
 
     /// Read the current position scalar.
@@ -1024,167 +1274,80 @@ impl LoroEngine {
     /// the same "not deleted" answer — the re-projection caller treats
     /// absence and aliveness identically.
     pub fn read_deleted_at(&self, block_id: &str) -> Result<Option<String>, AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        if blocks.get(block_id).is_none() {
+        let Some(node) = self.node_for(block_id) else {
             return Ok(None);
-        }
-        let block_map = self.get_block_map(block_id, "read deleted_at")?;
-        match block_map.get(FIELD_DELETED_AT) {
-            None => Ok(None),
-            Some(voc) => {
-                let value = voc.into_value().map_err(|_| {
-                    AppError::Validation(format!(
-                        "loro: read_deleted_at block {block_id} deleted_at is not a scalar"
-                    ))
-                })?;
-                match value {
-                    LoroValue::Null => Ok(None),
-                    LoroValue::String(s) => Ok(Some((*s).clone())),
-                    other => Err(AppError::Validation(format!(
-                        "loro: read_deleted_at block {block_id}: expected String|Null, got {other:?}"
-                    ))),
-                }
-            }
-        }
+        };
+        let meta = self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: read_deleted_at {block_id}: get_meta: {e}"))
+        })?;
+        read_deleted_at_meta(&meta, block_id)
     }
 
-    /// Walk the top-level `blocks` LoroMap and collect every block_id
-    /// whose `parent_id` field equals `parent_id` AND whose
-    /// `deleted_at` is unset (or explicitly null).  O(N_blocks) per
-    /// call.
+    /// Collect the live (non-soft-deleted) child `block_id`s of `parent_id`
+    /// in `ORDER BY position, block_id` order — matching the SQL projection's
+    /// sibling order. O(children) via `tree.children`.
     ///
-    /// Phase-0 day-7 measured this as ~250-2500x slower than indexed
-    /// SQL (SPIKE-REPORT.md §4.4) — that's why production reads
-    /// continue to flow through the SQL `blocks` table.  This call
-    /// exists for parity tests and debug paths only; it must not
-    /// land on a hot read path.
+    /// This call exists for parity tests and debug paths only; production
+    /// reads flow through the indexed SQL `blocks` table.
     pub fn list_children_walk(&self, parent_id: &str) -> Result<Vec<String>, AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        let mut out: Vec<String> = Vec::new();
-        let mut err: Option<AppError> = None;
-        blocks.for_each(|key, voc| {
-            if err.is_some() {
-                return;
+        let Some(parent_node) = self.node_for(parent_id) else {
+            return Ok(Vec::new());
+        };
+        let tree = self.tree();
+        let Some(children) = tree.children(TreeParentId::Node(parent_node)) else {
+            return Ok(Vec::new());
+        };
+        let mut rows: Vec<(i64, String)> = Vec::new();
+        for child in children {
+            let meta = tree.get_meta(child).map_err(|e| {
+                AppError::Validation(format!("loro: list_children_walk: get_meta: {e}"))
+            })?;
+            if read_deleted_at_meta(&meta, "child")?.is_some() {
+                continue; // soft-deleted — excluded, like the SQL filter
             }
-            let Ok(container) = voc.into_container() else {
-                err = Some(AppError::Validation(format!(
-                    "loro: list_children_walk block {key} value is not a container"
-                )));
-                return;
-            };
-            let Ok(block_map) = container.into_map() else {
-                err = Some(AppError::Validation(format!(
-                    "loro: list_children_walk block {key} container is not a LoroMap"
-                )));
-                return;
-            };
-            let deleted = match block_map.get(FIELD_DELETED_AT) {
-                None => false,
-                Some(field_voc) => match field_voc.into_value() {
-                    Ok(LoroValue::Null) => false,
-                    Ok(_) => true,
-                    Err(_) => {
-                        err = Some(AppError::Validation(format!(
-                            "loro: list_children_walk block {key} deleted_at is not a scalar"
-                        )));
-                        return;
-                    }
-                },
-            };
-            if deleted {
-                return;
-            }
-            let matches_parent = match block_map.get(FIELD_PARENT_ID) {
-                None => false,
-                Some(field_voc) => match field_voc.into_value() {
-                    Ok(LoroValue::Null) => false,
-                    Ok(LoroValue::String(s)) => s.as_str() == parent_id,
-                    Ok(_) => false,
-                    Err(_) => {
-                        err = Some(AppError::Validation(format!(
-                            "loro: list_children_walk block {key} parent_id is not a scalar"
-                        )));
-                        return;
-                    }
-                },
-            };
-            if matches_parent {
-                out.push(key.to_string());
-            }
-        });
-        if let Some(e) = err {
-            return Err(e);
+            let bid = read_string(&meta, FIELD_BLOCK_ID)?;
+            let pos = read_i64(&meta, FIELD_POSITION)?;
+            rows.push((pos, bid));
         }
-        Ok(out)
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        Ok(rows.into_iter().map(|(_, bid)| bid).collect())
     }
 
-    /// Count blocks whose `deleted_at` slot is absent or `Null` —
-    /// i.e. blocks that have NOT been soft-deleted.  Used by
-    /// debug/audit paths and by parity checks; not a hot-path read.
+    /// Count blocks that have NOT been soft-deleted (and are not
+    /// hard-purged).  Used by debug/audit paths and parity checks; not a
+    /// hot-path read.
     pub fn count_alive_blocks(&self) -> Result<usize, AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
+        let tree = self.tree();
         let mut alive = 0usize;
-        let mut err: Option<AppError> = None;
-        blocks.for_each(|key, voc| {
-            if err.is_some() {
-                return;
+        // `get_nodes(false)` returns the live (non-purged) forest; a
+        // soft-deleted node is still live in the tree, so filter on the
+        // `deleted_at` meta.
+        for node in tree.nodes() {
+            // `nodes()` includes purged-then-resurrected edge nodes only if
+            // present; guard with is_node_deleted to skip hard-purged ones.
+            if tree.is_node_deleted(&node).unwrap_or(true) {
+                continue;
             }
-            let Ok(container) = voc.into_container() else {
-                err = Some(AppError::Validation(format!(
-                    "loro: count_alive block {key} value is not a container"
-                )));
-                return;
-            };
-            let Ok(block_map) = container.into_map() else {
-                err = Some(AppError::Validation(format!(
-                    "loro: count_alive block {key} container is not a LoroMap"
-                )));
-                return;
-            };
-            let deleted = match block_map.get(FIELD_DELETED_AT) {
-                None => false,
-                Some(field_voc) => match field_voc.into_value() {
-                    Ok(LoroValue::Null) => false,
-                    Ok(_) => true,
-                    Err(_) => {
-                        err = Some(AppError::Validation(format!(
-                            "loro: count_alive block {key} deleted_at is not a scalar"
-                        )));
-                        return;
-                    }
-                },
-            };
-            if !deleted {
+            let meta = tree
+                .get_meta(node)
+                .map_err(|e| AppError::Validation(format!("loro: count_alive: get_meta: {e}")))?;
+            if read_deleted_at_meta(&meta, "count_alive")?.is_none() {
                 alive += 1;
             }
-        });
-        if let Some(e) = err {
-            return Err(e);
         }
         Ok(alive)
     }
 
-    /// Internal helper — fetch the per-block LoroMap by id with a
-    /// uniform error-context prefix so each caller doesn't repeat
-    /// the boilerplate.
+    /// Internal helper — fetch a block's tree-node **meta map** by id with
+    /// a uniform error-context prefix so each caller doesn't repeat the
+    /// boilerplate. Errors if the `block_id` is unknown to the index.
     fn get_block_map(&self, block_id: &str, ctx: &str) -> Result<LoroMap, AppError> {
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        let block_value = blocks.get(block_id).ok_or_else(|| {
+        let node = self.node_for(block_id).ok_or_else(|| {
             AppError::Validation(format!("loro: {ctx}: block {block_id} not found"))
         })?;
-        block_value
-            .into_container()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: {ctx}: block {block_id} value is not a container"
-                ))
-            })?
-            .into_map()
-            .map_err(|_| {
-                AppError::Validation(format!(
-                    "loro: {ctx}: block {block_id} container is not a LoroMap"
-                ))
-            })
+        self.tree().get_meta(node).map_err(|e| {
+            AppError::Validation(format!("loro: {ctx}: block {block_id} get_meta: {e}"))
+        })
     }
 
     /// A reference-clone of the engine's underlying `LoroDoc`.
@@ -1213,11 +1376,20 @@ impl LoroEngine {
 
     /// Import bytes previously produced by `export_snapshot` (or any
     /// other Loro export mode) into this doc.
+    ///
+    /// After importing, runs the flat-map→tree migration (a no-op once the
+    /// legacy root is empty) and rebuilds the `block_id → TreeID` index —
+    /// the imported bytes may have created tree nodes the incremental index
+    /// never saw, and (on a format rollout) may have carried legacy
+    /// flat-map block data.
     pub fn import(&mut self, bytes: &[u8]) -> Result<(), AppError> {
         self.doc
             .import(bytes)
             .map(|_status| ())
-            .map_err(|e| AppError::Validation(format!("loro: import: {e}")))
+            .map_err(|e| AppError::Validation(format!("loro: import: {e}")))?;
+        self.migrate_flat_blocks_to_tree()?;
+        self.rebuild_index();
+        Ok(())
     }
 
     /// Import `bytes` into the doc and return every block_id present
@@ -1266,13 +1438,164 @@ impl LoroEngine {
             .import(bytes)
             .map(|_status| ())
             .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
+        self.migrate_flat_blocks_to_tree()?;
+        self.rebuild_index();
 
-        let blocks: LoroMap = self.doc.get_map(BLOCKS_ROOT);
-        let mut out: Vec<crate::ulid::BlockId> = Vec::with_capacity(blocks.len());
-        blocks.for_each(|key, _voc| {
-            out.push(crate::ulid::BlockId::from_trusted(key));
-        });
+        // Enumerate every live block_id **parent-before-child** (pre-order
+        // DFS from the tree roots) so the caller's Pass-A projection inserts
+        // a parent's SQL row before any child's — the `blocks.parent_id`
+        // self-FK rejects the reverse order. Soft-deleted nodes are
+        // included (still live in the tree; the projection refreshes their
+        // core columns without touching SQL `deleted_at`); hard-purged
+        // nodes are absent from `children`/`roots` and so excluded.
+        let tree = self.tree();
+        let mut out: Vec<crate::ulid::BlockId> = Vec::with_capacity(self.index.len());
+        let mut stack: Vec<TreeID> = tree.roots();
+        // `roots()` is unordered; reverse so pre-order emits roots in a
+        // stable forward order (cosmetic — FK-correctness only needs
+        // parent-before-child, which the DFS guarantees regardless).
+        stack.reverse();
+        while let Some(node) = stack.pop() {
+            if let Ok(meta) = tree.get_meta(node) {
+                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
+                    out.push(crate::ulid::BlockId::from_trusted(&bid));
+                }
+            }
+            if let Some(mut children) = tree.children(TreeParentId::Node(node)) {
+                children.reverse();
+                stack.extend(children);
+            }
+        }
         Ok(out)
+    }
+
+    /// Migrate a legacy flat-map block model (engine format 1) into the
+    /// [`LoroTree`] (format 2) **in place** within this doc. Idempotent:
+    /// once the legacy [`LEGACY_BLOCKS_ROOT`] map is empty (already
+    /// migrated, or a fresh tree-format engine) this is a no-op, so it runs
+    /// unconditionally on every [`Self::import`].
+    ///
+    /// Preserves `block_properties` + `block_tags` (untouched — only the
+    /// hierarchy moves). Block content is re-created as a fresh `LoroText`
+    /// in node meta (its fine-grained edit history does not carry over —
+    /// acceptable: the op_log is the canonical, replay-able history and the
+    /// content *value* is preserved). Parent links are reconstructed in a
+    /// second pass so a child whose parent appears later still attaches;
+    /// a dangling parent (absent from the flat map) leaves the child at the
+    /// tree root.
+    pub fn migrate_flat_blocks_to_tree(&mut self) -> Result<(), AppError> {
+        let legacy: LoroMap = self.doc.get_map(LEGACY_BLOCKS_ROOT);
+        if legacy.is_empty() {
+            return Ok(());
+        }
+
+        // Snapshot the legacy entries first (read fully before mutating).
+        struct LegacyBlock {
+            block_id: String,
+            block_type: String,
+            content: String,
+            parent_id: Option<String>,
+            position: i64,
+            deleted_at: Option<String>,
+        }
+        let mut blocks: Vec<LegacyBlock> = Vec::with_capacity(legacy.len());
+        let mut read_err: Option<AppError> = None;
+        legacy.for_each(|key, voc| {
+            if read_err.is_some() {
+                return;
+            }
+            let parse = (|| -> Result<LegacyBlock, AppError> {
+                let block_map = voc
+                    .into_container()
+                    .map_err(|_| {
+                        AppError::Validation(format!("loro: migrate: block {key} not a container"))
+                    })?
+                    .into_map()
+                    .map_err(|_| {
+                        AppError::Validation(format!("loro: migrate: block {key} not a LoroMap"))
+                    })?;
+                Ok(LegacyBlock {
+                    block_id: key.to_string(),
+                    block_type: read_string(&block_map, FIELD_BLOCK_TYPE)?,
+                    content: read_text(&block_map, FIELD_CONTENT)?,
+                    parent_id: read_optional_string(&block_map, FIELD_PARENT_ID)?,
+                    position: read_i64(&block_map, FIELD_POSITION)?,
+                    deleted_at: read_deleted_at_meta(&block_map, key)?,
+                })
+            })();
+            match parse {
+                Ok(b) => blocks.push(b),
+                Err(e) => read_err = Some(e),
+            }
+        });
+        if let Some(e) = read_err {
+            return Err(e);
+        }
+
+        let tree = self.tree();
+        let mut id_to_node: HashMap<String, TreeID> = HashMap::new();
+
+        // Pass 1 — create every node under root with its scalars + content.
+        for b in &blocks {
+            let node = tree.create(TreeParentId::Root).map_err(|e| {
+                AppError::Validation(format!("loro: migrate: create node {}: {e}", b.block_id))
+            })?;
+            let meta = tree.get_meta(node).map_err(|e| {
+                AppError::Validation(format!("loro: migrate: get_meta {}: {e}", b.block_id))
+            })?;
+            self.write_node_scalars(&meta, &b.block_id, &b.block_type, b.position)?;
+            let content_text: LoroText = meta
+                .insert_container(FIELD_CONTENT, LoroText::new())
+                .map_err(|e| {
+                    AppError::Validation(format!(
+                        "loro: migrate: content container {}: {e}",
+                        b.block_id
+                    ))
+                })?;
+            content_text.insert(0, &b.content).map_err(|e| {
+                AppError::Validation(format!("loro: migrate: content {}: {e}", b.block_id))
+            })?;
+            if let Some(ts) = &b.deleted_at {
+                meta.insert(FIELD_DELETED_AT, LoroValue::from(ts.as_str()))
+                    .map_err(|e| {
+                        AppError::Validation(format!(
+                            "loro: migrate: deleted_at {}: {e}",
+                            b.block_id
+                        ))
+                    })?;
+            }
+            id_to_node.insert(b.block_id.clone(), node);
+        }
+
+        // Pass 2 — reparent children whose parent exists in the flat map.
+        for b in &blocks {
+            if let Some(parent_id) = &b.parent_id {
+                if let (Some(&node), Some(&parent_node)) =
+                    (id_to_node.get(&b.block_id), id_to_node.get(parent_id))
+                {
+                    tree.mov(node, TreeParentId::Node(parent_node))
+                        .map_err(|e| {
+                            AppError::Validation(format!(
+                                "loro: migrate: reparent {} under {}: {e}",
+                                b.block_id, parent_id
+                            ))
+                        })?;
+                }
+            }
+        }
+
+        // Clear the legacy flat map so the migration is a no-op next time.
+        for b in &blocks {
+            let _ = legacy.delete(&b.block_id);
+        }
+
+        self.index = id_to_node;
+        self.doc.commit();
+        tracing::info!(
+            migrated = blocks.len(),
+            "loro: migrated flat-map blocks to LoroTree (engine format 1 → 2)",
+        );
+        Ok(())
     }
 
     /// Encode the doc's current op-log version vector for transport
@@ -1332,6 +1655,14 @@ fn ctx_err(inner: &AppError, ctx: &str) -> AppError {
     AppError::Validation(format!("loro: {ctx}: {inner}"))
 }
 
+/// True iff `e` is LoroTree's deterministic cycle-rejection error — a
+/// `mov` whose target would become an ancestor of itself. The block
+/// hierarchy uses this to skip (not fail on) a cycle-forming reparent that
+/// reaches the engine despite the command-layer guard.
+fn is_cyclic_move(e: &LoroError) -> bool {
+    matches!(e, LoroError::TreeError(LoroTreeError::CyclicMoveError))
+}
+
 fn read_value(map: &LoroMap, key: &str) -> Result<Option<LoroValue>, AppError> {
     let Some(voc) = map.get(key) else {
         return Ok(None);
@@ -1366,6 +1697,26 @@ fn read_text(map: &LoroMap, key: &str) -> Result<String, AppError> {
         ))
     })?;
     Ok(text.to_string())
+}
+
+/// Read a node-meta `deleted_at` slot: `None` for an absent slot or an
+/// explicit `Null` (alive), `Some(ts)` for a soft-delete timestamp.
+fn read_deleted_at_meta(meta: &LoroMap, block_id: &str) -> Result<Option<String>, AppError> {
+    match meta.get(FIELD_DELETED_AT) {
+        None => Ok(None),
+        Some(voc) => {
+            let value = voc.into_value().map_err(|_| {
+                AppError::Validation(format!("loro: block {block_id} deleted_at is not a scalar"))
+            })?;
+            match value {
+                LoroValue::Null => Ok(None),
+                LoroValue::String(s) => Ok(Some((*s).clone())),
+                other => Err(AppError::Validation(format!(
+                    "loro: block {block_id}: deleted_at expected String|Null, got {other:?}"
+                ))),
+            }
+        }
+    }
 }
 
 fn read_optional_string(map: &LoroMap, key: &str) -> Result<Option<String>, AppError> {
@@ -2080,5 +2431,269 @@ mod sync_vv_tests {
             VersionVector::decode(&sender_vv).unwrap(),
             "receiver vv must match sender vv after delta import"
         );
+    }
+}
+
+/// PEND-80 Phase 3 — LoroTree block hierarchy: tree-op behaviour, the
+/// flat-map → tree snapshot migration, and concurrent-move convergence.
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    /// Create A and B under root, C under A; verify the read surface
+    /// derives parent/position from the tree + meta, then reparent C
+    /// under B and re-verify.
+    #[test]
+    fn create_reparent_and_read() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("A", "content", "a-text", None, 1)
+            .unwrap();
+        e.apply_create_block("B", "content", "b-text", None, 2)
+            .unwrap();
+        e.apply_create_block("C", "content", "c-text", Some("A"), 1)
+            .unwrap();
+
+        let c = e.read_block("C").unwrap().unwrap();
+        assert_eq!(c.parent_id.as_deref(), Some("A"));
+        assert_eq!(c.position, 1);
+        assert_eq!(c.content, "c-text");
+        assert_eq!(c.block_type, "content");
+        assert_eq!(e.read_parent("A").unwrap(), None, "A is a tree root");
+        assert_eq!(e.list_children_walk("A").unwrap(), vec!["C".to_string()]);
+        assert_eq!(e.list_children_walk("B").unwrap(), Vec::<String>::new());
+
+        // Reparent C under B at a new position.
+        e.apply_move_block("C", Some("B"), 7).unwrap();
+        let c = e.read_block("C").unwrap().unwrap();
+        assert_eq!(c.parent_id.as_deref(), Some("B"));
+        assert_eq!(c.position, 7);
+        assert_eq!(e.list_children_walk("A").unwrap(), Vec::<String>::new());
+        assert_eq!(e.list_children_walk("B").unwrap(), vec!["C".to_string()]);
+    }
+
+    /// `list_children_walk` returns live children in `(position, id)`
+    /// order and excludes soft-deleted siblings — matching the SQL
+    /// projection's `ORDER BY position` + `deleted_at IS NULL` filter.
+    #[test]
+    fn list_children_orders_by_position_excludes_deleted() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block("c2", "content", "", Some("P"), 20)
+            .unwrap();
+        e.apply_create_block("c1", "content", "", Some("P"), 10)
+            .unwrap();
+        e.apply_create_block("c3", "content", "", Some("P"), 30)
+            .unwrap();
+        e.apply_delete_block("c2", "2025-01-01T00:00:00Z").unwrap();
+
+        assert_eq!(
+            e.list_children_walk("P").unwrap(),
+            vec!["c1".to_string(), "c3".to_string()],
+        );
+    }
+
+    /// A cycle-forming reparent (move a node under its own descendant) is
+    /// rejected deterministically by LoroTree and skipped (the apply
+    /// succeeds, the parent is left unchanged) — the headline cycle-safety
+    /// win over the old per-key-LWW flat map.
+    #[test]
+    fn cycle_move_is_rejected_and_skipped() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("A", "content", "", None, 0).unwrap();
+        e.apply_create_block("B", "content", "", Some("A"), 0)
+            .unwrap();
+        // Move A under B (B is A's child) — would form a cycle.
+        e.apply_move_block("A", Some("B"), 0).unwrap();
+        // A stays a root; B stays under A.
+        assert_eq!(e.read_parent("A").unwrap(), None);
+        assert_eq!(e.read_parent("B").unwrap().as_deref(), Some("A"));
+    }
+
+    /// Soft-delete keeps the node in the tree (restore-able); purge removes
+    /// it. `count_alive_blocks` reflects the soft-delete state.
+    #[test]
+    fn soft_delete_restore_purge_lifecycle() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("X", "content", "x", None, 0).unwrap();
+        assert_eq!(e.count_alive_blocks().unwrap(), 1);
+
+        e.apply_delete_block("X", "2025-06-02T00:00:00Z").unwrap();
+        assert!(e.read_deleted("X").unwrap());
+        assert_eq!(
+            e.read_deleted_at("X").unwrap().as_deref(),
+            Some("2025-06-02T00:00:00Z")
+        );
+        assert_eq!(e.count_alive_blocks().unwrap(), 0);
+        // Still readable (node survives for restore + cascade derivation).
+        assert!(e.read_block("X").unwrap().is_some());
+
+        e.apply_restore_block("X").unwrap();
+        assert!(!e.read_deleted("X").unwrap());
+        assert_eq!(e.read_deleted_at("X").unwrap(), None);
+        assert_eq!(e.count_alive_blocks().unwrap(), 1);
+
+        e.apply_purge_block("X").unwrap();
+        assert!(e.read_block("X").unwrap().is_none());
+        assert_eq!(e.count_alive_blocks().unwrap(), 0);
+        // Purge is idempotent.
+        e.apply_purge_block("X").unwrap();
+    }
+
+    /// Re-applying `CreateBlock` for an existing id (boot-replay heal)
+    /// updates in place rather than erroring or duplicating.
+    #[test]
+    fn create_is_idempotent_under_replay() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block("P", "page", "p", None, 0).unwrap();
+        e.apply_create_block("X", "content", "v1", Some("P"), 1)
+            .unwrap();
+        e.apply_create_block("X", "content", "v2", Some("P"), 1)
+            .unwrap();
+        let x = e.read_block("X").unwrap().unwrap();
+        assert_eq!(x.content, "v2");
+        assert_eq!(e.count_alive_blocks().unwrap(), 2);
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["X".to_string()]);
+    }
+
+    /// Build a **legacy flat-map** snapshot (engine format 1) the way the
+    /// pre-Phase-3 engine wrote it, import it (which migrates), and assert
+    /// the tree-derived read surface recovers every field losslessly, the
+    /// legacy root is cleared, and the migration is idempotent.
+    #[test]
+    fn migrate_flat_map_to_tree_round_trips() {
+        // Write a flat-map doc directly under LEGACY_BLOCKS_ROOT.
+        let legacy_bytes = {
+            let doc = LoroDoc::new();
+            let blocks = doc.get_map(LEGACY_BLOCKS_ROOT);
+            let write = |id: &str,
+                         btype: &str,
+                         content: &str,
+                         parent: Option<&str>,
+                         position: i64,
+                         deleted: Option<&str>| {
+                let bm: LoroMap = blocks.insert_container(id, LoroMap::new()).unwrap();
+                bm.insert(FIELD_BLOCK_TYPE, LoroValue::from(btype)).unwrap();
+                let t: LoroText = bm.insert_container(FIELD_CONTENT, LoroText::new()).unwrap();
+                t.insert(0, content).unwrap();
+                bm.insert(
+                    FIELD_PARENT_ID,
+                    match parent {
+                        Some(p) => LoroValue::from(p),
+                        None => LoroValue::Null,
+                    },
+                )
+                .unwrap();
+                bm.insert(FIELD_POSITION, LoroValue::from(position))
+                    .unwrap();
+                if let Some(d) = deleted {
+                    bm.insert(FIELD_DELETED_AT, LoroValue::from(d)).unwrap();
+                }
+            };
+            write("page", "page", "P", None, 0, None);
+            write("a", "content", "A", Some("page"), 1, None);
+            write(
+                "b",
+                "content",
+                "B",
+                Some("page"),
+                2,
+                Some("2025-01-01T00:00:00Z"),
+            );
+            write("c", "content", "C", Some("a"), 1, None);
+            // Dangling parent: parent id not present in the flat map.
+            write("orphan", "content", "O", Some("ghost"), 5, None);
+            doc.commit();
+            doc.export(ExportMode::Snapshot).unwrap()
+        };
+
+        let mut e = LoroEngine::new();
+        e.import(&legacy_bytes).unwrap();
+
+        // Fields recovered losslessly.
+        let a = e.read_block("a").unwrap().unwrap();
+        assert_eq!(a.parent_id.as_deref(), Some("page"));
+        assert_eq!(a.position, 1);
+        assert_eq!(a.content, "A");
+        assert_eq!(a.block_type, "content");
+
+        assert_eq!(e.read_parent("c").unwrap().as_deref(), Some("a"));
+        assert!(e.read_deleted("b").unwrap());
+        assert_eq!(
+            e.read_deleted_at("b").unwrap().as_deref(),
+            Some("2025-01-01T00:00:00Z")
+        );
+        // page(alive) + a + c + orphan = 4 alive; b is soft-deleted.
+        assert_eq!(e.count_alive_blocks().unwrap(), 4);
+        // page's live children, position-ordered, excluding deleted b.
+        assert_eq!(e.list_children_walk("page").unwrap(), vec!["a".to_string()]);
+        // Dangling parent → child left at the tree root (parent recovered None).
+        assert_eq!(e.read_parent("orphan").unwrap(), None);
+
+        // Legacy root cleared → migration is a no-op the second time.
+        e.migrate_flat_blocks_to_tree().unwrap();
+        assert_eq!(e.count_alive_blocks().unwrap(), 4);
+
+        // The migrated (tree-format) snapshot round-trips into a fresh engine.
+        let tree_bytes = e.export_snapshot().unwrap();
+        let mut e2 = LoroEngine::new();
+        e2.import(&tree_bytes).unwrap();
+        assert_eq!(
+            e2.read_block("c").unwrap().unwrap().parent_id.as_deref(),
+            Some("a")
+        );
+        assert_eq!(e2.count_alive_blocks().unwrap(), 4);
+    }
+
+    /// Two devices concurrently reparent the same node to different
+    /// parents; after exchanging snapshots both converge on the **same**
+    /// parent (Loro's move-CRDT), not a per-key-LWW split. This is the
+    /// core Phase-3 convergence guarantee.
+    #[test]
+    fn concurrent_reparent_converges() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+
+        // Seed a shared tree: two pages + one block under p1.
+        a.apply_create_block("p1", "page", "P1", None, 0).unwrap();
+        a.apply_create_block("p2", "page", "P2", None, 1).unwrap();
+        a.apply_create_block("x", "content", "X", Some("p1"), 0)
+            .unwrap();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        assert_eq!(b.read_parent("x").unwrap().as_deref(), Some("p1"));
+
+        // Concurrent divergent reparents.
+        a.apply_move_block("x", Some("p2"), 0).unwrap();
+        b.apply_move_block("x", Some("p1"), 0).unwrap();
+
+        // Exchange full snapshots both ways.
+        let a_bytes = a.export_snapshot().unwrap();
+        let b_bytes = b.export_snapshot().unwrap();
+        a.import(&b_bytes).unwrap();
+        b.import(&a_bytes).unwrap();
+
+        let pa = a.read_parent("x").unwrap();
+        let pb = b.read_parent("x").unwrap();
+        assert_eq!(pa, pb, "both peers must converge on the same parent for x");
+        assert!(
+            pa.as_deref() == Some("p1") || pa.as_deref() == Some("p2"),
+            "converged parent is one of the two concurrent intents, got {pa:?}"
+        );
+    }
+
+    /// A purge on one peer converges across a snapshot exchange: the block
+    /// is gone on both sides.
+    #[test]
+    fn concurrent_purge_converges() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        a.apply_create_block("root", "page", "R", None, 0).unwrap();
+        a.apply_create_block("k", "content", "K", Some("root"), 0)
+            .unwrap();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        a.apply_purge_block("k").unwrap();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        assert!(b.read_block("k").unwrap().is_none());
+        assert_eq!(b.list_children_walk("root").unwrap(), Vec::<String>::new());
     }
 }
