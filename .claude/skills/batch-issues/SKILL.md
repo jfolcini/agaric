@@ -94,10 +94,14 @@ fill the idle window while keeping real oversight.
 - Choose a second issue whose files don't overlap, ideally a different toolchain (frontend
   while Rust compiles) so builds don't contend on the cargo target lock.
 - Run it in an **isolated `git worktree`** on its own branch (`git worktree add ../wt-x -b
-  branch origin/main`); each Rust worktree gets its own `target/`. For frontend in a
-  worktree, symlink `node_modules` from the main checkout FIRST
-  (`ln -s <main>/node_modules node_modules`) — gitignored, absent in fresh worktrees, and
-  if you skip it `tsc -b` creates a real dir and nesting breaks (TS2688).
+  branch origin/main`); each Rust worktree gets its own `target/`. **Immediately seed the
+  gitignored artifacts the pre-push hook needs, or the push fails even for a Rust-only diff
+  (see pitfalls):** `ln -sfn <main>/node_modules node_modules` (Phase A `prek --all-files`
+  lints JS regardless of your diff; without it oxfmt's native binding is "not found") and
+  `cp src-tauri/.env src-tauri/dev.db <wt>/src-tauri/` (Phase E `sqlx prepare --check`
+  connects to `DATABASE_URL=sqlite:dev.db`). For frontend, the `node_modules` symlink must
+  exist BEFORE `tsc -b` or it creates a real dir and nesting breaks (TS2688). Simpler for a
+  one-off: push the branch from the MAIN checkout instead of the worktree.
 - Ship each issue as its own PR; reconcile both against CI per §8.
 - Don't force a bad second issue: if everything else is blocked on a maintainer decision,
   run just one — but pick a short wakeup, not a 20-minute idle.

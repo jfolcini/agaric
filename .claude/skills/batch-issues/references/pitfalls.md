@@ -86,6 +86,27 @@ benchmark call sites passing the old type; lib+tests build clean and a subagent 
 change, run `cd src-tauri && cargo check --all-targets` before committing and fix bench
 call sites (usually a trailing `.into()`).
 
+### Pushing from a FRESH worktree needs node_modules + .env + dev.db seeded first
+
+`git worktree add` checks out *tracked* files only; the gitignored artifacts the pre-push
+hook (`scripts/verify-ci-equivalent.sh`) depends on are ABSENT, so a worktree push fails
+even when the diff is Rust-only (session: SQL-review batch):
+
+- **`node_modules`** — Phase A runs `prek --all-files`, linting *every* file in the repo
+  (oxlint/oxfmt over JS) no matter what your diff touches. Without it oxfmt aborts:
+  `Cannot find native binding @oxfmt/binding-linux-x64-gnu`. Symlink FIRST:
+  `ln -sfn <main>/node_modules node_modules`. A failed push can leave a partial *real*
+  `node_modules/` dir behind (npm tried to self-heal) — `rm -rf node_modules` before
+  re-symlinking, or `ln` nests the link inside it.
+- **`src-tauri/.env` + `src-tauri/dev.db`** — Phase E `cargo sqlx prepare --check -- --tests`
+  CONNECTS to `DATABASE_URL` (read from `src-tauri/.env`, = `sqlite:dev.db`); both are
+  gitignored. Missing → `--database-url or DATABASE_URL must be set`. Copy both from main:
+  `cp src-tauri/.env src-tauri/dev.db <wt>/src-tauri/`. dev.db must match the branch's
+  schema (fine when no migrations were added; else recreate per the next pitfall).
+
+Do all three once, right after `git worktree add`, before the first commit/push. Or just
+push the branch from the MAIN checkout (which already has them).
+
 ### The shared `src-tauri/dev.db` must match the CURRENT branch's migrations
 
 The pre-commit/pre-push `cargo clippy` runs sqlx in *online* mode against `DATABASE_URL`
