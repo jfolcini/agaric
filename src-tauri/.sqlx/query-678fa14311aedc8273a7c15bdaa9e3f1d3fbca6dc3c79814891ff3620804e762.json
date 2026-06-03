@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue WHERE next_attempt_at <= ? ORDER BY next_attempt_at ASC LIMIT ?",
+  "query": "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue WHERE next_attempt_at <= ? ORDER BY next_attempt_at ASC, block_id ASC, task_kind ASC LIMIT ?",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "a31917a13de17140394ec322f5bc182d63c06feeb70ce3e02b6dc000b3f0722d"
+  "hash": "678fa14311aedc8273a7c15bdaa9e3f1d3fbca6dc3c79814891ff3620804e762"
 }

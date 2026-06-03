@@ -4287,3 +4287,313 @@ async fn reindex_page_link_cache_for_block_multi_target_full_lifecycle() {
         "aggregate UPSERT + NOT EXISTS DELETE must produce {{PB:2, PC:1}} and sweep PD's stale row"
     );
 }
+
+/// P6 (#346): `reindex_block_links` pushes the per-target
+/// `resolve_block_space` filter into the INSERT's correlated subquery
+/// (was an N+1 Rust loop). This test verifies (a) a same-space target is
+/// inserted, (b) a cross-space target is filtered out, and (c) the
+/// soft-delete guards the subquery carries are preserved: a target whose
+/// space-holding page is soft-deleted resolves to no space and is dropped
+/// (invariant #9).
+#[tokio::test]
+async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two space marker pages (the `value_ref` FK target).
+    async fn insert_page_with_pid(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    async fn set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind(block_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    let space1 = "01SPACE0000000000000000001";
+    let space2 = "01SPACE0000000000000000002";
+    insert_page_with_pid(&pool, space1).await;
+    insert_page_with_pid(&pool, space2).await;
+
+    // Source page in space1.
+    let src_page = "01SRCPAGE000000000000000AA";
+    insert_page_with_pid(&pool, src_page).await;
+    set_space(&pool, src_page, space1).await;
+
+    // Same-space target page (space1) and cross-space target page (space2).
+    let tgt_same = "01TGTSAME000000000000000BB";
+    let tgt_cross = "01TGTCROS000000000000000CC";
+    let tgt_deleted_holder = "01TGTDELS000000000000000DD";
+    insert_page_with_pid(&pool, tgt_same).await;
+    set_space(&pool, tgt_same, space1).await;
+    insert_page_with_pid(&pool, tgt_cross).await;
+    set_space(&pool, tgt_cross, space2).await;
+    // Same-space target, but soft-delete the holder so its space resolves
+    // to None → must be dropped by the preserved soft-delete guard.
+    insert_page_with_pid(&pool, tgt_deleted_holder).await;
+    set_space(&pool, tgt_deleted_holder, space1).await;
+    soft_delete_block(&pool, tgt_deleted_holder).await;
+
+    // Source content block under src_page links to all three targets.
+    let src_block = "01SRCBLOK000000000000000EE";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+        .bind(src_block)
+        .bind(format!("[[{tgt_same}]] [[{tgt_cross}]] [[{tgt_deleted_holder}]]"))
+        .bind(src_page)
+        .bind(src_page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reindex_block_links(&pool, src_block).await.unwrap();
+
+    let mut targets: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(src_block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec![tgt_same.to_string()],
+        "only the same-space, live-holder target may be linked; cross-space \
+         and soft-deleted-holder targets must be dropped by the pushed-down filter"
+    );
+}
+
+/// SQL/C9(b) (#345): the page-link rollup keys edges by the OWNING PAGE
+/// (`blocks.page_id`), not the immediate parent. A link inside a block
+/// nested two levels under a page must roll up to the page, not the
+/// intermediate block. This test seeds page → mid block → leaf block
+/// (link), reindexes, and asserts the `page_link_cache` source is the
+/// page id.
+#[tokio::test]
+async fn reindex_page_link_cache_rolls_up_to_owning_page_c9b() {
+    let (pool, _dir) = test_pool().await;
+
+    async fn insert_node(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        page_id: &str,
+    ) {
+        sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, ?, ?, ?, ?)")
+            .bind(id)
+            .bind(block_type)
+            .bind(content)
+            .bind(parent_id)
+            .bind(page_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    let page = "01PAGEOWN000000000000000AA";
+    let target = "01PAGETGT000000000000000BB";
+    let mid = "01MIDBLOK000000000000000CC";
+    let leaf = "01LEAFBLK000000000000000DD";
+    insert_node(&pool, page, "page", "Owner", None, page).await;
+    insert_node(&pool, target, "page", "Target", None, target).await;
+    // mid is a child of the page; leaf is a child of mid (2 levels deep).
+    // Both have page_id = page (the denormalised owner).
+    insert_node(&pool, mid, "content", "mid", Some(page), page).await;
+    insert_node(
+        &pool,
+        leaf,
+        "content",
+        &format!("deep [[{target}]]"),
+        Some(mid),
+        page,
+    )
+    .await;
+
+    // The leaf's block_links edge (written by reindex_block_links).
+    reindex_block_links(&pool, leaf).await.unwrap();
+    // Roll up into page_link_cache.
+    reindex_page_link_cache_for_block(&pool, leaf)
+        .await
+        .unwrap();
+
+    let rows: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT source_page_id, target_page_id, edge_count FROM page_link_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(page.to_string(), target.to_string(), 1)],
+        "edge from a 2-level-nested block must roll up to the owning page \
+         (blocks.page_id), NOT the immediate parent block"
+    );
+}
+
+/// SQL/C2 (#342): the full `pages_cache` rebuild UPSERTs only
+/// `(page_id, title, updated_at)`; before the fix the two aggregate
+/// columns fell to DEFAULT 0 on every fresh insert, so after a
+/// snapshot/sync RESET (which wipes `pages_cache` then re-inserts) every
+/// page read count = 0 until an unrelated per-op edit touched it. This
+/// test seeds links + child blocks, runs the full rebuild from an EMPTY
+/// cache (the RESET state), and asserts both counts equal a
+/// from-first-principles recompute (NOT a copy of the production SQL —
+/// the child count walks the tree, the inbound count is pinned with a
+/// literal too).
+#[tokio::test]
+async fn rebuild_pages_cache_recomputes_counts_c2() {
+    let (pool, _dir) = test_pool().await;
+
+    // Helper: insert a block with an explicit page_id (the rebuild's
+    // count subqueries read the denormalised `blocks.page_id`).
+    async fn insert_with_page(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        page_id: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(content)
+        .bind(parent_id)
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Two pages. PAGE-A owns two content children; a block on PAGE-B
+    // links into PAGE-A (one inbound link, cross-page so it counts).
+    insert_with_page(&pool, "PAGEAAAA", "page", "Page A", None, Some("PAGEAAAA")).await;
+    insert_with_page(&pool, "PAGEBBBB", "page", "Page B", None, Some("PAGEBBBB")).await;
+    insert_with_page(
+        &pool,
+        "CHILDAA1",
+        "content",
+        "child one",
+        Some("PAGEAAAA"),
+        Some("PAGEAAAA"),
+    )
+    .await;
+    insert_with_page(
+        &pool,
+        "CHILDAA2",
+        "content",
+        "child two [[PAGEAAAA]]",
+        Some("PAGEAAAA"),
+        Some("PAGEAAAA"),
+    )
+    .await;
+    insert_with_page(
+        &pool,
+        "CHILDBB1",
+        "content",
+        "see [[PAGEAAAA]]",
+        Some("PAGEBBBB"),
+        Some("PAGEBBBB"),
+    )
+    .await;
+
+    // block_links: CHILDBB1 (on PAGE-B) → PAGE-A is a cross-page inbound
+    // edge for PAGE-A. CHILDAA2 (on PAGE-A) → PAGE-A is a same-page link
+    // and must be EXCLUDED from PAGE-A's inbound count.
+    for (src, tgt) in [("CHILDBB1", "PAGEAAAA"), ("CHILDAA2", "PAGEAAAA")] {
+        sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+            .bind(src)
+            .bind(tgt)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // RESET state: cache is empty before the full rebuild.
+    let pre: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(pre, 0, "cache must start empty (RESET state)");
+
+    rebuild_pages_cache(&pool).await.unwrap();
+
+    // From-first-principles canonical counts (independent of the
+    // production recompute SQL). child_block_count walks the parent tree;
+    // inbound_link_count is asserted both structurally and with literals.
+    async fn canonical(pool: &SqlitePool, page_id: &str) -> (i64, i64) {
+        let child: i64 = sqlx::query_scalar(
+            "WITH RECURSIVE owned(id, block_type, depth) AS ( \
+                 SELECT b.id, b.block_type, 0 FROM blocks b \
+                 WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+                 UNION ALL \
+                 SELECT b.id, b.block_type, o.depth + 1 FROM blocks b \
+                 JOIN owned o ON b.parent_id = o.id \
+                 WHERE b.deleted_at IS NULL AND o.block_type != 'page' AND o.depth < 100 \
+             ) SELECT COUNT(*) FROM owned WHERE block_type != 'page'",
+        )
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let inbound: i64 = sqlx::query_scalar(
+            "SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                 JOIN blocks descendant ON bl.target_id = descendant.id \
+                 JOIN blocks src ON src.id = bl.source_id \
+             WHERE descendant.page_id = ?1 AND descendant.deleted_at IS NULL \
+               AND src.deleted_at IS NULL AND src.page_id IS NOT NULL \
+               AND src.page_id != ?1",
+        )
+        .bind(page_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (inbound, child)
+    }
+
+    let cached = |page_id: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT inbound_link_count, child_block_count FROM pages_cache WHERE page_id = ?",
+            )
+            .bind(page_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // PAGE-A: 2 children, 1 cross-page inbound link (same-page excluded).
+    let canon_a = canonical(&pool, "PAGEAAAA").await;
+    assert_eq!(canon_a, (1, 2), "canonical PAGE-A counts pinned by literal");
+    assert_eq!(
+        cached("PAGEAAAA").await,
+        canon_a,
+        "rebuild must recompute PAGE-A counts, not leave them DEFAULT 0"
+    );
+
+    // PAGE-B: 1 child, 0 inbound links.
+    let canon_b = canonical(&pool, "PAGEBBBB").await;
+    assert_eq!(canon_b, (0, 1), "canonical PAGE-B counts pinned by literal");
+    assert_eq!(
+        cached("PAGEBBBB").await,
+        canon_b,
+        "rebuild must recompute PAGE-B counts"
+    );
+}

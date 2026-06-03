@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",\n             bl.target_id AS \"target_page_id!\",\n             COUNT(*) AS \"edge_count!\"\n         FROM block_links bl\n         JOIN blocks sb ON sb.id = bl.source_id\n         WHERE sb.deleted_at IS NULL\n         GROUP BY 1, 2",
+  "query": "SELECT\n             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!\",\n             bl.target_id AS \"target_page_id!\",\n             COUNT(*) AS \"edge_count!\"\n         FROM block_links bl\n         JOIN blocks sb ON sb.id = bl.source_id\n         WHERE sb.deleted_at IS NULL\n         GROUP BY 1, 2",
   "describe": {
     "columns": [
       {
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "b8cf26ba546770a537ffbc967b5dc614fa81b4106bcff4b4f6e9f63908104cf9"
+  "hash": "9d006080ac31a968fcc10d2bc2e411f5f2886543e54e268ec5422c52a761e476"
 }

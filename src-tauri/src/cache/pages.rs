@@ -54,6 +54,42 @@ async fn apply_sort_merge_rebuild(
     .execute(&mut *write_conn)
     .await?;
 
+    // SQL/C2 (#342): the UPSERT above only writes (page_id, title,
+    // updated_at) — the two aggregate columns fall to DEFAULT 0 on every
+    // fresh insert. After a snapshot/sync RESET (which wipes `pages_cache`
+    // then re-inserts), every page would read count = 0 until an
+    // unrelated per-op edit happened to touch it, breaking MostLinked /
+    // MostContent sorts, Orphan / HasNoInboundLinks filters, and the ↗N
+    // badge. Recompute both counts for *all* rows here, reusing the exact
+    // correlated-subquery shape from the per-op
+    // `recompute_pages_cache_counts_for_pages` (the single source of
+    // truth for the two columns) with its `WHERE page_id IN (...)` clause
+    // dropped so the rebuild touches every page. Runs inside the same
+    // write tx so the cache is never observed mid-rebuild. The
+    // `rebuild_path_count_parity` test in `cache/tests.rs` asserts these
+    // values equal the per-op recompute.
+    sqlx::query!(
+        "UPDATE pages_cache SET \
+             inbound_link_count = ( \
+                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                     JOIN blocks descendant ON bl.target_id = descendant.id \
+                     JOIN blocks src ON src.id = bl.source_id \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND src.deleted_at IS NULL \
+                       AND src.page_id IS NOT NULL \
+                       AND src.page_id != pages_cache.page_id \
+             ), \
+             child_block_count = ( \
+                 SELECT COUNT(*) FROM blocks descendant \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND descendant.id != pages_cache.page_id \
+             )",
+    )
+    .execute(&mut *write_conn)
+    .await?;
+
     Ok(upsert.rows_affected() + delete.rows_affected())
 }
 

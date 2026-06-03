@@ -208,7 +208,19 @@ pub async fn list_page_aliases_by_prefix_inner(
     scope: &SpaceScope,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
     let like_pattern = format!("%{}%", crate::sql_utils::escape_like(prefix));
-    let effective_limit = limit.unwrap_or(MAX_PAGE_ALIASES_PREFIX);
+    // R1 (#347): reject out-of-range `limit` instead of silently passing
+    // an unbounded value to SQLite. Matches the `list_blocks` / `list_trash`
+    // contract (`pagination::PageParams::new`): a supplied limit must be in
+    // `[1, MAX_PAGE_ALIASES_PREFIX]`; `None` falls through to the cap.
+    let effective_limit = match limit {
+        Some(l) if (1..=MAX_PAGE_ALIASES_PREFIX).contains(&l) => l,
+        Some(l) => {
+            return Err(AppError::Validation(format!(
+                "list_page_aliases_by_prefix limit must be in [1, {MAX_PAGE_ALIASES_PREFIX}]; got {l}"
+            )));
+        }
+        None => MAX_PAGE_ALIASES_PREFIX,
+    };
     let space_filter = scope.as_filter_param();
     let rows = sqlx::query_as!(
         PageAliasPrefixRow,
@@ -773,6 +785,32 @@ pub async fn list_page_links_inner(
     scope: &SpaceScope,
     tag_ids: Option<&[String]>,
 ) -> Result<Vec<PageLink>, AppError> {
+    // Single-pool entry point (tests, callers without a split pool). The
+    // pool is writable, so it serves as both the read and write side of
+    // the split variant — preserving the lazy-rebuild behaviour.
+    list_page_links_inner_split(pool, pool, scope, tag_ids).await
+}
+
+/// Read/write split variant of [`list_page_links_inner`] (SQL/C1, #341).
+///
+/// `read_pool` is bound with `PRAGMA query_only=ON` in production, so the
+/// lazy `page_link_cache` rebuild — a DELETE+INSERT — MUST run on
+/// `write_pool`. The previous single-pool form rebuilt on the read pool
+/// and crashed with "attempt to write a readonly database" the first time
+/// an upgrading user opened the graph/backlinks view before any edit
+/// (`page_link_cache` empty, `block_links` populated, no backfill).
+///
+/// All reads (the cache-empty probe, the `block_links` presence probe, and
+/// the final SELECT) go through `read_pool`; only the rebuild touches
+/// `write_pool` via [`crate::cache::rebuild_page_link_cache_split`].
+#[instrument(skip(write_pool, read_pool, tag_ids), err)]
+pub async fn list_page_links_inner_split(
+    write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    scope: &SpaceScope,
+    tag_ids: Option<&[String]>,
+) -> Result<Vec<PageLink>, AppError> {
+    let pool = read_pool;
     // PEND-35 Tier 4.5 — encode the tag set as a JSON array so the SQL
     // can fan it out via `json_each(?2)` (mirrors the
     // `value_text_in_json` shape in `pagination::properties`). The
@@ -796,6 +834,11 @@ pub async fn list_page_links_inner(
     // the hard constraint "All existing list_page_links tests must pass
     // without modification" true while preserving the steady-state
     // perf win.
+    //
+    // SQL/C1 (#341): the rebuild is a DELETE+INSERT, so it MUST target
+    // `write_pool`. Driving it through the read pool (`query_only=ON`)
+    // is what produced the "attempt to write a readonly database" hard
+    // error for an upgrading user opening the graph before any edit.
     let cache_empty: bool =
         sqlx::query_scalar!(r#"SELECT NOT EXISTS (SELECT 1 FROM page_link_cache) AS "v!: i32""#)
             .fetch_one(pool)
@@ -808,7 +851,7 @@ pub async fn list_page_links_inner(
                 .await?
                 == 1;
         if block_links_present {
-            crate::cache::rebuild_page_link_cache(pool).await?;
+            crate::cache::rebuild_page_link_cache_split(write_pool, read_pool).await?;
         }
     }
 
@@ -1295,11 +1338,14 @@ pub async fn import_markdown(
 #[tauri::command]
 #[specta::specta]
 pub async fn list_page_links(
-    pool: State<'_, ReadPool>,
+    write_pool: State<'_, WritePool>,
+    read_pool: State<'_, ReadPool>,
     scope: SpaceScope,
     tag_ids: Option<Vec<String>>,
 ) -> Result<Vec<PageLink>, AppError> {
-    list_page_links_inner(&pool.0, &scope, tag_ids.as_deref())
+    // SQL/C1 (#341): the lazy `page_link_cache` rebuild is a DELETE+INSERT
+    // and must run on the write pool — the read pool is `query_only=ON`.
+    list_page_links_inner_split(&write_pool.0, &read_pool.0, &scope, tag_ids.as_deref())
         .await
         .map_err(sanitize_internal_error)
 }

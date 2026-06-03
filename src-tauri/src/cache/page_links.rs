@@ -3,9 +3,19 @@
 //!
 //! Each row holds a `(source_page_id, target_page_id, edge_count)`
 //! tuple: the number of distinct `block_links` rows whose source rolls
-//! up to `source_page_id` (via `blocks.parent_id` when the source is a
-//! content block, or directly when the source is a page) and whose
-//! target is `target_page_id`.
+//! up to `source_page_id` (via `blocks.page_id` — the denormalised
+//! owning page, which is the source's own id when the source IS a page)
+//! and whose target is `target_page_id`.
+//!
+//! SQL/C9 (#345): the roll-up prefers `blocks.page_id` over
+//! `blocks.parent_id` — `COALESCE(page_id, parent_id, id)`. `parent_id`
+//! is the *immediate* parent, so a link inside a block nested
+//! two-or-more levels under a page was mis-attributed to the intermediate
+//! block instead of the owning page. `page_id` (migration 0027/0066) is
+//! the nearest page ancestor — self for page blocks. The `parent_id`
+//! fallback preserves the prior single-step roll-up for rows where
+//! `page_id` was never stamped (test fixtures / partial state); the final
+//! `id` fallback covers top-level tags with neither.
 //!
 //! The read path (`list_page_links_inner`) selects from this table
 //! plus a `blocks` join on each endpoint to enforce
@@ -25,7 +35,7 @@
 //!
 //! - [`rebuild_page_link_cache`] — full recompute that walks every
 //!   `block_links` row, rolls up the source to a page via
-//!   `COALESCE(parent_id, source_id)`, groups by
+//!   `COALESCE(blocks.page_id, parent_id, source_id)`, groups by
 //!   `(source_page, target_page)`, and DELETE + INSERTs the whole
 //!   table. Used by snapshot restore, the boot-time "table is empty"
 //!   fallback, and the delete/restore/purge FULL_CACHE_REBUILD_TASKS
@@ -61,10 +71,11 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// recompute sees the canonical `block_links` state.
 ///
 /// Algorithm:
-///   1. Resolve `source_page = COALESCE(blocks.parent_id, block_id)` for
-///      `block_id`. If the block itself is a page, `source_page = block_id`.
-///      If `block_id` is gone (purged), `source_page` falls through to
-///      `block_id` and the recompute naturally drops empty pairs.
+///   1. Resolve `source_page = COALESCE(page_id, parent_id, block_id)`
+///      for `block_id`. If the block itself is a page, `page_id = id` so
+///      `source_page = block_id`. If `block_id` is gone (purged),
+///      `source_page` falls through to `block_id` and the recompute
+///      naturally drops empty pairs.
 ///   2. Collect every distinct `target_page` that currently appears in
 ///      `block_links` under `source_id = block_id` OR rolls up to
 ///      `source_page` AND every `target_page` that previously appeared in
@@ -72,7 +83,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 ///      up edges that just dropped to zero).
 ///   3. For each `(source_page, target_page)` pair in the union, recompute
 ///      `edge_count = COUNT(*) FROM block_links bl JOIN blocks sb
-///       ON sb.id = bl.source_id AND COALESCE(sb.parent_id, sb.id) =
+///       ON sb.id = bl.source_id AND COALESCE(sb.page_id, sb.parent_id, sb.id) =
 ///       source_page WHERE bl.target_id = target_page`. UPSERT non-zero
 ///      counts; DELETE zero counts.
 ///
@@ -92,27 +103,34 @@ pub async fn reindex_page_link_cache_for_block(
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_links_reindex").await?;
 
     // Resolve the source page (the page the changed block lives on).
-    // `parent_id` is the immediate parent — for content blocks under a
-    // page that is exactly the page id. For nested content blocks
-    // (block under block) we still roll up to the *immediate* parent
-    // because the read query in `list_page_links_inner` uses
-    // `COALESCE(sb.parent_id, bl.source_id)` (single-step roll-up); we
-    // mirror that exact shape here so the cache and the legacy query
-    // agree byte-for-byte on what "source page" means.
-    let source_page: String =
-        match sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .map(|r| (r.parent_id,))
-        {
-            Some((Some(parent),)) => parent,
-            // `parent_id IS NULL` → block is its own page (or a top-level
-            // tag with no parent). Source page = block_id.
-            Some((None,)) => block_id.to_owned(),
-            // Block missing (purged). Fall back to block_id so the
-            // recompute can still drop stale rows keyed under that id.
-            None => block_id.to_owned(),
-        };
+    // SQL/C9 (#345): prefer `page_id` (the denormalised owning page, set
+    // by migration 0027/0066) over `parent_id` (the immediate parent).
+    // For a content block nested several levels under a page, `parent_id`
+    // is the intermediate block, not the page — keying edges by it
+    // mis-attributes the link. `page_id` is the nearest page ancestor and
+    // is `id` for page blocks. The `parent_id` fallback covers fixtures /
+    // partial-state rows where `page_id` was not stamped (preserving the
+    // pre-fix single-step roll-up), and the final `block_id` fallback
+    // covers top-level tags (no parent, no page) and purged blocks.
+    //
+    // This `COALESCE(page_id, parent_id, id)` chain MUST stay identical to
+    // the SQL roll-up below and in the full-rebuild query so the
+    // Rust-resolved `source_page` matches what the SQL groups under.
+    let source_page: String = match sqlx::query!(
+        "SELECT page_id, parent_id FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        Some(r) => r
+            .page_id
+            .or(r.parent_id)
+            .unwrap_or_else(|| block_id.to_owned()),
+        // Block missing (purged). Fall back to block_id so the
+        // recompute can still drop stale rows keyed under that id.
+        None => block_id.to_owned(),
+    };
 
     // Pairs touched: every target that currently appears in block_links
     // under any block whose roll-up == source_page, UNION every target
@@ -126,7 +144,7 @@ pub async fn reindex_page_link_cache_for_block(
              SELECT DISTINCT bl.target_id
              FROM block_links bl
              JOIN blocks sb ON sb.id = bl.source_id
-             WHERE COALESCE(sb.parent_id, sb.id) = ?1
+             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1
                AND sb.deleted_at IS NULL
              UNION
              SELECT target_page_id AS target_id
@@ -158,7 +176,7 @@ pub async fn reindex_page_link_cache_for_block(
              SELECT bl.target_id AS target, COUNT(*) AS edge_count \
              FROM block_links bl \
              JOIN blocks sb ON sb.id = bl.source_id \
-             WHERE COALESCE(sb.parent_id, sb.id) = ?1 \
+             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 \
                AND sb.deleted_at IS NULL \
                AND bl.target_id IN (SELECT value FROM json_each(?2)) \
              GROUP BY 1 \
@@ -184,7 +202,7 @@ pub async fn reindex_page_link_cache_for_block(
            AND NOT EXISTS ( \
                SELECT 1 FROM block_links bl \
                JOIN blocks sb ON sb.id = bl.source_id \
-               WHERE COALESCE(sb.parent_id, sb.id) = ?1 \
+               WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 \
                  AND sb.deleted_at IS NULL \
                  AND bl.target_id = page_link_cache.target_page_id \
            )",
@@ -233,7 +251,7 @@ async fn rebuild_page_link_cache_impl(pool: &SqlitePool) -> Result<u64, AppError
     // typically a few thousand rows on a 100K-block vault.
     let rows: Vec<(String, String, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",
+             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!\",
              bl.target_id AS \"target_page_id!\",
              COUNT(*) AS \"edge_count!\"
          FROM block_links bl
@@ -288,7 +306,7 @@ async fn rebuild_page_link_cache_split_impl(
 ) -> Result<u64, AppError> {
     let rows: Vec<(String, String, i64)> = sqlx::query!(
         "SELECT
-             COALESCE(sb.parent_id, bl.source_id) AS \"source_page_id!\",
+             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!\",
              bl.target_id AS \"target_page_id!\",
              COUNT(*) AS \"edge_count!\"
          FROM block_links bl

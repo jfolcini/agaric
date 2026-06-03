@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH desired AS ( SELECT bl.target_id AS target, COUNT(*) AS edge_count FROM block_links bl JOIN blocks sb ON sb.id = bl.source_id WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 AND sb.deleted_at IS NULL AND bl.target_id IN (SELECT value FROM json_each(?2)) GROUP BY 1 ) INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) SELECT ?1, target, edge_count FROM desired WHERE true ON CONFLICT(source_page_id, target_page_id) DO UPDATE SET edge_count = excluded.edge_count",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "57bdca5118faf4375abbbb2dc8843f2d7ddcfa61ea089fb89fc6f24d17c3d00b"
+}

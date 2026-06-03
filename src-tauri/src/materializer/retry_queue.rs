@@ -328,12 +328,18 @@ pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
 /// race where two concurrent failure inserts both observe `prior = None`,
 /// both compute `attempts = 1`, and both INSERT — the second triggering
 /// `ON CONFLICT` and overwriting with the same `excluded.attempts = 1`,
-/// silently losing one increment. The backoff schedule depends on
-/// `attempts`, so we use `RETURNING attempts` to learn the actual
-/// post-update value and (only on the escalation path) issue a
-/// follow-up `UPDATE` to set the correct `next_attempt_at`. The
-/// common-case first failure stays at one round-trip; the escalation
-/// case is two round-trips, matching the previous SELECT+INSERT cost.
+/// silently losing one increment.
+///
+/// R3 (#347): the backoff is now folded into the same statement. The
+/// previous form learned `attempts` via `RETURNING` and, on the
+/// escalation path, issued a *second* non-atomic `UPDATE` to fix
+/// `next_attempt_at` — a window where the row was visible to the sweeper
+/// with the wrong (too-short) backoff. A `CASE` on the post-increment
+/// `attempts + 1` computes the correct delay inline, so the whole
+/// failure record is one atomic statement (and one round-trip) for both
+/// the first-failure and escalation paths. The `CASE` mirrors
+/// [`backoff_delay_for`] step-for-step:
+///   attempts 1 → +1 min, 2 → +5 min, 3 → +30 min, 4+ → +1 hour.
 pub(crate) async fn record_failure(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -345,55 +351,53 @@ pub(crate) async fn record_failure(
     let kind_string = kind.task_kind_str();
     let kind_str: &str = kind_string.as_ref();
 
-    // Optimistic next_attempt_at for the INSERT (first-failure) case.
-    // The DO UPDATE side reuses this value verbatim; if the SQL-side
-    // increment escalates `attempts` past 1 we follow up below to fix
-    // it to the correct backoff step.
-    // #109 Phase 2: next_attempt_at is epoch-ms — `now + backoff` as i64 ms.
-    let initial_next_attempt = crate::db::now_ms() + backoff_delay_for(1).num_milliseconds();
+    // #109 Phase 2: next_attempt_at is epoch-ms. The backoff schedule is
+    // computed SQL-side from the post-increment attempts count so the
+    // INSERT and DO UPDATE branches stay consistent and atomic. The four
+    // delay constants are bound from `backoff_delay_for` to keep the
+    // schedule defined in exactly one place (the Rust fn) — the
+    // `retry_backoff_matches_schedule` test asserts the SQL CASE and the
+    // fn agree.
+    let now = crate::db::now_ms();
+    let d1 = backoff_delay_for(1).num_milliseconds();
+    let d2 = backoff_delay_for(2).num_milliseconds();
+    let d3 = backoff_delay_for(3).num_milliseconds();
+    let d4 = backoff_delay_for(4).num_milliseconds();
+    // First-failure INSERT lands attempts = 1 → delay d1.
+    let initial_next_attempt = now + d1;
 
-    let attempts_after = sqlx::query_scalar!(
+    let row = sqlx::query!(
         "INSERT INTO materializer_retry_queue \
              (block_id, task_kind, attempts, last_error, next_attempt_at) \
-         VALUES (?, ?, 1, ?, ?) \
+         VALUES (?1, ?2, 1, ?3, ?4) \
          ON CONFLICT(block_id, task_kind) DO UPDATE SET \
              attempts = materializer_retry_queue.attempts + 1, \
              last_error = excluded.last_error, \
-             next_attempt_at = ? \
-         RETURNING attempts AS \"attempts!: i64\"",
+             next_attempt_at = ?5 + CASE materializer_retry_queue.attempts + 1 \
+                 WHEN 1 THEN ?6 \
+                 WHEN 2 THEN ?7 \
+                 WHEN 3 THEN ?8 \
+                 ELSE ?9 \
+             END \
+         RETURNING attempts AS \"attempts!: i64\", next_attempt_at AS \"next_attempt_at!: i64\"",
         block_id,
         kind_str,
         last_error,
         initial_next_attempt,
-        initial_next_attempt,
+        now,
+        d1,
+        d2,
+        d3,
+        d4,
     )
     .fetch_one(pool)
     .await?;
 
-    // For the escalation path (attempts > 1) the optimistic
-    // `backoff_delay_for(1)` is too short. Recompute against the
-    // actual `attempts_after` returned by the UPSERT and patch the row.
-    let next_attempt = if attempts_after > 1 {
-        let escalated = crate::db::now_ms() + backoff_delay_for(attempts_after).num_milliseconds();
-        sqlx::query!(
-            "UPDATE materializer_retry_queue SET next_attempt_at = ? \
-             WHERE block_id = ? AND task_kind = ?",
-            escalated,
-            block_id,
-            kind_str,
-        )
-        .execute(pool)
-        .await?;
-        escalated
-    } else {
-        initial_next_attempt
-    };
-
     tracing::warn!(
         block_id = %block_id,
         task_kind = kind_str,
-        attempts = attempts_after,
-        next_attempt_at = %next_attempt,
+        attempts = row.attempts,
+        next_attempt_at = %row.next_attempt_at,
         "persisted failed background task to retry queue"
     );
     Ok(())
@@ -481,9 +485,16 @@ pub(crate) struct DueRow {
 pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRow>, AppError> {
     let now = crate::db::now_ms();
     let rows = sqlx::query!(
+        // IX1 (#347): `(block_id, task_kind)` tiebreaker makes the swept
+        // order deterministic under `LIMIT` — an equal-`next_attempt_at`
+        // pool would otherwise drain in engine-dependent order, starving
+        // some rows across sweeps. The trio
+        // `(next_attempt_at, block_id, task_kind)` is exactly the covering
+        // index `idx_materializer_retry_queue_due` (migration 0063), so
+        // the added sort keys are satisfied by the index — no extra sort.
         "SELECT block_id, task_kind, attempts, created_at FROM materializer_retry_queue \
          WHERE next_attempt_at <= ? \
-         ORDER BY next_attempt_at ASC LIMIT ?",
+         ORDER BY next_attempt_at ASC, block_id ASC, task_kind ASC LIMIT ?",
         now,
         limit,
     )
@@ -916,6 +927,56 @@ mod tests {
             Some("err3"),
             "last_error must be overwritten with the most recent message"
         );
+    }
+
+    /// R3 (#347): the backoff folded into the single `ON CONFLICT DO
+    /// UPDATE` must produce the SAME `next_attempt_at` schedule the prior
+    /// two-statement (UPSERT + follow-up UPDATE) form did, for every step
+    /// 1→2→3→4(cap). Asserts `next_attempt_at - now` lands in the
+    /// `backoff_delay_for(attempts)` window on each failure, confirming
+    /// the SQL `CASE` and the Rust schedule agree and that the escalation
+    /// path no longer leaves the row at the too-short first-failure delay.
+    #[tokio::test]
+    async fn record_failure_backoff_matches_schedule_atomically_r3() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_R3".into(),
+        };
+
+        for expected_attempts in 1..=4_i64 {
+            let before = crate::db::now_ms();
+            record_failure(&pool, &task, "boom").await.unwrap();
+            let after = crate::db::now_ms();
+
+            let row = sqlx::query!(
+                "SELECT attempts AS \"attempts!: i64\", \
+                        next_attempt_at AS \"next_attempt_at!: i64\" \
+                 FROM materializer_retry_queue \
+                 WHERE block_id = ? AND task_kind = ?",
+                "BLK_R3",
+                "UpdateFtsBlock",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+            assert_eq!(
+                row.attempts, expected_attempts,
+                "attempts must accumulate atomically"
+            );
+
+            let delay = backoff_delay_for(expected_attempts).num_milliseconds();
+            // next_attempt_at was computed as `now_inside_sql + delay`,
+            // where now_inside_sql is bracketed by [before, after].
+            assert!(
+                row.next_attempt_at >= before + delay && row.next_attempt_at <= after + delay,
+                "step {expected_attempts}: next_attempt_at={} must equal SQL now + {delay}ms \
+                 (window [{}, {}])",
+                row.next_attempt_at,
+                before + delay,
+                after + delay,
+            );
+        }
     }
 
     #[tokio::test]
