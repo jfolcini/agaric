@@ -661,10 +661,12 @@ describe('SortableBlock gutter button pointer-events', () => {
     expect(deleteBtn.className).toContain('group-hover:pointer-events-auto')
   })
 
-  // B2 (#217): the desktop drag handle rests at a faint opacity-30 (with pointer
-  // events enabled) rather than the base opacity-0, so the reorder affordance is
-  // discoverable without hovering the row first; hover still raises it to full.
-  it('drag handle rests at opacity-30 with pointer events enabled (B2 discoverability)', () => {
+  // #370: the desktop drag handle is hidden at rest (opacity-0 / pointer-events-
+  // none from GUTTER_BUTTON_BASE) and revealed only on row hover / focus-within /
+  // .block-active — same per-block contract as the other gutter controls. The
+  // earlier #217-B2 opacity-30 at-rest tweak made a grip visible on every row at
+  // all times, which read as "all blocks hovered"; reverted here.
+  it('drag handle is hidden at rest and revealed on row hover (per-block contract)', () => {
     render(
       <SortableBlock
         blockId="BLOCK_PE"
@@ -675,11 +677,11 @@ describe('SortableBlock gutter button pointer-events', () => {
     )
 
     const dragHandle = screen.getByTestId('drag-handle')
-    expect(dragHandle.className).toContain('opacity-30')
-    expect(dragHandle.className).toContain('pointer-events-auto')
-    expect(dragHandle.className).not.toContain('opacity-0')
-    expect(dragHandle.className).not.toContain('pointer-events-none')
+    expect(dragHandle.className).toContain('opacity-0')
+    expect(dragHandle.className).toContain('pointer-events-none')
+    expect(dragHandle.className).not.toContain('opacity-30')
     expect(dragHandle.className).toContain('group-hover:opacity-100')
+    expect(dragHandle.className).toContain('group-hover:pointer-events-auto')
   })
 
   it('history button has pointer-events-none when invisible (opacity-0)', () => {
@@ -1575,8 +1577,9 @@ describe('SortableBlock visibility controls', () => {
     expect(container.firstElementChild?.className).not.toContain('block-active')
   })
 
-  // B2 (#217): drag handle is faintly visible at rest (opacity-30), not hidden.
-  it('drag handle rests at opacity-30 (faintly visible, B2 discoverability)', () => {
+  // #370: drag handle is hidden at rest (opacity-0), revealed only on row hover /
+  // focus — not faintly visible on every row (reverts the #217-B2 opacity-30).
+  it('drag handle is hidden at rest (opacity-0), revealed on hover', () => {
     render(
       <SortableBlock
         blockId="BLOCK_1"
@@ -1587,8 +1590,9 @@ describe('SortableBlock visibility controls', () => {
     )
 
     const handle = screen.getByRole('button', { name: /reorder block/i })
-    expect(handle.className).toContain('opacity-30')
-    expect(handle.className).not.toContain('opacity-0')
+    expect(handle.className).toContain('opacity-0')
+    expect(handle.className).not.toContain('opacity-30')
+    expect(handle.className).toContain('group-hover:opacity-100')
   })
 
   it('drag handle has group-hover:opacity-100 class for hover reveal', () => {
