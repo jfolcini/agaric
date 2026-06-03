@@ -173,7 +173,19 @@ export function SettingsView(): React.ReactElement {
       {/* Tab bar — wraps in a horizontal ScrollArea so the row scrolls
           instead of overflowing the panel when the window is narrow or
           a verbose locale stretches the labels (mirrors TabBar.tsx). */}
-      <ScrollArea orientation="horizontal" className="border-b">
+      <ScrollArea
+        orientation="horizontal"
+        className="border-b"
+        // A mouse wheel only emits deltaY, which a horizontal scroller
+        // ignores by default — translate it into horizontal scroll so the
+        // off-screen tabs are reachable without a trackpad.
+        viewportProps={{
+          onWheel: (e) => {
+            if (e.deltaY === 0) return
+            e.currentTarget.scrollLeft += e.deltaY
+          },
+        }}
+      >
         <div role="tablist" aria-label={t('sidebar.settings')} className="flex gap-1 w-max">
           {TAB_IDS.map((tab) => (
             <button
@@ -184,7 +196,10 @@ export function SettingsView(): React.ReactElement {
               aria-selected={activeTab === tab}
               aria-controls={`settings-panel-${tab}`}
               className={cn(
-                'shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px',
+                // border thickness mirrors the sidebar active-item bar
+                // (border-l-[3px] / dark:border-l-4) so the selected-tab
+                // underline matches the nav accent line's weight.
+                'shrink-0 whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors border-b-[3px] dark:border-b-4 -mb-px',
                 activeTab === tab
                   ? 'border-primary text-foreground'
                   : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50',

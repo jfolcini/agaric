@@ -51,4 +51,32 @@ test.describe('Report-a-bug dialog', () => {
     const scrolled = await viewport.evaluate((el) => el.scrollTop)
     expect(scrolled).toBeGreaterThan(0)
   })
+
+  test('body content does not overflow horizontally', async ({ page }) => {
+    // Regression: Radix's ScrollArea viewport wraps children in a
+    // `display:table` div that shrink-wraps to content width, so the form
+    // controls (inputs, textarea, preview) ran off the right edge with no
+    // wrap and — vertical-only scroller — no horizontal scrollbar.
+    await page.setViewportSize({ width: 900, height: 800 })
+    await page.goto('/')
+    await expect(page.getByRole('button', { name: 'Journal', exact: true })).toBeVisible()
+
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent('agaric:report-bug', { detail: { message: 'overflow probe' } }),
+      )
+    })
+
+    const body = page.getByTestId('bug-report-body')
+    await expect(body).toBeVisible()
+    const viewport = body.locator('[data-slot="scroll-area-viewport"]').first()
+
+    const { clientWidth, scrollWidth } = await viewport.evaluate((el) => ({
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+    }))
+    // No horizontal overflow: content fits the viewport width (allow 1px
+    // sub-pixel rounding).
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 1)
+  })
 })
