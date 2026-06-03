@@ -54,8 +54,12 @@ const mockPdfDoc = {
   destroy: mockDestroy,
 }
 
+// pdfjs v6: getDocument returns a loading task that owns destroy() (the
+// document proxy no longer exposes it). The component tears down via the
+// loading task, so the mock task must carry destroy.
 const mockGetDocument = vi.fn(() => ({
   promise: Promise.resolve(mockPdfDoc),
+  destroy: mockDestroy,
 }))
 
 vi.mock('pdfjs-dist', () => ({
@@ -70,6 +74,7 @@ describe('PdfViewerDialog', () => {
     vi.clearAllMocks()
     mockGetDocument.mockReturnValue({
       promise: Promise.resolve(mockPdfDoc),
+      destroy: mockDestroy,
     })
     mockGetPage.mockReturnValue(
       Promise.resolve({
@@ -119,6 +124,7 @@ describe('PdfViewerDialog', () => {
       promise: new Promise((resolve) => {
         resolveDoc = resolve as (value: unknown) => void
       }),
+      destroy: mockDestroy,
     })
 
     render(
@@ -214,6 +220,7 @@ describe('PdfViewerDialog', () => {
     // Use a 1-page PDF
     mockGetDocument.mockReturnValue({
       promise: Promise.resolve({ ...mockPdfDoc, numPages: 1 }),
+      destroy: mockDestroy,
     })
 
     render(
@@ -259,6 +266,7 @@ describe('PdfViewerDialog', () => {
   it('shows error state when PDF fails to load', async () => {
     mockGetDocument.mockReturnValue({
       promise: Promise.reject(new Error('Network error')),
+      destroy: mockDestroy,
     })
 
     render(
@@ -287,7 +295,7 @@ describe('PdfViewerDialog', () => {
     )
 
     await waitFor(() => {
-      expect(mockGetDocument).toHaveBeenCalledWith('asset://localhost/path/to/doc.pdf')
+      expect(mockGetDocument).toHaveBeenCalledWith({ url: 'asset://localhost/path/to/doc.pdf' })
     })
   })
 
