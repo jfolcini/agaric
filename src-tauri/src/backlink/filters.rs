@@ -609,6 +609,371 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
     })
 }
 
+// ---------------------------------------------------------------------------
+// #346 P1: compile BacklinkFilter -> correlated SQL WHERE fragment
+// ---------------------------------------------------------------------------
+
+/// A single positional bind value for a compiled backlink filter fragment.
+///
+/// Mirrors the `filters::primitive::Bind` shape but only carries the two
+/// scalar kinds the backlink leaves emit: text (ids, property text/date
+/// values, LIKE patterns, JSON-array set bindings) and `f64` (numeric
+/// property values). The `f64` variant exists so that `PropertyNum`'s value
+/// keeps its native SQLite affinity rather than being stringified.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum FilterBind {
+    Text(String),
+    Num(f64),
+}
+
+/// A compiled boolean SQL fragment for a `BacklinkFilter` subtree, plus the
+/// ordered positional binds it consumes.
+///
+/// The fragment is written against the OUTER query's source-block alias
+/// `b` (e.g. `EXISTS (SELECT 1 FROM block_properties bp WHERE bp.block_id =
+/// b.id …)` / `b.block_type = ?`). The outer query already enforces
+/// `b.deleted_at IS NULL` and self-exclusion, so leaf fragments deliberately
+/// do NOT re-filter those on `b` — matching the per-leaf semantics of
+/// `resolve_filter_with_candidates` while avoiding a redundant predicate.
+///
+/// `sql` uses bare `?` placeholders (NOT `?N`) so the fragment can be
+/// spliced into a larger `QueryBuilder` statement where the surrounding
+/// base-query binds interleave with the fragment binds positionally.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CompiledFilter {
+    pub sql: String,
+    pub binds: Vec<FilterBind>,
+}
+
+impl CompiledFilter {
+    /// A fragment that always evaluates false (empty-set leaf): empty FTS
+    /// query, empty embedded id set, or a numeric `Contains`/`StartsWith`.
+    fn never() -> Self {
+        Self {
+            sql: "1=0".to_string(),
+            binds: Vec::new(),
+        }
+    }
+}
+
+/// Embed a pre-resolved id set as a correlated `b.id IN (SELECT value FROM
+/// json_each(?))` membership test (or `1=0` when the set is empty).
+///
+/// Used by the hybrid leaves (`Contains`/`HasTag`/`HasTagPrefix`/
+/// `SourcePage`) which are resolved ONCE via the existing helpers and then
+/// embedded as a set — they must never be correlated per outer row (each
+/// would re-run an FTS scan / tag union / recursive descendant walk).
+fn membership_fragment(ids: &FxHashSet<String>) -> Result<CompiledFilter, AppError> {
+    if ids.is_empty() {
+        return Ok(CompiledFilter::never());
+    }
+    let json = serde_json::to_string(&ids.iter().collect::<Vec<_>>())?;
+    Ok(CompiledFilter {
+        sql: "b.id IN (SELECT value FROM json_each(?))".to_string(),
+        binds: vec![FilterBind::Text(json)],
+    })
+}
+
+/// Compile a [`BacklinkFilter`] subtree into a correlated boolean SQL
+/// fragment (against outer alias `b`) plus its ordered positional binds
+/// (#346 P1).
+///
+/// This is the SQL-pushdown counterpart to [`resolve_filter`]: instead of
+/// materialising each leaf to an `FxHashSet` and intersecting in Rust (which
+/// for negative/broad leaves forces the whole-vault complement into memory),
+/// every leaf becomes an `EXISTS`/column-compare/`IN (json_each)` fragment
+/// that SQLite evaluates row-by-row in the outer backlink query.
+///
+/// **Parity contract:** each leaf fragment reproduces the EXACT operator,
+/// `ESCAPE`, `IS NOT NULL` guard, and value-mangling of the corresponding
+/// `resolve_filter_with_candidates` arm. The old path is retained as the
+/// parity oracle (see `backlink::tests`).
+///
+/// **Hybrid leaves** (`Contains`, `HasTag`, `HasTagPrefix`, `SourcePage`) are
+/// resolved once via the existing helpers and embedded as a `json_each` id
+/// set rather than correlated per row — recursion / FTS / tag scans must not
+/// run once per candidate source block.
+pub(crate) fn compile_backlink_filter<'a>(
+    pool: &'a SqlitePool,
+    filter: &'a BacklinkFilter,
+    depth: u32,
+) -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<CompiledFilter, AppError>> + Send + 'a>,
+> {
+    Box::pin(async move {
+        if depth > 50 {
+            return Err(AppError::Validation(
+                "Filter nesting depth exceeds 50".into(),
+            ));
+        }
+        match filter {
+            BacklinkFilter::PropertyText { key, op, value } => {
+                let (sql_op, needs_escape) = match op {
+                    CompareOp::Eq => ("=", false),
+                    CompareOp::Neq => ("<>", false),
+                    CompareOp::Lt => ("<", false),
+                    CompareOp::Gt => (">", false),
+                    CompareOp::Lte => ("<=", false),
+                    CompareOp::Gte => (">=", false),
+                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+                };
+                let bind_value: String = match op {
+                    CompareOp::Contains => format!("%{}%", escape_like(value)),
+                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
+                    _ => value.clone(),
+                };
+                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+                let sql = format!(
+                    "EXISTS (SELECT 1 FROM block_properties bp \
+                     WHERE bp.block_id = b.id AND bp.key = ? \
+                       AND bp.value_text IS NOT NULL \
+                       AND bp.value_text {sql_op} ?{escape_clause})"
+                );
+                Ok(CompiledFilter {
+                    sql,
+                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Text(bind_value)],
+                })
+            }
+
+            BacklinkFilter::PropertyNum { key, op, value } => {
+                let sql_op = match op {
+                    CompareOp::Eq => "=",
+                    CompareOp::Neq => "<>",
+                    CompareOp::Lt => "<",
+                    CompareOp::Gt => ">",
+                    CompareOp::Lte => "<=",
+                    CompareOp::Gte => ">=",
+                    // `Contains`/`StartsWith` are meaningless on numeric
+                    // values and short-circuit to the empty set, exactly as
+                    // the resolver returns `FxHashSet::default()`.
+                    CompareOp::Contains | CompareOp::StartsWith => {
+                        return Ok(CompiledFilter::never());
+                    }
+                };
+                let sql = format!(
+                    "EXISTS (SELECT 1 FROM block_properties bp \
+                     WHERE bp.block_id = b.id AND bp.key = ? \
+                       AND bp.value_num IS NOT NULL \
+                       AND bp.value_num {sql_op} ?)"
+                );
+                Ok(CompiledFilter {
+                    sql,
+                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Num(*value)],
+                })
+            }
+
+            BacklinkFilter::PropertyDate { key, op, value } => {
+                let (sql_op, needs_escape) = match op {
+                    CompareOp::Eq => ("=", false),
+                    CompareOp::Neq => ("<>", false),
+                    CompareOp::Lt => ("<", false),
+                    CompareOp::Gt => (">", false),
+                    CompareOp::Lte => ("<=", false),
+                    CompareOp::Gte => (">=", false),
+                    CompareOp::Contains | CompareOp::StartsWith => ("LIKE", true),
+                };
+                let bind_value: String = match op {
+                    CompareOp::Contains => format!("%{}%", escape_like(value)),
+                    CompareOp::StartsWith => format!("{}%", escape_like(value)),
+                    _ => value.clone(),
+                };
+                let escape_clause = if needs_escape { " ESCAPE '\\'" } else { "" };
+                let sql = format!(
+                    "EXISTS (SELECT 1 FROM block_properties bp \
+                     WHERE bp.block_id = b.id AND bp.key = ? \
+                       AND bp.value_date IS NOT NULL \
+                       AND bp.value_date {sql_op} ?{escape_clause})"
+                );
+                Ok(CompiledFilter {
+                    sql,
+                    binds: vec![FilterBind::Text(key.clone()), FilterBind::Text(bind_value)],
+                })
+            }
+
+            BacklinkFilter::PropertyIsSet { key } => Ok(CompiledFilter {
+                sql: "EXISTS (SELECT 1 FROM block_properties bp \
+                      WHERE bp.block_id = b.id AND bp.key = ?)"
+                    .to_string(),
+                binds: vec![FilterBind::Text(key.clone())],
+            }),
+
+            BacklinkFilter::PropertyIsEmpty { key } => Ok(CompiledFilter {
+                sql: "NOT EXISTS (SELECT 1 FROM block_properties bp \
+                      WHERE bp.block_id = b.id AND bp.key = ?)"
+                    .to_string(),
+                binds: vec![FilterBind::Text(key.clone())],
+            }),
+
+            BacklinkFilter::TodoState { state } => Ok(CompiledFilter {
+                sql: "b.todo_state = ?".to_string(),
+                binds: vec![FilterBind::Text(state.clone())],
+            }),
+
+            BacklinkFilter::Priority { level } => Ok(CompiledFilter {
+                sql: "b.priority = ?".to_string(),
+                binds: vec![FilterBind::Text(level.clone())],
+            }),
+
+            BacklinkFilter::DueDate { op, value } => {
+                // Mirror the resolver's per-op `IS NOT NULL` guards exactly.
+                // `Eq` has no explicit guard (a NULL due_date never equals a
+                // bound value anyway); every other comparison adds
+                // `due_date IS NOT NULL`.
+                let sql = match op {
+                    CompareOp::Eq => "b.due_date = ?".to_string(),
+                    CompareOp::Neq => "(b.due_date != ? AND b.due_date IS NOT NULL)".to_string(),
+                    CompareOp::Lt => "(b.due_date < ? AND b.due_date IS NOT NULL)".to_string(),
+                    CompareOp::Lte => "(b.due_date <= ? AND b.due_date IS NOT NULL)".to_string(),
+                    CompareOp::Gt => "(b.due_date > ? AND b.due_date IS NOT NULL)".to_string(),
+                    CompareOp::Gte => "(b.due_date >= ? AND b.due_date IS NOT NULL)".to_string(),
+                    CompareOp::Contains | CompareOp::StartsWith => {
+                        return Err(AppError::Validation(format!(
+                            "DueDate filter does not support {op:?} operator"
+                        )));
+                    }
+                };
+                Ok(CompiledFilter {
+                    sql,
+                    binds: vec![FilterBind::Text(value.clone())],
+                })
+            }
+
+            BacklinkFilter::CreatedInRange { after, before } => {
+                let after_prefix = after
+                    .as_ref()
+                    .and_then(|d| parse_iso_to_ms(d))
+                    .map(ms_to_ulid_prefix);
+                let before_prefix = before
+                    .as_ref()
+                    .and_then(|d| parse_iso_to_ms(d))
+                    .map(ms_to_ulid_prefix);
+
+                let mut clauses: Vec<&str> = Vec::new();
+                let mut binds: Vec<FilterBind> = Vec::new();
+                if let Some(lo) = after_prefix {
+                    clauses.push("b.id >= ?");
+                    binds.push(FilterBind::Text(lo));
+                }
+                if let Some(hi) = before_prefix {
+                    clauses.push("b.id < ?");
+                    binds.push(FilterBind::Text(hi));
+                }
+                // No bounds at all ⇒ every non-deleted block matched in the
+                // resolver. The outer query already constrains to non-deleted
+                // source blocks, so `1=1` reproduces "all candidates".
+                let sql = if clauses.is_empty() {
+                    "1=1".to_string()
+                } else {
+                    format!("({})", clauses.join(" AND "))
+                };
+                Ok(CompiledFilter { sql, binds })
+            }
+
+            BacklinkFilter::BlockType { block_type } => Ok(CompiledFilter {
+                sql: "b.block_type = ?".to_string(),
+                binds: vec![FilterBind::Text(block_type.clone())],
+            }),
+
+            // ── Hybrid leaves: pre-resolve once, embed as a json_each set ──
+            BacklinkFilter::Contains { query } => {
+                // Empty / whitespace-only / sanitizes-to-empty ⇒ empty set,
+                // matching the resolver's early returns.
+                if query.trim().is_empty() {
+                    return Ok(CompiledFilter::never());
+                }
+                let sanitized = sanitize_fts_query(query);
+                if sanitized.is_empty() {
+                    return Ok(CompiledFilter::never());
+                }
+                let ids = resolve_filter(pool, filter, depth).await?;
+                membership_fragment(&ids)
+            }
+
+            BacklinkFilter::HasTag { .. }
+            | BacklinkFilter::HasTagPrefix { .. }
+            | BacklinkFilter::SourcePage { .. } => {
+                let ids = resolve_filter(pool, filter, depth).await?;
+                membership_fragment(&ids)
+            }
+
+            // ── Boolean combinators ──
+            BacklinkFilter::And { filters } => {
+                // Preserve the resolver's empty-And semantics: it returns the
+                // empty set (`1=0`), NOT the neutral "all" element.
+                if filters.is_empty() {
+                    return Ok(CompiledFilter::never());
+                }
+                let compiled = try_join_all(
+                    filters
+                        .iter()
+                        .map(|f| compile_backlink_filter(pool, f, depth + 1)),
+                )
+                .await?;
+                let mut binds = Vec::new();
+                let parts: Vec<String> = compiled
+                    .into_iter()
+                    .map(|c| {
+                        binds.extend(c.binds);
+                        c.sql
+                    })
+                    .collect();
+                Ok(CompiledFilter {
+                    sql: format!("({})", parts.join(" AND ")),
+                    binds,
+                })
+            }
+
+            BacklinkFilter::Or { filters } => {
+                // Resolver's empty-Or returns the empty set (the fold starts
+                // from an empty accumulator and never unions anything), so an
+                // empty `Or` is `1=0`, NOT `1=1`.
+                if filters.is_empty() {
+                    return Ok(CompiledFilter::never());
+                }
+                let compiled = try_join_all(
+                    filters
+                        .iter()
+                        .map(|f| compile_backlink_filter(pool, f, depth + 1)),
+                )
+                .await?;
+                let mut binds = Vec::new();
+                let parts: Vec<String> = compiled
+                    .into_iter()
+                    .map(|c| {
+                        binds.extend(c.binds);
+                        c.sql
+                    })
+                    .collect();
+                Ok(CompiledFilter {
+                    sql: format!("({})", parts.join(" OR ")),
+                    binds,
+                })
+            }
+
+            BacklinkFilter::Not { filter: inner } => {
+                // Three-valued-logic guard: the resolver's `Not` computes the
+                // set complement over all non-deleted blocks, treating a leaf
+                // that "doesn't apply" (e.g. `b.priority = ?` on a row whose
+                // `priority` is NULL) as simply NOT matching the positive
+                // filter — so it lands IN the complement. Raw SQL `NOT (…)`
+                // does NOT: `b.priority = 'low'` is NULL on a NULL column,
+                // and `NOT NULL` is NULL (treated as false in WHERE), which
+                // would WRONGLY drop that row from the negation. Collapsing
+                // the inner fragment with `COALESCE(…, 0)` forces NULL → false
+                // BEFORE negating, so `NOT` yields true and the row joins the
+                // complement — exactly matching the Rust set-difference. For
+                // `EXISTS`/`NOT EXISTS`/boolean-combinator fragments (never
+                // NULL) the COALESCE is a harmless no-op.
+                let compiled = compile_backlink_filter(pool, inner, depth + 1).await?;
+                Ok(CompiledFilter {
+                    sql: format!("NOT COALESCE(({}), 0)", compiled.sql),
+                    binds: compiled.binds,
+                })
+            }
+        }
+    })
+}
+
 /// Recursive-CTE walk that returns every descendant (including the seed
 /// roots themselves) of a list of `page_id`s, filtering out deleted
 /// rows and bounding recursion depth at 100 (AGENTS.md
