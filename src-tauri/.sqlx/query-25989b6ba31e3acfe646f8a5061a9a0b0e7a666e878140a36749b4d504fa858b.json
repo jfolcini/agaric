@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE cohort(id, root_deleted_at, depth) AS ( SELECT b.id, b.deleted_at, 0 FROM blocks b WHERE b.id IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NOT NULL UNION ALL SELECT b.id, c.root_deleted_at, c.depth + 1 FROM blocks b INNER JOIN cohort c ON b.parent_id = c.id WHERE b.deleted_at = c.root_deleted_at AND c.depth < 100 ) UPDATE blocks SET deleted_at = NULL WHERE id IN (SELECT id FROM cohort) AND deleted_at IS NOT NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "25989b6ba31e3acfe646f8a5061a9a0b0e7a666e878140a36749b4d504fa858b"
+}

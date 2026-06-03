@@ -489,12 +489,15 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
 /// *after* migrations run via [`recover_derived_state_from_op_log`]
 /// because migration 73's DROP TABLE blocks would CASCADE-delete them.
 async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::error::AppError> {
+    // R4 (#347): propagate probe errors with `?` rather than masking a
+    // transient failure as `0`/false. A swallowed error here would skip
+    // recovery entirely and let migrations run against a missing `blocks`
+    // table — far worse than surfacing the boot error.
     let exists = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'blocks'"
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0)
+    .await?
         > 0;
 
     if exists {
@@ -507,8 +510,7 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'"
     )
     .fetch_one(pool)
-    .await
-    .unwrap_or(0);
+    .await?;
 
     if migrations_table_exists == 0 {
         return Ok(());
@@ -516,8 +518,7 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
 
     let migration_rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        .await?;
 
     if migration_rows == 0 {
         return Ok(());
@@ -564,12 +565,13 @@ async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
 ) -> Result<(), crate::error::AppError> {
     // Guard: op_log might not exist on ancient databases.
+    // R4 (#347): propagate with `?` — a transient probe failure must not
+    // silently skip block recovery.
     let op_log_exists = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'op_log'"
     )
     .fetch_one(&mut *executor)
-    .await
-    .unwrap_or(0)
+    .await?
         > 0;
 
     if !op_log_exists {
@@ -577,9 +579,18 @@ async fn recover_blocks_from_op_log(
         return Ok(());
     }
 
-    let ops = sqlx::query("SELECT op_type, payload FROM op_log ORDER BY device_id, seq")
-        .fetch_all(&mut *executor)
-        .await?;
+    // C8 (#345): replay in materializer LWW order. The live materializer
+    // resolves cross-device same-block edits by `created_at DESC` (last
+    // writer wins); replaying in `(device_id, seq)` order instead would
+    // let the lexically-largest `device_id` win regardless of wall-clock
+    // time, diverging the recovered `blocks` table from a normally-applied
+    // log. `created_at` is an indexed INTEGER-ms column post-migration
+    // 0079/0080; `(device_id, seq)` is the deterministic tiebreaker for
+    // ops sharing a millisecond.
+    let ops =
+        sqlx::query("SELECT op_type, payload FROM op_log ORDER BY created_at, device_id, seq")
+            .fetch_all(&mut *executor)
+            .await?;
 
     if ops.is_empty() {
         return Ok(());
@@ -735,16 +746,39 @@ async fn recover_derived_state_from_op_log(
 
     // Only recover if derived tables are empty — otherwise we would
     // duplicate rows on every startup.
+    //
+    // R4 (#347): propagate probe errors with `?` rather than masking them
+    // as `0` (which would wrongly trigger a full re-replay against an
+    // already-populated DB).
     let prop_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
         .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        .await?;
 
     let tag_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_tags")
         .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        .await?;
 
+    // C9 (#345) — the OR is intentional; a per-table gate is NOT safe here.
+    //
+    // This recovery exists for exactly one state: migration 73's
+    // `DROP TABLE blocks` CASCADE-emptied both `block_properties` and
+    // `block_tags` (both carry `FK … ON DELETE CASCADE` to `blocks(id)`),
+    // so in the corruption path the two tables empty *together* — they
+    // never empty independently. The OR therefore fires recovery iff BOTH
+    // are empty and skips it the moment EITHER holds rows (the DB is
+    // already populated; re-replaying would duplicate).
+    //
+    // A per-table gate ("recover properties iff prop_count == 0, tags iff
+    // tag_count == 0") was evaluated and rejected: (1) the single shared
+    // `tx` replays the whole op log once across set_property /
+    // delete_property / add_tag, so per-table gating would need two passes
+    // or mid-loop op-type skipping; (2) the trailing blocks-column
+    // backfill (todo_state / priority / due_date / scheduled_date) reads
+    // from the just-repopulated `block_properties`, so gating properties
+    // off while tags ran would leave the denormalised columns stale; and
+    // (3) because both tables empty together, the OR and an AND are
+    // equivalent on the only path that reaches here — the OR is just the
+    // more conservative phrasing (any sign of existing data ⇒ skip).
     if prop_count > 0 || tag_count > 0 {
         return Ok(());
     }
@@ -756,9 +790,14 @@ async fn recover_derived_state_from_op_log(
 
     let mut tx = pool.begin().await?;
 
-    let ops = sqlx::query("SELECT op_type, payload FROM op_log ORDER BY device_id, seq")
-        .fetch_all(&mut *tx)
-        .await?;
+    // C8 (#345): replay derived-state ops in materializer LWW order
+    // (`created_at DESC` semantics → ascending replay with last-writer
+    // overwriting earlier values), `(device_id, seq)` as the same-ms
+    // tiebreaker. See the matching rationale in `recover_blocks_from_op_log`.
+    let ops =
+        sqlx::query("SELECT op_type, payload FROM op_log ORDER BY created_at, device_id, seq")
+            .fetch_all(&mut *tx)
+            .await?;
 
     for row in ops {
         let op_type: String = row.try_get("op_type")?;
@@ -943,6 +982,23 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         .max_connections(4)
         .connect_with(read_opts)
         .await?;
+
+    // R2 (#347): assert the read pool actually came up `query_only`. The
+    // `.pragma("query_only", "ON")` above is the structural guard against
+    // an accidental write through a read connection (C1's bug class), but a
+    // mis-wired connect-options builder or a future sqlx change could
+    // silently drop the pragma. Acquire one read connection and confirm
+    // `PRAGMA query_only == 1` at boot rather than discovering it on the
+    // first errant write at runtime.
+    let query_only: i64 = sqlx::query_scalar("PRAGMA query_only")
+        .fetch_one(&read_pool)
+        .await?;
+    if query_only != 1 {
+        return Err(crate::error::AppError::Snapshot(format!(
+            "read pool failed query_only assertion at boot: PRAGMA query_only = {query_only} \
+             (expected 1); the read pool is not write-protected"
+        )));
+    }
 
     Ok(DbPools {
         write: write_pool,
@@ -1284,6 +1340,26 @@ mod tests {
         assert!(
             result.is_err(),
             "read pool should reject INSERT due to query_only pragma"
+        );
+    }
+
+    /// R2 (#347): `init_pools` asserts `PRAGMA query_only == 1` on the read
+    /// pool at boot. A correctly-wired pool passes the assertion (init
+    /// succeeds) AND every read connection reports `query_only = 1`, so the
+    /// structural guard against accidental writes through the read pool is
+    /// verified eagerly rather than on the first errant write.
+    #[tokio::test]
+    async fn init_pools_asserts_read_pool_query_only_at_boot() {
+        let (pools, _dir) = test_pools().await;
+        // init_pools returning Ok already means the boot assertion passed;
+        // double-check the live pragma value on a fresh read connection.
+        let query_only: i64 = sqlx::query_scalar("PRAGMA query_only")
+            .fetch_one(&pools.read)
+            .await
+            .unwrap();
+        assert_eq!(
+            query_only, 1,
+            "read pool must report PRAGMA query_only = 1 after init_pools boot assertion"
         );
     }
 

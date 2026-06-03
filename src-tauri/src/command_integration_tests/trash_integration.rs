@@ -1,6 +1,7 @@
 use super::common::*;
 use crate::op_log;
 use crate::soft_delete;
+use crate::ulid::BlockId;
 
 // ======================================================================
 // restore_all_deleted — happy paths (B-46)
@@ -687,4 +688,270 @@ async fn purge_all_deleted_succeeds_when_tag_is_deleted_but_still_inherited_by_l
         .await
         .unwrap();
     assert!(exists.is_none(), "BUG46_T must be physically removed");
+}
+
+// ======================================================================
+// C3 (#345) — batch restore must restore only the root's exact cohort,
+// not "any tombstoned descendant".
+// ======================================================================
+
+/// Sequence: `delete child@T1` (child becomes its own cascade root), then
+/// `delete parent@T2` (cascade-deletes parent + its OTHER descendants, but
+/// skips the already-deleted child, which keeps `deleted_at = T1`).
+///
+/// Batch-restoring the parent must un-delete ONLY the T2 cohort. The child
+/// trashed independently at T1 must stay trashed — and the emitted
+/// `RestoreBlock(deleted_at_ref=T2)` op must reference exactly the cohort a
+/// peer's replay (or the single-row `restore_block_inner` path) would
+/// restore. The pre-fix batch UPDATE used `AND deleted_at IS NOT NULL`,
+/// which over-restored the T1 child and diverged from the emitted op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_restore_restores_only_root_cohort_not_unrelated_trashed_child() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // parent / child(deleted independently first) / sibling(deleted with parent)
+    insert_block(&pool, "C3_PAR", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "C3_CHD",
+        "content",
+        "child T1",
+        Some("C3_PAR"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "C3_SIB",
+        "content",
+        "sibling T2",
+        Some("C3_PAR"),
+        Some(2),
+    )
+    .await;
+
+    // 1) delete the child as its own root (T1). Production path: writes a
+    //    `delete_block` op with created_at == the child's deleted_at.
+    delete_block_inner(&pool, DEV, &mat, "C3_CHD".into())
+        .await
+        .unwrap();
+    let child_t1 = get_block_inner(&pool, "C3_CHD".into())
+        .await
+        .unwrap()
+        .deleted_at
+        .expect("child must be soft-deleted at T1");
+
+    // 2) delete the parent (T2). Cascade marks parent + sibling but SKIPS
+    //    the already-deleted child (cascade filters deleted_at IS NULL), so
+    //    the child keeps deleted_at = T1.
+    delete_block_inner(&pool, DEV, &mat, "C3_PAR".into())
+        .await
+        .unwrap();
+    let parent_t2 = get_block_inner(&pool, "C3_PAR".into())
+        .await
+        .unwrap()
+        .deleted_at
+        .expect("parent must be soft-deleted at T2");
+    assert_ne!(
+        child_t1, parent_t2,
+        "child (T1) and parent (T2) must have distinct deleted_at"
+    );
+    // Child still carries its own T1 tombstone (cascade did not touch it).
+    let chd_after_parent_delete = get_block_inner(&pool, "C3_CHD".into())
+        .await
+        .unwrap()
+        .deleted_at;
+    assert_eq!(
+        chd_after_parent_delete,
+        Some(child_t1),
+        "child must retain its T1 tombstone after the parent's T2 cascade"
+    );
+
+    // 3) batch-restore the parent only.
+    let resp = restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![BlockId::from_trusted("C3_PAR")])
+        .await
+        .unwrap();
+
+    // Parent + sibling (T2 cohort) restored; the T1 child is NOT.
+    assert_eq!(
+        resp.affected_count, 2,
+        "only the T2 cohort (parent + sibling) must be restored, not the T1 child"
+    );
+    let par = get_block_inner(&pool, "C3_PAR".into()).await.unwrap();
+    let sib = get_block_inner(&pool, "C3_SIB".into()).await.unwrap();
+    let chd = get_block_inner(&pool, "C3_CHD".into()).await.unwrap();
+    assert!(par.deleted_at.is_none(), "parent must be restored");
+    assert!(sib.deleted_at.is_none(), "sibling must be restored");
+    assert_eq!(
+        chd.deleted_at,
+        Some(child_t1),
+        "the independently-trashed T1 child MUST stay trashed (C3 over-restore bug)"
+    );
+
+    // 4) the emitted RestoreBlock op must carry the parent's T2 timestamp —
+    //    the exact cohort the single-row restore_block_inner path would use.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let restore_ops: Vec<_> = ops
+        .iter()
+        .filter(|o| o.op_type == "restore_block")
+        .collect();
+    assert_eq!(
+        restore_ops.len(),
+        1,
+        "exactly one restore_block op (for the single restored root)"
+    );
+    assert!(
+        restore_ops[0].payload.contains("C3_PAR"),
+        "restore op must reference the parent root"
+    );
+    assert!(
+        restore_ops[0].payload.contains(&format!("{parent_t2}")),
+        "restore op's deleted_at_ref must be the parent's T2 timestamp ({parent_t2}); \
+         payload = {}",
+        restore_ops[0].payload
+    );
+}
+
+// ======================================================================
+// C9 (#345) — same-epoch-ms collision must not conflate two cascade roots.
+// ======================================================================
+
+/// Two distinct delete events whose roots land on the SAME epoch-ms used to
+/// be conflated by the structural heuristic (`parent.deleted_at =
+/// b.deleted_at`), emitting one fewer Restore/Purge op than performed.
+///
+/// The fix derives roots from the `delete_block` op-log entries
+/// (`op.created_at = blocks.deleted_at`), which is collision-proof. This
+/// test constructs the collision deterministically: a child (root) and its
+/// parent both deleted at the SAME timestamp `T`, each with its own
+/// `delete_block` op. Both must be recognised as independent roots →
+/// `restore_all_deleted` emits TWO restore ops (and likewise purge).
+///
+/// Op-log rows are inserted directly (the production `now_ms()` is not
+/// controllable in-test and is non-monotonic, which is exactly why the bug
+/// could not be closed by the ms migration).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_ms_collision_emits_one_restore_op_per_root() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // parent P, child C under P. Child was deleted as its own root first,
+    // then the parent — both happen to share the same epoch-ms `T`.
+    insert_block(&pool, "C9_P", "page", "parent", None, Some(1)).await;
+    insert_block(&pool, "C9_C", "content", "child", Some("C9_P"), Some(1)).await;
+
+    let t: i64 = 1_700_000_000_000;
+    // Both blocks tombstoned at the same ms (cascade skips the already-
+    // deleted child, so the child keeps its own T == the parent's T).
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN ('C9_P', 'C9_C')")
+        .bind(t)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // One delete_block op per root, both with created_at == T. (op_log is
+    // append-only; we INSERT, never UPDATE.)
+    for (seq, id) in [(1_i64, "C9_C"), (2_i64, "C9_P")] {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, origin) \
+             VALUES (?, ?, ?, 'delete_block', ?, ?, ?, 'user')",
+        )
+        .bind(DEV)
+        .bind(seq)
+        .bind(format!("hash-{id}"))
+        .bind(format!(
+            "{{\"op_type\":\"delete_block\",\"block_id\":\"{id}\"}}"
+        ))
+        .bind(t)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let resp = restore_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+    assert_eq!(resp.affected_count, 2, "both blocks must be restored");
+
+    // The bug: the structural heuristic saw parent.deleted_at == C.deleted_at
+    // and demoted the child, emitting ONLY ONE restore op. The op-log
+    // derivation recognises BOTH as roots → TWO restore ops.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let restore_ops: Vec<_> = ops
+        .iter()
+        .filter(|o| o.op_type == "restore_block")
+        .collect();
+    assert_eq!(
+        restore_ops.len(),
+        2,
+        "same-ms collision must still emit one restore op per root (C9), \
+         got {}: {:?}",
+        restore_ops.len(),
+        restore_ops.iter().map(|o| &o.payload).collect::<Vec<_>>()
+    );
+    let payloads: String = restore_ops.iter().map(|o| o.payload.as_str()).collect();
+    assert!(
+        payloads.contains("C9_P"),
+        "a restore op must name the parent"
+    );
+    assert!(
+        payloads.contains("C9_C"),
+        "a restore op must name the child"
+    );
+}
+
+/// Purge counterpart of [`same_ms_collision_emits_one_restore_op_per_root`]:
+/// two roots colliding on one epoch-ms must each get their own `PurgeBlock`
+/// op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_ms_collision_emits_one_purge_op_per_root() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "C9P_P", "page", "parent", None, Some(1)).await;
+    insert_block(&pool, "C9P_C", "content", "child", Some("C9P_P"), Some(1)).await;
+
+    let t: i64 = 1_700_000_000_000;
+    sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id IN ('C9P_P', 'C9P_C')")
+        .bind(t)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (seq, id) in [(1_i64, "C9P_C"), (2_i64, "C9P_P")] {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, block_id, origin) \
+             VALUES (?, ?, ?, 'delete_block', ?, ?, ?, 'user')",
+        )
+        .bind(DEV)
+        .bind(seq)
+        .bind(format!("hash-{id}"))
+        .bind(format!(
+            "{{\"op_type\":\"delete_block\",\"block_id\":\"{id}\"}}"
+        ))
+        .bind(t)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let resp = purge_all_deleted_inner(&pool, DEV, &mat).await.unwrap();
+    assert_eq!(resp.affected_count, 2, "both blocks must be purged");
+
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let purge_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "purge_block").collect();
+    assert_eq!(
+        purge_ops.len(),
+        2,
+        "same-ms collision must emit one purge op per root (C9), got {}",
+        purge_ops.len()
+    );
 }
