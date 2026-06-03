@@ -653,10 +653,26 @@ pub async fn reproject_block_properties_from_engine(
             continue;
         }
 
+        // FK safety (#377): `value_ref` is a FK to `blocks(id)` (migration
+        // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. The engine can
+        // legitimately hand back a ref whose target has no `blocks` row in
+        // THIS space — a cross-space reference, or a forward reference to a
+        // block projected later in the same `changed_blocks` loop. An
+        // unguarded INSERT would raise FK 787 and abort the whole inbound-sync
+        // `BEGIN IMMEDIATE` transaction; every retry would fail identically,
+        // wedging sync for that peer/space. Guard the row exactly like the
+        // sibling `reproject_block_tags_from_engine`: insert only when
+        // `value_ref` is NULL (no FK to satisfy — the value lives in another
+        // column) or its target block exists. A dangling/cross-space ref is
+        // dropped (row-absent), which is the only valid representation —
+        // NULL-ing `value_ref` would leave an all-NULL row that violates the
+        // `exactly_one_value` CHECK, and authoritative-replace already removed
+        // any prior row via the up-front DELETE.
         sqlx::query!(
             "INSERT INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             SELECT ?, ?, ?, ?, ?, ?, ? \
+             WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
             block_id_str,
             key,
             value_text,
@@ -664,6 +680,8 @@ pub async fn reproject_block_properties_from_engine(
             value_date,
             value_ref,
             value_bool,
+            value_ref,
+            value_ref,
         )
         .execute(&mut *conn)
         .await?;
@@ -2030,6 +2048,43 @@ mod tests {
         .expect("fetch link");
         // ref value lands in value_ref (4th canonical column).
         assert_eq!(link, (None, None, None, Some(BLOCK_A.into()), None));
+    }
+
+    #[tokio::test]
+    async fn reproject_skips_dangling_ref_without_fk_abort_377() {
+        // Regression (#377): a ref-typed property whose target has no `blocks`
+        // row in this space — a cross-space reference, or a forward reference
+        // to a block projected later in the same `changed_blocks` loop — must
+        // NOT raise an FK violation that aborts the inbound-sync transaction
+        // (which would wedge sync, failing identically on every retry). The
+        // dangling ref is dropped (row-absent), mirroring the FK-safe
+        // `reproject_block_tags_from_engine`. The positive case (a ref to an
+        // existing block IS inserted) is covered by `reproject_routes_ref_value`
+        // above, so together they prove the guard is selective.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        // A valid ULID that has no corresponding `blocks` row.
+        const DANGLING: &str = "01HZ000000000000000000DANG";
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let props = vec![("link".to_string(), pv(DANGLING))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("a dangling ref must not FK-abort the inbound-sync tx");
+        drop(conn);
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'link'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+        assert_eq!(
+            count.0, 0,
+            "a dangling ref property must be dropped (row-absent), not inserted"
+        );
     }
 
     #[tokio::test]
