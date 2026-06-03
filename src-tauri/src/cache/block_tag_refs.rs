@@ -201,6 +201,18 @@ pub async fn reindex_block_tag_refs_split(
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
     let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
+    // #375: resolve the source space so the INSERT excludes cross-space tags,
+    // identically to the single-pool `reindex_block_tag_refs`. The split path
+    // reads from `read_pool`, so the resolution does too.
+    let source_space: Option<String> = if to_insert.is_empty() {
+        None
+    } else {
+        let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
+        crate::space::resolve_block_space(read_pool, &source_block_id)
+            .await?
+            .map(|s| s.as_str().to_owned())
+    };
+
     if to_delete.is_empty() && to_insert.is_empty() {
         return Ok(());
     }
@@ -231,14 +243,30 @@ pub async fn reindex_block_tag_refs_split(
         // are actually tags. Non-tag candidates (stray IDs that happen to
         // match the regex but point at content/page blocks) are silently
         // dropped.
+        //
+        // #375: this SQL is now byte-identical to the single-pool
+        // `reindex_block_tag_refs` INSERT — it restores the `deleted_at IS NULL`
+        // guard on the tag-existence EXISTS (a soft-deleted tag must not
+        // produce a ref, invariant #9) and the `(?3 IS NULL OR …)` cross-space
+        // filter the split variant previously dropped. Keeping the string
+        // identical lets it reuse the single-pool query's `.sqlx` cache entry.
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query!(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
-             SELECT ?, value FROM json_each(?) \
+             SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS \
-                 (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
+                 (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) \
+               AND (?3 IS NULL OR ?3 = ( \
+                   SELECT bp.value_ref FROM block_properties bp \
+                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
+                   WHERE bp.block_id = COALESCE( \
+                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
+                           je.value) \
+                     AND bp.key = 'space' \
+                   LIMIT 1))",
             block_id,
             insert_json,
+            source_space,
         )
         .execute(&mut *tx)
         .await?;
@@ -274,6 +302,29 @@ async fn compute_desired_pairs(
     .into_iter()
     .collect();
 
+    // #375: resolve every live block's space once so the full rebuild applies
+    // the SAME cross-space exclusion the incremental `reindex_block_tag_refs`
+    // pushes into its INSERT. Without this, a full rebuild (snapshot restore,
+    // boot empty-table fallback, explicit "rebuild caches") re-admits exactly
+    // the cross-space tag-refs the incremental path is careful to exclude. The
+    // per-block subquery is `space::resolve_block_space`'s SQL (page_id-aware,
+    // both soft-delete guards). A NULL space means "unscoped".
+    let space_of: std::collections::HashMap<String, Option<String>> = sqlx::query!(
+        r#"SELECT b.id AS "id!", (
+               SELECT bp.value_ref FROM block_properties bp
+               JOIN blocks h ON h.id = bp.block_id AND h.deleted_at IS NULL
+               WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space'
+               LIMIT 1
+           ) AS "space?"
+           FROM blocks b
+           WHERE b.deleted_at IS NULL"#
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.id, r.space))
+    .collect();
+
     let re = super::tag_ref_re();
     let mut pairs: HashSet<(String, String)> = HashSet::new();
     {
@@ -284,9 +335,21 @@ async fn compute_desired_pairs(
         .fetch(&mut *conn);
         while let Some(row) = stream.try_next().await? {
             let content = row.content.as_deref().unwrap_or("");
+            // Source space: `None` (unscoped) keeps every tag, mirroring the
+            // incremental `?3 IS NULL` branch; otherwise a tag is kept only if
+            // its own resolved space equals the source's (a NULL tag space is
+            // dropped, exactly as `NULL = ?3` evaluates falsy).
+            let src_space = space_of.get(&row.id).cloned().flatten();
             for cap in re.captures_iter(content) {
                 let tag_id = cap[1].to_string();
-                if tag_ids.contains(&tag_id) {
+                if !tag_ids.contains(&tag_id) {
+                    continue;
+                }
+                let same_space = match &src_space {
+                    None => true,
+                    Some(s) => space_of.get(&tag_id).and_then(Option::as_ref) == Some(s),
+                };
+                if same_space {
                     pairs.insert((row.id.clone(), tag_id));
                 }
             }
