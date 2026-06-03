@@ -98,6 +98,7 @@ fn bench_search_fts(c: &mut Criterion) {
                     &[],
                     None,
                     &meta,
+                    None,
                 )
             });
         });
