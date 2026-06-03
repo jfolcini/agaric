@@ -466,6 +466,22 @@ async fn eval_property_sort_materialised(
 /// post-resolve `.get(&id)` lookups in the grouping pass run on the
 /// faster Fx hash. Callers were already on Fx-flavoured sets, so this
 /// keeps the family aligned.
+///
+/// C9 (#345) — invariant: the `JOIN blocks p ON p.id = b.page_id` is
+/// deliberately *unguarded* (no `p.block_type = 'page'`, no
+/// `p.deleted_at IS NULL`). It relies on the data invariant that a
+/// block's `page_id` always points at a live `page` row:
+///
+/// * migration 0073's `page_id_self_for_pages` CHECK keeps every page
+///   row's own `page_id` consistent, and
+/// * the soft-delete path cascades to descendants, so a block's owning
+///   page is alive whenever the block is.
+///
+/// The `#[cfg(test)]` CTE oracle adds those guards explicitly; the two
+/// resolutions can therefore diverge ONLY on corrupted data (a `page_id`
+/// pointing at a deleted or non-page row), which the normal write paths
+/// never produce. No runtime guard is added here so the hot grouping
+/// path keeps the single denormalised-column join.
 pub(super) async fn resolve_root_pages(
     pool: &SqlitePool,
     block_ids: &FxHashSet<String>,

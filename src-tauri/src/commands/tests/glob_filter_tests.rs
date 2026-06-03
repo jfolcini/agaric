@@ -117,6 +117,7 @@ async fn empty_include_and_exclude_returns_all_matches() {
         None,
         Some(50),
         SearchFilter::default(),
+        None,
     )
     .await
     .unwrap();
@@ -137,6 +138,7 @@ async fn include_glob_prefix_anchored() {
             include_page_globs: vec!["Journal/*".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -168,6 +170,7 @@ async fn include_glob_case_insensitive() {
             include_page_globs: vec!["journal/*".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -188,6 +191,7 @@ async fn include_glob_substring_default() {
             include_page_globs: vec!["meeting".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -208,6 +212,7 @@ async fn brace_expansion_unions() {
             include_page_globs: vec!["{Journal,Archive}/*".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -228,6 +233,7 @@ async fn comma_separated_unions() {
             include_page_globs: vec!["Journal/*,Meeting*".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -248,6 +254,7 @@ async fn include_and_exclude_compose_with_and_intersection() {
             exclude_page_globs: vec!["*2025*".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -273,6 +280,7 @@ async fn brace_nesting_returns_validation_error() {
             include_page_globs: vec!["{a,{b,c}}".into()],
             ..Default::default()
         },
+        None,
     )
     .await;
     let err = result.unwrap_err();
@@ -296,6 +304,7 @@ async fn unbalanced_bracket_returns_validation_error() {
             include_page_globs: vec!["[unclosed".into()],
             ..Default::default()
         },
+        None,
     )
     .await;
     let err = result.unwrap_err();
@@ -323,6 +332,7 @@ async fn legacy_tag_and_filter_still_works() {
             tag_ids: vec![],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();

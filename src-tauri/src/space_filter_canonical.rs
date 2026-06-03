@@ -27,21 +27,24 @@
 //!
 //! ## What's NOT in scope
 //!
-//! Three space-scoped queries in the source tree intentionally use
+//! Some space-scoped queries in the source tree intentionally use
 //! a *different* SQL shape and therefore are NOT canonical-fragment
-//! sites; they are excluded from the allowlist below:
+//! sites. The parity test ([`tests::space_filter_production_sites_match_canonical`])
+//! walks `src/**/*.rs` at test time and asserts the canonical shape
+//! on every regex match, so structurally-different sites are simply
+//! not matched by the canonical regex and need no allowlisting:
 //!
-//! | File | Why excluded |
+//! | File | Why structurally different |
 //! |---|---|
 //! | `commands/pages.rs` (alias-prefix lookup) | `b.id IN (...)` instead of `b.page_id IN (...)` — page rows match by their own id, not their owning page. |
 //! | `pagination/history.rs` (op-log filter) | `json_extract(ol.payload, '$.block_id') IN (...)` — operates on the op-log payload, not a `blocks` row. |
-//! | `fts/search.rs` (dynamic SQL) | No `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
+//! | `fts/search.rs` / `fts/toggle_filter.rs` (dynamic SQL) | No `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
 //!
-//! These three files use the same *block_properties(key='space')*
+//! These files use the same *block_properties(key='space')*
 //! sub-select but with a different surrounding bracket structure,
 //! so the canonical-shape regex below does not (and should not)
 //! match them. If the canonical fragment ever changes shape, those
-//! three sites will need separate review.
+//! sites will need separate review.
 
 /// Canonical inline form of the space-filter SQL fragment with `?N`
 /// standing in for the bind index (which varies from `?2` to `?8`
@@ -139,55 +142,67 @@ mod tests {
         );
     }
 
-    /// Test B — every production-source-tree occurrence of the
-    /// space-filter fragment, after normalisation, equals
-    /// [`SPACE_FILTER_CANONICAL`]. Source files are embedded at
-    /// compile time via `include_str!` so the test runs without
-    /// filesystem access.
+    /// Recursively collect every `*.rs` file under `dir`, returning
+    /// `(display_path_relative_to_src, contents)` pairs. `std::fs`
+    /// is fine in a test; this runs from the crate root (cargo sets
+    /// the cwd to the package manifest dir for tests).
+    fn collect_rs_files(
+        dir: &std::path::Path,
+        src_root: &std::path::Path,
+    ) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let entries = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("read_dir {} failed: {e}", dir.display()));
+        for entry in entries {
+            let entry = entry.expect("dir entry");
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(collect_rs_files(&path, src_root));
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                let rel = path
+                    .strip_prefix(src_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
+                out.push((rel, contents));
+            }
+        }
+        out
+    }
+
+    /// Test B — every canonical-shape space-filter occurrence found by
+    /// a recursive `src/**/*.rs` walk, after normalisation, equals
+    /// [`SPACE_FILTER_CANONICAL`]. The walk (rather than a hand-
+    /// maintained `include_str!` allowlist) means a new call site in
+    /// *any* file is automatically asserted — there is no allowlist to
+    /// fall out of sync with, and no magic expected-count to bump.
     ///
-    /// The fixed allowlist (rather than a directory walk) is
-    /// deliberate: when a developer adds a new space-filter call
-    /// site in a file not yet listed, the count assertion below
-    /// catches it and forces a conscious decision to extend the
-    /// list.
-    ///
-    /// **Files NOT in the allowlist** (intentionally — see the
-    /// module-level "What's NOT in scope" doc): `commands/pages.rs`,
-    /// `pagination/history.rs`, `fts/search.rs`. These three use
-    /// space filters with structurally different SQL shapes (b.id IN
-    /// directly, json_extract over op-log payload, dynamic SQL
-    /// without the `?N IS NULL OR` guard) and are not canonical-
-    /// fragment sites.
+    /// Structurally-different sites (see the module-level "What's NOT
+    /// in scope" doc) are excluded by `DENY_FILES` below. Note that
+    /// the canonical regex only matches the `(?N IS NULL OR b.page_id
+    /// IN (SELECT bp.block_id …))` shape, so files using `b.id IN`,
+    /// `json_extract(...)`, or the guard-less dynamic-SQL form are not
+    /// matched regardless — `DENY_FILES` is a belt-and-suspenders
+    /// guard for files that happen to contain a canonical-looking
+    /// fragment we deliberately do not want policed (e.g. this module
+    /// itself, which holds the canonical const + the alternate string
+    /// in test A).
     #[test]
     fn space_filter_production_sites_match_canonical() {
-        // (display_path, file_contents). Paths are relative to this
-        // module (`src-tauri/src/space_filter_canonical.rs`).
-        let sites: &[(&str, &str)] = &[
-            ("commands/agenda.rs", include_str!("commands/agenda.rs")),
-            (
-                "commands/blocks/queries.rs",
-                include_str!("commands/blocks/queries.rs"),
-            ),
-            ("pagination/agenda.rs", include_str!("pagination/agenda.rs")),
-            (
-                "pagination/hierarchy.rs",
-                include_str!("pagination/hierarchy.rs"),
-            ),
-            ("pagination/links.rs", include_str!("pagination/links.rs")),
-            (
-                "pagination/properties.rs",
-                include_str!("pagination/properties.rs"),
-            ),
-            ("pagination/tags.rs", include_str!("pagination/tags.rs")),
-            ("pagination/trash.rs", include_str!("pagination/trash.rs")),
-            (
-                "pagination/undated.rs",
-                include_str!("pagination/undated.rs"),
-            ),
-            ("backlink/grouped.rs", include_str!("backlink/grouped.rs")),
-            ("backlink/query.rs", include_str!("backlink/query.rs")),
-            ("tag_query/query.rs", include_str!("tag_query/query.rs")),
+        // Files excluded from the parity walk. Paths are relative to
+        // `src-tauri/src/`. Each entry must document why.
+        const DENY_FILES: &[&str] = &[
+            // This module holds SPACE_FILTER_CANONICAL itself plus the
+            // hand-written single-line `alternate` in test A — both are
+            // canonical by construction and policing them here would be
+            // circular.
+            "space_filter_canonical.rs",
         ];
+
+        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let sites = collect_rs_files(&src_root, &src_root);
 
         // Permissive regex that locates every canonical-shape space-
         // filter occurrence. `(?s)` enables dot-matches-newline so
@@ -205,7 +220,10 @@ mod tests {
         let mut total_hits = 0usize;
         let mut failures: Vec<String> = Vec::new();
 
-        for (path, content) in sites {
+        for (path, content) in &sites {
+            if DENY_FILES.contains(&path.as_str()) {
+                continue;
+            }
             for m in pattern_re.find_iter(content) {
                 total_hits += 1;
                 let site_norm = normalize(m.as_str());
@@ -229,38 +247,20 @@ mod tests {
             failures.join("\n"),
         );
 
-        // Catches: a new canonical-shape space-filter call site is added
-        // to a file already in the allowlist, or to a file NOT in the
-        // allowlist (which would not be detected because `include_str!`
-        // wouldn't see it). The expected count is the sum of regex hits
-        // across every listed file as audited at the time this test was
-        // written.
-        //
-        // When a site is added or removed, this assertion fails — bump
-        // the constant deliberately, audit the new/removed site for
-        // canonical conformance, and (if the new site lives in a file
-        // not yet listed) extend the allowlist above.
-        // H1 (PEND-28a Batch 2) bumped this from 19 to 23: the backlink
-        // pipeline `eval_backlink_query` / `eval_backlink_query_grouped`
-        // refactor introduced four additional canonical-shape sites
-        // (SQL COUNT + filtered-COUNT + page query + materialised
-        // filtered-ids SQL in `backlink/query.rs`, COUNT +
-        // filtered-ids SQL in `backlink/grouped.rs`) while removing
-        // the two pre-H1 base-set fetches.
-        // PageBrowser pagination UX (2026-05-14) bumped from 23 to 24:
-        // the new `count_blocks_by_type` helper in
-        // `commands/blocks/queries.rs` adds a canonical-shape
-        // space-filter for the `total_count` COUNT query that drives
-        // the PageBrowser "X of Y" progress chip.
-        const EXPECTED_HITS: usize = 24;
-        assert_eq!(
-            total_hits, EXPECTED_HITS,
-            "expected {EXPECTED_HITS} canonical-shape space-filter \
-             matches across the listed production source files, found \
-             {total_hits}. Either a site was added/removed, or the \
-             allowlist above is missing a file. Audit `grep -rn \
-             \"b.page_id IN (SELECT bp.block_id\" src-tauri/src/` and \
-             reconcile.",
+        // The recursive walk should always find at least the known
+        // production sites; a zero count means the regex or the walk
+        // broke (e.g. the canonical fragment was reshaped without
+        // updating the pattern), which would silently disable the
+        // drift guard. No exact count is asserted — adding/removing a
+        // canonical-shape call site no longer requires touching this
+        // test, since every match is checked for shape conformance.
+        assert!(
+            total_hits > 0,
+            "the src/**/*.rs walk found zero canonical-shape space-filter \
+             sites; the pattern regex or SPACE_FILTER_CANONICAL shape \
+             likely changed and silently disabled this drift guard. \
+             Audit `grep -rn \"b.page_id IN (SELECT bp.block_id\" \
+             src-tauri/src/`.",
         );
     }
 

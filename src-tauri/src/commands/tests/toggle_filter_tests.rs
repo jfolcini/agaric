@@ -134,6 +134,7 @@ async fn all_toggles_off_returns_snippet_and_no_offsets() {
         None,
         Some(20),
         filter_with(false, false, false),
+        None,
     )
     .await
     .unwrap();
@@ -167,6 +168,7 @@ async fn case_sensitive_narrows_candidates() {
         None,
         Some(20),
         filter_with(true, false, false),
+        None,
     )
     .await
     .unwrap();
@@ -208,6 +210,7 @@ async fn whole_word_does_not_match_substring() {
         None,
         Some(20),
         filter_with(false, true, false),
+        None,
     )
     .await
     .unwrap();
@@ -237,6 +240,7 @@ async fn regex_mode_matches_anchored_pattern() {
         None,
         Some(20),
         filter_with(false, false, true),
+        None,
     )
     .await
     .unwrap();
@@ -267,6 +271,7 @@ async fn regex_compile_error_surfaces_typed_validation() {
         None,
         Some(20),
         filter_with(false, false, true),
+        None,
     )
     .await
     .expect_err("invalid regex must surface AppError::Validation");
@@ -290,6 +295,7 @@ async fn empty_query_with_regex_toggle_returns_empty() {
         None,
         Some(20),
         filter_with(false, false, true),
+        None,
     )
     .await
     .unwrap();
@@ -331,6 +337,7 @@ async fn regex_mode_emits_utf16_offsets_for_cjk_content() {
         None,
         Some(20),
         filter_with(false, false, true),
+        None,
     )
     .await
     .unwrap();

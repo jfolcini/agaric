@@ -60,7 +60,7 @@ fn test_space_filter() -> SearchFilter {
 async fn search_blocks_inner_empty_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "".into(), None, None, test_space_filter())
+    let result = search_blocks_inner(&pool, "".into(), None, None, test_space_filter(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -75,7 +75,7 @@ async fn search_blocks_inner_empty_query_returns_empty() {
 async fn search_blocks_inner_whitespace_query_returns_empty() {
     let (pool, _dir) = test_pool().await;
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "   ".into(), None, None, test_space_filter())
+    let result = search_blocks_inner(&pool, "   ".into(), None, None, test_space_filter(), None)
         .await
         .unwrap();
     assert_eq!(
@@ -104,9 +104,16 @@ async fn search_blocks_inner_finds_indexed_block() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "searchable".into(), None, None, test_space_filter())
-        .await
-        .unwrap();
+    let result = search_blocks_inner(
+        &pool,
+        "searchable".into(),
+        None,
+        None,
+        test_space_filter(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.items.len(), 1, "should find one matching block");
     assert_eq!(result.items[0].id, "SRCH1", "found block should be SRCH1");
 }
@@ -118,9 +125,16 @@ async fn search_blocks_inner_no_results_for_unindexed_term() {
     crate::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "cherry".into(), None, None, test_space_filter())
-        .await
-        .unwrap();
+    let result = search_blocks_inner(
+        &pool,
+        "cherry".into(),
+        None,
+        None,
+        test_space_filter(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         0,
@@ -159,9 +173,16 @@ async fn search_blocks_with_parent_id_filter() {
 
     // Without filter — both should appear
     assign_all_to_test_space(&pool).await;
-    let all = search_blocks_inner(&pool, "searchable".into(), None, None, test_space_filter())
-        .await
-        .unwrap();
+    let all = search_blocks_inner(
+        &pool,
+        "searchable".into(),
+        None,
+        None,
+        test_space_filter(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(all.items.len(), 2, "no filter: should find both blocks");
 
     // With parent_id filter — only block under PAGE_A
@@ -175,6 +196,7 @@ async fn search_blocks_with_parent_id_filter() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -224,9 +246,16 @@ async fn search_blocks_with_tag_filter() {
 
     // Without tag filter — all three
     assign_all_to_test_space(&pool).await;
-    let all = search_blocks_inner(&pool, "findme".into(), None, None, test_space_filter())
-        .await
-        .unwrap();
+    let all = search_blocks_inner(
+        &pool,
+        "findme".into(),
+        None,
+        None,
+        test_space_filter(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         all.items.len(),
         3,
@@ -244,6 +273,7 @@ async fn search_blocks_with_tag_filter() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -266,6 +296,7 @@ async fn search_blocks_with_tag_filter() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -305,9 +336,16 @@ async fn search_blocks_without_filters() {
 
     // No filters (backward compatible) — all matching results returned
     assign_all_to_test_space(&pool).await;
-    let result = search_blocks_inner(&pool, "universal".into(), None, None, test_space_filter())
-        .await
-        .unwrap();
+    let result = search_blocks_inner(
+        &pool,
+        "universal".into(),
+        None,
+        None,
+        test_space_filter(),
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         result.items.len(),
         2,
@@ -325,6 +363,7 @@ async fn search_blocks_without_filters() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();

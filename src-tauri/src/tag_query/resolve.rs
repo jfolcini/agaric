@@ -20,8 +20,8 @@ use crate::sql_utils::escape_like;
 /// inheritance applies only to explicit tags; an inline ref on a page
 /// does not propagate to child blocks.
 ///
-/// Deleted (`deleted_at IS NOT NULL`) and conflict
-/// blocks are excluded at every UNION arm.
+/// Deleted (`deleted_at IS NOT NULL`) blocks are excluded at every
+/// UNION arm.
 ///
 /// This is the single source of truth for the leaf SQL — both
 /// `resolve_expr` (here) and `BacklinkFilter::HasTag`

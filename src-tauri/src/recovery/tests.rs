@@ -1280,6 +1280,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1311,6 +1312,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1338,6 +1340,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
