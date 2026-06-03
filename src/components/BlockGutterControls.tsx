@@ -161,15 +161,16 @@ export const BlockGutterControls = React.memo(function BlockGutterControls({
       label={t('block.reorderTip')}
       ariaLabel={t('block.reorder')}
       testId="drag-handle"
-      // B2 (#217): the drag handle was fully invisible at rest (`opacity-0` from
-      // GUTTER_BUTTON_BASE), so the reorder affordance was undiscoverable until
-      // the row was hovered. Rest it at a faint `opacity-30` (and re-enable
-      // pointer events, which the base disables while hidden) so it teaches the
-      // affordance without shouting; `group-hover`/`focus` still raise it to
-      // full opacity via the base classes. Touch keeps the base behaviour
-      // (`.block-active` reveals it) — this is the desktop calm-UI compromise
-      // shared with #216-B (land once).
-      className="drag-handle cursor-grab hover:text-foreground opacity-30 pointer-events-auto"
+      // #370: the drag handle must follow the same per-block hover contract as
+      // every other gutter control — hidden at rest (`opacity-0` from
+      // GUTTER_BUTTON_BASE) and revealed only on `group-hover` /
+      // `group-focus-within` / `.block-active`. The earlier #217-B2 `opacity-30`
+      // at-rest tweak painted a grip on *every* row at all times, which defeated
+      // the per-row hover scope (it read as "all blocks hovered") and added
+      // persistent gutter chrome. Inherit the base behaviour so the affordance
+      // belongs to the single hovered/focused block. Touch is unaffected (it
+      // renders `touchDragHandle` below and keeps the `.block-active` reveal).
+      className="drag-handle cursor-grab hover:text-foreground"
       // B (#216): expose the keyboard-reorder shortcut to assistive tech.
       // The naming tooltip ("Reorder — Ctrl+Shift+↑/↓") already comes from
       // `block.reorderTip`; this makes the shortcut programmatically discoverable.
