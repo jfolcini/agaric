@@ -189,6 +189,21 @@ pub async fn reindex_block_links_split(
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
     let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
+    // #375: resolve the source space so the INSERT below can exclude
+    // cross-space targets, identically to the single-pool `reindex_block_links`
+    // (PEND-15 Phase 3 / #345/#346). The split path reads from `read_pool`, so
+    // the resolution does too (consistent with the content/target reads above).
+    // Without this the production split path silently re-admits exactly the
+    // cross-space rows the canonical path is careful to exclude.
+    let source_space: Option<String> = if to_insert.is_empty() {
+        None
+    } else {
+        let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
+        crate::space::resolve_block_space(read_pool, &source_block_id)
+            .await?
+            .map(|s| s.as_str().to_owned())
+    };
+
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — nothing to write.
         return Ok(());
@@ -221,14 +236,30 @@ pub async fn reindex_block_links_split(
         // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
         // so a link to a soft-deleted (tombstoned) target is never created
         // — invariant #9 (tombstones must not participate in derived state).
+        //
+        // #375: the `(?3 IS NULL OR ?3 = (…))` clause is the pushed-down
+        // cross-space filter — a verbatim copy of the single-pool variant's
+        // (and `space::resolve_block_space`'s) SQL. Source has no space
+        // (`?3 IS NULL`) ⇒ every target passes; otherwise a target is kept only
+        // if its own resolved space equals the source's (a NULL target space
+        // yields `NULL = ?3` → dropped).
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
             "INSERT OR IGNORE INTO block_links (source_id, target_id) \
-             SELECT ?, value FROM json_each(?) \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value AND deleted_at IS NULL)",
+             SELECT ?1, je.value FROM json_each(?2) je \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
+               AND (?3 IS NULL OR ?3 = ( \
+                   SELECT bp.value_ref FROM block_properties bp \
+                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
+                   WHERE bp.block_id = COALESCE( \
+                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
+                           je.value) \
+                     AND bp.key = 'space' \
+                   LIMIT 1))",
         )
         .bind(block_id)
         .bind(&insert_json)
+        .bind(&source_space)
         .execute(&mut *tx)
         .await?;
     }

@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", (\n               SELECT bp.value_ref FROM block_properties bp\n               JOIN blocks h ON h.id = bp.block_id AND h.deleted_at IS NULL\n               WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space'\n               LIMIT 1\n           ) AS \"space?\"\n           FROM blocks b\n           WHERE b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "space?",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "2e42a5dbfd7a600595460fb8777c3479714795479e7690a146db63dfb3d29169"
+}

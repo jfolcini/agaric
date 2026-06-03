@@ -4374,6 +4374,178 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
     );
 }
 
+/// #375 helpers: a space-marker page (its own `page_id`) and a `space`
+/// property on a block.
+async fn cs375_insert_page(pool: &SqlitePool, id: &str) {
+    sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)")
+        .bind(id)
+        .bind(id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+async fn cs375_set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
+        .bind(block_id)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #375: the production `reindex_block_links_split` path (read_pool present)
+/// must apply the same cross-space exclusion as the single-pool variant.
+/// Regression — the split INSERT previously omitted the cross-space filter.
+#[tokio::test]
+async fn reindex_block_links_split_excludes_cross_space_375() {
+    let (pool, _dir) = test_pool().await;
+    let space1 = "01SPACE0000000000000000001";
+    let space2 = "01SPACE0000000000000000002";
+    cs375_insert_page(&pool, space1).await;
+    cs375_insert_page(&pool, space2).await;
+
+    let src_page = "01SRCPAGE000000000000000AA";
+    cs375_insert_page(&pool, src_page).await;
+    cs375_set_space(&pool, src_page, space1).await;
+
+    let tgt_same = "01TGTSAME000000000000000BB";
+    let tgt_cross = "01TGTCROS000000000000000CC";
+    cs375_insert_page(&pool, tgt_same).await;
+    cs375_set_space(&pool, tgt_same, space1).await;
+    cs375_insert_page(&pool, tgt_cross).await;
+    cs375_set_space(&pool, tgt_cross, space2).await;
+
+    let src_block = "01SRCBLOK000000000000000EE";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+        .bind(src_block)
+        .bind(format!("[[{tgt_same}]] [[{tgt_cross}]]"))
+        .bind(src_page)
+        .bind(src_page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reindex_block_links_split(&pool, &pool, src_block)
+        .await
+        .unwrap();
+
+    let mut targets: Vec<String> =
+        sqlx::query_scalar("SELECT target_id FROM block_links WHERE source_id = ?")
+            .bind(src_block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    targets.sort();
+    assert_eq!(
+        targets,
+        vec![tgt_same.to_string()],
+        "the split path must exclude the cross-space target, like single-pool"
+    );
+}
+
+/// #375: the production `reindex_block_tag_refs_split` path must exclude
+/// cross-space tags AND soft-deleted tags. Regression — the split INSERT
+/// previously dropped both the cross-space filter and the `deleted_at IS NULL`
+/// guard on the tag-existence EXISTS.
+#[tokio::test]
+async fn reindex_block_tag_refs_split_excludes_cross_space_and_deleted_tag_375() {
+    let (pool, _dir) = test_pool().await;
+    let space1 = "01SPACE0000000000000000001";
+    let space2 = "01SPACE0000000000000000002";
+    cs375_insert_page(&pool, space1).await;
+    cs375_insert_page(&pool, space2).await;
+
+    let src_page = "01SRCPAGE000000000000000AA";
+    cs375_insert_page(&pool, src_page).await;
+    cs375_set_space(&pool, src_page, space1).await;
+
+    let tag_same = "01TAGSAME000000000000000T1";
+    let tag_cross = "01TAGCROS000000000000000T2";
+    let tag_deleted = "01TAGDELT000000000000000T3";
+    insert_block(&pool, tag_same, "tag", "same").await;
+    cs375_set_space(&pool, tag_same, space1).await;
+    insert_block(&pool, tag_cross, "tag", "cross").await;
+    cs375_set_space(&pool, tag_cross, space2).await;
+    insert_block(&pool, tag_deleted, "tag", "deleted").await;
+    cs375_set_space(&pool, tag_deleted, space1).await;
+    soft_delete_block(&pool, tag_deleted).await;
+
+    let src_block = "01SRCBLOK000000000000000E2";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+        .bind(src_block)
+        .bind(format!("{} {} {}", inline(tag_same), inline(tag_cross), inline(tag_deleted)))
+        .bind(src_page)
+        .bind(src_page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    reindex_block_tag_refs_split(&pool, &pool, src_block)
+        .await
+        .unwrap();
+
+    let mut tags: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM block_tag_refs WHERE source_id = ?")
+            .bind(src_block)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    tags.sort();
+    assert_eq!(
+        tags,
+        vec![tag_same.to_string()],
+        "split path must keep only the same-space, live tag; the cross-space \
+         and soft-deleted tags must be dropped"
+    );
+}
+
+/// #375: the full rebuild (`compute_desired_pairs`) must apply the same
+/// cross-space exclusion the incremental path does — otherwise a snapshot
+/// restore / boot fallback / explicit rebuild re-admits cross-space tag-refs.
+#[tokio::test]
+async fn rebuild_block_tag_refs_cache_excludes_cross_space_375() {
+    let (pool, _dir) = test_pool().await;
+    let space1 = "01SPACE0000000000000000001";
+    let space2 = "01SPACE0000000000000000002";
+    cs375_insert_page(&pool, space1).await;
+    cs375_insert_page(&pool, space2).await;
+
+    let src_page = "01SRCPAGE000000000000000AA";
+    cs375_insert_page(&pool, src_page).await;
+    cs375_set_space(&pool, src_page, space1).await;
+
+    let tag_same = "01TAGSAME000000000000000T1";
+    let tag_cross = "01TAGCROS000000000000000T2";
+    insert_block(&pool, tag_same, "tag", "same").await;
+    cs375_set_space(&pool, tag_same, space1).await;
+    insert_block(&pool, tag_cross, "tag", "cross").await;
+    cs375_set_space(&pool, tag_cross, space2).await;
+
+    let src_block = "01SRCBLOK000000000000000E3";
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+        .bind(src_block)
+        .bind(format!("{} {}", inline(tag_same), inline(tag_cross)))
+        .bind(src_page)
+        .bind(src_page)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    super::rebuild_block_tag_refs_cache(&pool).await.unwrap();
+
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id, tag_id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![(src_block.to_string(), tag_same.to_string())],
+        "the full rebuild must exclude the cross-space tag-ref"
+    );
+}
+
 /// SQL/C9(b) (#345): the page-link rollup keys edges by the OWNING PAGE
 /// (`blocks.page_id`), not the immediate parent. A link inside a block
 /// nested two levels under a page must roll up to the page, not the
