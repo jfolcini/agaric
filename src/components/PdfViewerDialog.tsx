@@ -44,6 +44,9 @@ export function PdfViewerDialog({
   const [error, setError] = useState<string | null>(null)
 
   const pdfDocRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
+  // pdfjs v6 removed PDFDocumentProxy.destroy(); teardown is via the loading
+  // task. Hold it so cleanup can release the worker transport + document.
+  const loadingTaskRef = useRef<pdfjsLib.PDFDocumentLoadingTask | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const renderTaskRef = useRef<ReturnType<pdfjsLib.PDFPageProxy['render']> | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -119,10 +122,11 @@ export function PdfViewerDialog({
       setNumPages(0)
 
       try {
-        const loadingTask = pdfjsLib.getDocument(fileUrl)
+        const loadingTask = pdfjsLib.getDocument({ url: fileUrl })
+        loadingTaskRef.current = loadingTask
         const pdfDoc = await loadingTask.promise
         if (cancelled) {
-          pdfDoc.destroy()
+          void loadingTask.destroy()
           return
         }
 
@@ -150,10 +154,11 @@ export function PdfViewerDialog({
         }
         renderTaskRef.current = null
       }
-      if (pdfDocRef.current) {
-        pdfDocRef.current.destroy()
-        pdfDocRef.current = null
+      if (loadingTaskRef.current) {
+        void loadingTaskRef.current.destroy()
+        loadingTaskRef.current = null
       }
+      pdfDocRef.current = null
     }
   }, [open, fileUrl, renderPage])
 
