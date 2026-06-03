@@ -784,7 +784,7 @@ async fn recover_derived_state_from_op_log(
     }
 
     tracing::warn!(
-        "Derived tables empty but op_log has {} ops — recovering properties and tags",
+        "Derived tables empty but op_log has {} ops — recovering properties, tags, and attachments",
         op_count
     );
 
@@ -794,10 +794,15 @@ async fn recover_derived_state_from_op_log(
     // (`created_at DESC` semantics → ascending replay with last-writer
     // overwriting earlier values), `(device_id, seq)` as the same-ms
     // tiebreaker. See the matching rationale in `recover_blocks_from_op_log`.
-    let ops =
-        sqlx::query("SELECT op_type, payload FROM op_log ORDER BY created_at, device_id, seq")
-            .fetch_all(&mut *tx)
-            .await?;
+    //
+    // #374: `created_at` is selected so the `add_attachment` arm can restore
+    // `attachments.created_at` (a NOT NULL column) from the originating op's
+    // timestamp — the same value the live `apply_add_attachment_tx` writes.
+    let ops = sqlx::query(
+        "SELECT op_type, payload, created_at FROM op_log ORDER BY created_at, device_id, seq",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
 
     for row in ops {
         let op_type: String = row.try_get("op_type")?;
@@ -903,6 +908,59 @@ async fn recover_derived_state_from_op_log(
                 .bind(tag_id)
                 .execute(&mut *tx)
                 .await?;
+            }
+            // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
+            // (its rows are the source of truth for fs_path / mime_type /
+            // filename / size_bytes — NOT a derived cache). Migration 0061
+            // gave `attachments.block_id` an `ON DELETE CASCADE` to
+            // `blocks(id)`, so the `DROP TABLE blocks` in the 0073/0080
+            // rebuilds cascade-deleted every attachment row under
+            // `foreign_keys=ON`, silently destroying that metadata and
+            // orphaning the on-disk files. The op-log `add_attachment`
+            // payload carries every column the row needs, so replay it here
+            // to restore the table (this arm runs on the same all-derived-
+            // tables-empty corruption path as the property/tag arms above).
+            "add_attachment" => {
+                let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+                let block_id = payload["block_id"].as_str().unwrap_or("");
+                let mime_type = payload["mime_type"].as_str().unwrap_or("");
+                let filename = payload["filename"].as_str().unwrap_or("");
+                let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
+                let fs_path = payload["fs_path"].as_str().unwrap_or("");
+                let created_at: i64 = row.try_get("created_at")?;
+
+                // Guard the `block_id` FK (→ blocks(id)): an attachment whose
+                // owning block was purged (or never reached this device) must
+                // stay deleted — restoring it would trip FK 787 and abort
+                // startup. `INSERT OR IGNORE` makes a duplicate `add_attachment`
+                // (same id) a no-op and keeps recovery idempotent across boots.
+                sqlx::query(
+                    "INSERT OR IGNORE INTO attachments \
+                     (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                     SELECT ?, ?, ?, ?, ?, ?, ? \
+                     WHERE EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
+                )
+                .bind(attachment_id)
+                .bind(block_id)
+                .bind(mime_type)
+                .bind(filename)
+                .bind(size_bytes)
+                .bind(fs_path)
+                .bind(created_at)
+                .bind(block_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+            // #374: a later `delete_attachment` must win over its earlier
+            // `add_attachment` (LWW replay order), so drop any row this op
+            // removed — otherwise recovery would resurrect a deleted file.
+            "delete_attachment" => {
+                let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
+
+                sqlx::query("DELETE FROM attachments WHERE id = ?")
+                    .bind(attachment_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             _ => {}
         }
@@ -2397,5 +2455,116 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(prio, 1, "an unrelated set property must still be recovered");
+    }
+
+    /// Regression (#374): the `blocks`-table rebuild in migrations 0073/0080
+    /// runs `DROP TABLE blocks` under `foreign_keys = ON`, which cascade-
+    /// deletes every `attachments` row (migration 0061 gave
+    /// `attachments.block_id` an `ON DELETE CASCADE`). `attachments` is the
+    /// one AUTHORITATIVE child of `blocks` (not a derived cache), so that
+    /// silently destroyed file metadata. Recovery must rebuild the table from
+    /// the op-log `add_attachment` payloads, honouring later
+    /// `delete_attachment` ops and skipping attachments whose owning block is
+    /// gone. The `DROP TABLE blocks` below reproduces the exact cascade.
+    #[tokio::test]
+    async fn init_pool_recovery_restores_attachments_374() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        let ts = chrono::Utc::now().timestamp_millis();
+
+        let ops: &[(i64, &str, &str)] = &[
+            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}"),
+            (2, "create_block", "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            // Live attachment on a recovered block — must be restored verbatim.
+            (3, "add_attachment", "{\"attachment_id\":\"ATT1\",\"block_id\":\"CHILD1\",\"mime_type\":\"image/png\",\"filename\":\"a.png\",\"size_bytes\":123,\"fs_path\":\"attachments/ATT1.png\"}"),
+            // Attachment whose owning block was never created — must be skipped
+            // (restoring it would trip the block_id FK and abort startup).
+            (4, "add_attachment", "{\"attachment_id\":\"ATT2\",\"block_id\":\"GHOST\",\"mime_type\":\"image/png\",\"filename\":\"g.png\",\"size_bytes\":7,\"fs_path\":\"attachments/ATT2.png\"}"),
+            // Added then deleted — the later delete must win (net absent).
+            (5, "add_attachment", "{\"attachment_id\":\"ATT3\",\"block_id\":\"CHILD1\",\"mime_type\":\"text/plain\",\"filename\":\"t.txt\",\"size_bytes\":4,\"fs_path\":\"attachments/ATT3.txt\"}"),
+            (6, "delete_attachment", "{\"attachment_id\":\"ATT3\",\"fs_path\":\"attachments/ATT3.txt\"}"),
+        ];
+        for (seq, op_type, payload) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // DROP blocks so the reopen rebuilds it from the op-log create ops
+        // (and, under FK=ON, cascade-empties `attachments` exactly as the
+        // 0073/0080 rebuild does). `attachments` is empty here because the
+        // owning blocks don't exist yet — they're only materialised during
+        // recovery — so the op-log replay is the sole source of restoration.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        let pool = init_pool(&db_path)
+            .await
+            .expect("recovery must restore attachments without crashing");
+
+        // The live attachment is restored with every column intact.
+        let row = sqlx::query(
+            "SELECT block_id, mime_type, filename, size_bytes, fs_path, created_at \
+             FROM attachments WHERE id = 'ATT1'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap()
+        .expect("live attachment ATT1 must be recovered from the op log");
+        let block_id: String = row.try_get("block_id").unwrap();
+        let mime: String = row.try_get("mime_type").unwrap();
+        let filename: String = row.try_get("filename").unwrap();
+        let size: i64 = row.try_get("size_bytes").unwrap();
+        let fs_path: String = row.try_get("fs_path").unwrap();
+        let created_at: i64 = row.try_get("created_at").unwrap();
+        assert_eq!(block_id, "CHILD1");
+        assert_eq!(mime, "image/png");
+        assert_eq!(filename, "a.png");
+        assert_eq!(size, 123);
+        assert_eq!(fs_path, "attachments/ATT1.png");
+        assert_eq!(
+            created_at, ts,
+            "created_at must come from the op's timestamp"
+        );
+
+        // Attachment on a missing block is skipped (no FK abort).
+        let ghost: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = 'ATT2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ghost, 0, "attachment on a missing block must be skipped");
+
+        // Added-then-deleted attachment stays absent (delete wins).
+        let deleted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = 'ATT3'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 0, "a deleted attachment must not be resurrected");
+
+        // Idempotency: a second boot (recovery re-walks the op log because
+        // this fixture has no properties/tags) must not duplicate or error —
+        // `INSERT OR IGNORE` keeps ATT1 at exactly one row.
+        drop(pool);
+        let pool = init_pool(&db_path)
+            .await
+            .expect("a second recovery pass must not crash");
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 1, "recovery must be idempotent across boots");
     }
 }
