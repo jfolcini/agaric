@@ -501,17 +501,31 @@ test.describe('Block interactions', () => {
     await expect(page.locator('[data-testid="sortable-block"]')).toHaveCount(countBefore - 1)
   })
 
-  test('drag handle is visible on hover/focus', async ({ page }) => {
+  // #370: the drag handle must follow the per-block hover contract — hidden at
+  // rest (opacity 0) on every row, revealed (opacity 1) only on the hovered row.
+  // `toBeVisible()` is insufficient here: Playwright treats an `opacity:0`
+  // element as visible, so we assert the *computed* opacity transition instead.
+  test('drag handle is hidden at rest and revealed on per-block hover (#370)', async ({ page }) => {
     await openPage(page, 'Getting Started')
 
-    const firstBlock = page.locator('[data-testid="sortable-block"]').first()
-    const dragHandle = firstBlock.locator('[data-testid="drag-handle"]')
+    const blocks = page.locator('[data-testid="sortable-block"]')
+    const firstBlock = blocks.nth(0)
+    const firstHandle = firstBlock.locator('[data-testid="drag-handle"]')
+    const secondHandle = blocks.nth(1).locator('[data-testid="drag-handle"]')
 
-    // Before hover, the drag handle has opacity-0 (not visually visible)
-    // After hover on the block group, it becomes visible
+    const opacityOf = (handle: typeof firstHandle) =>
+      handle.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity))
+
+    // At rest (cursor parked off the list), no grip is painted on any row.
+    await page.mouse.move(0, 0)
+    await expect.poll(() => opacityOf(firstHandle)).toBe(0)
+    await expect.poll(() => opacityOf(secondHandle)).toBe(0)
+
+    // Hovering the first block reveals ONLY its own handle…
     await firstBlock.hover()
-
-    await expect(dragHandle).toBeVisible()
+    await expect.poll(() => opacityOf(firstHandle)).toBe(1)
+    // …the sibling row's handle stays hidden (not "all blocks hovered").
+    await expect.poll(() => opacityOf(secondHandle)).toBe(0)
   })
 
   test('drag-and-drop reorders blocks', async ({ page }) => {
