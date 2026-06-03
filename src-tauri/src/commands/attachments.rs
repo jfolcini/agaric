@@ -478,16 +478,17 @@ pub async fn list_attachments_batch_inner(
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
          FROM attachments \
          WHERE block_id IN (SELECT value FROM json_each(?)) \
-         ORDER BY block_id, created_at",
+         ORDER BY created_at",
         ids_json
     )
     .fetch_all(pool)
     .await?;
 
-    // Group by block_id. Sorted-by-block_id input means the Rust grouping
-    // step is O(n) without a HashMap-of-Vec build — but a HashMap is the
-    // natural return type for the frontend. Use Entry::or_insert_with(Vec::new)
-    // and push.
+    // M7b (#348): grouping is via a HashMap keyed on `block_id`, so the
+    // result is NOT block-id ordered — the leading `block_id` sort key was
+    // dead (it never affected the HashMap output). `ORDER BY created_at` is
+    // kept because it fixes the order *within* each block's Vec, which the
+    // frontend relies on.
     let mut grouped: std::collections::HashMap<String, Vec<AttachmentRow>> =
         std::collections::HashMap::new();
     for row in rows {

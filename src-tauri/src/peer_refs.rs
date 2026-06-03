@@ -326,13 +326,18 @@ const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
 
 /// Mark that a pairing just completed and a first peer connection is expected.
 pub async fn set_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
+    // M5 (#348): bind `now_ms()` (epoch-ms, the column's contract) into both
+    // branches instead of `strftime('%s','now') * 1000` (second precision).
+    let now = crate::db::now_ms();
     sqlx::query!(
         "INSERT INTO app_settings (key, value, updated_at)
-         VALUES (?, '1', CAST(strftime('%s','now') AS INTEGER) * 1000)
+         VALUES (?, '1', ?)
          ON CONFLICT(key) DO UPDATE SET
              value = '1',
-             updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000",
+             updated_at = ?",
         PENDING_PAIRING_KEY,
+        now,
+        now,
     )
     .execute(pool)
     .await?;

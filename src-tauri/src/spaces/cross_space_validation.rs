@@ -26,9 +26,75 @@
 //! tolerated (mirrors the orphan-tag adoption in `add_tag`).
 
 use crate::cache::{TAG_REF_RE, ULID_LINK_RE};
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
-use crate::space::resolve_block_space;
+use crate::space::{resolve_block_space, SpaceId};
 use crate::ulid::BlockId;
+use std::collections::HashMap;
+
+/// Resolve the owning space of every block id in `ids` in one chunked
+/// pass (P8, #346), replacing the former per-token
+/// [`resolve_block_space`] N+1 in [`validate_content_cross_space_refs`].
+///
+/// Returns a map from input id → its resolved space (entries with no
+/// space — orphan blocks — are simply absent from the map, mirroring
+/// `resolve_block_space` returning `None`, which preserves the
+/// orphan-tolerance contract).
+///
+/// The IN-list is chunked at [`MAX_SQL_PARAMS`] so a content block with
+/// thousands of distinct reference tokens never exceeds SQLite's bound
+/// parameter limit. Soft-delete filtering matches `resolve_block_space`
+/// exactly (invariant #9): the input block must be live for its
+/// `page_id` to flow through the COALESCE, and the block that *holds*
+/// the `space` property must be live too.
+async fn resolve_block_spaces_batch(
+    conn: &mut sqlx::SqliteConnection,
+    ids: &[&str],
+) -> Result<HashMap<String, SpaceId>, AppError> {
+    use sqlx::Row as _;
+
+    let mut out: HashMap<String, SpaceId> = HashMap::new();
+    for chunk in ids.chunks(MAX_SQL_PARAMS) {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        // Per input block `b`, resolve its owning page via
+        // `COALESCE(page_id, id)` (both soft-delete filtered) then read
+        // that page's `space` property. A block with no `space` row
+        // yields a NULL `space_id` and is dropped below.
+        let sql = format!(
+            "SELECT b.id AS input_id, bp.value_ref AS space_id \
+               FROM blocks b \
+               LEFT JOIN block_properties bp \
+                 ON bp.block_id = COALESCE( \
+                      (SELECT page_id FROM blocks \
+                        WHERE id = b.id AND deleted_at IS NULL), \
+                      b.id) \
+                AND bp.key = 'space' \
+                AND EXISTS (SELECT 1 FROM blocks tgt \
+                             WHERE tgt.id = bp.block_id \
+                               AND tgt.deleted_at IS NULL) \
+              WHERE b.id IN ({placeholders})"
+        );
+        // Only placeholder `?` and a literal column list are interpolated
+        // (chunk len), never any caller value — every id is a bound param.
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for id in chunk {
+            q = q.bind(*id);
+        }
+        let rows = q.fetch_all(&mut *conn).await?;
+        for row in rows {
+            let input_id: String = row.try_get("input_id")?;
+            let space_id: Option<String> = row.try_get("space_id")?;
+            if let Some(space_id) = space_id {
+                // value_ref came from a validated SetProperty(space, …);
+                // skip re-parse (AGENTS.md invariant #8).
+                out.insert(input_id, SpaceId::from_trusted(&space_id));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// Scan `content` for ULID tokens and validate every referenced block
 /// belongs to the same space as `source_block_id`.
@@ -63,13 +129,14 @@ pub async fn validate_content_cross_space_refs(
         }
     }
 
+    // P8 (#346): resolve every target's space in one chunked pass instead
+    // of a per-token `resolve_block_space` round-trip. A target absent from
+    // the map is an orphan (no space) and is tolerated — not cross-space yet.
+    let target_spaces = resolve_block_spaces_batch(&mut *conn, &targets).await?;
     for target_str in targets {
-        let target_id = BlockId::from_trusted(target_str);
-        let target_space = resolve_block_space(&mut *conn, &target_id).await?;
-        // Only a target assigned to a DIFFERENT space is a violation; an
-        // orphan target (None) is tolerated — it is not cross-space yet.
-        if let Some(target_space) = target_space {
-            if target_space != source_space {
+        // Only a target assigned to a DIFFERENT space is a violation.
+        if let Some(target_space) = target_spaces.get(target_str) {
+            if *target_space != source_space {
                 return Err(AppError::Validation(format!(
                     "cross-space reference: block '{}' (space {}) references '{}' (space {})",
                     source_block_id.as_str(),

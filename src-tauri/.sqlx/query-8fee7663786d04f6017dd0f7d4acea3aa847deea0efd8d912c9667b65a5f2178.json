@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key, value_type FROM property_definitions",
+  "describe": {
+    "columns": [
+      {
+        "name": "key",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_type",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "property_definitions",
+            "name": "value_type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "8fee7663786d04f6017dd0f7d4acea3aa847deea0efd8d912c9667b65a5f2178"
+}

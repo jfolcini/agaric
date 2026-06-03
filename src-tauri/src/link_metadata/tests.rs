@@ -5,8 +5,8 @@ use super::html_parser::{
     extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
 };
 use super::{
-    cleanup_stale, clear_auth_flag, fetch_metadata, get_cached, read_body_limited, upsert,
-    LinkMetadata, MAX_BODY_SIZE,
+    cleanup_stale, fetch_metadata, get_cached, read_body_limited, upsert, LinkMetadata,
+    MAX_BODY_SIZE,
 };
 use crate::db::init_pool;
 use crate::db::now_ms;
@@ -652,40 +652,6 @@ async fn cleanup_stale_removes_old_non_auth_entries() {
 
     let auth_still = get_cached(&pool, "https://auth.example.com").await.unwrap();
     assert!(auth_still.is_some(), "old auth entry should still exist");
-}
-
-#[tokio::test]
-async fn clear_auth_flag_resets_flag() {
-    let (pool, _dir) = test_pool().await;
-
-    let meta = LinkMetadata {
-        url: "https://auth.example.com".to_string(),
-        title: Some("Auth Page".to_string()),
-        favicon_url: None,
-        description: None,
-        fetched_at: 1_736_942_400_000, // 2025-01-15T12:00:00Z
-        auth_required: true,
-        not_found: false,
-    };
-    upsert(&pool, &meta).await.unwrap();
-
-    clear_auth_flag(&pool, "https://auth.example.com")
-        .await
-        .unwrap();
-
-    let cached = get_cached(&pool, "https://auth.example.com")
-        .await
-        .unwrap()
-        .expect("should find metadata after clearing auth flag");
-
-    assert!(
-        !cached.auth_required,
-        "auth_required should be false after clear"
-    );
-    assert_ne!(
-        cached.fetched_at, 1_736_942_400_000,
-        "fetched_at should be updated after clearing auth flag"
-    );
 }
 
 #[tokio::test]

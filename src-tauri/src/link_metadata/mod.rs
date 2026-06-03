@@ -9,6 +9,14 @@
 //! - this file (`mod.rs`) — HTTP client, DB operations, and the
 //!   `LinkMetadata` type. Re-exports the public parsing API from
 //!   `html_parser` to preserve the original single-file API surface.
+//!
+//! DB access here uses runtime `sqlx::query`/`query_as` (not the
+//! compile-time `query!` macros) by design: the `link_metadata` table is
+//! a device-local, regenerable cache (never synced), and its STRICT +
+//! CHECK column affinity already enforces row shape at write time. The
+//! runtime form keeps this isolated helper free of an offline-`.sqlx`
+//! dependency; it is an intentional choice, not an oversight — do not
+//! convert these to macros.
 
 use std::sync::OnceLock;
 
@@ -255,18 +263,6 @@ pub async fn upsert(pool: &SqlitePool, meta: &LinkMetadata) -> Result<(), AppErr
     .bind(not_found_flag)
     .execute(pool)
     .await?;
-
-    Ok(())
-}
-
-/// Clear the `auth_required` flag for a URL and update `fetched_at` to now.
-pub async fn clear_auth_flag(pool: &SqlitePool, url: &str) -> Result<(), AppError> {
-    let now = now_ms();
-    sqlx::query("UPDATE link_metadata SET auth_required = 0, fetched_at = ? WHERE url = ?")
-        .bind(now)
-        .bind(url)
-        .execute(pool)
-        .await?;
 
     Ok(())
 }

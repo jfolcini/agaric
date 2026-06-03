@@ -8,6 +8,20 @@ use crate::error::AppError;
 /// Returns blocks where `todo_state IN ('TODO', 'DOING')` and
 /// `(due_date < before_date OR scheduled_date < before_date)`.
 /// Ordered by `COALESCE(due_date, scheduled_date) DESC, id DESC`.
+///
+/// # Admission column vs sort key mismatch (#349, C9)
+///
+/// The **admission** predicate (`due_date < ?1 OR scheduled_date < ?1`)
+/// and the **sort key** (`COALESCE(due_date, scheduled_date)`) are not the
+/// same expression — this is deliberate but worth calling out. A task with
+/// both columns set is admitted if *either* falls before `before_date`,
+/// yet it sorts (and keysets) on `due_date` alone (COALESCE prefers the
+/// non-NULL `due_date`). So a task whose `scheduled_date < before_date`
+/// but whose `due_date >= before_date` is admitted *and* ordered by its
+/// future `due_date`. The keyset cursor stays consistent because it
+/// captures the same `COALESCE(...)` value (bound as `?4`) that the
+/// `ORDER BY` uses, so pagination never drifts even though the admission
+/// gate is broader than the sort key.
 pub async fn list_unfinished_tasks(
     pool: &SqlitePool,
     before_date: &str,

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position, b.deleted_at,\n                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as \"page_id: crate::ulid::BlockId\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.content LIKE '____-__-__'\n             AND b.content >= ?\n             AND b.content <= ?\n             AND EXISTS (\n                 SELECT 1 FROM block_properties bp\n                 WHERE bp.block_id = b.id\n                   AND bp.key = 'space'\n                   AND bp.value_ref = ?\n             )\n           ORDER BY b.content ASC",
+  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position, b.deleted_at,\n                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as \"page_id: crate::ulid::BlockId\"\n           FROM blocks b\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             -- C9 (#345): journal-title detection. LIKE drives the index\n             -- (case-insensitive, but `_` matches ANY char, so it admits\n             -- non-date titles like \"abcd-ef-gh\"); the GLOB tightens it to\n             -- a digit class. Both are kept: LIKE keeps the query sargable\n             -- while GLOB rejects non-digit false positives.\n             AND b.content LIKE '____-__-__'\n             AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'\n             AND b.content >= ?\n             AND b.content <= ?\n             AND EXISTS (\n                 SELECT 1 FROM block_properties bp\n                 WHERE bp.block_id = b.id\n                   AND bp.key = 'space'\n                   AND bp.value_ref = ?\n             )\n           ORDER BY b.content ASC",
   "describe": {
     "columns": [
       {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "5ddd2c102c81d3a89b34dcd51ca739f01fd7c834b1274f35a4c5172100fffd89"
+  "hash": "e9777629920b29c96e0ba525ee00860231e7b36047f33bb47f2a488bd8743543"
 }

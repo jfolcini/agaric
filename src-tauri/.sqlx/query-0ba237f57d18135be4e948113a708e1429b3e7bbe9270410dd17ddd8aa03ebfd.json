@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT bt.block_id AS \"block_id!\", bt.tag_id AS \"tag_id!\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space') AS \"source_space?\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS \"target_space?\"\n           FROM block_tags bt\n           JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL\n           JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL\n           WHERE (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space')\n              IS NOT\n                 (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space')",
+  "query": "WITH cs AS (\n              SELECT bt.block_id AS block_id, bt.tag_id AS tag_id,\n                (SELECT bp.value_ref FROM block_properties bp\n                 WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space') AS source_space,\n                (SELECT bp.value_ref FROM block_properties bp\n                 WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS target_space\n              FROM block_tags bt\n              JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL\n              JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL\n           )\n           SELECT block_id AS \"block_id!\", tag_id AS \"tag_id!\",\n                  source_space AS \"source_space?\", target_space AS \"target_space?\"\n             FROM cs\n            WHERE source_space IS NOT target_space",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       true
     ]
   },
-  "hash": "2f1818cccdbf8791c92d7bc628bee34b5b7a045f6c2da5cee16ba7ecfa824af6"
+  "hash": "0ba237f57d18135be4e948113a708e1429b3e7bbe9270410dd17ddd8aa03ebfd"
 }

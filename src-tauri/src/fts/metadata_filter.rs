@@ -651,6 +651,18 @@ fn append_text_not_in_or_not_null(
     sql.push_str(&format!("\n           AND ({})", parts.join(" OR ")));
 }
 
+/// Append a date predicate (`IS NULL` / `BETWEEN` / comparison) to `sql`.
+///
+/// # Date representation assumption (#349)
+///
+/// Every comparison here (`BETWEEN`, `<`/`<=`/`>`/`>=`) relies on the
+/// target columns (`due_date`, `scheduled_date`, …) storing **TEXT ISO-8601
+/// `YYYY-MM-DD`** values, which sort lexicographically the same way they
+/// sort chronologically. This holds today. Should a future migration move
+/// these columns to epoch-ms `INTEGER` (mirroring `deleted_at` post-0080),
+/// the bound `MetaBind::Str` values and the string comparisons here would
+/// silently mis-order — convert the binds to ms and revisit the operators
+/// at that time.
 fn append_date_predicate(
     sql: &mut String,
     next_param: &mut usize,

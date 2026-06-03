@@ -412,7 +412,13 @@ pub async fn list_journal_pages_in_range_inner(
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
+             -- C9 (#345): journal-title detection. LIKE drives the index
+             -- (case-insensitive, but `_` matches ANY char, so it admits
+             -- non-date titles like "abcd-ef-gh"); the GLOB tightens it to
+             -- a digit class. Both are kept: LIKE keeps the query sargable
+             -- while GLOB rejects non-digit false positives.
              AND b.content LIKE '____-__-__'
+             AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
              AND b.content >= ?
              AND b.content <= ?
              AND EXISTS (
@@ -979,6 +985,49 @@ mod tests {
         assert_eq!(rows.len(), 1, "non-date page must not appear");
         assert_eq!(rows[0].content.as_deref(), Some(TEST_DATE));
         assert_ne!(rows[0].id, non_date.into_string());
+
+        mat.shutdown();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_journal_pages_in_range_rejects_like_false_positive() {
+        // C9 (#345): the old `LIKE '____-__-__'` admits any character in each
+        // `_` slot. A title like "2025-04-1x" is 10 chars in the
+        // `____-__-__` shape AND falls inside the `>= '2025-04-01' AND
+        // <= '2025-04-30'` lexical range, so the bounded range does NOT
+        // mask it — only the new digit-class GLOB rejects it.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, "Personal").await;
+
+        // A real journal page in range.
+        resolve_or_create_journal_page(&pool, DEV, &mat, TEST_DATE, &space)
+            .await
+            .unwrap();
+        // A non-date page whose title matches the old LIKE shape and sits
+        // inside the date range, but has a non-digit final char.
+        let bogus = crate::commands::create_page_in_space_inner(
+            &pool,
+            DEV,
+            &mat,
+            None,
+            "2025-04-1x".to_string(),
+            space.clone(),
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+
+        let rows = list_journal_pages_in_range_inner(&pool, "2025-04-01", "2025-04-30", &space)
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "GLOB must reject the LIKE false positive '2025-04-1x'"
+        );
+        assert_eq!(rows[0].content.as_deref(), Some(TEST_DATE));
+        assert_ne!(rows[0].id, bogus.into_string());
 
         mat.shutdown();
     }

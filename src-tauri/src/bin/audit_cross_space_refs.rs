@@ -221,20 +221,24 @@ async fn audit_a1(
     limit: usize,
     names: &FxHashMap<String, String>,
 ) -> Result<CategoryReport, sqlx::Error> {
+    // P8 (#346): a CTE computes each row's source/target space ONCE; the
+    // outer query filters on the aliases (was 4 correlated subqueries/row —
+    // 2 in SELECT, 2 in WHERE — recomputing the same value twice each).
     let rows = sqlx::query!(
-        r#"SELECT bl.source_id AS "source_id!", bl.target_id AS "target_id!",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS "source_space?",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS "target_space?"
-           FROM block_links bl
-           JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL
-           JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL
-           WHERE (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')
-              IS NOT
-                 (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space')"#
+        r#"WITH cs AS (
+              SELECT bl.source_id AS source_id, bl.target_id AS target_id,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS source_space,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS target_space
+              FROM block_links bl
+              JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL
+              JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL
+           )
+           SELECT source_id AS "source_id!", target_id AS "target_id!",
+                  source_space AS "source_space?", target_space AS "target_space?"
+             FROM cs
+            WHERE source_space IS NOT target_space"#
     )
     .fetch_all(pool)
     .await?;
@@ -261,20 +265,22 @@ async fn audit_a2(
     limit: usize,
     names: &FxHashMap<String, String>,
 ) -> Result<CategoryReport, sqlx::Error> {
+    // P8 (#346): CTE computes source/target space once per row (see audit_a1).
     let rows = sqlx::query!(
-        r#"SELECT bt.block_id AS "block_id!", bt.tag_id AS "tag_id!",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space') AS "source_space?",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS "target_space?"
-           FROM block_tags bt
-           JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL
-           JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL
-           WHERE (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space')
-              IS NOT
-                 (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space')"#
+        r#"WITH cs AS (
+              SELECT bt.block_id AS block_id, bt.tag_id AS tag_id,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space') AS source_space,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS target_space
+              FROM block_tags bt
+              JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL
+              JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL
+           )
+           SELECT block_id AS "block_id!", tag_id AS "tag_id!",
+                  source_space AS "source_space?", target_space AS "target_space?"
+             FROM cs
+            WHERE source_space IS NOT target_space"#
     )
     .fetch_all(pool)
     .await?;
@@ -301,20 +307,22 @@ async fn audit_a3(
     limit: usize,
     names: &FxHashMap<String, String>,
 ) -> Result<CategoryReport, sqlx::Error> {
+    // P8 (#346): CTE computes source/target space once per row (see audit_a1).
     let rows = sqlx::query!(
-        r#"SELECT btr.source_id AS "source_id!", btr.tag_id AS "tag_id!",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS "source_space?",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS "target_space?"
-           FROM block_tag_refs btr
-           JOIN blocks bs ON bs.id = btr.source_id AND bs.deleted_at IS NULL
-           JOIN blocks tg ON tg.id = btr.tag_id AND tg.deleted_at IS NULL
-           WHERE (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')
-              IS NOT
-                 (SELECT bp.value_ref FROM block_properties bp
-                  WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space')"#
+        r#"WITH cs AS (
+              SELECT btr.source_id AS source_id, btr.tag_id AS tag_id,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS source_space,
+                (SELECT bp.value_ref FROM block_properties bp
+                 WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS target_space
+              FROM block_tag_refs btr
+              JOIN blocks bs ON bs.id = btr.source_id AND bs.deleted_at IS NULL
+              JOIN blocks tg ON tg.id = btr.tag_id AND tg.deleted_at IS NULL
+           )
+           SELECT source_id AS "source_id!", tag_id AS "tag_id!",
+                  source_space AS "source_space?", target_space AS "target_space?"
+             FROM cs
+            WHERE source_space IS NOT target_space"#
     )
     .fetch_all(pool)
     .await?;
