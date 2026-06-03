@@ -1841,6 +1841,36 @@ async fn revert_ops_appends_reverse_op_without_mutating_original() {
     );
 }
 
+/// C5 (#344): `revert_ops_inner` must reject a batch larger than
+/// `MAX_REVERT_OPS` (1000) with a clean `Validation` error, before any
+/// DB work — so a point-in-time restore that sweeps an unbounded op set
+/// can never hand the batch helpers a Vec large enough to overflow the
+/// SQL bind limit. 1001 refs need no seeding: the cap is checked up
+/// front, ahead of the first query.
+#[tokio::test]
+async fn revert_ops_rejects_batch_over_max_revert_ops_c5() {
+    use crate::commands::revert_ops_inner;
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let ops: Vec<OpRef> = (1..=1001)
+        .map(|seq| OpRef {
+            device_id: TEST_DEVICE.into(),
+            seq,
+        })
+        .collect();
+
+    let err = revert_ops_inner(&pool, TEST_DEVICE, &mat, ops)
+        .await
+        .expect_err("C5: a 1001-op batch must be rejected");
+    assert!(
+        matches!(err, crate::error::AppError::Validation(_)),
+        "over-cap batch must surface AppError::Validation, got {err:?}"
+    );
+}
+
 // ======================================================================
 // SQL-review B-3 — parity: batched vs. per-op reverse computation
 // ======================================================================
@@ -2029,5 +2059,172 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             b, l,
             "B-3 parity violation at idx {i}: batched={b:?} vs legacy={l:?}"
         );
+    }
+}
+
+/// #343 (SQL/C4): the batched property-reverse path must honour the #181
+/// `delete_property` semantics. For the sequence
+/// `Set(K="A"); Delete(K); Set(K="a")`, the most-recent prior op before
+/// the final Set is a `delete_property` — so reversing the final Set must
+/// yield `DeleteProperty(K)` (the property was absent), NOT a resurrected
+/// `SetProperty(K="A")`. Pin the batched output against the single-op
+/// `compute_reverse` oracle for this case.
+#[tokio::test]
+async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
+    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+
+    let (pool, _dir) = test_pool().await;
+
+    let bid = BlockId::test_id("C4_BLK");
+    let key = "status";
+
+    // Set(K="A")
+    append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: bid.clone(),
+            key: key.into(),
+            value_text: Some("A".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        FIXED_TS + 60_000,
+    )
+    .await;
+    // Delete(K)
+    append_op(
+        &pool,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: bid.clone(),
+            key: key.into(),
+        }),
+        FIXED_TS + 120_000,
+    )
+    .await;
+    // Set(K="a") — the op whose reverse we examine.
+    let final_set = append_op(
+        &pool,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: bid.clone(),
+            key: key.into(),
+            value_text: Some("a".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+        FIXED_TS + 180_000,
+    )
+    .await;
+
+    let op_refs = vec![crate::op::OpRef {
+        device_id: final_set.device_id.clone(),
+        seq: final_set.seq,
+    }];
+
+    // Single-op oracle.
+    let legacy = compute_reverse(&pool, &final_set.device_id, final_set.seq)
+        .await
+        .unwrap();
+    assert!(
+        matches!(legacy, OpPayload::DeleteProperty(ref p) if p.key == key && p.block_id == bid),
+        "single-op oracle should reverse Set;Delete;Set to DeleteProperty, got {legacy:?}"
+    );
+
+    // Batched candidate must match the oracle byte-for-byte.
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    let batched = compute_reverse_batch(&pool, &records).await.unwrap();
+    assert_eq!(batched.len(), 1, "exactly one reverse for one op");
+    assert_eq!(
+        batched[0], legacy,
+        "#343 parity violation: batched reverse of final Set must equal single-op DeleteProperty"
+    );
+}
+
+/// C5 (#344): a batch large enough to overflow SQLite's bind-parameter
+/// limit must still compute its reverses. Before chunking, each per-op
+/// `edit_block` subquery in `fetch_prior_text_batch` bound 5 params, so
+/// any batch over `floor(999 / 5) = 199` ops blew past the conservative
+/// limit (and over 32766/5 ≈ 6553 the real one). 400 edits exercise the
+/// chunk boundary several times over and assert no "too many SQL
+/// variables" error — i.e. each executed UNION-ALL statement stays under
+/// the bind cap while results remain aligned to input order.
+#[tokio::test]
+async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
+    use crate::reverse::{compute_reverse_batch, get_op_records_batch};
+
+    let (pool, _dir) = test_pool().await;
+
+    let bid = BlockId::test_id("C5_BLK");
+    let mut ts = 0i64;
+    let next_ts = |ts: &mut i64| -> i64 {
+        *ts += 1;
+        1_736_942_400_000 + *ts * 60_000
+    };
+
+    // Root create so every edit's prior-text lookup resolves.
+    append_op(
+        &pool,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: bid.clone(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: Some(1),
+            content: "v0".into(),
+        }),
+        next_ts(&mut ts),
+    )
+    .await;
+
+    // 400 sequential edits on the SAME block — comfortably over the
+    // old ~199-op (5-bind) single-statement ceiling.
+    const N_EDITS: usize = 400;
+    let mut op_refs: Vec<crate::op::OpRef> = Vec::with_capacity(N_EDITS);
+    for i in 0..N_EDITS {
+        let rec = append_op(
+            &pool,
+            OpPayload::EditBlock(EditBlockPayload {
+                block_id: bid.clone(),
+                to_text: format!("v{}", i + 1),
+                prev_edit: None,
+            }),
+            next_ts(&mut ts),
+        )
+        .await;
+        op_refs.push(crate::op::OpRef {
+            device_id: rec.device_id,
+            seq: rec.seq,
+        });
+    }
+
+    // The two batch helpers that fan out one bound subquery per op.
+    // Either would have tripped "too many SQL variables" pre-chunking.
+    let records = get_op_records_batch(&pool, &op_refs).await.unwrap();
+    assert_eq!(records.len(), N_EDITS, "all op records round-tripped");
+
+    let batched = compute_reverse_batch(&pool, &records)
+        .await
+        .expect("C5: batched reverse of 400 edits must not overflow the SQL bind limit");
+    assert_eq!(batched.len(), N_EDITS, "one reverse per input op, in order");
+
+    // Output must stay aligned to input order across chunk boundaries:
+    // the reverse of edit i restores the text edit (i-1) wrote ("v{i}"),
+    // and the first edit reverts to the create_block content ("v0").
+    for (i, rev) in batched.iter().enumerate() {
+        let expected = if i == 0 {
+            "v0".to_string()
+        } else {
+            format!("v{i}")
+        };
+        match rev {
+            OpPayload::EditBlock(p) => assert_eq!(
+                p.to_text, expected,
+                "reverse #{i} should restore prior text '{expected}', got '{}'",
+                p.to_text
+            ),
+            other => panic!("reverse #{i} should be EditBlock, got {other:?}"),
+        }
     }
 }

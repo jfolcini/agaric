@@ -1,9 +1,9 @@
 // B-3 batch builder uses `i as i64` / `i as usize` to round-trip its
 // per-op input-position index between Rust `usize` (Vec index) and
-// SQLite `INTEGER`. Batch sizes are bounded by the caller (50-op undo
-// is the documented upper bound) so the casts cannot wrap, truncate,
-// or lose sign in practice — annotate at module scope instead of every
-// site.
+// SQLite `INTEGER`. Batch sizes are bounded by the caller
+// (`MAX_REVERT_OPS = 1000` in `commands::history`, C5/#344) so the casts
+// cannot wrap, truncate, or lose sign in practice — annotate at module
+// scope instead of every site.
 #![allow(
     clippy::cast_possible_wrap,
     clippy::cast_possible_truncation,
@@ -39,6 +39,7 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::str::FromStr;
 
 use super::{attachment_ops, block_ops, tag_ops};
+use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
 use crate::op::{
     CreateBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
@@ -46,6 +47,25 @@ use crate::op::{
 };
 use crate::op_log::OpRecord;
 use crate::ulid::BlockId;
+
+// C5 (#344): per-op bind-parameter widths. Each batch helper builds a
+// UNION-ALL with one subquery per op; to keep every executed statement
+// under SQLite's `SQLITE_MAX_VARIABLE_NUMBER` we process `idxs` in
+// chunks of `MAX_SQL_PARAMS / BINDS_PER_OP`. The widths below count the
+// `push_bind` calls in each helper's per-op subquery:
+//   * text / position: idx, block_id, created_at, created_at, seq      → 5
+//   * property:        idx, block_id, key, created_at, created_at, seq → 6
+//   * attachment:      idx, attachment_id, created_at, created_at, seq → 5
+//   * op-record fetch: idx, device_id, seq                             → 3
+// `MAX_SQL_PARAMS` is the crate-wide 999 bound from `crate::db` (the
+// same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
+// `batch_insert_snapshot_rows!` chunker uses) — well under the real
+// 3.32+ limit of 32766, so the chunked statements never overflow.
+const TEXT_BINDS_PER_OP: usize = 5;
+const POSITION_BINDS_PER_OP: usize = 5;
+const PROPERTY_BINDS_PER_OP: usize = 6;
+const ATTACHMENT_BINDS_PER_OP: usize = 5;
+const OP_RECORD_BINDS_PER_OP: usize = 3;
 
 /// Batch-compute reverse payloads for a sequence of [`OpRecord`]s.
 ///
@@ -211,35 +231,42 @@ async fn fetch_prior_text_batch(
     // surrounding `SELECT ? AS idx, op_type, payload FROM (…)` so the
     // ordering binds locally. Same shape applies to every per-type
     // batch fetch below.
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
-    for (i, &op_idx) in idxs.iter().enumerate() {
-        let payload: EditBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
-        let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
-        if i == 0 {
-            qb.push("SELECT ");
-        } else {
-            qb.push(" UNION ALL SELECT ");
-        }
-        qb.push_bind(i as i64);
-        qb.push(
-            " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
-        );
-        qb.push_bind(bid_upper);
-        qb.push(" AND op_type IN ('edit_block','create_block') AND (created_at < ");
-        qb.push_bind(ops[op_idx].created_at);
-        qb.push(" OR (created_at = ");
-        qb.push_bind(ops[op_idx].created_at);
-        qb.push(" AND seq < ");
-        qb.push_bind(ops[op_idx].seq);
-        qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
-    }
-    let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
-
+    // C5 (#344): chunk so each UNION-ALL statement binds at most
+    // `chunk_size * TEXT_BINDS_PER_OP ≤ MAX_SQL_PARAMS`. The bound `idx`
+    // is the GLOBAL output position (`base + j`) so results map straight
+    // back into `out` regardless of chunk boundaries.
+    let chunk_size = MAX_SQL_PARAMS / TEXT_BINDS_PER_OP;
     let mut out: Vec<Option<(String, String)>> = vec![None; idxs.len()];
-    for (i, op_type, payload) in rows {
-        let i = i as usize;
-        if i < out.len() {
-            out[i] = Some((op_type, payload));
+    for (chunk_no, chunk) in idxs.chunks(chunk_size).enumerate() {
+        let base = chunk_no * chunk_size;
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, &op_idx) in chunk.iter().enumerate() {
+            let payload: EditBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
+            let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind((base + j) as i64);
+            qb.push(
+                " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
+            );
+            qb.push_bind(bid_upper);
+            qb.push(" AND op_type IN ('edit_block','create_block') AND (created_at < ");
+            qb.push_bind(ops[op_idx].created_at);
+            qb.push(" OR (created_at = ");
+            qb.push_bind(ops[op_idx].created_at);
+            qb.push(" AND seq < ");
+            qb.push_bind(ops[op_idx].seq);
+            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+        }
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (i, op_type, payload) in rows {
+            let i = i as usize;
+            if i < out.len() {
+                out[i] = Some((op_type, payload));
+            }
         }
     }
     Ok(out)
@@ -256,47 +283,67 @@ async fn fetch_prior_position_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
-    for (i, &op_idx) in idxs.iter().enumerate() {
-        let payload: MoveBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
-        let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
-        if i == 0 {
-            qb.push("SELECT ");
-        } else {
-            qb.push(" UNION ALL SELECT ");
-        }
-        qb.push_bind(i as i64);
-        qb.push(
-            " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
-        );
-        qb.push_bind(bid_upper);
-        qb.push(" AND op_type IN ('move_block','create_block') AND (created_at < ");
-        qb.push_bind(ops[op_idx].created_at);
-        qb.push(" OR (created_at = ");
-        qb.push_bind(ops[op_idx].created_at);
-        qb.push(" AND seq < ");
-        qb.push_bind(ops[op_idx].seq);
-        qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
-    }
-    let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
-
+    // C5 (#344): chunked identically to `fetch_prior_text_batch`.
+    let chunk_size = MAX_SQL_PARAMS / POSITION_BINDS_PER_OP;
     let mut out: Vec<Option<(String, String)>> = vec![None; idxs.len()];
-    for (i, op_type, payload) in rows {
-        let i = i as usize;
-        if i < out.len() {
-            out[i] = Some((op_type, payload));
+    for (chunk_no, chunk) in idxs.chunks(chunk_size).enumerate() {
+        let base = chunk_no * chunk_size;
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, &op_idx) in chunk.iter().enumerate() {
+            let payload: MoveBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
+            let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind((base + j) as i64);
+            qb.push(
+                " AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ",
+            );
+            qb.push_bind(bid_upper);
+            qb.push(" AND op_type IN ('move_block','create_block') AND (created_at < ");
+            qb.push_bind(ops[op_idx].created_at);
+            qb.push(" OR (created_at = ");
+            qb.push_bind(ops[op_idx].created_at);
+            qb.push(" AND seq < ");
+            qb.push_bind(ops[op_idx].seq);
+            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+        }
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (i, op_type, payload) in rows {
+            let i = i as usize;
+            if i < out.len() {
+                out[i] = Some((op_type, payload));
+            }
         }
     }
     Ok(out)
 }
 
 /// Batched `find_prior_property`: scopes by (block_id, key) and the
-/// strictly-before (ts, seq) predicate, returning the most-recent
-/// `set_property` payload for each (block, key) pair. The `key` is
-/// extracted from each op's payload — either an `EditBlock`-style
-/// `SetPropertyPayload` (for the `set_property` op type) or a
-/// `DeletePropertyPayload` (for `delete_property`); both carry a
-/// `block_id` + `key` shape.
+/// strictly-before (ts, seq) predicate, inspecting the SINGLE
+/// most-recent op touching (block, key) across BOTH the
+/// `set_property` and `delete_property` op-types.
+///
+/// #181: the prior value of a property is whatever the most-recent op
+/// touching (block, key) left it as — which may be a `delete_property`,
+/// not just a `set_property`. Filtering on `set_property` alone ignores
+/// an intervening delete. So this considers `op_type IN ('set_property',
+/// 'delete_property')`, takes the single most-recent matching op, and:
+///   * returns `Some(payload)` only when that op is a `set_property`
+///     (the property's prior value);
+///   * returns `None` when it is a `delete_property` (the property was
+///     ABSENT immediately before the op being reversed) or when there is
+///     no prior op at all.
+///
+/// This mirrors `property_ops::find_prior_property` byte-for-byte in
+/// semantics; `None` means "prior absent" for both consumers.
+///
+/// The `key` is extracted from each op's payload — either an
+/// `EditBlock`-style `SetPropertyPayload` (for the `set_property` op
+/// type) or a `DeletePropertyPayload` (for `delete_property`); both
+/// carry a `block_id` + `key` shape.
 async fn fetch_prior_property_batch(
     pool: &SqlitePool,
     ops: &[OpRecord],
@@ -305,42 +352,53 @@ async fn fetch_prior_property_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
-    for (i, &op_idx) in idxs.iter().enumerate() {
-        let record = &ops[op_idx];
-        // Both SetPropertyPayload and DeletePropertyPayload carry a
-        // (block_id, key) prefix; the cheaper path is to deserialize
-        // into the smaller of the two (DeleteProperty) which ignores
-        // the extra `value_*` fields under serde's default
-        // behaviour. That keeps one shared helper across the two
-        // op-types instead of two near-identical paths.
-        let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
-        let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
-        if i == 0 {
-            qb.push("SELECT ");
-        } else {
-            qb.push(" UNION ALL SELECT ");
-        }
-        qb.push_bind(i as i64);
-        qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE block_id = ");
-        qb.push_bind(bid_upper);
-        qb.push(" AND json_extract(payload, '$.key') = ");
-        qb.push_bind(payload.key);
-        qb.push(" AND op_type = 'set_property' AND (created_at < ");
-        qb.push_bind(record.created_at);
-        qb.push(" OR (created_at = ");
-        qb.push_bind(record.created_at);
-        qb.push(" AND seq < ");
-        qb.push_bind(record.seq);
-        qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
-    }
-    let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
-
+    // C5 (#344): chunked so each UNION-ALL statement binds at most
+    // `chunk_size * PROPERTY_BINDS_PER_OP ≤ MAX_SQL_PARAMS`. Only the
+    // chunk loop is C5; the per-op predicate and the #181 set/delete
+    // result interpretation below are the C4 (#343) logic, unchanged.
+    let chunk_size = MAX_SQL_PARAMS / PROPERTY_BINDS_PER_OP;
     let mut out: Vec<Option<String>> = vec![None; idxs.len()];
-    for (i, payload) in rows {
-        let i = i as usize;
-        if i < out.len() {
-            out[i] = Some(payload);
+    for (chunk_no, chunk) in idxs.chunks(chunk_size).enumerate() {
+        let base = chunk_no * chunk_size;
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, &op_idx) in chunk.iter().enumerate() {
+            let record = &ops[op_idx];
+            // Both SetPropertyPayload and DeletePropertyPayload carry a
+            // (block_id, key) prefix; the cheaper path is to deserialize
+            // into the smaller of the two (DeleteProperty) which ignores
+            // the extra `value_*` fields under serde's default
+            // behaviour. That keeps one shared helper across the two
+            // op-types instead of two near-identical paths.
+            let payload: DeletePropertyPayload = serde_json::from_str(&record.payload)?;
+            let bid_upper = payload.block_id.as_str().to_ascii_uppercase();
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind((base + j) as i64);
+            qb.push(" AS idx, op_type, payload FROM (SELECT op_type, payload FROM op_log WHERE block_id = ");
+            qb.push_bind(bid_upper);
+            qb.push(" AND json_extract(payload, '$.key') = ");
+            qb.push_bind(payload.key);
+            qb.push(" AND op_type IN ('set_property', 'delete_property') AND (created_at < ");
+            qb.push_bind(record.created_at);
+            qb.push(" OR (created_at = ");
+            qb.push_bind(record.created_at);
+            qb.push(" AND seq < ");
+            qb.push_bind(record.seq);
+            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+        }
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (i, op_type, payload) in rows {
+            let i = i as usize;
+            if i < out.len() {
+                // #181: only a `set_property` carries a prior value; a
+                // `delete_property` means the property was absent → None.
+                if op_type == "set_property" {
+                    out[i] = Some(payload);
+                }
+            }
         }
     }
     Ok(out)
@@ -358,34 +416,39 @@ async fn fetch_prior_attachment_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
-    for (i, &op_idx) in idxs.iter().enumerate() {
-        let record = &ops[op_idx];
-        let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
-        let att_id = payload.attachment_id.as_str().to_string();
-        if i == 0 {
-            qb.push("SELECT ");
-        } else {
-            qb.push(" UNION ALL SELECT ");
-        }
-        qb.push_bind(i as i64);
-        qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND attachment_id = ");
-        qb.push_bind(att_id);
-        qb.push(" AND (created_at < ");
-        qb.push_bind(record.created_at);
-        qb.push(" OR (created_at = ");
-        qb.push_bind(record.created_at);
-        qb.push(" AND seq < ");
-        qb.push_bind(record.seq);
-        qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
-    }
-    let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
-
+    // C5 (#344): chunked identically to the other prior-fetch helpers.
+    let chunk_size = MAX_SQL_PARAMS / ATTACHMENT_BINDS_PER_OP;
     let mut out: Vec<Option<String>> = vec![None; idxs.len()];
-    for (i, payload) in rows {
-        let i = i as usize;
-        if i < out.len() {
-            out[i] = Some(payload);
+    for (chunk_no, chunk) in idxs.chunks(chunk_size).enumerate() {
+        let base = chunk_no * chunk_size;
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, &op_idx) in chunk.iter().enumerate() {
+            let record = &ops[op_idx];
+            let payload: crate::op::DeleteAttachmentPayload =
+                serde_json::from_str(&record.payload)?;
+            let att_id = payload.attachment_id.as_str().to_string();
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind((base + j) as i64);
+            qb.push(" AS idx, payload FROM (SELECT payload FROM op_log WHERE op_type = 'add_attachment' AND attachment_id = ");
+            qb.push_bind(att_id);
+            qb.push(" AND (created_at < ");
+            qb.push_bind(record.created_at);
+            qb.push(" OR (created_at = ");
+            qb.push_bind(record.created_at);
+            qb.push(" AND seq < ");
+            qb.push_bind(record.seq);
+            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+        }
+        let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (i, payload) in rows {
+            let i = i as usize;
+            if i < out.len() {
+                out[i] = Some(payload);
+            }
         }
     }
     Ok(out)
@@ -535,21 +598,6 @@ pub async fn get_op_records_batch(
     if refs.is_empty() {
         return Ok(Vec::new());
     }
-    let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
-    for (i, r) in refs.iter().enumerate() {
-        if i == 0 {
-            qb.push("SELECT ");
-        } else {
-            qb.push(" UNION ALL SELECT ");
-        }
-        qb.push_bind(i as i64);
-        qb.push(
-            " AS idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id FROM op_log WHERE device_id = ",
-        );
-        qb.push_bind(r.device_id.clone());
-        qb.push(" AND seq = ");
-        qb.push_bind(r.seq);
-    }
     type Row = (
         i64,
         String,
@@ -561,21 +609,45 @@ pub async fn get_op_records_batch(
         i64,
         Option<String>,
     );
-    let rows: Vec<Row> = qb.build_query_as().fetch_all(pool).await?;
+    // C5 (#344): chunk so each statement binds at most
+    // `chunk_size * OP_RECORD_BINDS_PER_OP ≤ MAX_SQL_PARAMS`. The bound
+    // `idx` is the GLOBAL `refs` position (`base + j`) so rows map back
+    // into `out` regardless of chunk boundaries.
+    let chunk_size = MAX_SQL_PARAMS / OP_RECORD_BINDS_PER_OP;
     let mut out: Vec<Option<OpRecord>> = vec![None; refs.len()];
-    for (idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) in rows {
-        let i = idx as usize;
-        if i < out.len() {
-            out[i] = Some(OpRecord {
-                device_id,
-                seq,
-                parent_seqs,
-                hash,
-                op_type,
-                payload,
-                created_at,
-                block_id,
-            });
+    for (chunk_no, chunk) in refs.chunks(chunk_size).enumerate() {
+        let base = chunk_no * chunk_size;
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, r) in chunk.iter().enumerate() {
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind((base + j) as i64);
+            qb.push(
+                " AS idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id FROM op_log WHERE device_id = ",
+            );
+            qb.push_bind(r.device_id.clone());
+            qb.push(" AND seq = ");
+            qb.push_bind(r.seq);
+        }
+        let rows: Vec<Row> = qb.build_query_as().fetch_all(pool).await?;
+        for (idx, device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) in rows
+        {
+            let i = idx as usize;
+            if i < out.len() {
+                out[i] = Some(OpRecord {
+                    device_id,
+                    seq,
+                    parent_seqs,
+                    hash,
+                    op_type,
+                    payload,
+                    created_at,
+                    block_id,
+                });
+            }
         }
     }
     let mut result: Vec<OpRecord> = Vec::with_capacity(refs.len());
