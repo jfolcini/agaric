@@ -628,16 +628,30 @@ pub(super) async fn resolve_root_pages_cte(
 
 /// List all distinct property keys currently in use across all blocks.
 ///
-/// The `LIMIT 1000` cap is practical insurance against a runaway schema:
-/// real workloads carry on the order of tens of distinct property keys,
-/// and 1000 is well beyond any realistic UI render budget (key pickers,
-/// filter dropdowns). Callers that need the full universe (admin /
+/// The cap (`PROPERTY_KEY_CAP`) is practical insurance against a runaway
+/// schema: real workloads carry on the order of tens of distinct property
+/// keys, and 1000 is well beyond any realistic UI render budget (key
+/// pickers, filter dropdowns). Callers that need the full universe (admin /
 /// migration paths) should query `block_properties` directly.
+///
+/// #347 (R5): the cap used to be silent. We now over-fetch by one row and
+/// `warn!` when the result is actually truncated, so a vault that somehow
+/// exceeds the cap surfaces in logs instead of silently dropping keys.
+const PROPERTY_KEY_CAP: usize = 1000;
+
 pub async fn list_property_keys(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let rows =
-        sqlx::query_scalar!("SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1000",)
+    let mut rows =
+        sqlx::query_scalar!("SELECT DISTINCT key FROM block_properties ORDER BY key LIMIT 1001",)
             .fetch_all(pool)
             .await?;
+    if rows.len() > PROPERTY_KEY_CAP {
+        tracing::warn!(
+            target: "agaric::list_property_keys",
+            cap = PROPERTY_KEY_CAP,
+            "distinct property keys exceed the typeahead cap; result truncated"
+        );
+        rows.truncate(PROPERTY_KEY_CAP);
+    }
     Ok(rows)
 }
 

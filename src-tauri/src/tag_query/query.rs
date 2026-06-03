@@ -203,22 +203,36 @@ pub async fn list_all_tags_in_space(
 
 /// List all tag_ids associated with a block.
 ///
-/// The `LIMIT 1000` cap is practical insurance against a runaway row
+/// The cap (`BLOCK_TAG_CAP`) is practical insurance against a runaway row
 /// count surfacing in the UI: in real use a block carries on the order
 /// of ≤100 tags, and 1000 is well below any UI render budget. Callers
 /// that need every tag (admin / migration paths) should query
 /// `block_tags` directly.
+///
+/// #347 (R5): the cap used to be silent. We over-fetch by one row and
+/// `warn!` on actual truncation so an anomalous block surfaces in logs.
+const BLOCK_TAG_CAP: usize = 1000;
+
 pub async fn list_tags_for_block(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query_scalar!(
-        "SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id LIMIT 1000",
+    let mut rows = sqlx::query_scalar!(
+        "SELECT tag_id FROM block_tags WHERE block_id = ?1 ORDER BY tag_id LIMIT 1001",
         block_id
     )
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().collect())
+    if rows.len() > BLOCK_TAG_CAP {
+        tracing::warn!(
+            target: "agaric::list_tags_for_block",
+            block_id,
+            cap = BLOCK_TAG_CAP,
+            "block tag count exceeds the typeahead cap; result truncated"
+        );
+        rows.truncate(BLOCK_TAG_CAP);
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
