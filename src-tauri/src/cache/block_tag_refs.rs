@@ -70,29 +70,27 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.tag_id).collect();
 
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let mut to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
     // PEND-15 Phase 3 — filter out cross-space tag-refs before inserting.
     // Tags are space-scoped (Path A); the write-time gate rejects
     // cross-space tag refs, and the cache must mirror that invariant.
-    if !to_insert.is_empty() {
+    //
+    // P6 (#346): the source space is resolved once; the per-tag space
+    // resolution that used to run in a Rust loop is pushed into the
+    // INSERT's correlated subquery below (one set-based statement instead
+    // of N+1 round-trips). The subquery is a verbatim copy of
+    // `space::resolve_block_space`'s SQL and KEEPS both soft-delete
+    // guards (invariant #9): the input-block `page_id` lookup and the
+    // holder join.
+    let source_space: Option<String> = if to_insert.is_empty() {
+        None
+    } else {
         let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
-        let source_space = crate::space::resolve_block_space(&mut *tx, &source_block_id).await?;
-        if source_space.is_some() {
-            let mut same_space: Vec<&String> = Vec::with_capacity(to_insert.len());
-            for tag_id in &to_insert {
-                let tag_block_id = crate::ulid::BlockId::from_trusted(tag_id);
-                if let Ok(Some(tag_space)) =
-                    crate::space::resolve_block_space(&mut *tx, &tag_block_id).await
-                {
-                    if Some(&tag_space) == source_space.as_ref() {
-                        same_space.push(tag_id);
-                    }
-                }
-            }
-            to_insert = same_space;
-        }
-    }
+        crate::space::resolve_block_space(&mut *tx, &source_block_id)
+            .await?
+            .map(|s| s.as_str().to_owned())
+    };
 
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — transaction rolls back on drop (no commit needed).
@@ -123,14 +121,37 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
         // dropped. `INSERT OR IGNORE` handles the already-present case
         // if two insert passes race (shouldn't happen inside a tx, but
         // keeps the statement idempotent).
+        //
+        // The tag-existence guard also requires `deleted_at IS NULL` so a
+        // soft-deleted tag never produces a ref (invariant #9 — matches
+        // the prior loop, whose `resolve_block_space` soft-delete guards
+        // dropped tombstoned holders).
+        //
+        // P6 (#346): the `(?3 IS NULL OR target_space = ?3)` clause is the
+        // pushed-down cross-space filter. When the source has no resolved
+        // space (`?3 IS NULL`) every tag passes (mirrors the old
+        // `if source_space.is_some()` skip). Otherwise a tag is kept only
+        // if its own resolved space equals the source's; tags whose space
+        // is NULL yield `NULL = ?3` → falsy → dropped, exactly as the
+        // prior loop did. The space subquery is a verbatim copy of
+        // `space::resolve_block_space` and KEEPS both soft-delete guards.
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query!(
             "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) \
-             SELECT ?, value FROM json_each(?) \
+             SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS \
-                 (SELECT 1 FROM blocks WHERE id = value AND block_type = 'tag')",
+                 (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) \
+               AND (?3 IS NULL OR ?3 = ( \
+                   SELECT bp.value_ref FROM block_properties bp \
+                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
+                   WHERE bp.block_id = COALESCE( \
+                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
+                           je.value) \
+                     AND bp.key = 'space' \
+                   LIMIT 1))",
             block_id,
             insert_json,
+            source_space,
         )
         .execute(&mut *tx)
         .await?;

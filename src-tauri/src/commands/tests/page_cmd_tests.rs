@@ -436,6 +436,45 @@ async fn list_page_aliases_by_prefix_inner_respects_limit() {
     assert_eq!(result.len(), 2, "limit=2 should return exactly 2 aliases");
 }
 
+/// R1 (#347): an out-of-range `limit` must surface as
+/// `AppError::Validation`, matching the `list_blocks` / `list_trash`
+/// contract — not be silently passed to SQLite. `None` and an in-range
+/// value still succeed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "PAGE_R1", "page", "R1", None, Some(0)).await;
+    set_page_aliases_inner(&pool, "PAGE_R1", vec!["r1-alias".into()])
+        .await
+        .unwrap();
+
+    // Zero is below the [1, MAX] range.
+    let zero = list_page_aliases_by_prefix_inner(&pool, "r1-", Some(0), &SpaceScope::Global).await;
+    assert!(
+        matches!(zero, Err(crate::error::AppError::Validation(_))),
+        "limit=0 must be rejected as Validation, got {zero:?}"
+    );
+
+    // A huge value (above MAX_PAGE_ALIASES_PREFIX = 50) is rejected too.
+    let huge =
+        list_page_aliases_by_prefix_inner(&pool, "r1-", Some(10_000), &SpaceScope::Global).await;
+    assert!(
+        matches!(huge, Err(crate::error::AppError::Validation(_))),
+        "limit=10000 must be rejected as Validation, got {huge:?}"
+    );
+
+    // None and an in-range value still succeed.
+    let ok_none = list_page_aliases_by_prefix_inner(&pool, "r1-", None, &SpaceScope::Global)
+        .await
+        .expect("None limit must succeed");
+    assert_eq!(ok_none.len(), 1);
+    let ok_in_range =
+        list_page_aliases_by_prefix_inner(&pool, "r1-", Some(10), &SpaceScope::Global)
+            .await
+            .expect("in-range limit must succeed");
+    assert_eq!(ok_in_range.len(), 1);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_page_aliases_by_prefix_inner_orders_shortest_first() {
     // ORDER BY length(alias), alias — exact-typed alias (the shortest
@@ -2085,6 +2124,82 @@ async fn list_page_links_excludes_deleted_pages() {
     assert!(!has_deleted, "should not include links to deleted pages");
 
     mat.shutdown();
+}
+
+/// SQL/C1 (#341): an upgrading user who opens the graph/backlinks view
+/// before any edit has an empty `page_link_cache` but a populated
+/// `block_links` table (migration 0065 creates the cache empty with no
+/// backfill). The lazy rebuild that fires in that state is a
+/// DELETE+INSERT, so it MUST run on the write pool — driving it through
+/// the `query_only=ON` read pool produced "attempt to write a readonly
+/// database". This test reproduces the exact upgrade state against a
+/// real split pool (`init_pools` → `query_only` reader) and asserts the
+/// read both succeeds AND backfills the rolled-up edge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_page_links_split_lazy_rebuild_on_readonly_pool_c1() {
+    use crate::db::init_pools;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pools = init_pools(&db_path).await.unwrap();
+    let write = pools.write.clone();
+    let read = pools.read.clone();
+
+    // Two pages + a content block under p1 linking to p2 — written via
+    // the write pool (the read pool is query_only).
+    insert_block(&write, "PAGE-AAAA", "page", "Page A", None, Some(0)).await;
+    insert_block(&write, "PAGE-BBBB", "page", "Page B", None, Some(1)).await;
+    insert_block(
+        &write,
+        "BLCK-AAAA",
+        "content",
+        "see [[PAGE-BBBB]]",
+        Some("PAGE-AAAA"),
+        Some(0),
+    )
+    .await;
+
+    // Populate `block_links` directly (mimicking a backfilled-but-cache-
+    // empty upgrade window) and leave `page_link_cache` empty.
+    sqlx::query("INSERT OR IGNORE INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("BLCK-AAAA")
+        .bind("PAGE-BBBB")
+        .execute(&write)
+        .await
+        .unwrap();
+
+    // Sanity: cache is empty before the read.
+    let cache_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&read)
+        .await
+        .unwrap();
+    assert_eq!(cache_rows, 0, "page_link_cache must start empty");
+
+    // The read drives the lazy rebuild. Pre-fix this returned
+    // "attempt to write a readonly database"; post-fix the rebuild lands
+    // on the write pool and the call succeeds.
+    let links =
+        crate::commands::list_page_links_inner_split(&write, &read, &SpaceScope::Global, None)
+            .await
+            .expect("split read must not write through the read pool");
+
+    let edge = links
+        .iter()
+        .find(|l| l.source_id == "PAGE-AAAA" && l.target_id == "PAGE-BBBB");
+    assert!(
+        edge.is_some(),
+        "rolled-up p1→p2 edge must be present after the lazy rebuild"
+    );
+
+    // The rebuild must have committed to the cache via the write pool.
+    let cache_rows_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_link_cache")
+        .fetch_one(&read)
+        .await
+        .unwrap();
+    assert_eq!(
+        cache_rows_after, 1,
+        "lazy rebuild must persist the edge to page_link_cache"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -111,6 +111,18 @@ async fn apply_agenda_diff(
 ///
 /// Conflict-aware ( on every block reference,
 /// invariant #9). Soft-deleted rows excluded.
+///
+/// SQL/C9(c) (#345): the `date/YYYY-MM-DD` tag projection (the second
+/// UNION arm) validates only the *digit shape* via `GLOB`
+/// (`[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]`), not calendar
+/// validity — a tag like `date/2025-13-99` passes the shape check and
+/// is projected verbatim. This is intentional and left as-is: every
+/// consumer self-guards (the FE date parser and the Google Calendar
+/// push layer both reject malformed dates downstream), so an invalid
+/// date string in the cache is inert. Enforcing month/day bounds (let
+/// alone leap-year correctness) in portable SQLite would add a brittle
+/// nested CASE for marginal benefit — see the issue's \"do not
+/// over-engineer\" note.
 const DESIRED_AGENDA_SQL: &str = "SELECT date, block_id, source, prio FROM (
             SELECT bp.value_date AS date, bp.block_id, 'property:' || bp.key AS source, 0 AS prio
             FROM block_properties bp

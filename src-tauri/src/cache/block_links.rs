@@ -50,31 +50,31 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
 
     // 4. Diff
     let to_delete: Vec<&String> = old_targets.difference(&new_targets).collect();
-    let mut to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
+    let to_insert: Vec<&String> = new_targets.difference(&old_targets).collect();
 
     // PEND-15 Phase 3 — filter out cross-space targets before inserting.
     // The write-time enforcement gate (Phase 2) rejects new cross-space
     // references, but the materializer rebuild path also processes content
     // that may contain legacy tokens. Filtering here ensures the cache
     // never holds cross-space rows even if a legacy token survives.
-    if !to_insert.is_empty() {
+    //
+    // P6 (#346): the source space is resolved once (one query); the
+    // per-target space resolution that used to run in a Rust loop is
+    // pushed into the INSERT's correlated subquery below, so the whole
+    // cross-space filter costs one set-based statement instead of N+1
+    // round-trips. The subquery is a verbatim copy of
+    // `space::resolve_block_space`'s SQL and KEEPS both soft-delete
+    // guards (invariant #9): the input-block `page_id` lookup
+    // (`AND deleted_at IS NULL`) and the holder join
+    // (`tgt.deleted_at IS NULL`).
+    let source_space: Option<String> = if to_insert.is_empty() {
+        None
+    } else {
         let source_block_id = crate::ulid::BlockId::from_trusted(block_id);
-        let source_space = crate::space::resolve_block_space(&mut *tx, &source_block_id).await?;
-        if source_space.is_some() {
-            let mut same_space: Vec<&String> = Vec::with_capacity(to_insert.len());
-            for target_id in &to_insert {
-                let target_block_id = crate::ulid::BlockId::from_trusted(target_id);
-                if let Ok(Some(target_space)) =
-                    crate::space::resolve_block_space(&mut *tx, &target_block_id).await
-                {
-                    if Some(&target_space) == source_space.as_ref() {
-                        same_space.push(target_id);
-                    }
-                }
-            }
-            to_insert = same_space;
-        }
-    }
+        crate::space::resolve_block_space(&mut *tx, &source_block_id)
+            .await?
+            .map(|s| s.as_str().to_owned())
+    };
 
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — transaction is rolled back on drop (no commit needed).
@@ -101,14 +101,35 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
         // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
         // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
         // targets out of the result set instead of relying on the FK.
+        // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
+        // so a link to a soft-deleted (tombstoned) target is never created
+        // — invariant #9 (tombstones must not participate in derived state).
+        //
+        // P6 (#346): the `(?3 IS NULL OR target_space = ?3)` clause is the
+        // pushed-down cross-space filter. When the source has no resolved
+        // space (`?3 IS NULL`) every target passes (mirrors the old
+        // `if source_space.is_some()` skip). Otherwise a target is kept
+        // only if its own resolved space equals the source's; targets
+        // whose space is NULL (unresolvable / soft-deleted holder) yield
+        // `NULL = ?3` → falsy → dropped, exactly as the prior loop did
+        // (it only pushed `Ok(Some(space))` matches).
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
             "INSERT OR IGNORE INTO block_links (source_id, target_id) \
-             SELECT ?, value FROM json_each(?) \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value)",
+             SELECT ?1, je.value FROM json_each(?2) je \
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
+               AND (?3 IS NULL OR ?3 = ( \
+                   SELECT bp.value_ref FROM block_properties bp \
+                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
+                   WHERE bp.block_id = COALESCE( \
+                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
+                           je.value) \
+                     AND bp.key = 'space' \
+                   LIMIT 1))",
         )
         .bind(block_id)
         .bind(&insert_json)
+        .bind(&source_space)
         .execute(&mut *tx)
         .await?;
     }
@@ -197,11 +218,14 @@ pub async fn reindex_block_links_split(
         // INSERT OR IGNORE skips PK/UNIQUE conflicts but does NOT suppress FK
         // violations — the `WHERE EXISTS` filter on `blocks` keeps dangling
         // targets out of the result set instead of relying on the FK.
+        // SQL/C9 (#345): the EXISTS guard also requires `deleted_at IS NULL`
+        // so a link to a soft-deleted (tombstoned) target is never created
+        // — invariant #9 (tombstones must not participate in derived state).
         let insert_json = serde_json::to_string(&to_insert)?;
         sqlx::query(
             "INSERT OR IGNORE INTO block_links (source_id, target_id) \
              SELECT ?, value FROM json_each(?) \
-             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value)",
+             WHERE EXISTS (SELECT 1 FROM blocks WHERE id = value AND deleted_at IS NULL)",
         )
         .bind(block_id)
         .bind(&insert_json)
