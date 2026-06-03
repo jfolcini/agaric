@@ -27,7 +27,7 @@ use futures_util::future::try_join_all;
 use rustc_hash::{FxHashMap, FxHashSet};
 use sqlx::SqlitePool;
 
-use super::filters::resolve_filter_with_candidates;
+use super::filters::{compile_backlink_filter, CompiledFilter, FilterBind};
 use super::sort::sort_ids;
 use super::types::*;
 use super::SMALL_IN_LIMIT;
@@ -107,25 +107,40 @@ pub async fn eval_backlink_query(
         });
     }
 
-    // 2. Resolve filters (if any). The candidate-aware leaves do not
-    //    receive a base candidate set — feeding them one would require
-    //    materialising the full base set, which is exactly what H1
-    //    eliminates. Leaf SQL still filters `deleted_at IS NULL`; the
-    //    base-set predicates (target match, self-exclusion, space) are
-    //    re-applied at the page query below so the final intersection is
-    //    correct.
-    let filtered_ids_opt: Option<FxHashSet<String>> = match filters.as_ref() {
+    // 2. Compile filters (if any) into a single correlated SQL WHERE
+    //    fragment (#346 P1) instead of materialising each leaf to a Rust
+    //    set and intersecting in memory. Top-level filters carry AND
+    //    semantics, so each compiles independently and the fragments are
+    //    AND-joined. The fragment is correlated on the outer source-block
+    //    alias `b`; the hybrid leaves (`Contains`/`HasTag`/`HasTagPrefix`/
+    //    `SourcePage`) pre-resolve their id sets ONCE and embed them as a
+    //    `json_each` membership test. The base-set predicates (target
+    //    match, self-exclusion, deleted_at, space) live in the surrounding
+    //    queries; the fragment only adds the user filter.
+    let compiled_filter: Option<CompiledFilter> = match filters.as_ref() {
         Some(filter_list) if !filter_list.is_empty() => {
-            let futures = filter_list
-                .iter()
-                .map(|f| resolve_filter_with_candidates(pool, f, 0, None));
-            let results = try_join_all(futures).await?;
-            let mut iter = results.into_iter();
-            let mut acc = iter.next().unwrap_or_default();
-            for set in iter {
-                acc.retain(|id| set.contains(id));
-            }
-            Some(acc)
+            let compiled = try_join_all(
+                filter_list
+                    .iter()
+                    .map(|f| compile_backlink_filter(pool, f, 0)),
+            )
+            .await?;
+            let mut binds = Vec::new();
+            let parts: Vec<String> = compiled
+                .into_iter()
+                .map(|c| {
+                    binds.extend(c.binds);
+                    c.sql
+                })
+                .collect();
+            // Single fragment ⇒ use it directly; multiple ⇒ AND-join in a
+            // parenthesised group so it nests safely under the base WHERE.
+            let sql = if parts.len() == 1 {
+                parts.into_iter().next().unwrap()
+            } else {
+                format!("({})", parts.join(" AND "))
+            };
+            Some(CompiledFilter { sql, binds })
         }
         _ => None,
     };
@@ -141,7 +156,7 @@ pub async fn eval_backlink_query(
                 space_id,
                 page,
                 dir,
-                filtered_ids_opt.as_ref(),
+                compiled_filter.as_ref(),
                 total_count,
             )
             .await
@@ -155,7 +170,7 @@ pub async fn eval_backlink_query(
                 space_id,
                 page,
                 &sort,
-                filtered_ids_opt,
+                compiled_filter.as_ref(),
                 total_count,
             )
             .await
@@ -172,48 +187,49 @@ async fn eval_created_sort_keyset(
     space_id: Option<&str>,
     page: &PageRequest,
     dir: SortDir,
-    filtered_ids: Option<&FxHashSet<String>>,
+    filter: Option<&CompiledFilter>,
     total_count: usize,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    // When filters resolved to an empty set, short-circuit.
-    if let Some(set) = filtered_ids {
-        if set.is_empty() {
-            return Ok(BacklinkQueryResponse {
-                items: vec![],
-                next_cursor: None,
-                has_more: false,
-                total_count,
-                filtered_count: 0,
-            });
-        }
-    }
-
-    // `filtered_count` = base predicates ∩ filter set. The pre-H1
-    // implementation intersected the resolved filter set with the
-    // backlink base set before measuring. Filters like
-    // `SourcePage` resolve to "all blocks not under page X" — millions
-    // of ids that are NOT backlinks to the target. Using
-    // `filtered_ids.len()` would over-count badly. Run the count in SQL
-    // so the intersection happens server-side.
-    let filtered_count = match filtered_ids {
+    // `filtered_count` = base predicates ∩ filter fragment. The fragment is
+    // correlated on `b`, so SQLite intersects with the backlink base set
+    // server-side — `SourcePage`-style "all blocks not under page X" leaves
+    // can never over-count the way a naive Rust `set.len()` would.
+    //
+    // QueryBuilder is used so the fragment's positional binds interleave
+    // after the base-query binds in declaration order. An empty filter
+    // fragment compiles to `1=0`, which yields `filtered_count == 0` and the
+    // empty-response short-circuit below — no separate empty-set check
+    // needed.
+    let filtered_count = match filter {
         None => total_count,
-        Some(set) => {
-            let json = serde_json::to_string(&set.iter().collect::<Vec<_>>())?;
-            let count_i64: i64 = sqlx::query_scalar!(
+        Some(cf) => {
+            // Raw-string compose: the fragment's bare `?` placeholders are
+            // spliced inline, and binds are applied left-to-right so the
+            // base-query binds and the fragment binds interleave correctly.
+            // (sqlx binds positional `?` in `.bind()` call order.)
+            let sql = format!(
                 "SELECT COUNT(*) FROM block_links bl \
                  JOIN blocks b ON b.id = bl.source_id \
-                 WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+                 WHERE bl.target_id = ? AND bl.source_id != ? \
                    AND b.deleted_at IS NULL \
-                   AND (?2 IS NULL OR b.page_id IN ( \
+                   AND (? IS NULL OR b.page_id IN ( \
                         SELECT bp.block_id FROM block_properties bp \
-                        WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
-                   AND b.id IN (SELECT value FROM json_each(?3))",
-                block_id,
-                space_id,
-                json,
-            )
-            .fetch_one(pool)
-            .await?;
+                        WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+                   AND ({frag})",
+                frag = cf.sql,
+            );
+            let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                .bind(block_id)
+                .bind(block_id)
+                .bind(space_id)
+                .bind(space_id);
+            for b in &cf.binds {
+                q = match b {
+                    FilterBind::Text(s) => q.bind(s.clone()),
+                    FilterBind::Num(n) => q.bind(*n),
+                };
+            }
+            let count_i64: i64 = q.fetch_one(pool).await?;
             usize::try_from(count_i64).unwrap_or(0)
         }
     };
@@ -230,17 +246,10 @@ async fn eval_created_sort_keyset(
 
     // ----- Compose page SQL -------------------------------------------------
     //
-    // Reserved bind slots:
-    //   ?1  block_id (target_id + self-exclusion sentinel)
-    //   ?2  space_id (Option<&str>; NULL ⇒ unscoped)
-    //   ?3  cursor_flag (Option<i64>; NULL ⇒ no cursor)
-    //   ?4  cursor_id (String; only consulted when ?3 IS NOT NULL)
-    //   ?5  fetch_limit (i64; page.limit + 1)
-    //   ?6  filter_json (Option<String>; NULL ⇒ no filter set bound)
-    //
-    // Cursor direction encoded in the comparison operator at compose time:
-    //   Asc  → `b.id > ?4`
-    //   Desc → `b.id < ?4`
+    // Raw-string compose with bare `?` placeholders bound left-to-right so
+    // the optional filter fragment's binds interleave after the base/cursor
+    // binds. Cursor direction is encoded in the comparison operator at
+    // compose time: Asc → `b.id > ?`, Desc → `b.id < ?`.
     let cursor_cmp = match dir {
         SortDir::Asc => ">",
         SortDir::Desc => "<",
@@ -249,42 +258,49 @@ async fn eval_created_sort_keyset(
         SortDir::Asc => "ASC",
         SortDir::Desc => "DESC",
     };
-    let sql = format!(
-        "SELECT {cols} \
-         FROM block_links bl \
-         JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
-           AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
-           AND (?3 IS NULL OR b.id {cursor_cmp} ?4) \
-           AND (?6 IS NULL OR b.id IN (SELECT value FROM json_each(?6))) \
-         ORDER BY b.id {order_dir} LIMIT ?5",
-        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
-        cursor_cmp = cursor_cmp,
-        order_dir = order_dir,
-    );
-
     let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
         Some(c) => (Some(1), c.id.as_str()),
         None => (None, ""),
     };
     let fetch_limit: i64 = page.limit.saturating_add(1);
-    let filter_json: Option<String> = match filtered_ids {
-        Some(set) => Some(serde_json::to_string(&set.iter().collect::<Vec<_>>())?),
-        None => None,
-    };
 
-    let rows: Vec<BlockRow> = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
-        .bind(block_id) // ?1
-        .bind(space_id) // ?2
-        .bind(cursor_flag) // ?3
-        .bind(cursor_id) // ?4
-        .bind(fetch_limit) // ?5
-        .bind(filter_json.as_deref()) // ?6
-        .fetch_all(pool)
-        .await?;
+    // The filter fragment (if any) is spliced before ORDER BY; its binds are
+    // appended to the chain in declaration order.
+    let filter_clause = match filter {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
+    };
+    let sql = format!(
+        "SELECT {cols} \
+         FROM block_links bl \
+         JOIN blocks b ON b.id = bl.source_id \
+         WHERE bl.target_id = ? AND bl.source_id != ? \
+           AND b.deleted_at IS NULL \
+           AND (? IS NULL OR b.page_id IN ( \
+                SELECT bp.block_id FROM block_properties bp \
+                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           AND (? IS NULL OR b.id {cursor_cmp} ?) \
+           {filter_clause} \
+         ORDER BY b.id {order_dir} LIMIT ?",
+        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+    );
+
+    let mut q = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql))
+        .bind(block_id) // bl.target_id
+        .bind(block_id) // bl.source_id !=
+        .bind(space_id) // ? IS NULL
+        .bind(space_id) // value_ref
+        .bind(cursor_flag) // ? IS NULL
+        .bind(cursor_id); // b.id <cmp> ?
+    if let Some(cf) = filter {
+        for b in &cf.binds {
+            q = match b {
+                FilterBind::Text(s) => q.bind(s.clone()),
+                FilterBind::Num(n) => q.bind(*n),
+            };
+        }
+    }
+    let rows: Vec<BlockRow> = q.bind(fetch_limit).fetch_all(pool).await?;
 
     // Slice to honour `limit`; detect `has_more` from the +1 row.
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
@@ -330,45 +346,45 @@ async fn eval_property_sort_materialised(
     space_id: Option<&str>,
     page: &PageRequest,
     sort: &BacklinkSort,
-    filtered_ids_in: Option<FxHashSet<String>>,
+    filter: Option<&CompiledFilter>,
     total_count: usize,
 ) -> Result<BacklinkQueryResponse, AppError> {
-    // Build the post-filter id set. When filters were supplied we just
-    // intersect with the SQL-resolved backlink set; otherwise we resolve
-    // the full backlink set (intrinsic for property sort — values must
-    // be visited to know the page boundary).
-    let filter_json: Option<String> = match filtered_ids_in.as_ref() {
-        Some(set) if set.is_empty() => {
-            return Ok(BacklinkQueryResponse {
-                items: vec![],
-                next_cursor: None,
-                has_more: false,
-                total_count,
-                filtered_count: 0,
-            });
-        }
-        Some(set) => Some(serde_json::to_string(&set.iter().collect::<Vec<_>>())?),
-        None => None,
+    // Resolve the post-filter id set in SQL (instead of in Rust): the
+    // correlated filter fragment is spliced into a single
+    // `SELECT bl.source_id … WHERE <base> AND (<fragment>)`. Property sort
+    // still needs the full filtered id set in memory (values must be visited
+    // to know the page boundary), but the *base set* is never materialised
+    // and the negative/broad complement never leaves SQLite. An empty
+    // fragment compiles to `1=0`, so `filtered_ids` is empty and the
+    // short-circuit below fires.
+    let filter_clause = match filter {
+        Some(cf) => format!(" AND ({})", cf.sql),
+        None => String::new(),
     };
-
-    let filter_json_ref = filter_json.as_deref();
-    let filtered_ids: FxHashSet<String> = sqlx::query_scalar!(
+    let sql = format!(
         "SELECT bl.source_id FROM block_links bl \
          JOIN blocks b ON b.id = bl.source_id \
-         WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+         WHERE bl.target_id = ? AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.page_id IN ( \
+           AND (? IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
-           AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
-        block_id,
-        space_id,
-        filter_json_ref,
-    )
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .collect();
+                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           {filter_clause}"
+    );
+    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
+        .bind(block_id)
+        .bind(block_id)
+        .bind(space_id)
+        .bind(space_id);
+    if let Some(cf) = filter {
+        for b in &cf.binds {
+            q = match b {
+                FilterBind::Text(s) => q.bind(s.clone()),
+                FilterBind::Num(n) => q.bind(*n),
+            };
+        }
+    }
+    let filtered_ids: FxHashSet<String> = q.fetch_all(pool).await?.into_iter().collect();
 
     let filtered_count = filtered_ids.len();
     if filtered_count == 0 {

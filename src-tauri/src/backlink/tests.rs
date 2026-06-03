@@ -6110,3 +6110,971 @@ async fn eval_backlink_query_grouped_paginates_correctly() {
         "grouped keyset pagination must visit every source group exactly once"
     );
 }
+
+// ======================================================================
+// #346 P1 — SQL-pushdown parity battery
+//
+// Proves the new `compile_backlink_filter` path (`eval_backlink_query`'s
+// correlated SQL WHERE fragment) returns IDENTICAL `items` (as an id set),
+// `total_count`, and `filtered_count` to a reference computed via the OLD
+// `resolve_filter` + base-set-intersection logic. The old resolver is kept
+// solely as this parity oracle (#346 P1 contract).
+//
+// EVERY leaf type is covered, with emphasis on the negative / broad trees
+// (`Not`, `PropertyIsEmpty`, broad `BlockType`, `Not(HasTag)`,
+// `And(Not(X), Y)`, `Or(...)`, deeply nested) that previously forced the
+// whole-vault complement into Rust.
+// ======================================================================
+#[cfg(test)]
+mod parity_p1 {
+    use super::*;
+    use crate::backlink::filters::ms_to_ulid_prefix;
+
+    /// Insert a block with full control over the scalar filter columns.
+    /// `id` is the (ULID-shaped) primary key; pages set `page_id = id`.
+    #[allow(clippy::too_many_arguments)]
+    async fn insert_full(
+        pool: &SqlitePool,
+        id: &str,
+        block_type: &str,
+        page_id: Option<&str>,
+        parent_id: Option<&str>,
+        todo_state: Option<&str>,
+        priority: Option<&str>,
+        due_date: Option<&str>,
+        deleted: bool,
+    ) {
+        let pid: Option<String> = if block_type == "page" {
+            Some(id.to_string())
+        } else {
+            page_id.map(str::to_string)
+        };
+        let deleted_at: Option<i64> = if deleted {
+            Some(1_700_000_000_000)
+        } else {
+            None
+        };
+        sqlx::query(
+            "INSERT INTO blocks \
+             (id, block_type, content, page_id, parent_id, todo_state, priority, due_date, deleted_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(block_type)
+        .bind(format!("content of {id}"))
+        .bind(pid)
+        .bind(parent_id)
+        .bind(todo_state)
+        .bind(priority)
+        .bind(due_date)
+        .bind(deleted_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Build a deterministic 26-char ULID-shaped id whose 10-char timestamp
+    /// prefix encodes `ms`, padded with a fixed random component. This lets
+    /// `CreatedInRange` (which compares `b.id >= ms_to_ulid_prefix(after)`)
+    /// behave predictably.
+    fn ulid_at(ms: u64, suffix: &str) -> String {
+        let prefix = ms_to_ulid_prefix(ms);
+        // 16-char Crockford suffix; caller passes a short tag we pad out.
+        let mut s = suffix.to_string();
+        while s.len() < 16 {
+            s.push('0');
+        }
+        s.truncate(16);
+        format!("{prefix}{s}")
+    }
+
+    /// The shared rich fixture. Returns the `TARGET` page id. All source
+    /// blocks link to TARGET (so they form the backlink base set) except
+    /// where noted. Deleted + self-link + non-linking blocks are seeded to
+    /// exercise the base-set predicates the fragment must NOT re-filter.
+    async fn seed_fixture(pool: &SqlitePool) -> String {
+        // Target page.
+        insert_full(
+            pool,
+            "TARGETPAGE0000000000000000",
+            "page",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
+
+        // Two ancestor pages for SourcePage descendants-of testing.
+        insert_full(
+            pool,
+            "PAGEALPHA00000000000000000",
+            "page",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
+        insert_full(
+            pool,
+            "PAGEBETA000000000000000000",
+            "page",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
+
+        // Distinct creation times so CreatedInRange has something to bisect.
+        let t0 = 1_600_000_000_000u64;
+        let day = 86_400_000u64;
+
+        // Source blocks. (id, block_type, page, parent, todo, prio, due, deleted)
+        // S1: content, on PAGEALPHA, todo=open, prio=high, due=2025-06-01
+        let s1 = ulid_at(t0, "S1");
+        insert_full(
+            pool,
+            &s1,
+            "content",
+            Some("PAGEALPHA00000000000000000"),
+            Some("PAGEALPHA00000000000000000"),
+            Some("open"),
+            Some("high"),
+            Some("2025-06-01"),
+            false,
+        )
+        .await;
+        // S2: content, on PAGEALPHA, no todo, prio=low, due=2025-07-15
+        let s2 = ulid_at(t0 + day, "S2");
+        insert_full(
+            pool,
+            &s2,
+            "content",
+            Some("PAGEALPHA00000000000000000"),
+            Some("PAGEALPHA00000000000000000"),
+            None,
+            Some("low"),
+            Some("2025-07-15"),
+            false,
+        )
+        .await;
+        // S3: tag, on PAGEBETA, todo=done, prio=high, no due
+        // (`block_type` CHECK only permits content / tag / page.)
+        let s3 = ulid_at(t0 + 2 * day, "S3");
+        insert_full(
+            pool,
+            &s3,
+            "tag",
+            Some("PAGEBETA000000000000000000"),
+            Some("PAGEBETA000000000000000000"),
+            Some("done"),
+            Some("high"),
+            None,
+            false,
+        )
+        .await;
+        // S4: content, on PAGEBETA, todo=open, no prio, due=2024-01-01
+        let s4 = ulid_at(t0 + 3 * day, "S4");
+        insert_full(
+            pool,
+            &s4,
+            "content",
+            Some("PAGEBETA000000000000000000"),
+            Some("PAGEBETA000000000000000000"),
+            Some("open"),
+            None,
+            Some("2024-01-01"),
+            false,
+        )
+        .await;
+        // S5: page-less content (orphan from a page perspective).
+        let s5 = ulid_at(t0 + 4 * day, "S5");
+        insert_full(pool, &s5, "content", None, None, None, None, None, false).await;
+        // S6: content — DELETED (must never surface; base set excludes it).
+        let s6 = ulid_at(t0 + 5 * day, "S6");
+        insert_full(
+            pool,
+            &s6,
+            "content",
+            Some("PAGEALPHA00000000000000000"),
+            Some("PAGEALPHA00000000000000000"),
+            Some("open"),
+            Some("high"),
+            Some("2025-06-01"),
+            true,
+        )
+        .await;
+
+        // Links into TARGET.
+        for s in [&s1, &s2, &s3, &s4, &s5, &s6] {
+            insert_block_link(pool, s, "TARGETPAGE0000000000000000").await;
+        }
+        // Self-link (must be excluded by base set).
+        insert_block_link(
+            pool,
+            "TARGETPAGE0000000000000000",
+            "TARGETPAGE0000000000000000",
+        )
+        .await;
+
+        // A non-linking block (not in base set) that nonetheless matches
+        // many filters — guards that the fragment is correlated to the base.
+        let nolink = ulid_at(t0 + 6 * day, "NOLINK");
+        insert_full(
+            pool,
+            &nolink,
+            "content",
+            Some("PAGEALPHA00000000000000000"),
+            Some("PAGEALPHA00000000000000000"),
+            Some("open"),
+            Some("high"),
+            Some("2025-06-01"),
+            false,
+        )
+        .await;
+
+        // Properties.
+        insert_property(pool, &s1, "status", Some("active"), None, None).await;
+        insert_property(pool, &s1, "score", None, Some(10.0), None).await;
+        insert_property(pool, &s1, "reviewed", None, None, Some("2025-03-01")).await;
+        insert_property(pool, &s2, "status", Some("archived"), None, None).await;
+        insert_property(pool, &s2, "score", None, Some(99.0), None).await;
+        insert_property(pool, &s3, "status", Some("active"), None, None).await;
+        // s4: no properties at all (PropertyIsEmpty target).
+        insert_property(pool, &s5, "score", None, Some(50.0), None).await;
+        insert_property(pool, &nolink, "status", Some("active"), None, None).await;
+
+        // Tag blocks must exist as `block_type = 'tag'` rows (block_tags
+        // FKs `tag_id` → blocks(id)).
+        insert_full(
+            pool,
+            "TAGONE00000000000000000001",
+            "tag",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
+        insert_full(
+            pool,
+            "TAGTWO00000000000000000002",
+            "tag",
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .await;
+
+        // Tags. Tag T1 on S1, S3. Tag-name cache for prefix matching.
+        insert_tag_cache(pool, "TAGONE00000000000000000001", "project", 2).await;
+        insert_tag_cache(pool, "TAGTWO00000000000000000002", "proposal", 1).await;
+        insert_tag_assoc(pool, &s1, "TAGONE00000000000000000001").await;
+        insert_tag_assoc(pool, &s3, "TAGONE00000000000000000001").await;
+        insert_tag_assoc(pool, &s2, "TAGTWO00000000000000000002").await;
+
+        // FTS content for Contains.
+        insert_fts(pool, &s1, "the quick brown fox").await;
+        insert_fts(pool, &s2, "lazy dog sleeps").await;
+        insert_fts(pool, &s3, "quick silver fox").await;
+        insert_fts(pool, &s4, "nothing special here").await;
+
+        "TARGETPAGE0000000000000000".to_string()
+    }
+
+    /// Reference (OLD-path) result for a list of top-level (AND-combined)
+    /// filters: returns (filtered_id_set_in_base, total_count).
+    ///
+    /// Mirrors exactly what the pre-#346 `eval_backlink_query` computed:
+    /// base = non-deleted, non-self source blocks linking to target; the
+    /// per-filter `resolve_filter` sets are AND-intersected, then
+    /// intersected with the base set.
+    async fn oracle(
+        pool: &SqlitePool,
+        target: &str,
+        filters: &[BacklinkFilter],
+    ) -> (FxHashSet<String>, usize) {
+        // Base set via SQL (same predicate as eval_backlink_query's total).
+        let base: FxHashSet<String> = sqlx::query_scalar::<_, String>(
+            "SELECT bl.source_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.source_id \
+             WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
+               AND b.deleted_at IS NULL",
+        )
+        .bind(target)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+        let total = base.len();
+
+        if filters.is_empty() {
+            return (base.clone(), total);
+        }
+
+        // AND-intersection of each top-level filter's resolved set.
+        let mut acc: Option<FxHashSet<String>> = None;
+        for f in filters {
+            let set = resolve_filter(pool, f, 0).await.unwrap();
+            acc = Some(match acc {
+                None => set,
+                Some(mut a) => {
+                    a.retain(|id| set.contains(id));
+                    a
+                }
+            });
+        }
+        let filtered = acc.unwrap_or_default();
+        // Intersect with base (the page query does this server-side).
+        let in_base: FxHashSet<String> = filtered.intersection(&base).cloned().collect();
+        (in_base, total)
+    }
+
+    /// Run one parity case: assert NEW eval_backlink_query == oracle for
+    /// item-id set, total_count, and filtered_count.
+    async fn assert_parity(
+        pool: &SqlitePool,
+        target: &str,
+        label: &str,
+        filters: Vec<BacklinkFilter>,
+    ) {
+        let (expected_ids, expected_total) = oracle(pool, target, &filters).await;
+
+        // Large page so we get every item in one shot (fixture base set is
+        // tiny; 200 is the max permitted limit).
+        let page = PageRequest::new(None, Some(200)).unwrap();
+        let filt_arg = if filters.is_empty() {
+            None
+        } else {
+            Some(filters.clone())
+        };
+        let resp = eval_backlink_query(pool, target, filt_arg, None, &page, None)
+            .await
+            .unwrap_or_else(|e| panic!("[{label}] eval_backlink_query failed: {e:?}"));
+
+        let got_ids: FxHashSet<String> = resp.items.iter().map(|r| r.id.to_string()).collect();
+
+        assert_eq!(
+            resp.total_count, expected_total,
+            "[{label}] total_count mismatch"
+        );
+        assert_eq!(
+            resp.filtered_count,
+            expected_ids.len(),
+            "[{label}] filtered_count mismatch (expected ids: {expected_ids:?}, got: {got_ids:?})"
+        );
+        assert_eq!(got_ids, expected_ids, "[{label}] item id set mismatch");
+        // Items must be id-sorted (Created Asc default) and de-duplicated.
+        let mut sorted = resp
+            .items
+            .iter()
+            .map(|r| r.id.to_string())
+            .collect::<Vec<_>>();
+        let original = sorted.clone();
+        sorted.sort();
+        assert_eq!(original, sorted, "[{label}] items must be ascending by id");
+        assert_eq!(
+            resp.items.len(),
+            got_ids.len(),
+            "[{label}] items must contain no duplicate ids"
+        );
+    }
+
+    fn prop_text(key: &str, op: CompareOp, value: &str) -> BacklinkFilter {
+        BacklinkFilter::PropertyText {
+            key: key.into(),
+            op,
+            value: value.into(),
+        }
+    }
+
+    /// The full battery of filter trees. Each entry is (label, filters).
+    fn battery() -> Vec<(&'static str, Vec<BacklinkFilter>)> {
+        vec![
+            // ── Empty / passthrough ──
+            ("no_filters", vec![]),
+            // ── Property* leaves ──
+            (
+                "prop_text_eq",
+                vec![prop_text("status", CompareOp::Eq, "active")],
+            ),
+            (
+                "prop_text_neq",
+                vec![prop_text("status", CompareOp::Neq, "active")],
+            ),
+            (
+                "prop_text_contains",
+                vec![prop_text("status", CompareOp::Contains, "act")],
+            ),
+            (
+                "prop_text_startswith",
+                vec![prop_text("status", CompareOp::StartsWith, "arch")],
+            ),
+            (
+                "prop_text_lt",
+                vec![prop_text("status", CompareOp::Lt, "b")],
+            ),
+            (
+                "prop_num_gt",
+                vec![BacklinkFilter::PropertyNum {
+                    key: "score".into(),
+                    op: CompareOp::Gt,
+                    value: 20.0,
+                }],
+            ),
+            (
+                "prop_num_eq",
+                vec![BacklinkFilter::PropertyNum {
+                    key: "score".into(),
+                    op: CompareOp::Eq,
+                    value: 10.0,
+                }],
+            ),
+            (
+                "prop_num_contains_empty",
+                vec![BacklinkFilter::PropertyNum {
+                    key: "score".into(),
+                    op: CompareOp::Contains,
+                    value: 1.0,
+                }],
+            ),
+            (
+                "prop_date_gte",
+                vec![BacklinkFilter::PropertyDate {
+                    key: "reviewed".into(),
+                    op: CompareOp::Gte,
+                    value: "2025-01-01".into(),
+                }],
+            ),
+            (
+                "prop_date_startswith",
+                vec![BacklinkFilter::PropertyDate {
+                    key: "reviewed".into(),
+                    op: CompareOp::StartsWith,
+                    value: "2025".into(),
+                }],
+            ),
+            (
+                "prop_is_set",
+                vec![BacklinkFilter::PropertyIsSet {
+                    key: "status".into(),
+                }],
+            ),
+            // NEGATIVE: PropertyIsEmpty (the whole-vault-complement case).
+            (
+                "prop_is_empty",
+                vec![BacklinkFilter::PropertyIsEmpty {
+                    key: "status".into(),
+                }],
+            ),
+            (
+                "prop_is_empty_score",
+                vec![BacklinkFilter::PropertyIsEmpty {
+                    key: "score".into(),
+                }],
+            ),
+            // ── Scalar column leaves ──
+            (
+                "block_type_content",
+                vec![BacklinkFilter::BlockType {
+                    block_type: "content".into(),
+                }],
+            ),
+            (
+                "block_type_tag",
+                vec![BacklinkFilter::BlockType {
+                    block_type: "tag".into(),
+                }],
+            ),
+            (
+                "todo_open",
+                vec![BacklinkFilter::TodoState {
+                    state: "open".into(),
+                }],
+            ),
+            (
+                "priority_high",
+                vec![BacklinkFilter::Priority {
+                    level: "high".into(),
+                }],
+            ),
+            (
+                "due_lt",
+                vec![BacklinkFilter::DueDate {
+                    op: CompareOp::Lt,
+                    value: "2025-01-01".into(),
+                }],
+            ),
+            (
+                "due_neq_guarded",
+                vec![BacklinkFilter::DueDate {
+                    op: CompareOp::Neq,
+                    value: "2025-06-01".into(),
+                }],
+            ),
+            (
+                "due_gte",
+                vec![BacklinkFilter::DueDate {
+                    op: CompareOp::Gte,
+                    value: "2025-01-01".into(),
+                }],
+            ),
+            // ── CreatedInRange ──
+            (
+                "created_after",
+                vec![BacklinkFilter::CreatedInRange {
+                    after: Some("2020-09-15".into()),
+                    before: None,
+                }],
+            ),
+            (
+                "created_before",
+                vec![BacklinkFilter::CreatedInRange {
+                    after: None,
+                    before: Some("2020-09-15".into()),
+                }],
+            ),
+            (
+                "created_both",
+                vec![BacklinkFilter::CreatedInRange {
+                    after: Some("2020-09-13".into()),
+                    before: Some("2020-09-17".into()),
+                }],
+            ),
+            (
+                "created_none",
+                vec![BacklinkFilter::CreatedInRange {
+                    after: None,
+                    before: None,
+                }],
+            ),
+            // ── Hybrid (set-embedded) leaves ──
+            (
+                "contains",
+                vec![BacklinkFilter::Contains {
+                    query: "fox".into(),
+                }],
+            ),
+            (
+                "contains_empty",
+                vec![BacklinkFilter::Contains {
+                    query: "   ".into(),
+                }],
+            ),
+            (
+                "has_tag",
+                vec![BacklinkFilter::HasTag {
+                    tag_id: "TAGONE00000000000000000001".into(),
+                }],
+            ),
+            (
+                "has_tag_prefix",
+                vec![BacklinkFilter::HasTagPrefix {
+                    prefix: "pro".into(),
+                }],
+            ),
+            (
+                "source_page_included",
+                vec![BacklinkFilter::SourcePage {
+                    included: vec!["PAGEALPHA00000000000000000".into()],
+                    excluded: vec![],
+                }],
+            ),
+            (
+                "source_page_excluded",
+                vec![BacklinkFilter::SourcePage {
+                    included: vec![],
+                    excluded: vec!["PAGEALPHA00000000000000000".into()],
+                }],
+            ),
+            (
+                "source_page_incl_excl",
+                vec![BacklinkFilter::SourcePage {
+                    included: vec![
+                        "PAGEALPHA00000000000000000".into(),
+                        "PAGEBETA000000000000000000".into(),
+                    ],
+                    excluded: vec!["PAGEBETA000000000000000000".into()],
+                }],
+            ),
+            // ── Boolean: Not (negative/broad) ──
+            (
+                "not_block_type_content",
+                vec![BacklinkFilter::Not {
+                    filter: Box::new(BacklinkFilter::BlockType {
+                        block_type: "content".into(),
+                    }),
+                }],
+            ),
+            (
+                "not_has_tag",
+                vec![BacklinkFilter::Not {
+                    filter: Box::new(BacklinkFilter::HasTag {
+                        tag_id: "TAGONE00000000000000000001".into(),
+                    }),
+                }],
+            ),
+            (
+                "not_prop_is_set",
+                vec![BacklinkFilter::Not {
+                    filter: Box::new(BacklinkFilter::PropertyIsSet {
+                        key: "status".into(),
+                    }),
+                }],
+            ),
+            (
+                "not_of_empty",
+                vec![BacklinkFilter::Not {
+                    filter: Box::new(BacklinkFilter::PropertyIsSet {
+                        key: "no_such_key".into(),
+                    }),
+                }],
+            ),
+            // ── Boolean: And ──
+            (
+                "and_block_and_todo",
+                vec![BacklinkFilter::And {
+                    filters: vec![
+                        BacklinkFilter::BlockType {
+                            block_type: "content".into(),
+                        },
+                        BacklinkFilter::TodoState {
+                            state: "open".into(),
+                        },
+                    ],
+                }],
+            ),
+            (
+                "and_not_x_y",
+                vec![BacklinkFilter::And {
+                    filters: vec![
+                        BacklinkFilter::Not {
+                            filter: Box::new(BacklinkFilter::HasTag {
+                                tag_id: "TAGONE00000000000000000001".into(),
+                            }),
+                        },
+                        BacklinkFilter::BlockType {
+                            block_type: "content".into(),
+                        },
+                    ],
+                }],
+            ),
+            ("and_empty", vec![BacklinkFilter::And { filters: vec![] }]),
+            // ── Boolean: Or ──
+            (
+                "or_tag_or_page",
+                vec![BacklinkFilter::Or {
+                    filters: vec![
+                        BacklinkFilter::BlockType {
+                            block_type: "tag".into(),
+                        },
+                        BacklinkFilter::BlockType {
+                            block_type: "page".into(),
+                        },
+                    ],
+                }],
+            ),
+            (
+                "or_tag_or_propempty",
+                vec![BacklinkFilter::Or {
+                    filters: vec![
+                        BacklinkFilter::HasTag {
+                            tag_id: "TAGONE00000000000000000001".into(),
+                        },
+                        BacklinkFilter::PropertyIsEmpty {
+                            key: "status".into(),
+                        },
+                    ],
+                }],
+            ),
+            ("or_empty", vec![BacklinkFilter::Or { filters: vec![] }]),
+            // ── Multiple top-level (implicit AND) ──
+            (
+                "toplevel_and_two",
+                vec![
+                    BacklinkFilter::BlockType {
+                        block_type: "content".into(),
+                    },
+                    prop_text("status", CompareOp::Eq, "active"),
+                ],
+            ),
+            // ── Deeply nested ──
+            (
+                "nested_or_and_not",
+                vec![BacklinkFilter::Or {
+                    filters: vec![
+                        BacklinkFilter::And {
+                            filters: vec![
+                                BacklinkFilter::BlockType {
+                                    block_type: "content".into(),
+                                },
+                                BacklinkFilter::Not {
+                                    filter: Box::new(BacklinkFilter::PropertyIsEmpty {
+                                        key: "status".into(),
+                                    }),
+                                },
+                            ],
+                        },
+                        BacklinkFilter::And {
+                            filters: vec![
+                                BacklinkFilter::BlockType {
+                                    block_type: "tag".into(),
+                                },
+                                BacklinkFilter::HasTag {
+                                    tag_id: "TAGONE00000000000000000001".into(),
+                                },
+                            ],
+                        },
+                    ],
+                }],
+            ),
+            (
+                "nested_not_or",
+                vec![BacklinkFilter::Not {
+                    filter: Box::new(BacklinkFilter::Or {
+                        filters: vec![
+                            BacklinkFilter::BlockType {
+                                block_type: "tag".into(),
+                            },
+                            BacklinkFilter::BlockType {
+                                block_type: "page".into(),
+                            },
+                        ],
+                    }),
+                }],
+            ),
+            (
+                "nested_and_not_source_page",
+                vec![BacklinkFilter::And {
+                    filters: vec![
+                        BacklinkFilter::Not {
+                            filter: Box::new(BacklinkFilter::SourcePage {
+                                included: vec!["PAGEBETA000000000000000000".into()],
+                                excluded: vec![],
+                            }),
+                        },
+                        BacklinkFilter::PropertyIsSet {
+                            key: "status".into(),
+                        },
+                    ],
+                }],
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn p1_parity_battery_covers_every_leaf_and_boolean_combo() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        for (label, filters) in battery() {
+            assert_parity(&pool, &target, label, filters).await;
+        }
+    }
+
+    /// Property-sort path parity: the same battery, but asserting the
+    /// `eval_property_sort_materialised` branch (sort by a property) returns
+    /// the same id set + counts as the oracle. Sorting differs from Created,
+    /// but the *set* of matched ids and the counts must be identical.
+    #[tokio::test]
+    async fn p1_parity_property_sort_matches_oracle_set() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        let page = PageRequest::new(None, Some(200)).unwrap();
+        for (label, filters) in battery() {
+            let (expected_ids, expected_total) = oracle(&pool, &target, &filters).await;
+            let filt_arg = if filters.is_empty() {
+                None
+            } else {
+                Some(filters.clone())
+            };
+            let sort = Some(BacklinkSort::PropertyText {
+                key: "status".into(),
+                dir: SortDir::Asc,
+            });
+            let resp = eval_backlink_query(&pool, &target, filt_arg, sort, &page, None)
+                .await
+                .unwrap_or_else(|e| panic!("[{label}/propsort] failed: {e:?}"));
+            let got_ids: FxHashSet<String> = resp.items.iter().map(|r| r.id.to_string()).collect();
+            assert_eq!(
+                resp.total_count, expected_total,
+                "[{label}/propsort] total_count"
+            );
+            assert_eq!(
+                resp.filtered_count,
+                expected_ids.len(),
+                "[{label}/propsort] filtered_count"
+            );
+            assert_eq!(got_ids, expected_ids, "[{label}/propsort] id set");
+        }
+    }
+
+    /// Pagination parity: walk the Created-sort path one small page at a
+    /// time and confirm the union of pages equals the oracle set with no
+    /// duplicates — guards the cursor/keyset interaction with the fragment.
+    #[tokio::test]
+    async fn p1_parity_paginated_created_sort() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        let filters = vec![BacklinkFilter::Not {
+            filter: Box::new(BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            }),
+        }];
+        let (expected_ids, _total) = oracle(&pool, &target, &filters).await;
+
+        let mut seen: FxHashSet<String> = FxHashSet::default();
+        let mut cursor: Option<Cursor> = None;
+        for _ in 0..20 {
+            let page =
+                PageRequest::new(cursor.clone().map(|c| c.encode().unwrap()), Some(1)).unwrap();
+            let resp =
+                eval_backlink_query(&pool, &target, Some(filters.clone()), None, &page, None)
+                    .await
+                    .unwrap();
+            for it in &resp.items {
+                assert!(
+                    seen.insert(it.id.to_string()),
+                    "duplicate id across pages: {}",
+                    it.id
+                );
+            }
+            if !resp.has_more {
+                break;
+            }
+            cursor = resp
+                .next_cursor
+                .as_ref()
+                .map(|c| Cursor::decode(c).unwrap());
+        }
+        assert_eq!(seen, expected_ids, "paginated union must equal oracle set");
+    }
+
+    /// Focused regression for the three-valued-logic bug the randomised
+    /// battery surfaced (#346 P1): `Not(Priority="low")` must INCLUDE a row
+    /// whose `priority` column is NULL (it does not match the positive
+    /// filter, so it belongs in the complement). Raw SQL `NOT (b.priority =
+    /// ?)` yields NULL (→ false in WHERE) on a NULL column and would wrongly
+    /// drop the row; the `NOT COALESCE((…), 0)` wrap fixes it.
+    #[tokio::test]
+    async fn p1_not_over_null_column_includes_null_rows() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+        // S5 has a NULL priority and links to TARGET.
+        let filters = vec![BacklinkFilter::Not {
+            filter: Box::new(BacklinkFilter::Priority {
+                level: "low".into(),
+            }),
+        }];
+        assert_parity(&pool, &target, "not_priority_low_null_guard", filters).await;
+        // Also assert directly that the NULL-priority source survives.
+        let page = PageRequest::new(None, Some(200)).unwrap();
+        let resp = eval_backlink_query(
+            &pool,
+            &target,
+            Some(vec![BacklinkFilter::Not {
+                filter: Box::new(BacklinkFilter::Priority {
+                    level: "low".into(),
+                }),
+            }]),
+            None,
+            &page,
+            None,
+        )
+        .await
+        .unwrap();
+        let ids: FxHashSet<String> = resp.items.iter().map(|r| r.id.to_string()).collect();
+        let s5 = ulid_at(1_600_000_000_000u64 + 4 * 86_400_000u64, "S5");
+        assert!(
+            ids.contains(&s5),
+            "Not(Priority=low) must include the NULL-priority source S5: {ids:?}"
+        );
+    }
+
+    /// Randomised battery: generate pseudo-random filter trees from a seeded
+    /// LCG and assert parity for each. Deterministic (fixed seed) so a
+    /// failure is reproducible.
+    #[tokio::test]
+    async fn p1_parity_randomised_trees() {
+        let (pool, _dir) = test_pool().await;
+        let target = seed_fixture(&pool).await;
+
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u32
+        };
+
+        fn gen_leaf(r: &mut impl FnMut() -> u32) -> BacklinkFilter {
+            match r() % 8 {
+                0 => BacklinkFilter::BlockType {
+                    block_type: ["content", "tag", "page"][(r() % 3) as usize].into(),
+                },
+                1 => BacklinkFilter::TodoState {
+                    state: ["open", "done"][(r() % 2) as usize].into(),
+                },
+                2 => BacklinkFilter::Priority {
+                    level: ["high", "low"][(r() % 2) as usize].into(),
+                },
+                3 => BacklinkFilter::PropertyIsSet {
+                    key: ["status", "score", "reviewed"][(r() % 3) as usize].into(),
+                },
+                4 => BacklinkFilter::PropertyIsEmpty {
+                    key: ["status", "score"][(r() % 2) as usize].into(),
+                },
+                5 => BacklinkFilter::PropertyText {
+                    key: "status".into(),
+                    op: CompareOp::Eq,
+                    value: ["active", "archived"][(r() % 2) as usize].into(),
+                },
+                6 => BacklinkFilter::HasTag {
+                    tag_id: "TAGONE00000000000000000001".into(),
+                },
+                _ => BacklinkFilter::SourcePage {
+                    included: vec!["PAGEALPHA00000000000000000".into()],
+                    excluded: vec![],
+                },
+            }
+        }
+
+        fn gen_tree(r: &mut impl FnMut() -> u32, depth: u32) -> BacklinkFilter {
+            if depth == 0 || r().is_multiple_of(3) {
+                return gen_leaf(r);
+            }
+            match r() % 3 {
+                0 => BacklinkFilter::Not {
+                    filter: Box::new(gen_tree(r, depth - 1)),
+                },
+                1 => BacklinkFilter::And {
+                    filters: vec![gen_tree(r, depth - 1), gen_tree(r, depth - 1)],
+                },
+                _ => BacklinkFilter::Or {
+                    filters: vec![gen_tree(r, depth - 1), gen_tree(r, depth - 1)],
+                },
+            }
+        }
+
+        for i in 0..200 {
+            let tree = gen_tree(&mut next, 3);
+            // Include the tree in the label so any divergence is
+            // self-reproducing from the failure message.
+            let label = format!("rand_{i}: {tree:?}");
+            assert_parity(&pool, &target, &label, vec![tree]).await;
+        }
+    }
+}
