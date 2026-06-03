@@ -107,7 +107,7 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/coverage-v8": "^4.1.7",
+    "@vitest/coverage-v8": "^4.1.8",
     "better-npm-audit": "^3.11.0",
     "emojibase": "^17.0.0",
     "emojibase-data": "^17.0.0",
