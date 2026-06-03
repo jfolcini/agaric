@@ -290,6 +290,13 @@ wiremock = "0.6"
 jni = "0.22"
 ndk-context = "0.1"
 
+# Linux OS notifications are dispatched via notify-rust directly (see
+# commands/notifier.rs): tauri-plugin-notification fires notify-rust's
+# blocking show() on the tokio async runtime and discards the Result, which
+# silently emits no D-Bus call on Linux. Same crate/version the plugin pulls.
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -45,6 +45,7 @@ dependencies = [
  "loro",
  "mdns-sd",
  "ndk-context",
+ "notify-rust",
  "oauth2",
  "proptest",
  "qrcode",
