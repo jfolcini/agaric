@@ -91,7 +91,15 @@ const DialogBody = ({ ref, className, children, ...rest }: DialogBodyProps) => {
       data-slot="dialog-body"
       data-testid={rest['data-testid']}
       className={cn('flex-1 min-h-0 -mx-6', className)}
-      viewportClassName="px-6"
+      // Radix's ScrollArea Viewport wraps children in an inner
+      // `<div style="min-width:100%; display:table">`. `display:table`
+      // shrink-wraps to content width instead of being capped at the
+      // viewport, so wide/long body content (e.g. the bug-report form)
+      // overflows to the right with no wrap and — since this is a
+      // vertical-only ScrollArea — no horizontal scrollbar. Forcing that
+      // wrapper to `block` (beats the non-important inline style) makes it
+      // honour the viewport width so children wrap normally.
+      viewportClassName="px-6 [&>div]:!block"
     >
       <div className="space-y-4 min-w-0">{children}</div>
     </ScrollArea>
