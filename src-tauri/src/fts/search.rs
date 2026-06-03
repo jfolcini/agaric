@@ -231,6 +231,51 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
         }
     }
 
+    // R5 (#347) — second pass: drop dangling boolean operators.
+    //
+    // The first pass decides operator-vs-literal from *token positions*
+    // (`NOT` is an operator when a token follows it). But the operand it
+    // was counting on may then be dropped by the trigram length filter:
+    // e.g. `cats NOT ab` → `cats` is kept, `NOT` passes its position
+    // check (a token follows), then `ab` (2 chars) is dropped — leaving
+    // `"cats" NOT`, a bare trailing operator that FTS5 rejects with a
+    // syntax error on otherwise-benign input.
+    //
+    // A bare operator is an emitted part equal exactly to `OR` / `AND` /
+    // `NOT` (a quoted literal like `"NOT"` is a search term, not an
+    // operator, and must be preserved). We drop any bare operator left
+    // without the right-hand operand it requires:
+    //   * a trailing bare operator (`cats NOT ab` → `"cats" NOT`), and
+    //   * a bare operator immediately followed by another bare operator
+    //     (`cats OR ab NOT dogs` → `"cats" OR NOT "dogs"`): the first of
+    //     the adjacent pair has no operand on its right, so it is the one
+    //     dropped, leaving the trailing operator's operand intact.
+    // We do NOT drop a *leading* bare operator: the first pass only ever
+    // emits a leading bare `NOT` (OR/AND require a preceding emitted
+    // operand to be promoted), and `NOT term` is the intended,
+    // FTS5-valid form preserved by the existing contract. Iterate to a
+    // fixpoint so a run collapses fully.
+    let is_bare_op = |s: &str| matches!(s, "OR" | "AND" | "NOT");
+    loop {
+        let before = output_parts.len();
+        // Drop trailing bare operators (no right operand).
+        while output_parts.last().is_some_and(|s| is_bare_op(s)) {
+            output_parts.pop();
+        }
+        // Drop the earlier of an adjacent bare-operator pair — it is the
+        // one missing its right operand. Removing the earlier element
+        // lets the survivor re-check its new neighbour next pass.
+        if let Some(idx) = output_parts
+            .windows(2)
+            .position(|w| is_bare_op(&w[0]) && is_bare_op(&w[1]))
+        {
+            output_parts.remove(idx);
+        }
+        if output_parts.len() == before {
+            break;
+        }
+    }
+
     output_parts.join(" ")
 }
 
@@ -303,6 +348,10 @@ pub async fn search_fts(
     exclude_page_globs: &[String],
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
+    // P4 (#346) — `Some(n)` truncates `content` at the DB (codepoint-safe
+    // `substr`); `None` returns full content. The FE/IPC path passes
+    // `None`; the MCP `search` tool passes `Some(SEARCH_SNIPPET_CAP)`.
+    snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // Guard: empty/whitespace queries would cause an FTS5 syntax error.
     if query.trim().is_empty() {
@@ -370,6 +419,8 @@ pub async fn search_fts(
         metadata,
         true, // `search_fts` always emits snippets — its caller has no
         // post-filter that would clobber them.
+        // P4 (#346) — propagate the DB-side content truncation choice.
+        snippet_len,
         // PEND-70 — the non-partitioned `search_fts` path is the
         // cursor-paginated `search_blocks` IPC; it is not subject to
         // the palette's keystroke-burst pattern (the panel paginates
@@ -566,6 +617,12 @@ where
             // The toggle post-filter clears `row.snippet` anyway (it
             // prefers offsets), so skip the per-row `snippet()` walk.
             false,
+            // P4 (#346) — full content here: the caller's `keep` predicate
+            // runs the toggle regex against `content`, so truncating it at
+            // the DB would change which rows match / where offsets land.
+            // Any output truncation for this path happens after matching
+            // (see `search_with_toggles`).
+            None,
             None,
         )
         .await?;
@@ -630,6 +687,27 @@ where
 // Shared SQL builder + row fetcher
 // ---------------------------------------------------------------------------
 
+/// P4 (#346) — build the `content` SELECT expression for the search SQL.
+///
+/// - `None` → `b.content` (full column, unchanged behaviour; the FE/IPC
+///   path always passes `None`).
+/// - `Some(n)` → `substr(b.content, 1, n) AS content` — DB-side truncation
+///   to the first `n` codepoints. `substr` on a TEXT column counts
+///   codepoints (not bytes), so the cut never splits a multi-byte
+///   character; the result is always valid UTF-8. Used by the MCP `search`
+///   tool so it no longer ships up to 50 full block bodies just to
+///   `.chars().take(512)` them in Rust.
+///
+/// `n` is a server-controlled `usize` (never user input), so formatting it
+/// straight into the SQL text carries no injection risk. The `AS content`
+/// alias keeps the column name stable for `FromRow`/positional decoding.
+pub(super) fn content_select_expr(snippet_len: Option<usize>) -> String {
+    match snippet_len {
+        Some(n) => format!("substr(b.content, 1, {n}) AS content"),
+        None => "b.content".to_string(),
+    }
+}
+
 /// Build the dynamic FTS5 MATCH SQL and execute it, returning the raw
 /// rows in rank order. Reused by both [`search_fts`] (cursor-paginated,
 /// single-partition) and [`search_fts_partitioned`] (PEND-61 Phase 1,
@@ -675,6 +753,9 @@ async fn fts_fetch_rows(
     block_type_filter: Option<&str>,
     metadata: &MetadataPredicates,
     with_snippet: bool,
+    // P4 (#346) — `Some(n)` truncates `content` to the first `n` codepoints
+    // via `substr(b.content, 1, n)` in SQL; `None` selects the full column.
+    snippet_len: Option<usize>,
     cancel: Option<CancellationToken>,
 ) -> Result<Vec<FtsSearchRow>, AppError> {
     // PEND-70 — early-cancel before we even touch the read pool.
@@ -719,8 +800,17 @@ async fn fts_fetch_rows(
     // meaningful resolution is finer than 1e-9, this epsilon would merge
     // distinct ranks and skip/duplicate rows at the page boundary; revisit
     // it together with the cursor `rank` field then.
+    // P4 (#346) — when the caller (the MCP `search` tool) supplies a
+    // `snippet_len`, truncate `content` at the DB with `substr(b.content,
+    // 1, N)` instead of shipping the full column up to Rust to be
+    // truncated. `substr` on TEXT counts codepoints, so the cut is always
+    // on a char boundary (valid UTF-8). `N` is a server-controlled
+    // `usize` (never user input), so inlining it into the SQL text is
+    // injection-safe and avoids juggling another bound `?N` index through
+    // the dynamic filter builder.
+    let content_select = content_select_expr(snippet_len);
     let mut sql = format!(
-        r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,
+        r#"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
                 b.deleted_at,
                 b.todo_state, b.priority, b.due_date, b.scheduled_date,
                 b.page_id,
@@ -734,18 +824,17 @@ async fn fts_fetch_rows(
                 OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
     );
 
-    // Track next parameter index (1-based); first 5 are base params.
-    let mut next_param = 6;
+    // M2 (#348) — `StructuralFilterBuilder` owns the dynamic fragment,
+    // the running `?N` index, and the ordered bind sequence atomically,
+    // so the SQL-append order and the `.bind()` order cannot drift. The
+    // first 5 placeholders (`?1..?5`) are this builder's fixed base
+    // params, so dynamic filters start at `?6`. The 11-space `AND `
+    // prefix preserves the exact pre-M2 SQL byte sequence.
+    const PREFIX: &str = "\n           AND ";
+    let mut fb = super::filter_builder::StructuralFilterBuilder::new(6);
 
-    // Optional parent_id filter
-    let parent_param_idx = if parent_id.is_some() {
-        let idx = next_param;
-        sql.push_str(&format!("\n           AND b.parent_id = ?{idx}"));
-        next_param += 1;
-        Some(idx)
-    } else {
-        None
-    };
+    // Optional parent_id filter.
+    fb.add_parent(PREFIX, parent_id);
 
     // Optional tag_ids filter (ALL semantics).
     //
@@ -766,182 +855,67 @@ async fn fts_fetch_rows(
     // `to_ascii_uppercase`), so a mixed-case duplicate would survive
     // byte-exact dedup, inflate the bound count past the achievable
     // `COUNT(DISTINCT)`, and silently zero out the ALL-tags predicate.
-    let tag_count_param_idx;
-    let tag_param_start;
     let active_tag_ids: Vec<String> = match tag_ids {
         Some(ids) if !ids.is_empty() => {
             let mut seen = std::collections::HashSet::new();
-            let deduped: Vec<String> = ids
-                .iter()
+            ids.iter()
                 .map(|id| id.to_ascii_uppercase())
                 .filter(|id| seen.insert(id.clone()))
-                .collect();
-            // Build IN-list placeholders for the deduped tag IDs.
-            let placeholders: Vec<String> = (0..deduped.len())
-                .map(|i| format!("?{}", next_param + i))
-                .collect();
-            tag_param_start = next_param;
-            next_param += deduped.len();
-            tag_count_param_idx = next_param;
-            next_param += 1;
-            sql.push_str(&format!(
-                "\n           AND (SELECT COUNT(DISTINCT bt.tag_id) FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id IN ({})) = ?{tag_count_param_idx}",
-                placeholders.join(", ")
-            ));
-            deduped
+                .collect()
         }
-        _ => {
-            tag_param_start = 0;
-            tag_count_param_idx = 0;
-            Vec::new()
-        }
+        _ => Vec::new(),
     };
+    fb.add_tags_all(PREFIX, &active_tag_ids);
 
     // FEAT-3 Phase 2 — optional space-id filter. Resolves content blocks
     // to their owning page via `b.page_id` and intersects
     // against `block_properties(key = 'space').value_ref`. Mirrors the
-    // `crate::space_filter_clause!` macro used by the pagination helpers
-    // — kept inline here because the dynamic-SQL shape of this query
-    // (varying param indices for parent / tag / space filters) prevents
-    // the compile-time sqlx macro from being applied.
-    let space_param_idx = if space_id.is_some() {
-        let idx = next_param;
-        sql.push_str(&format!(
-            "\n           AND b.page_id IN (\
-             SELECT bp.block_id FROM block_properties bp \
-             WHERE bp.key = 'space' AND bp.value_ref = ?{idx})"
-        ));
-        next_param += 1;
-        Some(idx)
-    } else {
-        None
-    };
+    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` shape used
+    // by the pagination helpers — kept inline (via the builder) here
+    // because the dynamic-SQL shape of this query (varying param indices
+    // for parent / tag / space filters) prevents the compile-time sqlx
+    // macro from being applied.
+    fb.add_space(PREFIX, space_id);
 
     // PEND-54 — page-name glob include / exclude filters. Each entry
     // has already been brace-expanded, lowercased and substring-
-    // wrapped by `prepare_globs`; we bind one parameter per pattern
-    // and OR-join inside each `IN (...)` sub-select. `LOWER(title)`
-    // is applied SQL-side (cheap on the small `pages_cache` table).
+    // wrapped by `prepare_globs`; the shared P2 (#346) helper binds one
+    // parameter per pattern and OR-joins inside each `IN (...)`
+    // sub-select. `LOWER(title)` is applied SQL-side (cheap on the small
+    // `pages_cache` table).
     //
-    // SQL-2 (PEND-58f) — this `LOWER(pc.title) GLOB ?` clause is a
-    // `pages_cache` SCAN; it does NOT use `idx_pages_cache_title_nocase`
-    // (expression mismatch on `LOWER(...)`, GLOB-not-LIKE, and the
-    // substring-wrapped patterns carry a leading wildcard). The scan is
-    // acceptable because `pages_cache` is the small per-page summary
-    // table. See migration `0068_pages_cache_title_index.sql` for the
-    // full rationale.
-    let include_glob_param_start = if !include_page_globs.is_empty() {
-        let start = next_param;
-        let placeholders: Vec<String> = (0..include_page_globs.len())
-            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
-            .collect();
-        sql.push_str(&format!(
-            "\n           AND b.page_id IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
-            placeholders.join(" OR ")
-        ));
-        next_param += include_page_globs.len();
-        Some(start)
-    } else {
-        None
-    };
-
-    let exclude_glob_param_start = if !exclude_page_globs.is_empty() {
-        let start = next_param;
-        let placeholders: Vec<String> = (0..exclude_page_globs.len())
-            .map(|i| format!("LOWER(pc.title) GLOB ?{}", start + i))
-            .collect();
-        sql.push_str(&format!(
-            "\n           AND b.page_id NOT IN (SELECT pc.page_id FROM pages_cache pc WHERE {})",
-            placeholders.join(" OR ")
-        ));
-        next_param += exclude_page_globs.len();
-        Some(start)
-    } else {
-        None
-    };
+    // SQL-2 (PEND-58f) — that `LOWER(pc.title) GLOB ?` clause is a
+    // `pages_cache` SCAN; it does NOT use `idx_pages_cache_title_nocase`.
+    // See `glob_filter::append_page_glob_subselect` and migration
+    // `0068_pages_cache_title_index.sql` for the full rationale.
+    fb.add_page_globs(PREFIX, false, include_page_globs);
+    fb.add_page_globs(PREFIX, true, exclude_page_globs);
 
     // PEND-51 — optional `block_type` equality filter. The palette
     // fires a page-only query (`block_type_filter = Some("page")`)
     // alongside the unrestricted blocks query so the FE only has to
-    // merge by `page_id`. `None` preserves the today's no-filter
-    // behaviour. PEND-61 Phase 1 — the partitioned caller passes
-    // `None` here and partitions in Rust instead.
-    let block_type_param_idx = if block_type_filter.is_some() {
-        let idx = next_param;
-        sql.push_str(&format!("\n           AND b.block_type = ?{idx}"));
-        next_param += 1;
-        Some(idx)
-    } else {
-        None
-    };
+    // merge by `page_id`. `None` preserves today's no-filter behaviour.
+    // PEND-61 Phase 1 — the partitioned caller passes `None` here and
+    // partitions in Rust instead.
+    fb.add_block_type(PREFIX, block_type_filter);
 
-    // PEND-53 — state / priority / due / scheduled / property
-    // metadata predicates. `append_metadata_sql` mutates both `sql`
-    // and `next_param` and returns the bind values in declaration
-    // order. The caller binds them after the existing parameters.
-    let metadata_binds =
-        super::metadata_filter::append_metadata_sql(&mut sql, &mut next_param, metadata, "b");
+    // PEND-53 — state / priority / due / scheduled / property metadata
+    // predicates, spliced (with their ordered binds) into the builder.
+    fb.add_metadata(metadata, "b");
 
-    // Suppress unused variable warnings — these indices are used only when
-    // the corresponding filter is active, but the compiler cannot see that
-    // through the dynamic query-building logic.
-    let _ = (
-        parent_param_idx,
-        tag_param_start,
-        tag_count_param_idx,
-        space_param_idx,
-        include_glob_param_start,
-        exclude_glob_param_start,
-        block_type_param_idx,
-        next_param,
-    );
-
+    sql.push_str(fb.sql());
     sql.push_str("\n         ORDER BY fts.rank, b.id");
     sql.push_str("\n         LIMIT ?5");
 
-    // Build and bind the query dynamically.
-    let mut db_query = sqlx::query_as::<_, FtsSearchRow>(sqlx::AssertSqlSafe(sql.as_str()))
+    // Build and bind the query dynamically. Base params `?1..?5` first,
+    // then the builder replays its ordered dynamic binds.
+    let db_query = sqlx::query_as::<_, FtsSearchRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(sanitized) // ?1
         .bind(cursor_flag) // ?2
         .bind(cursor_rank) // ?3
         .bind(cursor_id) // ?4
         .bind(fetch_limit); // ?5
-
-    if let Some(pid) = parent_id {
-        db_query = db_query.bind(pid);
-    }
-    for tag_id in &active_tag_ids {
-        db_query = db_query.bind(tag_id);
-    }
-    if !active_tag_ids.is_empty() {
-        let tag_count: i64 = i64::try_from(active_tag_ids.len())
-            .expect("invariant: active_tag_ids is a small filter list and its len fits in i64");
-        db_query = db_query.bind(tag_count);
-    }
-    if let Some(sid) = space_id {
-        db_query = db_query.bind(sid);
-    }
-    // PEND-54 — bind include / exclude glob patterns in declaration
-    // order to match the placeholder indices appended above.
-    for pat in include_page_globs {
-        db_query = db_query.bind(pat);
-    }
-    for pat in exclude_page_globs {
-        db_query = db_query.bind(pat);
-    }
-    // PEND-51 — bind `block_type` filter value last so the placeholder
-    // index matches the order it was appended to the SQL above.
-    if let Some(bt) = block_type_filter {
-        db_query = db_query.bind(bt);
-    }
-    // PEND-53 / PEND-64 — bind metadata values in the same order as
-    // `append_metadata_sql` declared them. PEND-64 widened the bind
-    // type to `MetaBind` so nullable `value_num` / `value_date` /
-    // `value_ref` variants can carry SQL `NULL` for non-parseable
-    // user inputs.
-    for v in &metadata_binds {
-        db_query = v.bind(db_query);
-    }
+    let db_query = fb.apply(db_query);
 
     // PEND-70 — acquire a read-pool connection via the slow-acquire
     // logger so saturation under bursty typing surfaces in the log.
@@ -1187,6 +1161,9 @@ pub(crate) async fn search_fts_partitioned(
         Some("page"), // PEND-69 F1: page-only pre-filter at SQL
         metadata,
         with_snippet,
+        // P4 (#346) — the partitioned (palette) path always returns full
+        // content; only the MCP cursor path opts into DB-side truncation.
+        None,
         // PEND-70 — clone the cancel token so both partition scans
         // observe the same signal. `CancellationToken: Clone` is a
         // cheap watch::Receiver refcount bump.
@@ -1207,6 +1184,8 @@ pub(crate) async fn search_fts_partitioned(
         None, // unrestricted
         metadata,
         with_snippet,
+        // P4 (#346) — see the pages partition above; full content here too.
+        None,
         cancel,
     );
     let (pages_rows, blocks_rows) = tokio::try_join!(pages_future, blocks_future)?;

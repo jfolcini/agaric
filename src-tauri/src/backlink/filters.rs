@@ -99,7 +99,7 @@ pub(crate) fn ms_to_ulid_prefix(ms: u64) -> String {
 
 /// Resolve a `BacklinkFilter` into the set of matching `block_id`s.
 ///
-/// Deleted and conflict blocks are excluded at the leaf level.
+/// Deleted blocks are excluded at the leaf level.
 /// Uses the same recursive `Pin<Box<dyn Future>>` pattern as `tag_query::resolve_expr`.
 pub(crate) fn resolve_filter<'a>(
     pool: &'a SqlitePool,
@@ -370,7 +370,7 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                     return Ok(FxHashSet::default());
                 }
                 // Query FTS5 index, join back to blocks to get block id and
-                // exclude deleted/conflict blocks.
+                // exclude deleted blocks.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT fb.block_id \
                      FROM fts_blocks fb \
@@ -610,8 +610,8 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 }
 
 /// Recursive-CTE walk that returns every descendant (including the seed
-/// roots themselves) of a list of `page_id`s, filtering out deleted /
-/// conflict rows and bounding recursion depth at 100 (AGENTS.md
+/// roots themselves) of a list of `page_id`s, filtering out deleted
+/// rows and bounding recursion depth at 100 (AGENTS.md
 /// invariant #9).
 ///
 /// Uses a positional `IN (?,?,…)` clause when `roots.len() <=

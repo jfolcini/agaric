@@ -784,7 +784,12 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     // stay at the top level to keep the existing wire contract
     // backward-compatible.
     let f = args.filter.unwrap_or_default();
-    let mut resp = search_blocks_inner(
+    // P4 (#346) — push the snippet truncation into the DB instead of
+    // fetching up to 50 full block bodies and `.chars().take(...)`-ing them
+    // in Rust. `search_blocks_inner` returns `content` already truncated to
+    // `SEARCH_SNIPPET_CAP` codepoints (codepoint-safe `substr` on the
+    // non-matching paths; post-match truncation on the toggle/regex paths).
+    let resp = search_blocks_inner(
         pool,
         args.query,
         args.cursor,
@@ -808,20 +813,12 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             excluded_state_filter: f.excluded_state_filter,
             excluded_priority_filter: f.excluded_priority_filter,
         },
+        // P4 (#346) — DB-side truncation to SEARCH_SNIPPET_CAP codepoints.
+        // `substr` on TEXT cuts on codepoint boundaries, so the output is
+        // always valid UTF-8 even with multi-byte content (CJK, emoji).
+        Some(SEARCH_SNIPPET_CAP),
     )
     .await?;
-    // Truncate each result's content to SEARCH_SNIPPET_CAP chars. We
-    // truncate at char boundaries (not byte boundaries) so the output is
-    // always valid UTF-8 even when the content contains multi-byte
-    // characters (e.g. CJK, emoji).
-    for row in resp.items.iter_mut() {
-        if let Some(ref c) = row.content {
-            if c.chars().count() > SEARCH_SNIPPET_CAP {
-                let truncated: String = c.chars().take(SEARCH_SNIPPET_CAP).collect();
-                row.content = Some(truncated);
-            }
-        }
-    }
     to_tool_result(&resp)
 }
 

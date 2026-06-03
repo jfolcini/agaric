@@ -590,6 +590,81 @@ async fn search_truncates_long_content() {
     );
 }
 
+/// P4 (#346) — the MCP `search` path truncates `content` at the DB
+/// (`search_blocks_inner(.., Some(SEARCH_SNIPPET_CAP))`), while the FE/IPC
+/// path (`search_blocks_inner(.., None)`) returns the FULL block content.
+/// This pins the path-dependent contract: the same block yields a
+/// `SEARCH_SNIPPET_CAP`-codepoint snippet via the tool but its complete
+/// body via the cursor command.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_snippet_len_truncates_mcp_but_not_fe_path() {
+    use crate::commands::queries::search_blocks_inner;
+
+    let (tools, mat, _dir) = mk_tools().await;
+    // Body well past the cap so truncation is observable; the literal
+    // "needle" anchors the FTS match at the very start.
+    let full_len = SEARCH_SNIPPET_CAP + 1500;
+    let body: String = "needle ".to_string() + &"x".repeat(full_len);
+    let body_chars = body.chars().count();
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        body,
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    // MCP path — Some(SEARCH_SNIPPET_CAP): content truncated at the DB.
+    let mcp = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect("MCP search happy path");
+    let mcp_items = mcp["items"].as_array().expect("items");
+    assert_eq!(mcp_items.len(), 1, "exactly one block matches");
+    let mcp_content = mcp_items[0]["content"].as_str().unwrap_or("");
+    assert_eq!(
+        mcp_content.chars().count(),
+        SEARCH_SNIPPET_CAP,
+        "MCP path must truncate content to exactly SEARCH_SNIPPET_CAP codepoints",
+    );
+
+    // FE/IPC path — None: full content returned, byte-identical.
+    let fe = search_blocks_inner(
+        &tools.pool,
+        "needle".into(),
+        None,
+        Some(SEARCH_RESULT_CAP),
+        crate::commands::SearchFilter {
+            space_id: Some(TEST_SPACE_ID.into()),
+            ..Default::default()
+        },
+        None,
+    )
+    .await
+    .expect("FE search happy path");
+    assert_eq!(fe.items.len(), 1, "exactly one block matches");
+    let fe_content = fe.items[0].content.as_deref().unwrap_or("");
+    assert_eq!(
+        fe_content.chars().count(),
+        body_chars,
+        "FE path (snippet_len = None) must return the FULL block content untruncated",
+    );
+    assert!(
+        fe_content.chars().count() > SEARCH_SNIPPET_CAP,
+        "sanity: full content must exceed the MCP cap so the two paths differ",
+    );
+}
+
 // -------------------------------------------------------------------
 // PEND-65 — MCP `search` tool: `filter` arg threads through to
 // `SearchFilter`. The structured-filter shape mirrors the Tauri
@@ -1569,6 +1644,7 @@ proptest::proptest! {
                     space_id: Some(TEST_SPACE_ID.into()),
                     ..Default::default()
                 },
+                None,
             )
             .await
             .unwrap();

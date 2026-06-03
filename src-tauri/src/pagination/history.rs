@@ -139,6 +139,24 @@ pub async fn list_page_history(
         // bypassed `cargo sqlx prepare` validation; this branch is
         // entirely static SQL with `?N IS NULL` short-circuits, so the
         // macro form fits without losing any flexibility.
+        //
+        // IX2 (#349) — EQP-verified (5 000-row op_log seed, ANALYZE'd):
+        // a candidate composite `idx_op_log(created_at, seq)` was NOT
+        // added, and no migration ships in this group. The `ORDER BY
+        // ol.created_at DESC, ol.seq DESC, ol.device_id DESC` here plans
+        // as `SCAN ol` + `USE TEMP B-TREE FOR ORDER BY` today. With the
+        // candidate index it became `SCAN ol USING INDEX
+        // idx_op_log_created_seq` + `USE TEMP B-TREE FOR LAST TERM OF
+        // ORDER BY` — i.e. it is STILL a full scan (the keyset
+        // `created_at < ?3 OR (… seq < ?4) OR (…)` OR-chain is not a
+        // bounded range the planner can seek, and the no-cursor branch
+        // binds NULL sentinels) and STILL needs a temp B-tree (only the
+        // trailing `device_id` term is removed from it). The win is
+        // marginal — one fewer sort key on an already-small LIMIT 51
+        // page — while the index adds write amplification on the
+        // hot-path op_log insert. The existing single-column
+        // `idx_op_log_created` already covers the per-`created_at`
+        // lookups that matter. Conclusion: not worth it; left out.
         let rows = sqlx::query_as!(
             HistoryEntry,
             "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at \

@@ -189,6 +189,7 @@ async fn state_filter_in_list() {
             state_filter: vec!["TODO".into(), "DOING".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -213,6 +214,7 @@ async fn state_filter_none_matches_is_null() {
             state_filter: vec!["none".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -234,6 +236,7 @@ async fn state_and_priority_filter_compose() {
             priority_filter: vec!["1".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -260,6 +263,7 @@ async fn due_filter_op_form_lt() {
             }),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -286,6 +290,7 @@ async fn due_filter_named_none_routes_to_is_null() {
             due_filter: Some(DateFilter::Named(NamedDateRange::None)),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -309,6 +314,7 @@ async fn property_filter_include_value_text() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -335,6 +341,7 @@ async fn property_filter_include_empty_value_matches_key_presence() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -363,6 +370,7 @@ async fn property_filter_exclude_routes_to_not_exists() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -397,6 +405,7 @@ async fn property_filter_and_compose_across_keys() {
             ],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -423,6 +432,7 @@ async fn compound_filter_state_priority_property() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -447,6 +457,7 @@ async fn unknown_property_key_returns_zero_results() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -475,6 +486,7 @@ async fn excluded_state_filter_includes_no_state_rows() {
             excluded_state_filter: vec!["DONE".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -506,6 +518,7 @@ async fn excluded_state_none_sentinel_excludes_null_state() {
             excluded_state_filter: vec!["none".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -531,6 +544,7 @@ async fn excluded_state_combines_with_state_filter() {
             excluded_state_filter: vec!["DONE".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -555,6 +569,7 @@ async fn excluded_priority_inverts_priority_values() {
             excluded_priority_filter: vec!["1".into()],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -592,6 +607,7 @@ async fn prop_filter_matches_value_num_column() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -621,6 +637,7 @@ async fn prop_filter_matches_value_date_column() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -648,6 +665,7 @@ async fn prop_filter_matches_value_ref_column_case_insensitive() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -674,6 +692,7 @@ async fn prop_filter_text_value_still_matches_value_text() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -702,6 +721,7 @@ async fn prop_filter_numeric_value_does_not_match_text_column() {
             }],
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -727,6 +747,7 @@ async fn invalid_due_filter_surfaces_typed_error() {
             }),
             ..Default::default()
         },
+        None,
     )
     .await;
     let err = result.unwrap_err();

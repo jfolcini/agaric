@@ -1,4 +1,41 @@
 //! FTS index management — create, update, remove, and rebuild FTS entries.
+//!
+//! ## Single-row-per-`block_id` invariant (#345 / C6)
+//!
+//! `fts_blocks` is an FTS5 virtual table (migration `0006_fts5_trigram.sql`).
+//! FTS5 tables **cannot carry a `UNIQUE` constraint** (nor any other
+//! constraint), so the database does NOT enforce "exactly one row per
+//! `block_id`". That invariant holds ONLY by convention: **every write path
+//! in this module MUST `DELETE FROM fts_blocks WHERE block_id = ?` before it
+//! `INSERT`s a row for that `block_id`.**
+//!
+//! Concretely, the delete-then-insert discipline is observed by:
+//!
+//! - [`update_fts_for_block_with_maps`] / [`update_fts_for_block_split_with_maps`]
+//!   — single-block upsert (DELETE then INSERT in one transaction).
+//! - [`reindex_fts_references`] — batch DELETE of the chunk's ids, then a
+//!   multi-row INSERT.
+//! - [`rebuild_fts_index_impl`] / [`rebuild_fts_index_split_impl`] — full
+//!   `DELETE FROM fts_blocks` up front, then chunked INSERTs.
+//!
+//! A future writer that `INSERT`s without first `DELETE`ing the existing
+//! row(s) would **silently** produce duplicate rows for a `block_id`, which
+//! surfaces as duplicate search hits (and inflated `bm25` weighting). Because
+//! FTS5 can't reject the duplicate, nothing fails at write time — the bug is
+//! latent until a search returns the same block twice.
+//!
+//! Migrations are append-only and `0006` can't be edited, so we cannot add a
+//! schema-level guard. Instead [`debug_assert_single_fts_row`] (debug builds)
+//! and [`assert_no_duplicate_fts_rows`] (tests) provide a cheap runtime check;
+//! see the regression test `reindex_fts_references_multi_row_insert_no_duplicates`
+//! in `fts/tests.rs`, which asserts `COUNT(*) == 1` per block on the riskiest
+//! (reindex) write path.
+//!
+//! Note: converting `fts_blocks` to an external-content FTS5 table (which
+//! would let SQLite source the text from `blocks` and sidestep duplication)
+//! is deliberately out of scope — `stripped` is an NFC-normalised, markup- and
+//! reference-resolved *projection* of `blocks.content`, not the verbatim
+//! column, so it has no external-content source to point at.
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
@@ -138,6 +175,10 @@ pub async fn update_fts_for_block_with_maps(
             )
             .execute(&mut *tx)
             .await?;
+
+            // #345 / C6 — verify the DELETE-then-INSERT discipline left
+            // exactly one row (debug/test only; compiled out in release).
+            debug_assert_single_fts_row(&mut *tx, block_id).await;
         }
     }
 
@@ -211,6 +252,9 @@ pub async fn update_fts_for_block_split_with_maps(
     )
     .execute(&mut *tx)
     .await?;
+    // #345 / C6 — verify the single-row invariant before commit (debug/test
+    // only; compiled out in release).
+    debug_assert_single_fts_row(&mut *tx, block_id).await;
     tx.commit().await?;
     Ok(())
 }
@@ -508,4 +552,75 @@ pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// #345 / C6 — single-row-per-block integrity checks
+// ---------------------------------------------------------------------------
+//
+// FTS5 cannot enforce "exactly one row per block_id" (see the module-level
+// docs). These helpers turn the convention into a runtime check so a future
+// write path that forgets the DELETE-then-INSERT discipline trips loudly in
+// debug builds / tests instead of silently shipping duplicate search hits.
+
+/// #345 / C6 — debug-build assertion that a single `block_id` carries at most
+/// one `fts_blocks` row.
+///
+/// Call this in the same transaction immediately after a write to a single
+/// block to catch a missing DELETE-before-INSERT. In release builds the body
+/// compiles away to nothing (`cfg(debug_assertions)`), so hot write paths pay
+/// zero cost in production; in debug / test builds it runs one cheap
+/// `COUNT(*)` and panics on a duplicate.
+///
+/// Takes any `Executor` (a `&SqlitePool` or `&mut SqliteConnection`/`&mut
+/// Transaction`) so it can run inside the writer transaction before commit.
+#[cfg(debug_assertions)]
+pub(crate) async fn debug_assert_single_fts_row<'e, E>(executor: E, block_id: &str)
+where
+    E: sqlx::Executor<'e, Database = Sqlite>,
+{
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id = ?")
+        .bind(block_id)
+        .fetch_one(executor)
+        .await
+        .expect("integrity COUNT(*) on fts_blocks must succeed");
+    debug_assert!(
+        count <= 1,
+        "fts_blocks single-row invariant violated: block_id {block_id} has {count} rows \
+         (a write path INSERTed without DELETEing first — see #345/C6 in fts/index.rs)"
+    );
+}
+
+/// #345 / C6 — release-build no-op counterpart to
+/// [`debug_assert_single_fts_row`]. Lets call sites stay unconditional while
+/// the actual `COUNT(*)` only runs in debug/test builds.
+#[cfg(not(debug_assertions))]
+#[inline]
+pub(crate) async fn debug_assert_single_fts_row<'e, E>(_executor: E, _block_id: &str)
+where
+    E: sqlx::Executor<'e, Database = Sqlite>,
+{
+}
+
+/// #345 / C6 — test/debug integrity scan: assert that NO `block_id` in
+/// `fts_blocks` has more than one row.
+///
+/// Scans the whole table for any `block_id` appearing more than once and
+/// panics listing the offenders. Cheap on personal-notes-scale corpora; use
+/// it in tests after exercising a write path to guard the
+/// single-row-per-block invariant the schema cannot enforce.
+#[cfg(test)]
+pub(crate) async fn assert_no_duplicate_fts_rows(pool: &SqlitePool) {
+    let dupes: Vec<(String, i64)> = sqlx::query_as::<_, (String, i64)>(
+        "SELECT block_id, COUNT(*) AS n FROM fts_blocks \
+         GROUP BY block_id HAVING n > 1",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("integrity duplicate-scan on fts_blocks must succeed");
+    assert!(
+        dupes.is_empty(),
+        "fts_blocks single-row invariant violated (#345/C6): {} block_id(s) have duplicate rows: {dupes:?}",
+        dupes.len()
+    );
 }

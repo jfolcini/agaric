@@ -1575,6 +1575,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -1611,6 +1612,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();
@@ -1629,6 +1631,7 @@ async fn fts_search_reflects_edits_through_materializer_pipeline() {
             space_id: Some(TEST_SPACE_ID.into()),
             ..Default::default()
         },
+        None,
     )
     .await
     .unwrap();

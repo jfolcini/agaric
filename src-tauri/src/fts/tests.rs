@@ -290,6 +290,7 @@ async fn update_fts_indexes_block_and_search_finds_it() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -340,6 +341,7 @@ async fn update_fts_after_edit_finds_new_content() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -361,6 +363,7 @@ async fn update_fts_after_edit_finds_new_content() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -397,6 +400,7 @@ async fn update_fts_deleted_block_removes_from_index() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -467,6 +471,7 @@ async fn remove_fts_makes_block_unsearchable() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -513,6 +518,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -530,6 +536,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -547,6 +554,7 @@ async fn rebuild_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -575,6 +583,7 @@ async fn rebuild_excludes_deleted_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -595,6 +604,7 @@ async fn rebuild_excludes_deleted_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -642,6 +652,7 @@ async fn rebuild_clears_stale_entries() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -678,6 +689,7 @@ async fn rebuild_resolves_tag_and_page_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -698,6 +710,7 @@ async fn rebuild_resolves_tag_and_page_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -764,6 +777,7 @@ async fn fts_optimize_succeeds_and_search_still_works() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -822,6 +836,7 @@ async fn search_basic_finds_correct_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -854,6 +869,7 @@ async fn search_no_results() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -890,6 +906,7 @@ async fn search_empty_query_returns_empty() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -922,6 +939,7 @@ async fn search_whitespace_query_returns_empty() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -960,6 +978,7 @@ async fn search_sub_trigram_query_returns_empty() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -988,6 +1007,7 @@ async fn search_sub_trigram_query_returns_empty() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1036,6 +1056,7 @@ async fn search_deleted_blocks_excluded() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1107,6 +1128,7 @@ async fn search_pagination_works() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1130,6 +1152,7 @@ async fn search_pagination_works() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1180,6 +1203,7 @@ async fn search_fts5_syntax_error_returns_validation() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(
@@ -1225,6 +1249,7 @@ async fn search_multiple_terms_matches() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1246,6 +1271,7 @@ async fn search_multiple_terms_matches() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1299,6 +1325,7 @@ async fn search_sql_injection_attempt_no_crash() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await;
         assert!(
@@ -1319,6 +1346,7 @@ async fn search_sql_injection_attempt_no_crash() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1350,6 +1378,7 @@ async fn search_fts5_operators_are_sanitized() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(result.is_ok(), "OR as query should not crash");
@@ -1368,6 +1397,7 @@ async fn search_fts5_operators_are_sanitized() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(
@@ -1387,6 +1417,7 @@ async fn search_fts5_operators_are_sanitized() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(near_result.is_ok(), "NEAR() as query should not crash");
@@ -1429,6 +1460,7 @@ async fn search_special_fts5_characters_no_crash() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await;
         assert!(
@@ -1458,6 +1490,7 @@ async fn search_unmatched_quotes_no_crash() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(
@@ -1590,6 +1623,7 @@ async fn search_excludes_soft_deleted_blocks_after_index() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1635,6 +1669,7 @@ async fn search_respects_max_results_cap() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -1873,6 +1908,63 @@ fn sanitize_unmatched_quote_fallback() {
     );
 }
 
+#[test]
+fn sanitize_drops_dangling_operator_after_subtrigram_drop() {
+    // R5 (#347) — the first pass promotes `NOT` to a bare operator
+    // because a token (`ab`) follows it, but the trigram length filter
+    // then drops `ab` (2 chars), leaving a bare trailing `NOT`. Before
+    // the fix this produced `"cats" NOT`, which FTS5 rejects with a
+    // syntax error on benign input. The second pass must drop the
+    // operand-less operator.
+    assert_eq!(
+        sanitize_fts_query("cats NOT ab"),
+        "\"cats\"",
+        "operand of NOT was dropped by the trigram filter; the now-dangling \
+         bare NOT must be dropped, not emitted as `\"cats\" NOT`"
+    );
+    // Same hazard with the binary OR (right operand sub-trigram).
+    assert_eq!(
+        sanitize_fts_query("cats OR ab"),
+        "\"cats\"",
+        "right operand of OR dropped by trigram filter → dangling bare OR removed"
+    );
+    // Left operand of OR dropped → dangling leading bare OR removed.
+    assert_eq!(
+        sanitize_fts_query("ab OR cats"),
+        "\"cats\"",
+        "left operand of OR dropped by trigram filter → dangling bare OR removed"
+    );
+    // Both operands of OR survive → operator preserved (no regression).
+    assert_eq!(
+        sanitize_fts_query("cats OR dogs"),
+        "\"cats\" OR \"dogs\"",
+        "valid binary operator with both operands present is preserved"
+    );
+    // NOT with a surviving operand stays a bare operator.
+    assert_eq!(
+        sanitize_fts_query("cats NOT dogs"),
+        "\"cats\" NOT \"dogs\"",
+        "NOT with a surviving 3-char operand is a valid operator"
+    );
+    // Two operators collapse when the middle operand is dropped:
+    // `cats OR ab NOT dogs` → `cats`, OR(bare), [ab dropped], NOT(bare),
+    // dogs → `"cats" OR NOT "dogs"`. The adjacent bare-op pair `OR NOT`
+    // is invalid; the post-pass drops the operand-less `OR`, leaving a
+    // valid `"cats" NOT "dogs"`.
+    assert_eq!(
+        sanitize_fts_query("cats OR ab NOT dogs"),
+        "\"cats\" NOT \"dogs\"",
+        "middle operand dropped → adjacent bare operators reduced to the \
+         one that still has both operands"
+    );
+    // All-sub-trigram operands → everything drops, including operators.
+    assert_eq!(
+        sanitize_fts_query("ab NOT cd"),
+        "",
+        "both operands sub-trigram → empty MATCH (no dangling operator)"
+    );
+}
+
 // ======================================================================
 // FTS pagination with identical/close ranks (REVIEW-LATER #3 fix)
 // ======================================================================
@@ -1921,6 +2013,7 @@ async fn search_pagination_identical_ranks_no_duplicates_no_skips() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await
         .unwrap();
@@ -1999,6 +2092,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2036,6 +2130,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2060,6 +2155,7 @@ async fn search_cursor_round_trip_with_float_rank() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2134,6 +2230,7 @@ async fn search_pagination_close_ranks_epsilon_boundary() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await
         .unwrap();
@@ -2214,6 +2311,7 @@ async fn search_fts_sanitizer_protects_against_fts5_operators() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await;
         assert!(
@@ -2272,6 +2370,7 @@ async fn reindex_fts_references_batches_correctly() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2304,6 +2403,7 @@ async fn reindex_fts_references_batches_correctly() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2337,6 +2437,7 @@ async fn reindex_fts_references_batches_correctly() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2396,6 +2497,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2426,6 +2528,7 @@ async fn reindex_fts_references_updates_tag_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2494,6 +2597,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2529,6 +2633,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2563,6 +2668,7 @@ async fn reindex_fts_references_batch_50_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2631,6 +2737,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2662,6 +2769,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2680,6 +2788,7 @@ async fn reindex_fts_references_updates_inline_only_referencing_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2959,6 +3068,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2979,6 +3089,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -2999,6 +3110,7 @@ async fn rebuild_fts_index_split_indexes_all_active_blocks() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3030,6 +3142,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3050,6 +3163,7 @@ async fn rebuild_fts_index_split_excludes_deleted() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3085,6 +3199,7 @@ async fn rebuild_fts_index_split_resolves_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3105,6 +3220,7 @@ async fn rebuild_fts_index_split_resolves_refs() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3141,6 +3257,7 @@ async fn rebuild_fts_index_split_clears_stale_entries() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3184,6 +3301,7 @@ async fn update_fts_for_block_split_indexes_active_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3233,6 +3351,7 @@ async fn update_fts_for_block_split_removes_deleted_block() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3275,6 +3394,7 @@ async fn update_fts_for_block_split_handles_null_content() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3385,6 +3505,7 @@ async fn search_fts_filters_by_space() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3407,6 +3528,7 @@ async fn search_fts_filters_by_space() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3429,6 +3551,7 @@ async fn search_fts_filters_by_space() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3467,6 +3590,7 @@ async fn search_fts_nonexistent_space_returns_empty() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3567,6 +3691,7 @@ async fn rebuild_fts_index_chunked_indexes_all_blocks() {
             &[],
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await
         .unwrap();
@@ -3642,6 +3767,7 @@ async fn update_fts_for_block_with_maps_matches_wrapper_output() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3840,6 +3966,13 @@ async fn reindex_fts_references_multi_row_insert_no_duplicates() {
             "block {blk} (idx {i}) must contain renamed tag 'beta' after multi-row INSERT, got: {stripped:?}"
         );
     }
+
+    // #345 / C6 — whole-table integrity scan: the riskiest write path
+    // (reindex's batch DELETE + multi-row INSERT) must leave NO block_id
+    // with duplicate fts rows. FTS5 can't enforce this with a UNIQUE
+    // constraint, so this guards the single-row-per-block invariant
+    // documented at the top of `fts/index.rs`.
+    super::index::assert_no_duplicate_fts_rows(&pool).await;
 }
 
 // ======================================================================
@@ -3883,6 +4016,7 @@ async fn snippet_returns_paired_mark_boundaries_on_content_match() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3933,6 +4067,7 @@ async fn snippet_for_null_content_block_renders_no_match_span() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -3971,6 +4106,7 @@ async fn snippet_preserves_literal_lt_and_amp_in_source_content() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4009,6 +4145,7 @@ async fn snippet_for_long_content_returns_windowed_output() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4057,6 +4194,7 @@ async fn snippet_with_multiple_matches_contains_at_least_one_pair() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -4112,6 +4250,7 @@ async fn snippet_window_constant_produces_readable_output_on_representative_samp
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6420,6 +6559,7 @@ async fn fts_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6474,6 +6614,7 @@ async fn regex_duplicate_tag_ids_do_not_zero_out_all_tags_filter() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6536,6 +6677,7 @@ async fn regex_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches(
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6586,6 +6728,7 @@ async fn fts_mixed_case_duplicate_tag_ids_dedup_so_all_tags_predicate_matches() 
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6627,6 +6770,7 @@ async fn regex_over_long_raw_pattern_is_rejected() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .expect_err("over-long raw regex pattern must be rejected");
@@ -6731,6 +6875,7 @@ async fn regex_path_applies_tag_filter() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6790,6 +6935,7 @@ async fn regex_path_without_tag_filter_matches_all() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -6824,6 +6970,7 @@ async fn fts_over_long_query_is_rejected() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .expect_err("over-long query must be rejected");
@@ -6854,6 +7001,7 @@ async fn fts_query_at_exactly_the_cap_is_accepted() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await;
     assert!(
@@ -7190,6 +7338,7 @@ async fn be_a10_sqla3_cursor_pagination_full_pages_no_drops_no_dupes() {
             },
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await
         .unwrap();
@@ -7297,6 +7446,7 @@ async fn be_a10_sqla3_boundary_survivors_equal_limit_no_more() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7376,6 +7526,7 @@ async fn be_a10_sqla3_multi_window_fill_finds_sparse_survivors() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7434,6 +7585,7 @@ async fn be_a10_fts_plain_has_more_at_exactly_max_search_results() {
         &[],
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7524,6 +7676,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         None,
         Some(over),
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await
     .expect_err("limit > MAX_SEARCH_RESULTS must be rejected");
@@ -7539,6 +7692,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         None,
         Some(MAX_SEARCH_RESULTS),
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await;
     assert!(
@@ -7560,6 +7714,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         None,
         None,
         crate::commands::queries::SearchFilter::default(),
+        None,
     )
     .await;
     assert!(
@@ -7637,6 +7792,7 @@ async fn be_a10_post_filter_max_windows_bound_stops_without_hanging() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7727,6 +7883,7 @@ async fn new3_filter_only_by_tag_returns_tagged_excludes_untagged() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7772,6 +7929,7 @@ async fn new3_empty_query_no_filter_returns_empty_cursor() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7867,6 +8025,7 @@ async fn new3_cursor_pagination_no_drops_no_dupes() {
             new3_toggles_off(),
             None,
             &crate::fts::metadata_filter::MetadataPredicates::default(),
+            None,
         )
         .await
         .unwrap();
@@ -7977,6 +8136,7 @@ async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -7999,6 +8159,7 @@ async fn new3_cursor_exact_multiple_final_full_page_has_no_more() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -8065,6 +8226,7 @@ async fn new3_ordering_is_id_desc() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -8122,6 +8284,7 @@ async fn new3_respects_parent_id() {
         new3_toggles_off(),
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -8157,6 +8320,7 @@ async fn new3_respects_block_type_filter() {
         new3_toggles_off(),
         Some("page"),
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -8213,6 +8377,7 @@ async fn new3_respects_metadata_state_predicate() {
         new3_toggles_off(),
         None,
         &metadata,
+        None,
     )
     .await
     .unwrap();
@@ -8257,6 +8422,7 @@ async fn new3_mode_independent_regex_toggle() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();
@@ -8298,6 +8464,7 @@ async fn new3_mode_independent_case_sensitive_toggle() {
         },
         None,
         &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
     )
     .await
     .unwrap();

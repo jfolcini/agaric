@@ -499,6 +499,14 @@ fn prepare_search_filter(filter: &SearchFilter) -> Result<PreparedSearchFilter, 
 /// ?space_id`. The MCP path (`mcp::tools_ro::handle_search`) requires
 /// the agent to thread its active space too — see the `search` tool's
 /// input schema.
+/// P4 (#346) — `snippet_len`: when `Some(n)`, each returned row's
+/// `content` is truncated to the first `n` codepoints at the DATABASE
+/// (`substr(b.content, 1, n)` on the non-matching paths; after regex
+/// matching on the toggle/regex paths so matches and offsets stay
+/// correct). `None` returns full `content` — the byte-identical
+/// behaviour every FE/IPC caller relies on. The MCP `search` tool passes
+/// `Some(SEARCH_SNIPPET_CAP)` so it no longer fetches up to 50 full block
+/// bodies just to `.chars().take(512)` them in Rust.
 #[instrument(skip(pool, filter), err)]
 pub async fn search_blocks_inner(
     pool: &SqlitePool,
@@ -506,6 +514,7 @@ pub async fn search_blocks_inner(
     cursor: Option<String>,
     limit: Option<i64>,
     filter: SearchFilter,
+    snippet_len: Option<usize>,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
     // PEND-58g NEW-3 — the empty-query decision now lives in
     // `fts::search_with_toggles`: a blank query with at least one
@@ -552,6 +561,7 @@ pub async fn search_blocks_inner(
         prepared.toggles,
         filter.block_type_filter.as_deref(),
         &prepared.metadata,
+        snippet_len,
     )
     .await
 }
@@ -881,7 +891,10 @@ pub async fn search_blocks(
     limit: Option<i64>,
     filter: SearchFilter,
 ) -> Result<PageResponse<SearchBlockRow>, AppError> {
-    search_blocks_inner(&pool.0, query, cursor, limit, filter)
+    // P4 (#346) — the FE/IPC path always wants full block content
+    // (`snippet_len = None`); only the MCP `search` tool opts into DB-side
+    // truncation.
+    search_blocks_inner(&pool.0, query, cursor, limit, filter, None)
         .await
         .map_err(sanitize_internal_error)
 }
@@ -1616,6 +1629,24 @@ pub async fn filtered_blocks_query_inner(
     }
 
     sql.push_str(" ORDER BY b.id ASC LIMIT ?3");
+
+    // M3 (#348) — drift guard: the running `?N` placeholder index must
+    // stay in lockstep with the dynamic bind sequence. `next_param`
+    // started at 6 (placeholders `?1..?5` are the five fixed binds
+    // below; `?3` is reused for LIMIT), so every increment past 6 must
+    // correspond to exactly one pushed value across `prop_binds` +
+    // `tag_binds`. An off-by-one in the hand-tracked index would
+    // silently misbind; this assert turns that into a debug-build panic
+    // (no production cost — values are bound, never interpolated).
+    debug_assert_eq!(
+        next_param - 6,
+        prop_binds.len() + tag_binds.len(),
+        "filtered_blocks_query placeholder index ({next_param}) drifted \
+         from the dynamic bind count (prop={}, tag={}); the `?N` numbering \
+         and the bind sequence are out of sync",
+        prop_binds.len(),
+        tag_binds.len(),
+    );
 
     // ----- Bind in declared param order (?1..?N) -----------------------------
     let mut q = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
