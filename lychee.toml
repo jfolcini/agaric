@@ -69,4 +69,17 @@ exclude = [
     # `curl`. Both references (threat-model.md spec link + README badge) are
     # non-load-bearing, so the domain is excluded rather than churned.
     "^https?://slsa\\.dev/",
+    # v2.tauri.app repeatedly times out from GitHub Actions runners even with
+    # the 30s timeout + 5 retries above (validate run 26867985711: TIMEOUT on
+    # /start/prerequisites, /plugin/updater, and the bare host in README.md,
+    # SECURITY.md, docs/BUILD.md — 0 errors, only timeouts → exit 2). The
+    # Tauri docs CDN is up from browsers/`curl`; same GHA edge flake that
+    # motivated the timeout/retry tuning above. Canonical upstream docs,
+    # non-load-bearing for link integrity.
+    "^https?://v2\\.tauri\\.app/",
+    # contributor-covenant.org times out from GHA runners (same validate run:
+    # 4 TIMEOUTs on the homepage, /faq, /translations, and the v2.1 code of
+    # conduct in CODE_OF_CONDUCT.md). Site is up from browsers; excluded as a
+    # non-load-bearing upstream reference rather than churned.
+    "^https?://(www\\.)?contributor-covenant\\.org/",
 ]
