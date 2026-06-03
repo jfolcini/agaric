@@ -2501,10 +2501,16 @@ async fn revert_delete_property_restores_value() {
     );
 }
 
+/// C7 (#345): reverting an `add_attachment` must HARD-delete the row,
+/// matching the runtime / materializer model
+/// (`materializer::handlers::apply_delete_attachment_tx` runs
+/// `DELETE FROM attachments`). Undo was previously the only producer of
+/// soft-deleted attachment rows, and because `list_attachments_*` has no
+/// `deleted_at` filter, a soft-delete left a tombstone visible in
+/// listings that was never GC'd. After undo the row must be GONE, not
+/// merely stamped with `deleted_at`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn revert_add_attachment_soft_deletes() {
-    use sqlx::Row;
-
+async fn revert_add_attachment_hard_deletes_row_c7() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -2562,7 +2568,7 @@ async fn revert_add_attachment_soft_deletes() {
         .unwrap();
     let add_att_op = ops.iter().find(|o| o.op_type == "add_attachment").unwrap();
 
-    // Revert the add_attachment (reverse = DeleteAttachment → soft-delete)
+    // Revert the add_attachment (reverse = DeleteAttachment → hard-delete)
     revert_ops_inner(
         &pool,
         DEV,
@@ -2575,16 +2581,17 @@ async fn revert_add_attachment_soft_deletes() {
     .await
     .unwrap();
 
-    // Verify attachment is soft-deleted
-    let row = sqlx::query("SELECT deleted_at FROM attachments WHERE id = ?")
+    // C7: the row must be HARD-deleted — gone, not soft-deleted. A
+    // lingering (`deleted_at IS NOT NULL`) tombstone would leak into
+    // unfiltered `list_attachments_*` listings and never be GC'd.
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = ?")
         .bind(att_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    let deleted_at: Option<String> = row.get("deleted_at");
-    assert!(
-        deleted_at.is_some(),
-        "attachment should be soft-deleted after reverting add"
+    assert_eq!(
+        remaining, 0,
+        "C7: reverting add_attachment must hard-DELETE the row, not soft-delete it"
     );
 }
 
@@ -3847,10 +3854,12 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
     // its forward counterpart (AddAttachment) is already idempotent (INSERT OR
     // REPLACE), and a strict NotFound here would abort `revert_ops_inner`
     // batches when an attachment had been manually purged between the
-    // original op and the undo.
+    // original op and the undo. C7 (#345): the reverse now hard-DELETEs;
+    // `DELETE ... WHERE id = ?` on a missing row is a 0-row no-op, so it
+    // stays idempotent.
     assert!(
         result.is_ok(),
-        "soft-deleting a nonexistent attachment should succeed (idempotent), got: {result:?}"
+        "hard-deleting a nonexistent attachment should succeed (idempotent), got: {result:?}"
     );
 }
 

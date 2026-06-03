@@ -9,7 +9,6 @@ use crate::db::{CommandTx, ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::now_rfc3339;
 use crate::op::{OpPayload, OpRef, UndoResult};
 use crate::op_log;
 use crate::pagination;
@@ -19,6 +18,18 @@ use crate::space::SpaceScope;
 use crate::ulid::BlockId;
 
 use super::*;
+
+/// C5 (#344): upper bound on the number of ops a single batch revert may
+/// process. Matches the interactive `undo_depth` ceiling enforced in
+/// [`undo_page_op_inner`] (`undo_depth > 1000` → `Validation`) and the
+/// `count <= 1000` redo-walk bound in [`redo_page_op_inner`]. A
+/// point-in-time restore (`restore_page_to_op_inner`) previously
+/// collected *every* reversible op past the restore point with no
+/// ceiling, so a long-lived page could hand `revert_ops_inner` a Vec
+/// large enough to overflow even the chunked batch helpers' work and,
+/// before chunking, SQLite's bind-parameter limit. Capping the op count
+/// here returns a clean error instead.
+const MAX_REVERT_OPS: usize = 1000;
 
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
@@ -52,7 +63,7 @@ pub async fn apply_reverse_in_tx(
         //   - property ops (SetProperty uses INSERT OR REPLACE, DeleteProperty
         //     DELETEs without a rows_affected check)
         //   - attachment ops (AddAttachment uses INSERT OR REPLACE, DeleteAttachment
-        //     UPDATEs without a rows_affected check)
+        //     hard-DELETEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
@@ -307,15 +318,23 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::DeleteAttachment(p) => {
-            let now = now_rfc3339();
+            // C7 (#345): hard-DELETE the row to match the runtime /
+            // materializer model. The forward `delete_attachment` path
+            // (`materializer::handlers::apply_delete_attachment_tx`) hard-
+            // deletes the row, and the runtime command
+            // (`commands::attachments::delete_attachment_inner`) unlinks the
+            // file post-commit. Undo is the *only* producer of soft-deleted
+            // attachment rows, but `list_attachments_*` has no `deleted_at`
+            // filter, so a soft-delete UPDATE here left a tombstone visible in
+            // listings that is never GC'd. A hard DELETE keeps the reverse of
+            // an `add_attachment` byte-identical to a normal delete's row
+            // effect. The on-disk file is reconciled by the C-3c orphan-GC
+            // sweep (`cleanup_orphaned_attachments`), the same backstop the
+            // forward delete relies on.
             let attachment_id_str = p.attachment_id.as_str();
-            sqlx::query!(
-                "UPDATE attachments SET deleted_at = ? WHERE id = ?",
-                now,
-                attachment_id_str,
-            )
-            .execute(&mut **tx)
-            .await?;
+            sqlx::query!("DELETE FROM attachments WHERE id = ?", attachment_id_str,)
+                .execute(&mut **tx)
+                .await?;
         }
         OpPayload::AddAttachment(p) => {
             // Preserve original created_at from the existing (soft-deleted) attachment record
@@ -400,6 +419,17 @@ pub async fn revert_ops_inner(
 
     if ops.is_empty() {
         return Ok(vec![]);
+    }
+
+    // C5 (#344): bound the batch size before any DB work. This is the
+    // single choke point for both interactive batch undo (`revert_ops`)
+    // and point-in-time restore (`restore_page_to_op_inner`), so the cap
+    // is enforced once here rather than at every caller.
+    if ops.len() > MAX_REVERT_OPS {
+        return Err(AppError::Validation(format!(
+            "cannot revert {} ops in a single batch (maximum is {MAX_REVERT_OPS})",
+            ops.len()
+        )));
     }
 
     // Phase 1: Validate all ops are reversible by computing their reverse payloads.
@@ -587,6 +617,20 @@ pub async fn restore_page_to_op_inner(
                 seq: *seq,
             });
         }
+    }
+
+    // C5 (#344): reject an over-large restore up front with a
+    // restore-specific message. `revert_ops_inner` enforces the same
+    // `MAX_REVERT_OPS` cap as a backstop, but checking here means a
+    // point-in-time restore that would sweep thousands of ops fails
+    // cleanly before any batch work rather than relying on the inner
+    // guard. The bound matches the interactive `undo_depth` ceiling.
+    if reversible_ops.len() > MAX_REVERT_OPS {
+        return Err(AppError::Validation(format!(
+            "restore would revert {} ops, exceeding the maximum of {MAX_REVERT_OPS}; \
+             restore to a more recent point",
+            reversible_ops.len()
+        )));
     }
 
     // Revert the reversible ops using existing infrastructure

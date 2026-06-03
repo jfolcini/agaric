@@ -204,11 +204,25 @@ pub async fn find_prev_edit(
             if let Some(local_head) = heads.iter().find(|(dev, _)| dev == device_id) {
                 Ok(Some(local_head.clone()))
             } else {
-                // No local head among the edit heads — fall back to highest
-                // seq. This case shouldn't happen during local crash recovery
-                // (the local device should have at least one edit head if it
-                // has a draft to recover), but handle it defensively.
-                Ok(heads.into_iter().max_by_key(|(_, seq)| *seq))
+                // No local head among the edit heads — pick one
+                // deterministically.
+                //
+                // M6 (#348): this is a DAG-frontier tie-break, NOT a
+                // causal ordering. The heads are a concurrent frontier
+                // across devices, so per-device `seq`s are not comparable
+                // (device A's seq 5 and device B's seq 5 are causally
+                // unrelated); the old `max_by_key(seq)` therefore picked
+                // an arbitrary, device-naming-dependent head. We instead
+                // sort on the full `(device_id, seq)` key so the choice is
+                // explicit and reproducible across runs. This branch does
+                // NOT occur during normal local crash recovery (the local
+                // device owns at least one edit head whenever it has a
+                // draft to recover, so the `find` above wins); it is a
+                // defensive heuristic for a multi-device divergent frontier
+                // that real sync-merge logic will eventually own.
+                Ok(heads
+                    .into_iter()
+                    .max_by(|a, b| (a.0.as_str(), a.1).cmp(&(b.0.as_str(), b.1))))
             }
         }
     }

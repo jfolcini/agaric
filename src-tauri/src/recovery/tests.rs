@@ -1156,6 +1156,85 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
     assert_eq!(seq, b_edit.seq, "should return device B's edit seq");
 }
 
+/// M6 (#348): when there is NO local-device head among a multi-device
+/// frontier, the tie-break must be deterministic — `max` on the full
+/// `(device_id, seq)` key — rather than the old causally-meaningless
+/// `max(seq)`. This branch does not occur during normal local crash
+/// recovery (the local device owns a head whenever it has a draft to
+/// recover); it is a defensive DAG-frontier heuristic, so we assert
+/// reproducibility, not causal correctness.
+#[tokio::test]
+async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
+    let (pool, _dir) = test_pool().await;
+    let dev_a = "device-A";
+    let dev_b = "device-B";
+    let dev_c = "device-C"; // local device, NOT among the heads
+    let block_id = "block-no-local-head";
+
+    insert_test_block(&pool, block_id, "initial").await;
+
+    // Shared create root.
+    append_local_op_at(
+        &pool,
+        dev_a,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            block_type: "content".to_owned(),
+            parent_id: None,
+            position: Some(0),
+            content: "initial".to_owned(),
+        }),
+        1_736_942_400_000,
+    )
+    .await
+    .unwrap();
+
+    // Device A head: HIGHER per-device seq but lexically-smaller device.
+    // The old `max(seq)` would have picked A; the deterministic
+    // `(device_id, seq)` key picks B.
+    let _a_edit = append_local_op_at(
+        &pool,
+        dev_a,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            to_text: "edit from A".to_owned(),
+            prev_edit: Some((dev_a.to_owned(), 1)),
+        }),
+        1_736_942_460_000,
+    )
+    .await
+    .unwrap();
+
+    // Device B head.
+    let b_edit = append_local_op_at(
+        &pool,
+        dev_b,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::test_id(block_id),
+            to_text: "edit from B".to_owned(),
+            prev_edit: Some((dev_a.to_owned(), 1)),
+        }),
+        1_736_942_520_000,
+    )
+    .await
+    .unwrap();
+
+    // Local device is C (no head): tie-break must be deterministic and
+    // stable across calls — the `(device_id, seq)`-max is device B.
+    let first = find_prev_edit(&pool, block_id, dev_c).await.unwrap();
+    let second = find_prev_edit(&pool, block_id, dev_c).await.unwrap();
+    assert_eq!(
+        first, second,
+        "no-local-head tie-break must be deterministic across calls"
+    );
+    let (dev, seq) = first.expect("should still resolve a head");
+    assert_eq!(
+        dev, dev_b,
+        "deterministic (device_id, seq) tie-break must pick device B (lexically greatest)"
+    );
+    assert_eq!(seq, b_edit.seq, "should return device B's edit seq");
+}
+
 // === BUG-23: cache refresh after draft recovery ===
 
 /// Regression test for BUG-23: after `recover_at_boot` rewrites a block's
