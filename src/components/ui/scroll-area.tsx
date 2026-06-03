@@ -45,12 +45,23 @@ const ScrollArea = ({
   viewportProps,
   ...props
 }: ScrollAreaProps) => {
+  // LAYOUT: when the Root's height comes from a constraint (`max-h-*`,
+  // `flex-1`, …) rather than an explicit/definite height, a percentage
+  // height (`h-full`) on the Radix viewport falls back to `auto` per CSS
+  // §10.5 and grows to its content height — overflowing the Root, getting
+  // clipped by `overflow-hidden`, and leaving nothing to scroll. Making
+  // the Root a flex column and the viewport a `flex-auto min-h-0` child
+  // sizes the viewport to the Root's *resolved* height without relying on
+  // percentage resolution, so tall content overflows and scrolls. Width
+  // already resolves fine via normal block layout, so this is only needed
+  // for vertically-scrolling areas; horizontal-only areas keep `h-full`.
+  const scrollsVertically = orientation === 'vertical' || orientation === 'both'
   return (
     <ScrollAreaPrimitive.Root
       ref={ref}
       data-slot="scroll-area"
       type="hover"
-      className={cn('relative overflow-hidden', className)}
+      className={cn('relative overflow-hidden', scrollsVertically && 'flex flex-col', className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
@@ -58,7 +69,8 @@ const ScrollArea = ({
         data-slot="scroll-area-viewport"
         {...viewportProps}
         className={cn(
-          'size-full rounded-[inherit] transition-[color,box-shadow] focus-ring-visible focus-visible:outline-1',
+          'w-full rounded-[inherit] transition-[color,box-shadow] focus-ring-visible focus-visible:outline-1',
+          scrollsVertically ? 'flex-auto min-h-0' : 'h-full',
           viewportClassName,
           viewportProps?.className,
         )}
