@@ -76,10 +76,10 @@ exclude = [
     # Tauri docs CDN is up from browsers/`curl`; same GHA edge flake that
     # motivated the timeout/retry tuning above. Canonical upstream docs,
     # non-load-bearing for link integrity.
-    "^https?://v2\\.tauri\\.app/",
+    "^https?://v2\\.tauri\\.app(/|$)",
     # contributor-covenant.org times out from GHA runners (same validate run:
     # 4 TIMEOUTs on the homepage, /faq, /translations, and the v2.1 code of
     # conduct in CODE_OF_CONDUCT.md). Site is up from browsers; excluded as a
     # non-load-bearing upstream reference rather than churned.
-    "^https?://(www\\.)?contributor-covenant\\.org/",
+    "^https?://(www\\.)?contributor-covenant\\.org(/|$)",
 ]
