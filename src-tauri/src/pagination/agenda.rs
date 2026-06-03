@@ -6,14 +6,20 @@ use crate::error::AppError;
 /// List blocks for a specific date from the agenda cache, paginated.
 ///
 /// Ordered by `block_id ASC` (ULID ≈ chronological).
-/// Uses index `idx_agenda_date(date)`.
+///
+/// Driven by the `agenda_cache` primary key `(date, block_id)`: the leading
+/// `date` column serves the equality lookup and the trailing `block_id`
+/// serves the keyset order. (#349: the old `idx_agenda_date(date)` index
+/// was dropped in migration 0045 as redundant with this PK's leading
+/// column — do not cite it.)
 ///
 /// `date` must be in `YYYY-MM-DD` format.
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
 /// whose owning page (`b.page_id`) carries `space = ?space_id`.
 /// `None` keeps the pre-FEAT-3 behaviour (no filter). See
-/// [`crate::space_filter_clause`] for the shared SQL fragment definition.
+/// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
+/// SQL fragment definition.
 pub async fn list_agenda(
     pool: &SqlitePool,
     date: &str,
@@ -29,7 +35,7 @@ pub async fn list_agenda(
     };
 
     // FEAT-3p4 — ?6 (space_id) drives the shared space-filter clause.
-    // The literal mirrors `crate::space_filter_clause!` — kept inline here
+    // The literal mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline here
     // because `sqlx::query_as!` requires a string literal and does not
     // accept `concat!()`. Mirror any change to the filter SQL across
     // every inlined copy.
@@ -103,7 +109,7 @@ pub async fn list_agenda_range(
     // `b.due_date` / `b.scheduled_date`.
     //
     // FEAT-3p4 — ?8 (space_id) drives the shared space-filter clause.
-    // Mirrors `crate::space_filter_clause!` — kept inline because
+    // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query!` requires a string literal directly.
     let raw_rows = sqlx::query!(
         r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position,

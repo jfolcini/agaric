@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT bl.source_id AS \"source_id!\", bl.target_id AS \"target_id!\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS \"source_space?\",\n              (SELECT bp.value_ref FROM block_properties bp\n               WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS \"target_space?\"\n           FROM block_links bl\n           JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL\n           JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL\n           WHERE (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space')\n              IS NOT\n                 (SELECT bp.value_ref FROM block_properties bp\n                  WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space')",
+  "query": "WITH cs AS (\n              SELECT bl.source_id AS source_id, bl.target_id AS target_id,\n                (SELECT bp.value_ref FROM block_properties bp\n                 WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS source_space,\n                (SELECT bp.value_ref FROM block_properties bp\n                 WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS target_space\n              FROM block_links bl\n              JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL\n              JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL\n           )\n           SELECT source_id AS \"source_id!\", target_id AS \"target_id!\",\n                  source_space AS \"source_space?\", target_space AS \"target_space?\"\n             FROM cs\n            WHERE source_space IS NOT target_space",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       true
     ]
   },
-  "hash": "02cf54260a205ff276a19224cfaeaaf4e5dfc05fc03d696a9e7008e2544b9386"
+  "hash": "4bb9a1f7f1bdc16ca60475322e6ff70323145d57e0af429459cef52b422aee27"
 }

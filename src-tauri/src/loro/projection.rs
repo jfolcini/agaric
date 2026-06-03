@@ -579,6 +579,18 @@ pub async fn reproject_block_properties_from_engine(
     .execute(&mut *conn)
     .await?;
 
+    // P3 (#346): preload all `property_definitions` (key → value_type) ONCE
+    // instead of a per-String-typed-property SELECT inside the loop, which
+    // was an N+1 on every inbound sync. Behaviour is identical: a key absent
+    // from the map (no definition row) still defaults to "text" with a warn.
+    let value_types: std::collections::HashMap<String, String> =
+        sqlx::query!("SELECT key, value_type FROM property_definitions")
+            .fetch_all(&mut *conn)
+            .await?
+            .into_iter()
+            .map(|r| (r.key, r.value_type))
+            .collect();
+
     for (key, value) in props {
         if is_reserved_property_key(key) {
             // Reserved keys map to dedicated `blocks` columns, never
@@ -602,22 +614,19 @@ pub async fn reproject_block_properties_from_engine(
             // property definition, defaulting to "text" for an undefined key
             // (warn so a missing definition is observable).
             PropertyValue::Str(s) => {
-                let value_type: String = sqlx::query_scalar!(
-                    "SELECT value_type FROM property_definitions WHERE key = ?",
-                    key
-                )
-                .fetch_optional(&mut *conn)
-                .await?
-                .unwrap_or_else(|| {
-                    tracing::warn!(
-                        key = %key,
-                        block_id = %block_id.as_str(),
-                        "reproject_block_properties_from_engine: no property_definitions row; \
-                         defaulting to 'text'"
-                    );
-                    "text".to_string()
-                });
-                match value_type.as_str() {
+                let value_type: &str = value_types.get(key).map_or_else(
+                    || {
+                        tracing::warn!(
+                            key = %key,
+                            block_id = %block_id.as_str(),
+                            "reproject_block_properties_from_engine: no property_definitions row; \
+                             defaulting to 'text'"
+                        );
+                        "text"
+                    },
+                    String::as_str,
+                );
+                match value_type {
                     "number" => value_num = s.parse::<f64>().ok(),
                     "boolean" => value_bool = Some(i64::from(s == "true")),
                     "date" => value_date = Some(s.as_str()),

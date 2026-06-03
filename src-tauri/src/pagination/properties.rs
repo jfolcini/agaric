@@ -85,6 +85,17 @@ use crate::op::is_reserved_property_key;
 /// `block_type` is a simple equality push-down on `b.block_type` — when
 /// `Some`, only rows whose block matches are returned. `None` is the
 /// unfiltered (pre-Tier-3.4) behaviour.
+///
+/// # Value-filter type coverage (#349, C9)
+///
+/// The scalar value filter only consults the **text** (`value_text`) and
+/// **date** (`value_date`) columns — never `value_num`, `value_ref`, or
+/// `value_bool`. This is intentional and not a gap: the public command API
+/// only exposes `value_text` / `value_date` inputs to callers, so a query
+/// targeting a number/ref/bool property simply has no value predicate to
+/// pass. If the API is ever extended to admit numeric/ref/bool filters,
+/// the `filter_value` routing here (and the reserved/non-reserved SQL
+/// branches) must grow the corresponding columns.
 #[allow(clippy::too_many_arguments)]
 pub async fn query_by_property(
     pool: &SqlitePool,
@@ -161,7 +172,7 @@ pub async fn query_by_property(
 
     // FEAT-3p4 — both branches gain the `(?N IS NULL OR
     // b.page_id IN (...))` space-filter clause. The
-    // literal mirrors `crate::space_filter_clause!` — kept inline
+    // literal mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline
     // because both branches are dynamic SQL (the `{sql_op}`
     // interpolation precludes the `query_as!` macro). The `b.` alias is
     // introduced on the reserved-column branch so the same clause shape

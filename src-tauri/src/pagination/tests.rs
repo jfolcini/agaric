@@ -4743,6 +4743,117 @@ async fn test_list_unfinished_tasks_empty() {
     assert!(res.items.is_empty());
 }
 
+/// T1 (#349): exhaustive multi-page keyset walk of `list_unfinished_tasks`.
+///
+/// The keyset path (DESC ordering on `COALESCE(due_date, scheduled_date)`
+/// with an `id DESC` tiebreak, plus the side-vector `sort_dates`
+/// truncation) was previously only exercised by the empty-result test.
+/// This walks every page at `limit = 3` over 13 tasks that deliberately
+/// include:
+///   - duplicate `COALESCE(due, scheduled)` dates (forcing the `id DESC`
+///     tiebreak to drive ordering across a page boundary),
+///   - mixed NULLs (due-only, scheduled-only — so COALESCE picks the
+///     non-NULL column), and
+///   - both `TODO` and `DOING` states.
+/// Asserts: no duplicates, no gaps (every admitted task appears exactly
+/// once), and a globally non-increasing `(sort_date, id)` ordering that is
+/// stable across page boundaries.
+#[tokio::test]
+async fn list_unfinished_tasks_exhaustive_walk_no_dupes_or_gaps() {
+    let (pool, _dir) = test_pool().await;
+
+    // (id, due_date, scheduled_date, todo_state). NULLs are mixed; several
+    // rows share the same COALESCE(due, scheduled) date so the id-DESC
+    // tiebreak is the only ordering discriminator within a date bucket.
+    let tasks: [(&str, Option<&str>, Option<&str>, &str); 13] = [
+        ("UFTASK001", Some("2025-01-10"), None, "TODO"),
+        ("UFTASK002", Some("2025-01-10"), None, "DOING"), // dup date w/ 001
+        ("UFTASK003", None, Some("2025-01-10"), "TODO"),  // dup via scheduled
+        ("UFTASK004", Some("2025-01-09"), Some("2025-01-01"), "TODO"), // due wins
+        ("UFTASK005", Some("2025-01-09"), None, "DOING"), // dup date w/ 004
+        ("UFTASK006", None, Some("2025-01-08"), "TODO"),
+        ("UFTASK007", Some("2025-01-08"), None, "DOING"), // dup date w/ 006
+        ("UFTASK008", Some("2025-01-08"), None, "TODO"),  // dup date w/ 006,007
+        ("UFTASK009", None, Some("2025-01-07"), "DOING"),
+        ("UFTASK010", Some("2025-01-06"), None, "TODO"),
+        ("UFTASK011", Some("2025-01-05"), Some("2025-01-12"), "DOING"), // due wins
+        ("UFTASK012", None, Some("2025-01-05"), "TODO"),                // dup w/ 011
+        ("UFTASK013", Some("2025-01-04"), None, "TODO"),
+    ];
+
+    for (id, due, sched, state) in &tasks {
+        insert_block(&pool, id, "content", &format!("task {id}"), None, None).await;
+        sqlx::query(
+            "UPDATE blocks SET due_date = ?, scheduled_date = ?, todo_state = ? WHERE id = ?",
+        )
+        .bind(due)
+        .bind(sched)
+        .bind(state)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // `before_date` past every task's sort date so all 13 admit
+    // (admission is `due < before OR scheduled < before`).
+    let states = vec!["TODO".to_string(), "DOING".to_string()];
+    let mut collected: Vec<(String, String)> = Vec::new(); // (sort_date, id)
+    let mut cursor = None;
+    let mut page_count = 0;
+    loop {
+        let page = PageRequest::new(cursor, Some(3)).unwrap();
+        let resp = super::tasks::list_unfinished_tasks(&pool, "2025-12-31", &states, &page, None)
+            .await
+            .unwrap();
+        for item in &resp.items {
+            // Reconstruct the SQL sort key COALESCE(due, scheduled).
+            let sort_date = item
+                .due_date
+                .clone()
+                .or_else(|| item.scheduled_date.clone())
+                .expect("each admitted task has at least one date");
+            collected.push((sort_date, item.id.as_str().to_string()));
+        }
+        page_count += 1;
+        if !resp.has_more {
+            assert!(
+                resp.next_cursor.is_none(),
+                "last page must not carry a cursor"
+            );
+            break;
+        }
+        cursor = resp.next_cursor;
+        assert!(page_count < 20, "walk failed to terminate");
+    }
+
+    // No gaps: every seeded task appears exactly once.
+    let mut ids: Vec<&str> = collected.iter().map(|(_, id)| id.as_str()).collect();
+    ids.sort_unstable();
+    let mut expected: Vec<&str> = tasks.iter().map(|(id, ..)| *id).collect();
+    expected.sort_unstable();
+    assert_eq!(ids, expected, "exhaustive walk must return every task once");
+
+    // No duplicates.
+    let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), ids.len(), "no task may appear twice");
+
+    // Stable ordering across page boundaries: globally non-increasing on
+    // (sort_date DESC, id DESC) — exactly the SQL ORDER BY.
+    for win in collected.windows(2) {
+        let (a, b) = (&win[0], &win[1]);
+        assert!(
+            a >= b,
+            "ordering must be non-increasing on (sort_date, id): {a:?} then {b:?}"
+        );
+    }
+
+    assert!(
+        page_count >= 5,
+        "13 tasks at limit 3 should span at least 5 pages, got {page_count}"
+    );
+}
+
 // ====================================================================
 // SQL-review §5.3 — migration 0066 (COALESCE-removal backfill)
 // ====================================================================

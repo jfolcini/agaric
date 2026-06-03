@@ -47,8 +47,9 @@ pub async fn count_agenda_batch_inner(
     // invariant #6). Mirrors the sibling `count_agenda_batch_by_source_inner`.
     //
     // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
-    // The literal mirrors `crate::space_filter_clause!` — kept inline
-    // here because `sqlx::query!` requires a string literal and does
+    // The literal mirrors
+    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
+    // inline here because `sqlx::query!` requires a string literal and does
     // not accept `concat!()`. Resolves the agenda-cached block to its
     // owning page via `b.page_id` and intersects
     // against `block_properties(key = 'space').value_ref`.
@@ -108,13 +109,16 @@ pub async fn count_agenda_batch_by_source_inner(
         validate_date_format(d)?;
     }
     let dates_json = serde_json::to_string(&dates)?;
+    let scope_param = scope.as_filter_param();
     // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
-    // The literal mirrors `crate::space_filter_clause!` — kept inline
-    // here because this is dynamic SQL (`sqlx::query_as`) which cannot
-    // reuse the macro form. Resolves the agenda-cached block to its
-    // owning page via `b.page_id` and intersects
-    // against `block_properties(key = 'space').value_ref`.
-    let sql = "SELECT ac.date, ac.source, COUNT(*) as cnt \
+    // The literal mirrors
+    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`]. Resolves the
+    // agenda-cached block to its owning page via `b.page_id` and intersects
+    // against `block_properties(key = 'space').value_ref`. Uses the
+    // compile-time-checked `query!` macro — the only difference from
+    // `count_agenda_batch_inner` is the extra `ac.source` output column.
+    let rows = sqlx::query!(
+        "SELECT ac.date, ac.source, COUNT(*) AS \"cnt!: i64\" \
          FROM agenda_cache ac \
          JOIN blocks b ON b.id = ac.block_id \
          WHERE ac.date IN (SELECT value FROM json_each(?1)) \
@@ -122,18 +126,18 @@ pub async fn count_agenda_batch_by_source_inner(
            AND (?2 IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
                 WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
-         GROUP BY ac.date, ac.source";
-    let rows = sqlx::query_as::<_, (String, String, i64)>(sql)
-        .bind(dates_json)
-        .bind(scope.as_filter_param())
-        .fetch_all(pool)
-        .await?;
+         GROUP BY ac.date, ac.source",
+        dates_json,
+        scope_param,
+    )
+    .fetch_all(pool)
+    .await?;
     let mut result: HashMap<String, HashMap<String, usize>> = HashMap::new();
-    for (date, source, cnt) in rows {
+    for row in rows {
         // cnt is a non-negative count from SQL; safe to convert (I-CommandsCRUD-11)
-        result.entry(date).or_default().insert(
-            source,
-            usize::try_from(cnt)
+        result.entry(row.date).or_default().insert(
+            row.source,
+            usize::try_from(row.cnt)
                 .expect("COUNT(*) is non-negative and fits in usize on 64-bit targets"),
         );
     }
@@ -249,7 +253,7 @@ pub async fn list_projected_agenda_inner(
         Option<String>,
     )> = sqlx::query_as(
         // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
-        // Mirrors `crate::space_filter_clause!` — kept inline because this
+        // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
         // query uses dynamic-typed `query_as`. Resolves the cached block
         // to its owning page via `b.page_id` and
         // intersects against `block_properties(key = 'space').value_ref`.
@@ -401,7 +405,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // never surfaces in agenda / Google Calendar results.  `b.page_id`
     // is the denormalised root-page column (migration 0027).
     // FEAT-3p4 — ?1 (space_id) drives the shared space-filter clause.
-    // Mirrors `crate::space_filter_clause!` — kept inline because
+    // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query_as!` requires a string literal directly. Resolves
     // the repeating block to its owning page via
     // `b.page_id` and intersects against

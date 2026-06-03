@@ -139,8 +139,12 @@ pub async fn list_blocks_inner(
 /// PageBrowser "X of Y" progress indicator without paginating
 /// through the entire result set.
 ///
-/// Index: `idx_blocks_type(block_type, deleted_at)` — same covering
-/// index that the LIMIT/OFFSET row fetch uses.
+/// Indexes (M7a, #348): the `block_type`/`deleted_at` scan uses
+/// `idx_blocks_type(block_type, deleted_at)` — the same index the
+/// LIMIT/OFFSET row fetch uses. The optional `space_id` subquery is a
+/// *separate* fully-indexed lookup against `block_properties(key,
+/// value_ref)`; it is not covered by `idx_blocks_type`. Both are
+/// indexed, but no single index covers the whole statement.
 ///
 /// # Errors
 ///
@@ -654,7 +658,8 @@ pub async fn get_blocks(
 /// limit).
 ///
 /// The space-filter shape mirrors `pagination::list_trash` (and the
-/// `space_filter_clause` family in `pagination/{hierarchy,trash}.rs`):
+/// canonical [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`]
+/// fragment inlined across `pagination/{hierarchy,trash}.rs`):
 /// `b.page_id IN (SELECT bp.block_id FROM
 /// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?1)`.
 /// A soft-deleted block retains its `page_id` column value so the
