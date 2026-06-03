@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH RECURSIVE page_of(id, page_id, depth) AS ( SELECT id, id, 0 FROM blocks WHERE block_type = 'page' UNION ALL SELECT b.id, p.page_id, p.depth + 1 FROM blocks b JOIN page_of p ON b.parent_id = p.id WHERE b.block_type != 'page' AND p.depth < 100 ) UPDATE blocks SET page_id = ( SELECT page_id FROM page_of WHERE page_of.id = blocks.id ) WHERE block_type != 'page' AND EXISTS (SELECT 1 FROM page_of WHERE page_of.id = blocks.id)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "74a2435633f2ae5ef9a002bb82a8d135154baa2029f7448a2708221fb8054a24"
+}

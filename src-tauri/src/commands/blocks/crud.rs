@@ -1482,26 +1482,23 @@ pub async fn purge_block_inner(
 
 /// Restore ALL soft-deleted blocks in a single transaction.
 ///
-/// Finds root-level deleted blocks (those whose parent is not deleted with the
-/// same timestamp), creates a `RestoreBlock` op for each, then clears
-/// `deleted_at` on ALL deleted blocks. Recomputes tag inheritance afterward.
+/// Finds cascade roots from the op-log, creates a `RestoreBlock` op for
+/// each, then clears `deleted_at` on ALL deleted blocks. Recomputes tag
+/// inheritance afterward.
 ///
-/// # Known limitation: `deleted_at` collision window (I-CommandsCRUD-9)
+/// # Cascade-root derivation (C9, #345 — fixed)
 ///
-/// Cascade roots are inferred via the heuristic "block is a root if its
-/// `parent_id IS NULL` or its parent does NOT share the same `deleted_at`
-/// value". Two distinct cascade-delete events whose root blocks happen
-/// to land on the same RFC3339 millisecond would be conflated into a
-/// single root, producing one fewer `RestoreBlock` op than was actually
-/// performed. A peer device replaying the op log would then leave one of
-/// the two subtrees unrestored.
-///
-/// `now_rfc3339()` is millisecond-precision and not strictly monotonic
-/// across pool connections, so the collision-window is non-zero but
-/// vanishingly small under normal load (single-user, multi-device,
-/// occasional bulk restore). The mitigation path — explicitly recording
-/// the originating block-id in the op-log payload or a side table — is
-/// gated by AGENTS.md "Architectural Stability" and tracked separately.
+/// Cascade roots are derived from the `delete_block` op-log entries
+/// (`op.created_at = blocks.deleted_at`) when one exists, falling back to
+/// the structural `deleted_at`-equality heuristic only for op-less
+/// tombstones (recovery / legacy / the low-level `cascade_soft_delete`
+/// primitive, which does not append to `op_log`). This closes the prior
+/// same-millisecond collision window where two distinct cascade-delete
+/// events whose roots shared a timestamp were conflated into a single root,
+/// emitting one fewer `RestoreBlock` op than performed and leaving a peer's
+/// replay with one subtree unrestored. `now_ms()` is not strictly monotonic
+/// across pool connections, so a pure structural heuristic could not be made
+/// collision-safe; for op-backed deletes the op id is authoritative.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_all_deleted_inner(
     pool: &SqlitePool,
@@ -1511,18 +1508,56 @@ pub async fn restore_all_deleted_inner(
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
 
-    // Find root-level deleted blocks for op-log entries.
-    // A "root" is a deleted block whose parent is either NULL, doesn't exist,
-    // or has a different deleted_at (i.e., wasn't cascade-deleted together).
+    // C9 (#345) — derive cascade roots from the op-log when one exists,
+    // falling back to the structural heuristic only for op-less tombstones.
+    //
+    // Production deletes go through `delete_block_inner`, which appends one
+    // `DeleteBlock` op per root with `op.created_at == blocks.deleted_at`
+    // (the same `now` is written to both). Matching on that timestamp makes
+    // the root test exact and collision-proof:
+    //   * a true root's tombstone equals its own delete op's timestamp;
+    //   * a cascade descendant carries the ROOT's timestamp (different
+    //     `block_id`), so it never matches its own (absent) op;
+    //   * a block re-trashed as a descendant after a prior root delete
+    //     (del@T1 → restore → cascade@T2) carries `deleted_at = T2` while
+    //     its stale op has `created_at = T1` — correctly demoted.
+    //
+    // This fixes the same-ms collision the old structural heuristic
+    // ("root = parent_id NULL or parent's `deleted_at` differs") produced:
+    // `del child@T` then `del parent@T` left both sharing `deleted_at = T`,
+    // so the heuristic demoted the child → one fewer `RestoreBlock` op →
+    // a peer's replay left the child unrestored. `now_ms()` is not strictly
+    // monotonic across pool connections, so a pure structural test could
+    // never be made collision-safe; the op id is authoritative.
+    //
+    // The structural fallback (the `OR NOT EXISTS(delete_block op)` branch)
+    // is retained ONLY for tombstones with no `delete_block` op at all —
+    // op-less soft-deletes from recovery, legacy data, or the low-level
+    // `cascade_soft_delete` primitive (which does not append to `op_log`).
+    // For those there is no op id to key on, so the original parent-vs-self
+    // `deleted_at` comparison remains the best available signal.
     let roots = sqlx::query!(
         "SELECT b.id, b.deleted_at FROM blocks b \
          WHERE b.deleted_at IS NOT NULL \
          AND ( \
-           b.parent_id IS NULL \
-           OR NOT EXISTS ( \
-             SELECT 1 FROM blocks p \
-             WHERE p.id = b.parent_id \
-             AND p.deleted_at = b.deleted_at \
+           EXISTS ( \
+             SELECT 1 FROM op_log o \
+             WHERE o.op_type = 'delete_block' \
+               AND o.block_id = b.id \
+               AND o.created_at = b.deleted_at \
+           ) \
+           OR ( \
+             NOT EXISTS ( \
+               SELECT 1 FROM op_log o \
+               WHERE o.op_type = 'delete_block' AND o.block_id = b.id \
+             ) \
+             AND ( \
+               b.parent_id IS NULL \
+               OR NOT EXISTS ( \
+                 SELECT 1 FROM blocks p \
+                 WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at \
+               ) \
+             ) \
            ) \
          )"
     )
@@ -1582,81 +1617,49 @@ pub async fn restore_all_deleted_inner(
 
     let count = result.rows_affected();
 
-    // MAINT-214 (a): refresh `page_id` for each restored subtree
-    // synchronously, mirroring the recursive-CTE UPDATE in
-    // `move_block_inner` (`move_ops.rs:174-231`) and the per-root variant
-    // in `restore_block_inner` (`crud.rs:1028-1099`).  Without this sync
-    // update, callers reading right after commit can see a stale
-    // `page_id` (e.g. pointing at a page the parent has since been moved
-    // out of: `move_block_inner`'s recursive UPDATE skips deleted
-    // descendants, so a soft-deleted block keeps its pre-move `page_id`
-    // until restore).  The async `RebuildPageIds` materializer task
-    // dispatched via `commit_and_dispatch` below stays in place
-    // (idempotent — running it again is safe).
+    // MAINT-214 (a) + P7 (#346): refresh `page_id` for every restored block
+    // synchronously. The async `RebuildPageIds` materializer task dispatched
+    // via `commit_and_dispatch` below stays in place (idempotent), but
+    // without this sync update callers reading right after commit can see a
+    // stale `page_id` (e.g. a soft-deleted block keeps its pre-move
+    // `page_id` because `move_block_inner`'s recursive UPDATE skips deleted
+    // descendants).
     //
-    // Invariant #9: the recursive CTE filters `deleted_at IS NULL` in
-    // both members AND bounds `depth < 100`. Conflict copies inherit
-    // `parent_id` from the original and would otherwise be reparented
-    // under the restored subtree.
-    for root in &roots {
-        // 1. Compute the effective `page_id` for the root: parent's
-        //    `page_id` (or parent's `id` if parent is a page) for
-        //    non-pages; self for pages.
-        let parent_id: Option<String> =
-            sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", root.id)
-                .fetch_one(&mut **tx)
-                .await?;
-        let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
-            sqlx::query_scalar!(
-                "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
-                 FROM blocks WHERE id = ?",
-                pid
-            )
-            .fetch_optional(&mut **tx)
-            .await?
-            .flatten()
-        } else {
-            None
-        };
-        let is_page: bool =
-            sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root.id)
-                .fetch_one(&mut **tx)
-                .await?
-                == "page";
-        if !is_page {
-            sqlx::query!(
-                "UPDATE blocks SET page_id = ? WHERE id = ?",
-                new_page_id,
-                root.id
-            )
-            .execute(&mut **tx)
-            .await?;
-        }
-        // 2. Cascade page_id to all non-page active descendants. Pages
-        //    keep their own id as page_id regardless of parent (mirrors
-        //    the template at `move_ops.rs:216-231`).
-        let effective_page_id = if is_page {
-            Some(root.id.clone())
-        } else {
-            new_page_id
-        };
-        sqlx::query!(
-            "WITH RECURSIVE descendants(id, depth) AS ( \
-                 SELECT b.id, 0 FROM blocks b \
-                 WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
-                 UNION ALL \
-                 SELECT b.id, d.depth + 1 FROM blocks b \
-                 JOIN descendants d ON b.parent_id = d.id \
-                 WHERE b.deleted_at IS NULL AND d.depth < 100 \
-             ) \
-             UPDATE blocks SET page_id = ?2 \
-             WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
-            root.id,
-            effective_page_id,
-        )
+    // P7: the prior implementation looped ~4 single-row queries per root
+    // (SELECT parent_id, SELECT parent page_id, SELECT block_type, UPDATE
+    // self, then a per-root recursive UPDATE). Because `restore_all_deleted`
+    // clears `deleted_at` on the ENTIRE table above, every block is now
+    // alive, so `page_id` can be recomputed for the whole tree set-based in
+    // two statements regardless of root count:
+    //   1. pages self-reference (`page_id = id`);
+    //   2. a single recursive CTE walks parent→child from the page roots,
+    //      propagating each page's id down to its non-page descendants.
+    // This mirrors the post-recovery fixpoint in
+    // `recover_blocks_from_op_log` (`db.rs`), collapsed into one recursive
+    // pass (`depth < 100` bounds runaway recursion on corrupted chains;
+    // invariant #9). No `deleted_at` filter is needed — nothing is deleted
+    // at this point — and conflict copies, now also alive, are correctly
+    // routed to their own page ancestry.
+    sqlx::query!("UPDATE blocks SET page_id = id WHERE block_type = 'page'")
         .execute(&mut **tx)
         .await?;
-    }
+    sqlx::query!(
+        "WITH RECURSIVE page_of(id, page_id, depth) AS ( \
+             SELECT id, id, 0 FROM blocks WHERE block_type = 'page' \
+             UNION ALL \
+             SELECT b.id, p.page_id, p.depth + 1 \
+             FROM blocks b \
+             JOIN page_of p ON b.parent_id = p.id \
+             WHERE b.block_type != 'page' AND p.depth < 100 \
+         ) \
+         UPDATE blocks SET page_id = ( \
+             SELECT page_id FROM page_of WHERE page_of.id = blocks.id \
+         ) \
+         WHERE block_type != 'page' \
+           AND EXISTS (SELECT 1 FROM page_of WHERE page_of.id = blocks.id)"
+    )
+    .execute(&mut **tx)
+    .await?;
 
     // Recompute tag inheritance for all restored root blocks
     for root in &roots {
@@ -1680,23 +1683,17 @@ pub async fn restore_all_deleted_inner(
 
 /// Permanently purge ALL soft-deleted blocks in a single transaction.
 ///
-/// Creates `PurgeBlock` ops for root-level deleted blocks, then bulk-deletes
-/// all dependent rows and the blocks themselves. Irreversible.
+/// Creates `PurgeBlock` ops for cascade roots, then bulk-deletes all
+/// dependent rows and the blocks themselves. Irreversible.
 ///
-/// # Known limitation: `deleted_at` collision window (I-CommandsCRUD-9)
+/// # Cascade-root derivation (C9, #345 — fixed)
 ///
-/// Same heuristic as `restore_all_deleted_inner`: a block is treated as
-/// a cascade root if its `parent_id IS NULL` or its parent has a
-/// different `deleted_at` value. Two distinct cascade-delete events
-/// whose root blocks share an RFC3339 millisecond would emit a single
-/// `PurgeBlock` op instead of two, leaving a peer device with one
-/// subtree intact after replay. The collision-window is non-zero
-/// because `now_rfc3339()` is millisecond-precision and not strictly
-/// monotonic across pool connections, but the practical likelihood is
-/// vanishingly small under normal load (single-user, multi-device,
-/// occasional bulk purge). The fix path — recording the originating
-/// block-id explicitly in the op-log payload or a side table — is
-/// gated by AGENTS.md "Architectural Stability" and tracked separately.
+/// Same as `restore_all_deleted_inner`: cascade roots are derived from the
+/// `delete_block` op-log entries (`op.created_at = blocks.deleted_at`) when
+/// one exists, falling back to the structural heuristic only for op-less
+/// tombstones. This closes the prior same-millisecond collision window where
+/// two delete events sharing a timestamp emitted a single `PurgeBlock` op
+/// instead of two, leaving a peer with one subtree intact after replay.
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_all_deleted_inner(
     pool: &SqlitePool,
@@ -1706,16 +1703,34 @@ pub async fn purge_all_deleted_inner(
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "purge_all_deleted").await?;
 
-    // Find root-level deleted blocks for op-log entries
+    // C9 (#345) — derive cascade roots from the op-log when one exists
+    // (`op.created_at = blocks.deleted_at`), falling back to the structural
+    // heuristic only for op-less tombstones. This is collision-proof on the
+    // same-ms window the old `parent.deleted_at = b.deleted_at` heuristic
+    // conflated. See the matching block in `restore_all_deleted_inner` for
+    // the full rationale.
     let roots = sqlx::query!(
         "SELECT b.id, b.deleted_at FROM blocks b \
          WHERE b.deleted_at IS NOT NULL \
          AND ( \
-           b.parent_id IS NULL \
-           OR NOT EXISTS ( \
-             SELECT 1 FROM blocks p \
-             WHERE p.id = b.parent_id \
-             AND p.deleted_at = b.deleted_at \
+           EXISTS ( \
+             SELECT 1 FROM op_log o \
+             WHERE o.op_type = 'delete_block' \
+               AND o.block_id = b.id \
+               AND o.created_at = b.deleted_at \
+           ) \
+           OR ( \
+             NOT EXISTS ( \
+               SELECT 1 FROM op_log o \
+               WHERE o.op_type = 'delete_block' AND o.block_id = b.id \
+             ) \
+             AND ( \
+               b.parent_id IS NULL \
+               OR NOT EXISTS ( \
+                 SELECT 1 FROM blocks p \
+                 WHERE p.id = b.parent_id AND p.deleted_at = b.deleted_at \
+               ) \
+             ) \
            ) \
          )"
     )
@@ -1912,10 +1927,15 @@ use crate::commands::properties::MAX_BATCH_BLOCK_IDS;
 /// Each input id is treated as a *root* of a soft-delete cascade —
 /// the frontend's batch action is sourced from
 /// `listTrash` which already returns roots only.
-/// The descendant walk uses the standard CTE (invariant #9).
-/// Restoration filters `deleted_at IS NOT NULL` so non-deleted ids in
-/// the input are silently no-ops (matches the "all" variant's
-/// behaviour against a mixed table).
+///
+/// C3 (#345): the descendant walk is a cohort-scoped recursive CTE — it
+/// only restores descendants that share their seed root's exact
+/// `deleted_at` timestamp, matching the single-row path's
+/// `AND deleted_at = deleted_at_ref` guard per-root (NOT "any tombstoned
+/// descendant"). A child trashed in a different delete event keeps its
+/// tombstone, and the emitted `RestoreBlock(deleted_at_ref)` op restores
+/// the same cohort a peer's replay would — no sync divergence. Non-deleted
+/// ids in the input are silently no-ops.
 ///
 /// Returns the number of blocks whose `deleted_at` was actually cleared
 /// (roots + descendants), NOT the input list length.
@@ -2001,25 +2021,39 @@ pub async fn restore_blocks_by_ids_inner(
         op_records.push(op_record);
     }
 
-    // Restore: clear `deleted_at` on every root + its descendants. The
-    // descendant walk seeds from the input id set via `json_each(?1)`
-    // (multi-root variant of `descendants_cte_standard!()`). Conflict
-    // copies are filtered (invariant #9), `depth < 100` bounds runaway
-    // recursion, and the final `deleted_at IS NOT NULL` predicate is
-    // a paranoia guard against alive descendants whose parent was the
-    // selected root (shouldn't happen for cascaded subtrees, but keeps
-    // the UPDATE idempotent against repeats).
+    // C3 (#345): restore each root's EXACT delete cohort, not "any
+    // tombstoned descendant". The single-row path
+    // (`restore_block_inner`) scopes its UPDATE with
+    // `AND deleted_at = deleted_at_ref` — restoring only the descendants
+    // that were cascade-deleted in the SAME event as the root. The old
+    // batch UPDATE used `AND deleted_at IS NOT NULL`, which over-restored
+    // a child trashed at T1 that later sits under a root cascade-deleted
+    // at T2: restoring the T2 root un-deleted the unrelated T1 child too.
+    // Worse, the per-root op emitted above carries the root's own
+    // `deleted_at` (T2), so a peer replaying that op restores ONLY the T2
+    // cohort → local-vs-sync divergence.
+    //
+    // A single scalar bind can't express "match the seed root's own
+    // timestamp" for a multi-root walk, so the recursive CTE carries each
+    // seed's `deleted_at` (`root_deleted_at`) down the tree and the walk
+    // only descends into children that share their parent's cohort
+    // timestamp (`b.deleted_at = c.root_deleted_at`). A descendant trashed
+    // in a different event has a different `deleted_at` and is pruned —
+    // exactly matching the single-row cohort guard, but per-root. Seeds are
+    // pre-filtered to soft-deleted roots (`b.deleted_at IS NOT NULL`);
+    // `depth < 100` bounds runaway recursion (invariant #9).
     let result = sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
+        "WITH RECURSIVE cohort(id, root_deleted_at, depth) AS ( \
+             SELECT b.id, b.deleted_at, 0 FROM blocks b \
+             WHERE b.id IN (SELECT value FROM json_each(?1)) \
+               AND b.deleted_at IS NOT NULL \
              UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
+             SELECT b.id, c.root_deleted_at, c.depth + 1 FROM blocks b \
+             INNER JOIN cohort c ON b.parent_id = c.id \
+             WHERE b.deleted_at = c.root_deleted_at AND c.depth < 100 \
          ) \
          UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NOT NULL",
+         WHERE id IN (SELECT id FROM cohort) AND deleted_at IS NOT NULL",
         ids_json
     )
     .execute(&mut **tx)
@@ -2115,20 +2149,45 @@ pub async fn purge_blocks_by_ids_inner(
         return Ok(BulkTrashResponse { affected_count: 0 });
     }
 
-    // PEND-26 N2 — refuse to purge if ANY root's subtree saturates the
-    // depth-100 cap; mirroring the single-row guard. We check
-    // per-root because the cap is per-walk; a single deep tree in the
-    // batch would silently leak descendants past depth 100.
-    for root in &roots {
-        if crate::block_descendants::cascade_depth_saturated(&mut **tx, &root.id).await? {
-            return Err(AppError::Validation(format!(
-                "block '{}' subtree is too deep to purge (>=99 levels); \
-                 the recursive cascade would hit the depth-100 cap and \
-                 leave descendants below depth 100 dangling. Purge in \
-                 chunks instead.",
-                root.id,
-            )));
-        }
+    // Multi-root descendant CTE — variant of `descendants_cte_purge!()`
+    // seeded from `json_each(?1)`. Like the single-root purge CTE this
+    // does NOT filter `deleted_at` (PURGE is the documented exception to
+    // invariant #9). `depth < 100` still bounds runaway recursion. Kept
+    // inline as a `&str` so each `sqlx::query(...)` call can `concat!`
+    // against per-table tail clauses without macro expansion gymnastics.
+    let cte = "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE d.depth < 100 \
+         ) ";
+
+    // PEND-26 N2 + R5 (#347) — refuse to purge if ANY root's subtree
+    // saturates the depth-100 cap; mirroring the single-row guard. The
+    // prior implementation ran `cascade_depth_saturated` once per root (up
+    // to MAX_BATCH_BLOCK_IDS = 1000 separate recursive walks). Collapse it
+    // into a single `SELECT MAX(depth)` over the SAME multi-root CTE the
+    // deletes below already use: one walk covers every root's subtree, and
+    // `MAX(depth) >= 99` flags saturation exactly as
+    // `cascade_depth_saturated` does (the recursive arm's `d.depth < 100`
+    // lets the walk step from 99 to 100, so >= 99 is the conservative
+    // boundary). When saturated we can't cheaply name the offending root
+    // without re-walking, so the message points at the batch.
+    let max_depth: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(sqlx::AssertSqlSafe(
+        format!("{cte}SELECT MAX(depth) FROM descendants"),
+    ))
+    .bind(&ids_json)
+    .fetch_one(&mut **tx)
+    .await?;
+    if max_depth.unwrap_or(0) >= 99 {
+        return Err(AppError::Validation(
+            "a selected block's subtree is too deep to purge (>=99 levels); \
+             the recursive cascade would hit the depth-100 cap and leave \
+             descendants below depth 100 dangling. Purge in chunks instead."
+                .into(),
+        ));
     }
 
     // Emit one PurgeBlock op per root.
@@ -2146,22 +2205,6 @@ pub async fn purge_blocks_by_ids_inner(
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut **tx)
         .await?;
-
-    // Multi-root descendant CTE — variant of `descendants_cte_purge!()`
-    // seeded from `json_each(?1)`. Like the single-root purge CTE this
-    // does NOT filter  (PURGE is the documented
-    // exception to invariant #9). `depth < 100` still bounds runaway
-    // recursion. Kept inline as a `&str` so each `sqlx::query(...)` call
-    // can `concat!` against per-table tail clauses without macro
-    // expansion gymnastics.
-    let cte = "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE d.depth < 100 \
-         ) ";
 
     // block_tags
     sqlx::query(sqlx::AssertSqlSafe(format!(
