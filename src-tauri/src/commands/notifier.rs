@@ -30,6 +30,9 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+// Used by the plugin dispatch path on macOS/Windows; Linux dispatches via
+// notify-rust directly (see `dispatch_linux_notification`).
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::commands::sanitize_internal_error;
@@ -108,14 +111,72 @@ fn notify_task_inner<R: tauri::Runtime>(
 ) -> Result<(), AppError> {
     let (title, body) = prepare_notification(notification)?;
 
-    let mut builder = app.notification().builder().title(title);
-    if let Some(body) = body {
-        builder = builder.body(body);
+    // Linux: dispatch via notify-rust directly on a dedicated OS thread.
+    //
+    // Observed (0.3.5, GNOME 46 / Wayland): the app's notifications never
+    // reach the FDO daemon — none appear in the notification center and a
+    // D-Bus monitor captures no `Notify` from the app, yet standalone
+    // notify-rust calls (same zbus/async-io backend) do appear. The plugin
+    // fires notify-rust's blocking `show()` via `tauri::async_runtime::spawn`
+    // and discards the `Result` (`let _ = …`), so the failure is swallowed and
+    // the IPC command still returns `Ok` (the user only sees the in-app
+    // "sent" toast). The most likely cause is notify-rust's async-io blocking
+    // call not driving to completion inside Tauri's async runtime.
+    //
+    // Running the blocking call on a plain `std::thread` makes dispatch
+    // independent of the surrounding runtime (verified to emit the `Notify`
+    // and land in the center), and we join + propagate the error instead of
+    // swallowing it so any real failure surfaces to the caller / logs.
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app; // plugin handle unused on this path
+        dispatch_linux_notification(title, body)
     }
-    builder.show().map_err(|e| {
-        AppError::InvalidOperation(format!("failed to dispatch OS notification: {e}"))
-    })?;
-    Ok(())
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut builder = app.notification().builder().title(title);
+        if let Some(body) = body {
+            builder = builder.body(body);
+        }
+        builder.show().map_err(|e| {
+            AppError::InvalidOperation(format!("failed to dispatch OS notification: {e}"))
+        })?;
+        Ok(())
+    }
+}
+
+/// Dispatch an OS notification on Linux via `notify-rust`, off the tokio
+/// runtime. See [`notify_task_inner`] for why the plugin path is bypassed.
+#[cfg(target_os = "linux")]
+fn dispatch_linux_notification(title: String, body: Option<String>) -> Result<(), AppError> {
+    let handle = std::thread::Builder::new()
+        .name("os-notify".into())
+        .spawn(move || -> Result<(), String> {
+            let mut n = notify_rust::Notification::new();
+            n.summary(&title);
+            if let Some(body) = &body {
+                n.body(body);
+            }
+            // Associate with the installed `agaric.desktop` so GNOME shows the
+            // app icon, lists it under per-app notification settings, and
+            // retains it in the notification center.
+            n.hint(notify_rust::Hint::DesktopEntry("agaric".to_string()));
+            n.show().map(|_| ()).map_err(|e| e.to_string())
+        })
+        .map_err(|e| {
+            AppError::InvalidOperation(format!("failed to spawn notification thread: {e}"))
+        })?;
+
+    match handle.join() {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(AppError::InvalidOperation(format!(
+            "failed to dispatch OS notification: {e}"
+        ))),
+        Err(_) => Err(AppError::InvalidOperation(
+            "notification dispatch thread panicked".into(),
+        )),
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,10 @@
     "clipboard-manager:allow-write-text",
     "os:default",
     "notification:default",
+    "core:window:allow-set-title",
     "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
     "deep-link:default",
     "autostart:default",
     "updater:default"
