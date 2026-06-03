@@ -123,8 +123,37 @@ describe('ScrollArea', () => {
     const viewport = q(container, '[data-slot="scroll-area-viewport"]')
     expect(viewport.className).toContain('p-4')
     expect(viewport.className).toContain('custom-viewport')
-    // Default classes are still present
-    expect(viewport.className).toContain('size-full')
+    // Default classes are still present. The viewport sizes to the Root's
+    // resolved height via flex (`flex-auto min-h-0`) for vertical scrolling
+    // rather than a percentage height — see scroll-area.tsx LAYOUT note.
+    expect(viewport.className).toContain('w-full')
+    expect(viewport.className).toContain('flex-auto')
+    expect(viewport.className).toContain('min-h-0')
+  })
+
+  it('makes the root a flex column for vertical scrolling but not horizontal', () => {
+    // Vertical (default): the fix relies on `flex flex-col` on the root so the
+    // viewport can size to the root's resolved height via `flex-auto`.
+    const { container: vertical } = render(
+      <ScrollArea>
+        <p>Content</p>
+      </ScrollArea>,
+    )
+    const verticalRoot = q(vertical, '[data-slot="scroll-area"]')
+    expect(verticalRoot.className).toContain('flex-col')
+
+    // Horizontal-only areas keep the percentage `h-full` (width resolves via
+    // block layout) and must NOT become a flex column.
+    const { container: horizontal } = render(
+      <ScrollArea orientation="horizontal">
+        <p>Content</p>
+      </ScrollArea>,
+    )
+    const horizontalRoot = q(horizontal, '[data-slot="scroll-area"]')
+    expect(horizontalRoot.className).not.toContain('flex-col')
+    const horizontalViewport = q(horizontal, '[data-slot="scroll-area-viewport"]')
+    expect(horizontalViewport.className).toContain('h-full')
+    expect(horizontalViewport.className).not.toContain('flex-auto')
   })
 
   it('spreads viewportProps onto the viewport (role, tabIndex, aria-label)', () => {
