@@ -38,8 +38,10 @@ pub const MAX_GLOB_LEN: usize = 1024;
 ///   3. Validated (unbalanced bracket / nested brace / escape → error).
 ///   4. Brace-expanded (cartesian, capped at `EXPANSION_CAP`).
 ///   5. Bare-token substring-wrapped (no `*`/`?`/`[` → `*…*`).
-///   6. Lowercased so the SQL `LOWER(title) GLOB ?` clause matches
-///      case-insensitively.
+///   6. ASCII-lowercased (`to_ascii_lowercase`) so it folds identically to
+///      the SQL `LOWER(title) GLOB ?` clause (SQLite's `LOWER` is ASCII-only).
+///      Matching is therefore case-insensitive for ASCII and exact for
+///      non-ASCII letters — symmetric on both sides (#381).
 ///
 /// An empty input list yields an empty result (the caller short-
 /// circuits the IN clause when the result is empty).
@@ -64,7 +66,16 @@ pub fn prepare_globs(entries: &[String]) -> Result<Vec<String>, AppError> {
             }
             for pat in expanded {
                 let with_substring = wrap_substring(&pat);
-                out.push(with_substring.to_lowercase());
+                // #381: fold with `to_ascii_lowercase`, NOT `to_lowercase`.
+                // The column side is SQLite's `LOWER(title)`, which folds
+                // ASCII A–Z only (no ICU compiled in). Rust's full-Unicode
+                // `to_lowercase` folded the PATTERN's accented/Cyrillic/Greek
+                // letters while `LOWER(title)` left the column's unchanged, so
+                // a title with an uppercase non-ASCII letter (e.g. `CAFÉ`)
+                // could never match. ASCII-only folding on both sides is
+                // symmetric: case-insensitive for ASCII, exact-match for
+                // non-ASCII (predictable), instead of silently unmatched.
+                out.push(with_substring.to_ascii_lowercase());
             }
             if out.len() > EXPANSION_CAP {
                 return Err(AppError::Validation(format!(
@@ -311,6 +322,21 @@ mod tests {
     fn bare_token_wraps_with_substring() {
         let out = prepare_globs(&["Journal".to_string()]).unwrap();
         assert_eq!(out, vec!["*journal*"]);
+    }
+
+    #[test]
+    fn ascii_fold_preserves_non_ascii_case_381() {
+        // #381: fold ASCII only (to match SQLite's ASCII-only LOWER on the
+        // column side). An uppercase accented letter is left as-is — `É`
+        // stays `É` — exactly as `LOWER(title)` leaves it, so `CAFÉ` matches.
+        // Full-Unicode `to_lowercase` would fold the PATTERN's `É`→`é` while
+        // the column kept `É`, silently unmatching the title.
+        let out = prepare_globs(&["CAFÉ".to_string()]).unwrap();
+        assert_eq!(
+            out,
+            vec!["*cafÉ*"],
+            "ASCII letters fold (C→c); non-ASCII case is preserved (É stays É)"
+        );
     }
 
     #[test]
