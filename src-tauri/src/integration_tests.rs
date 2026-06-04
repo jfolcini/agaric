@@ -1134,12 +1134,15 @@ async fn children_listed_in_position_order() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let parent = create_content(&pool, &mat, "parent", None, Some(1)).await;
+    let parent = create_content(&pool, &mat, "parent", None, Some(0)).await;
 
-    // Create children with positions 3, 1, 2 (deliberately out of order)
-    let c3 = create_content(&pool, &mat, "pos 3", Some(parent.id.to_string()), Some(3)).await;
-    let c1 = create_content(&pool, &mat, "pos 1", Some(parent.id.to_string()), Some(1)).await;
-    let c2 = create_content(&pool, &mat, "pos 2", Some(parent.id.to_string()), Some(2)).await;
+    // #400: `index` is now a 0-based sibling slot. Create children at slots
+    // 2, 0, 1 (deliberately out of order) — the projected dense 1-based
+    // `position` is `slot + 1`, so they should read back as positions 3, 1, 2
+    // respectively and list in dense-rank order 1, 2, 3.
+    let c3 = create_content(&pool, &mat, "pos 3", Some(parent.id.to_string()), Some(2)).await;
+    let c1 = create_content(&pool, &mat, "pos 1", Some(parent.id.to_string()), Some(0)).await;
+    let c2 = create_content(&pool, &mat, "pos 2", Some(parent.id.to_string()), Some(1)).await;
 
     // Drain the materializer's background dispatches before reading: the
     // children are indexed asynchronously, so without this the list query
@@ -1189,18 +1192,20 @@ async fn edit_content_preserves_position() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let block = create_content(&pool, &mat, "original", None, Some(5)).await;
-    assert_eq!(block.position, Some(5), "initial position");
+    // #400: `index` is a 0-based sibling slot; a sole first child projects to
+    // the dense 1-based `position` 1.
+    let block = create_content(&pool, &mat, "original", None, Some(0)).await;
+    assert_eq!(block.position, Some(1), "initial position");
 
     let edited = edit_block_inner(&pool, DEV, &mat, block.id.clone(), "updated".into())
         .await
         .unwrap();
 
-    assert_eq!(edited.position, Some(5), "position must not change on edit");
+    assert_eq!(edited.position, Some(1), "position must not change on edit");
     assert_eq!(edited.content, Some("updated".into()));
 
     let fetched = get_block_inner(&pool, block.id.clone()).await.unwrap();
-    assert_eq!(fetched.position, Some(5), "DB position must be unchanged");
+    assert_eq!(fetched.position, Some(1), "DB position must be unchanged");
 }
 
 // ======================================================================

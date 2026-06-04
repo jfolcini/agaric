@@ -25,7 +25,7 @@ import { logger } from '@/lib/logger'
 
 import { INDENT_WIDTH } from '../components/SortableBlock'
 import {
-  computePosition,
+  computeDropIndex,
   type FlatBlock,
   getDragDescendants,
   getProjection,
@@ -149,54 +149,56 @@ export function useBlockDnD({
       const blockId = active.id as string
       const activeBlock = blocks.find((b) => b.id === blockId)
 
-      if (projected && activeBlock) {
-        // Check if the projection indicates a depth/parent change
-        const currentParentId = activeBlock.parent_id ?? rootParentId
-        const depthChanged = projected.depth !== activeBlock.depth
-        const parentChanged = projected.parentId !== currentParentId
-        const isSentinel = (over.id as string) === SENTINEL_ID
+      // UX-241: on success restore focus on the dragged block so EditableBlock's
+      // `isFocused` effect re-fires `scrollIntoView` and the viewport tracks it.
+      // Only restore on success — if the move rejects, leave focus cleared.
+      const restoreFocusOnSuccess = (label: string, p: Promise<unknown>) =>
+        p
+          .then(() => setFocused(blockId))
+          .catch((err: unknown) => {
+            logger.warn(
+              'useBlockDnD',
+              `${label} failed after drag — focus cleared`,
+              { blockId },
+              err,
+            )
+          })
 
-        if (isSentinel || depthChanged || parentChanged || active.id !== over.id) {
-          // Tree-aware move: use projection to determine new parent + position
-          const overIndex = isSentinel
-            ? visibleItems.length
-            : visibleItems.findIndex((b) => b.id === over.id)
-          const newPosition = computePosition(visibleItems, projected.parentId, overIndex, blockId)
-          // UX-241: restore focus on the dragged block after the move commits so
-          // the EditableBlock `isFocused` effect re-fires `scrollIntoView` and
-          // the viewport tracks the moved block instead of jumping to the top.
-          // Only restore on success — if moveToParent rejects, leave focus cleared.
-          moveToParent(blockId, projected.parentId, newPosition)
-            .then(() => setFocused(blockId))
-            .catch((err: unknown) => {
-              logger.warn(
-                'useBlockDnD',
-                'moveToParent failed after drag — leaving focus cleared',
-                { blockId },
-                err,
-              )
-            })
+      if (projected && activeBlock) {
+        const currentParentId = activeBlock.parent_id ?? rootParentId
+        const parentChanged = projected.parentId !== currentParentId
+        // #400: send the 0-based sibling slot; the backend derives the
+        // convergent fractional key (no colliding / `<= 0` positions).
+        const newIndex = computeDropIndex(
+          visibleItems,
+          projected.parentId,
+          over.id as string,
+          blockId,
+        )
+
+        if (parentChanged) {
+          // Reparent / nest / change depth → structural change needs a refetch.
+          restoreFocusOnSuccess('moveToParent', moveToParent(blockId, projected.parentId, newIndex))
           return
         }
+
+        // R5 (#404): a same-parent reorder takes the optimistic local-splice
+        // path instead of `moveToParent`'s full `load()` refetch.
+        if (active.id !== over.id || (over.id as string) === SENTINEL_ID) {
+          restoreFocusOnSuccess('reorder', reorder(blockId, newIndex))
+        }
+        return
       }
 
-      // Same-level reorder (no depth/parent change)
+      // Fallback (no projection): same-parent reorder by sibling slot.
       if (active.id !== over.id) {
-        const overIndex = blocks.findIndex((b) => b.id === over.id)
-        if (overIndex >= 0) {
-          // UX-241: restore focus on the dragged block after the reorder commits.
-          // See moveToParent branch above for rationale.
-          reorder(blockId, overIndex)
-            .then(() => setFocused(blockId))
-            .catch((err: unknown) => {
-              logger.warn(
-                'useBlockDnD',
-                'reorder failed after drag — leaving focus cleared',
-                { blockId },
-                err,
-              )
-            })
-        }
+        const newIndex = computeDropIndex(
+          blocks,
+          activeBlock?.parent_id ?? rootParentId,
+          over.id as string,
+          blockId,
+        )
+        restoreFocusOnSuccess('reorder', reorder(blockId, newIndex))
       }
     },
     [blocks, rootParentId, projected, visibleItems, moveToParent, reorder, setFocused],

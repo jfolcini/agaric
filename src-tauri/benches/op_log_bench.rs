@@ -48,6 +48,7 @@ fn bench_append_single_op(c: &mut Criterion) {
                     block_type: "content".into(),
                     parent_id: None,
                     position: Some(0),
+                    index: None,
                     content: "hello world".into(),
                 });
                 append_local_op(&pool, "dev-bench", payload).await.unwrap();
@@ -75,6 +76,7 @@ fn bench_append_batch_100(c: &mut Criterion) {
                         block_type: "content".into(),
                         parent_id: None,
                         position: Some(i),
+                        index: None,
                         content: format!("content {i}"),
                     });
                     append_local_op(&pool, "dev-batch", payload).await.unwrap();
@@ -107,6 +109,7 @@ fn bench_append_varying_payload_size(c: &mut Criterion) {
                         block_type: "content".into(),
                         parent_id: None,
                         position: Some(0),
+                        index: None,
                         content,
                     });
                     append_local_op(&pool, "dev-size", payload).await.unwrap();
@@ -141,6 +144,7 @@ fn bench_append_to_populated(c: &mut Criterion) {
                             block_type: "content".into(),
                             parent_id: None,
                             position: Some(0),
+                            index: None,
                             content: "new op".into(),
                         });
                         append_local_op(&pool, "dev-pop", payload).await.unwrap();

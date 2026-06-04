@@ -12,6 +12,7 @@ async fn snapshot_create_block_response() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
+    // #400: index 0 (first child) ⇒ provisional dense 1-based rank 1.
     let resp = create_block_inner(
         &pool,
         DEV,
@@ -19,7 +20,7 @@ async fn snapshot_create_block_response() {
         "content".into(),
         "snapshot test content".into(),
         None,
-        Some(1),
+        Some(0),
     )
     .await
     .unwrap();

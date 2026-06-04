@@ -78,6 +78,33 @@ pub async fn project_create_block_to_sql(
     Ok(())
 }
 
+/// Reproject a parent's children to **dense 1-based `position`** in the engine's
+/// fractional-index order (#400). `ordered_block_ids` is the authoritative
+/// sibling order from `LoroEngine::children_ordered_block_ids` (including
+/// soft-deleted blocks, which keep their slot). This is a projection-only write
+/// — it mutates no Loro state and appends no op — so the op-log / sync surface
+/// is unchanged while `ORDER BY position` stays consistent with the tree.
+///
+/// Called after every create/move on each affected parent. A move that changes
+/// parent must reproject **both** the source and the target parent.
+pub async fn reproject_dense_positions(
+    conn: &mut SqliteConnection,
+    ordered_block_ids: &[String],
+) -> Result<(), AppError> {
+    for (idx, block_id) in ordered_block_ids.iter().enumerate() {
+        // 1-based, matching the pre-#400 convention.
+        let rank = i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1);
+        sqlx::query!(
+            "UPDATE blocks SET position = ? WHERE id = ?",
+            rank,
+            block_id,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
 /// Project an `EditBlock` engine state into SQL via
 /// `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS
 /// NULL`. The `content` value comes from the engine's post-apply

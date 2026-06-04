@@ -204,6 +204,7 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(0),
+                index: None,
                 content: content.clone(),
             }))
         }
@@ -227,6 +228,7 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
                 block_id: BlockId::from_trusted(target),
                 new_parent_id: None,
                 new_position: *position,
+                new_index: None,
             }))
         }
         OpKind::SetProperty { index, key, value } => {

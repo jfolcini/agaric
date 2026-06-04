@@ -35,6 +35,7 @@ fn make_create(block_id: &str, content: &str) -> OpPayload {
         block_type: "content".into(),
         parent_id: None,
         position: Some(0),
+        index: None,
         content: content.into(),
     })
 }
@@ -998,6 +999,7 @@ async fn find_lca_after_compaction_produces_not_found() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "v1".to_owned(),
         }),
         1_704_067_200_000,

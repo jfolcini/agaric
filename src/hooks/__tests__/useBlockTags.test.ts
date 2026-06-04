@@ -468,7 +468,7 @@ describe('useBlockTags handleCreateTag', () => {
       blockType: 'tag',
       content: 'NewTag',
       parentId: null,
-      position: null,
+      index: null,
       scope: { kind: 'global' },
     })
 
@@ -513,7 +513,7 @@ describe('useBlockTags handleCreateTag', () => {
       blockType: 'tag',
       content: 'Trimmed',
       parentId: null,
-      position: null,
+      index: null,
       scope: { kind: 'global' },
     })
   })
@@ -567,7 +567,7 @@ describe('useBlockTags handleCreateTag', () => {
       blockType: 'tag',
       content: 'Solo',
       parentId: null,
-      position: null,
+      index: null,
       scope: { kind: 'global' },
     })
 

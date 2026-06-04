@@ -109,6 +109,7 @@ async fn apply_op_tag_inheritance_dispatches_create_block() {
         block_type: "content".into(),
         parent_id: Some(BlockId::from_trusted("PAR_CB")),
         position: Some(1),
+        index: None,
         content: "hi".into(),
     });
     let mut conn = pool.acquire().await.unwrap();

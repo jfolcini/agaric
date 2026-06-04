@@ -545,7 +545,7 @@ describe('PageHeader tag management', () => {
         blockType: 'tag',
         content: 'newtag',
         parentId: null,
-        position: null,
+        index: null,
         scope: { kind: 'global' },
       })
     })

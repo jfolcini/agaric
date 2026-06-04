@@ -19,7 +19,7 @@ async fn create_content_block_returns_correct_fields() {
         "content".into(),
         "hello world".into(),
         None,
-        Some(1),
+        Some(0),
     )
     .await
     .unwrap();
@@ -31,7 +31,8 @@ async fn create_content_block_returns_correct_fields() {
         "content must match input"
     );
     assert!(resp.parent_id.is_none(), "top-level block has no parent");
-    assert_eq!(resp.position, Some(1), "position must match input");
+    // #400: index 0 (first child) ⇒ provisional dense 1-based rank 1.
+    assert_eq!(resp.position, Some(1), "index 0 ⇒ position 1");
     assert!(resp.deleted_at.is_none(), "new block must not be deleted");
     assert_eq!(resp.id.as_str().len(), 26, "ULID must be 26 chars");
 }
@@ -73,7 +74,8 @@ async fn create_page_block_returns_correct_fields() {
 
     assert_eq!(resp.block_type, "page", "block_type must be page");
     assert_eq!(resp.content, Some("My Page".into()), "content must match");
-    assert_eq!(resp.position, Some(10), "position must match");
+    // #400: index is a 0-based slot; provisional dense rank = index + 1.
+    assert_eq!(resp.position, Some(11), "index 10 ⇒ provisional rank 11");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -115,7 +117,10 @@ async fn create_block_with_parent_sets_parent_id() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_block_with_position_preserves_position() {
+async fn create_block_with_index_maps_to_dense_rank() {
+    // #400: the create arg is a 0-based sibling slot (`index`), not a 1-based
+    // sparse position. The optimistic SQL write + response carry the
+    // provisional dense 1-based rank = index + 1.
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -133,13 +138,17 @@ async fn create_block_with_position_preserves_position() {
 
     assert_eq!(
         resp.position,
-        Some(42),
-        "position must be preserved exactly"
+        Some(43),
+        "index 42 ⇒ provisional dense rank 43"
     );
 
     // Verify in DB
     let row = get_block_inner(&pool, resp.id).await.unwrap();
-    assert_eq!(row.position, Some(42), "position must be persisted in DB");
+    assert_eq!(
+        row.position,
+        Some(43),
+        "provisional rank must be persisted in DB"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1771,12 +1780,13 @@ async fn move_block_reparents_and_updates_position() {
         Some("MV_PAR_B".into()),
         "new parent must be MV_PAR_B"
     );
-    assert_eq!(resp.new_position, 5, "position must match");
+    // #400: new_index 5 ⇒ provisional dense 1-based rank = new_index + 1 = 6.
+    assert_eq!(resp.new_position, 6, "new_index 5 ⇒ rank 6");
 
     // Verify DB state
     let row = get_block_inner(&pool, "MV_CHILD".into()).await.unwrap();
     assert_eq!(row.parent_id, Some("MV_PAR_B".into()), "parent_id in DB");
-    assert_eq!(row.position, Some(5), "position in DB");
+    assert_eq!(row.position, Some(6), "provisional rank in DB");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1803,7 +1813,8 @@ async fn move_block_to_root_clears_parent() {
         resp.new_parent_id.is_none(),
         "root move must have None parent"
     );
-    assert_eq!(resp.new_position, 10, "position must match");
+    // #400: new_index 10 ⇒ provisional dense 1-based rank = new_index + 1 = 11.
+    assert_eq!(resp.new_position, 11, "new_index 10 ⇒ rank 11");
 
     let row = get_block_inner(&pool, "MV2_CHD".into()).await.unwrap();
     assert!(

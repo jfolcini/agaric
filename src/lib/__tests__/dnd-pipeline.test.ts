@@ -1,53 +1,84 @@
 /**
  * Drag-and-drop DROP PIPELINE integration tests.
  *
- * `tree-utils.test.ts` covers `getProjection` / `computePosition` in isolation.
+ * `tree-utils.test.ts` covers `getProjection` / `computeDropIndex` in isolation.
  * This file wires them together exactly the way `useBlockDnD.handleDragEnd`
- * does, then applies the SAME semantics the real backend (`move_block`) uses,
+ * does, then applies the SAME semantics the new backend (`move_block`) uses,
  * so the tests assert the property a user actually cares about: *after I drop a
  * block, is it where I dropped it?*
  *
- * Backend ground truth (verified in src-tauri):
- *   - `move_block` does `UPDATE blocks SET parent_id=?, position=?` with NO
- *     sibling renumbering (commands/blocks/move_ops.rs:160).
- *   - `position` must be > 0 (1-based); `position <= 0` is rejected with
- *     `AppError::Validation("position must be positive")` (move_ops.rs:43).
- *   - `list` orders siblings by `position ASC, id ASC` (blocks/queries.rs:540),
- *     so equal positions tie-break by ULID (creation order), NOT drop intent.
- *   - new blocks are created at `MAX(position)+1`, i.e. consecutive 1,2,3…
- *     with no gaps (blocks/crud.rs:202).
- *
- * Bugs this surfaces are encoded with `it.fails(...)`: the body asserts the
- * CORRECT (desired) outcome, which currently throws, so `it.fails` passes and
- * the suite stays green. When the underlying bug is fixed the body starts
- * passing and `it.fails` flips to red — the signal to delete the `.fails`.
- * Each `it.fails` is paired with a plain `it(...)` CHARACTERIZATION test that
- * locks in today's (wrong) behaviour so a fix can't change it silently.
+ * Backend ground truth (#400 — index-based move on Loro's fractional index):
+ *   - `move_block(blockId, parentId, newIndex)` inserts the block at the
+ *     0-based `newIndex` slot among the target parent's OTHER children, then
+ *     materializes dense 1-based `position` for every sibling group it touched
+ *     (old + new parent). No collisions, no gaps, never rejected.
+ *   - `list` orders siblings by `position ASC, id ASC`; because positions are
+ *     now dense + collision-free, order matches drop intent (not ULID).
  */
 
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
-import { computePosition, type FlatBlock, getProjection, SENTINEL_ID } from '../tree-utils'
+import { computeDropIndex, type FlatBlock, getProjection, SENTINEL_ID } from '../tree-utils'
 
 const INDENT = 24
 
-// ── Faithful backend model ────────────────────────────────────────────────
+// ── Faithful backend model (#400) ─────────────────────────────────────────
 
-class PositionRejectedError extends Error {}
-
-/** Apply `move_block` as the Rust backend does: set parent+position, renumber
- *  nothing, reject a non-positive position. */
+/**
+ * Apply `move_block` as the new Rust backend does: set the block's parent,
+ * insert it at the 0-based `newIndex` slot among the target parent's OTHER
+ * children, then assign dense 1-based positions to BOTH the old and new
+ * sibling groups. Never rejects.
+ */
 function backendMove(
   rows: FlatBlock[],
   blockId: string,
   parentId: string | null,
-  position: number,
+  newIndex: number,
 ): FlatBlock[] {
-  if (position <= 0) {
-    throw new PositionRejectedError(`position must be positive (1-based), got ${position}`)
+  const moved = rows.find((b) => b.id === blockId)
+  if (!moved) return rows
+  const oldParentId = moved.parent_id ?? null
+
+  // Order the target parent's other children by current (position, id).
+  const others = rows
+    .filter((b) => b.id !== blockId && (b.parent_id ?? null) === parentId)
+    .sort((a, b) => {
+      const pa = a.position ?? Number.MAX_SAFE_INTEGER
+      const pb = b.position ?? Number.MAX_SAFE_INTEGER
+      if (pa !== pb) return pa - pb
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    })
+  const slot = Math.max(0, Math.min(newIndex, others.length))
+  const ordered = [...others]
+  ordered.splice(slot, 0, { ...moved, parent_id: parentId })
+
+  // Dense 1-based ranks for the new sibling group.
+  const newPos = new Map<string, number>()
+  ordered.forEach((b, i) => newPos.set(b.id, i + 1))
+
+  // Dense 1-based ranks for the old sibling group (block removed) when the
+  // parent changed.
+  const oldPos = new Map<string, number>()
+  if (oldParentId !== parentId) {
+    rows
+      .filter((b) => b.id !== blockId && (b.parent_id ?? null) === oldParentId)
+      .sort((a, b) => {
+        const pa = a.position ?? Number.MAX_SAFE_INTEGER
+        const pb = b.position ?? Number.MAX_SAFE_INTEGER
+        if (pa !== pb) return pa - pb
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+      })
+      .forEach((b, i) => oldPos.set(b.id, i + 1))
   }
-  return rows.map((b) => (b.id === blockId ? { ...b, parent_id: parentId, position } : b))
+
+  return rows.map((b) => {
+    if (b.id === blockId) return { ...b, parent_id: parentId, position: newPos.get(b.id) as number }
+    if (newPos.has(b.id)) return { ...b, position: newPos.get(b.id) as number }
+    if (oldPos.has(b.id)) return { ...b, position: oldPos.get(b.id) as number }
+    return b
+  })
 }
 
 /** Order a flat bag of rows exactly like the DB `list` query (position, id). */
@@ -101,12 +132,12 @@ function collectDescendants(items: FlatBlock[], activeId: string): Set<string> {
 interface DropResult {
   order: string[]
   parentId: string | null
-  position: number
+  index: number
   depthOf: (id: string) => number
 }
 
 /**
- * Reproduce `useBlockDnD.handleDragEnd`'s parent+position computation for a
+ * Reproduce `useBlockDnD.handleDragEnd`'s parent + slot computation for a
  * pointer drag, then apply the backend move. `overId === activeId` models the
  * "drag in place + horizontal offset to indent/dedent" gesture.
  */
@@ -121,16 +152,16 @@ function simulateMouseDrop(
   const visibleItems = items.filter((b) => !descendantIds.has(b.id))
 
   const projected = getProjection(visibleItems, activeId, overId, offsetX, INDENT, null)
-  const overIndex =
-    overId === SENTINEL_ID ? visibleItems.length : visibleItems.findIndex((b) => b.id === overId)
-  const position = computePosition(visibleItems, projected.parentId, overIndex, activeId)
+  // Matches handleDragEnd: compute the 0-based sibling slot from the projected
+  // parent + the drop target.
+  const index = computeDropIndex(visibleItems, projected.parentId, overId, activeId)
 
-  const moved = backendMove(rows, activeId, projected.parentId, position)
+  const moved = backendMove(rows, activeId, projected.parentId, index)
   const flat = reflatten(moved)
   return {
     order: flat.map((b) => b.id),
     parentId: projected.parentId,
-    position,
+    index,
     depthOf: (id: string) => flat.find((b) => b.id === id)?.depth ?? -1,
   }
 }
@@ -146,59 +177,36 @@ function flatRoots(...ids: string[]): FlatBlock[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 describe('drop pipeline — same-level reorder', () => {
-  it('drags a block to the very bottom (works — id tie-break agrees with intent)', () => {
+  it('drags a block DOWN onto the last sibling (lands after it)', () => {
     const rows = flatRoots('A', 'B', 'C')
     const { order } = simulateMouseDrop(rows, 'A', 'C')
+    // Downward drag drops AFTER the target (A vacates, B/C slide up) → A last.
+    expect(order).toEqual(['B', 'C', 'A'])
+  })
+
+  // Dragging A down onto B swaps them → [B, A, C]. The 0-based slot
+  // (computeDropIndex) accounts for A vacating its slot, so it lands AFTER B.
+  it('drags a block DOWN onto the next sibling (swaps)', () => {
+    const rows = flatRoots('A', 'B', 'C')
+    const { order } = simulateMouseDrop(rows, 'A', 'B')
     expect(order).toEqual(['B', 'A', 'C'])
   })
 
-  // ── BUG 1: off-by-one on a downward drag onto the adjacent sibling ──────
-  // Dragging A down onto B should swap them → [B, A, C]. computePosition is
-  // handed the RAW over-index (active still occupies the slot above), so it
-  // inserts BEFORE B instead of after → position 1 → A never moves.
-  it.fails('BUG: drags a block DOWN onto the next sibling (should swap, currently no-ops)', () => {
-    const rows = flatRoots('A', 'B', 'C')
-    const { order } = simulateMouseDrop(rows, 'A', 'B')
-    expect(order).toEqual(['B', 'A', 'C']) // DESIRED
-  })
-
-  it('CHARACTERIZATION: downward drag onto next sibling computes a no-op position', () => {
-    const rows = flatRoots('A', 'B', 'C')
-    const { order, position } = simulateMouseDrop(rows, 'A', 'B')
-    expect(position).toBe(1) // == A's own position → no move
-    expect(order).toEqual(['A', 'B', 'C'])
-  })
-
-  // ── BUG 2: position collision on an upward drag between siblings ────────
-  // Dragging C up onto B should land it between A and B → [A, C, B].
-  // computePosition returns B.position (2); the backend does not renumber and
-  // `list` tie-breaks by ULID (B < C) → C ends up AFTER B (unchanged).
-  it.fails('BUG: drags a block UP between two siblings (should reorder, currently no-ops)', () => {
+  // Dragging C up onto B lands it between A and B → [A, C, B]. Dense renumber
+  // means no collision and order matches intent.
+  it('drags a block UP between two siblings (reorders)', () => {
     const rows = flatRoots('A', 'B', 'C')
     const { order } = simulateMouseDrop(rows, 'C', 'B')
-    expect(order).toEqual(['A', 'C', 'B']) // DESIRED
+    expect(order).toEqual(['A', 'C', 'B'])
   })
 
-  it('CHARACTERIZATION: upward drag collides on position and leaves order unchanged', () => {
-    const rows = flatRoots('A', 'B', 'C')
-    const { order, position } = simulateMouseDrop(rows, 'C', 'B')
-    expect(position).toBe(2) // collides with B
-    expect(order).toEqual(['A', 'B', 'C'])
-  })
-
-  // ── BUG 3: drop-to-top computes a position the backend rejects ──────────
-  // Dropping a block above the first sibling computes `firstPos - 1`. With the
-  // first sibling at position 1 that is 0, which the backend REJECTS → the
-  // whole move throws and the user sees an error toast instead of a reorder.
-  it.fails('BUG: drags a block to the very TOP (should become first, currently rejected)', () => {
+  // Dropping a block above the first sibling computes slot 0 — "move to top" —
+  // which the backend accepts (no `position <= 0` rejection anymore).
+  it('drags a block to the very TOP (becomes first)', () => {
     const rows = flatRoots('A', 'B')
-    const { order } = simulateMouseDrop(rows, 'B', 'A')
-    expect(order).toEqual(['B', 'A']) // DESIRED
-  })
-
-  it('CHARACTERIZATION: drop-to-top emits a non-positive position the backend rejects', () => {
-    const rows = flatRoots('A', 'B')
-    expect(() => simulateMouseDrop(rows, 'B', 'A')).toThrow(/position must be positive/)
+    const { order, index } = simulateMouseDrop(rows, 'B', 'A')
+    expect(index).toBe(0)
+    expect(order).toEqual(['B', 'A'])
   })
 })
 
@@ -211,16 +219,15 @@ describe('drop pipeline — drag to indent', () => {
     const rows = flatRoots('A', 'B', 'C')
     // Gesture: keep the pointer over B (the dragged row) and push right one
     // indent level → B becomes the first child of A.
-    const { parentId, position, depthOf } = simulateMouseDrop(rows, 'B', 'B', INDENT * 2)
+    const { parentId, index, depthOf } = simulateMouseDrop(rows, 'B', 'B', INDENT * 2)
     expect(parentId).toBe('A')
-    expect(position).toBe(1) // first child of A — no collision
+    expect(index).toBe(0) // first (and only) child of A — slot 0
     expect(depthOf('B')).toBe(1)
   })
 
-  // ── BUG 4: nesting as the FIRST child computes position 0 ──────────────
-  // Dropping B so it becomes A's first child (before existing child A1) hits
-  // the same non-positive-position rejection as drop-to-top.
-  it.fails('BUG: nests a block as the first child of a populated parent (currently rejected)', () => {
+  // Dropping B so it becomes A's first child (before existing child A1) is
+  // slot 0 — "nest as first child" — which the backend now accepts.
+  it('nests a block as the first child of a populated parent', () => {
     const rows: FlatBlock[] = [
       makeBlock({ id: 'A', parent_id: null, position: 1, depth: 0 }),
       makeBlock({ id: 'A1', parent_id: 'A', position: 1, depth: 1 }),
@@ -228,16 +235,7 @@ describe('drop pipeline — drag to indent', () => {
     ]
     // Drag B up onto A1 with a small right offset → first child of A, before A1.
     const { order } = simulateMouseDrop(rows, 'B', 'A1', 4)
-    expect(order).toEqual(['A', 'B', 'A1']) // DESIRED
-  })
-
-  it('CHARACTERIZATION: nesting before the first child emits position 0', () => {
-    const rows: FlatBlock[] = [
-      makeBlock({ id: 'A', parent_id: null, position: 1, depth: 0 }),
-      makeBlock({ id: 'A1', parent_id: 'A', position: 1, depth: 1 }),
-      makeBlock({ id: 'B', parent_id: null, position: 2, depth: 0 }),
-    ]
-    expect(() => simulateMouseDrop(rows, 'B', 'A1', 4)).toThrow(/position must be positive/)
+    expect(order).toEqual(['A', 'B', 'A1'])
   })
 })
 
@@ -278,14 +276,13 @@ describe('drop pipeline — subtree moves as a unit', () => {
     expect(depthOf('P1')).toBe(1)
   })
 
-  // The downward-drag off-by-one (BUG 1) also defeats subtree reordering.
-  it.fails('BUG: dragging a parent DOWN onto the next sibling (should move subtree past it)', () => {
+  it('dragging a parent DOWN onto the next sibling moves the subtree past it', () => {
     const rows: FlatBlock[] = [
       makeBlock({ id: 'P', parent_id: null, position: 1, depth: 0 }),
       makeBlock({ id: 'P1', parent_id: 'P', position: 1, depth: 1 }),
       makeBlock({ id: 'Q', parent_id: null, position: 2, depth: 0 }),
     ]
     const { order } = simulateMouseDrop(rows, 'P', 'Q')
-    expect(order).toEqual(['Q', 'P', 'P1']) // DESIRED
+    expect(order).toEqual(['Q', 'P', 'P1'])
   })
 })

@@ -521,29 +521,36 @@ fn build_reverse_move_block(
             payload.block_id, record.device_id, record.seq
         ))
     })?;
-    let (old_parent, old_pos): (Option<BlockId>, i64) = if prior_op_type == "move_block" {
-        let p: MoveBlockPayload = serde_json::from_str(prior_payload)?;
-        (p.new_parent_id, p.new_position)
-    } else {
-        let p: CreateBlockPayload = serde_json::from_str(prior_payload)?;
-        // BUG-26: positions are 1-based and `move_block_inner` rejects
-        // 0. Ancient `create_block` payloads with `position = None`
-        // cannot mint a valid reverse-move; mirror the per-op fallback
-        // in `block_ops::find_prior_position` and surface
-        // `NonReversible`.
-        match p.position {
-            Some(pos) => (p.parent_id, pos),
-            None => {
-                return Err(AppError::NonReversible {
-                    op_type: "move_block".into(),
-                });
+    // #400: restore the prior sibling slot. New-scheme prior ops carry a 0-based
+    // index; pre-#400 ops carry a 1-based position. `(parent, index, position)`.
+    let (old_parent, old_index, old_pos): (Option<BlockId>, Option<i64>, Option<i64>) =
+        if prior_op_type == "move_block" {
+            let p: MoveBlockPayload = serde_json::from_str(prior_payload)?;
+            (p.new_parent_id, p.new_index, Some(p.new_position))
+        } else {
+            let p: CreateBlockPayload = serde_json::from_str(prior_payload)?;
+            // BUG-26: ancient `create_block` payloads predate the position wire
+            // field (both `index` and `position` absent) → no valid reverse-move;
+            // mirror `block_ops::find_prior_position` and surface `NonReversible`.
+            match (p.index, p.position) {
+                (Some(idx), _) => (p.parent_id, Some(idx), None),
+                (None, Some(pos)) => (p.parent_id, None, Some(pos)),
+                (None, None) => {
+                    return Err(AppError::NonReversible {
+                        op_type: "move_block".into(),
+                    });
+                }
             }
-        }
+        };
+    let (new_position, new_index) = match old_index {
+        Some(idx) => (idx + 1, Some(idx)),
+        None => (old_pos.unwrap_or(1), None),
     };
     Ok(OpPayload::MoveBlock(MoveBlockPayload {
         block_id: payload.block_id,
         new_parent_id: old_parent,
-        new_position: old_pos,
+        new_position,
+        new_index,
     }))
 }
 

@@ -475,6 +475,7 @@ mod tests {
             block_type: "content".to_string(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "hello".to_string(),
         });
 

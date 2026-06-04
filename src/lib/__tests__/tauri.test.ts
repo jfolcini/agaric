@@ -143,7 +143,7 @@ describe('createBlock', () => {
       blockType: 'content',
       content: 'hello',
       parentId: 'PARENT01',
-      position: 3,
+      index: 3,
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
@@ -151,7 +151,7 @@ describe('createBlock', () => {
       blockType: 'content',
       content: 'hello',
       parentId: 'PARENT01',
-      position: 3,
+      index: 3,
       // BUG-1 / H-3a + PEND-18 Phase 3: every `create_block` IPC call
       // carries the `scope` tagged-enum. For non-page block types
       // `{ kind: 'global' }` is correct (the backend ignores it).
@@ -176,7 +176,7 @@ describe('createBlock', () => {
       blockType: 'page',
       content: 'test',
       parentId: null,
-      position: null,
+      index: null,
       // BUG-1 / H-3a + PEND-18 Phase 3: in production a page-typed
       // `createBlock` MUST pass an active scope; this unit test exercises
       // only the wrapper's payload shape, so `{ kind: 'global' }` here
@@ -522,7 +522,7 @@ describe('moveBlock', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
       blockId: 'BLK001',
       newParentId: 'PARENT02',
-      newPosition: 5,
+      newIndex: 5,
     })
     expect(result).toEqual(expected)
   })
@@ -536,7 +536,7 @@ describe('moveBlock', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
       blockId: 'BLK001',
       newParentId: null,
-      newPosition: 0,
+      newIndex: 0,
     })
   })
 })

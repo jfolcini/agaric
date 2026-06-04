@@ -74,19 +74,19 @@ async function createSamplePages(t: TFunction): Promise<void> {
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody1'),
     parentId: gettingStartedId,
-    position: 0,
+    index: 0,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody2'),
     parentId: gettingStartedId,
-    position: 1,
+    index: 1,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleGettingStartedBody3'),
     parentId: gettingStartedId,
-    position: 2,
+    index: 2,
   })
 
   // Create t('welcome.sampleQuickTipsTitle') page with keyboard shortcut highlights
@@ -98,19 +98,19 @@ async function createSamplePages(t: TFunction): Promise<void> {
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody1'),
     parentId: quickTipsId,
-    position: 0,
+    index: 0,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody2'),
     parentId: quickTipsId,
-    position: 1,
+    index: 1,
   })
   await createBlock({
     blockType: 'content',
     content: t('welcome.sampleQuickTipsBody3'),
     parentId: quickTipsId,
-    position: 2,
+    index: 2,
   })
 }
 

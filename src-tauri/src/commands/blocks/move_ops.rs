@@ -35,7 +35,7 @@ pub async fn move_block_inner(
     materializer: &Materializer,
     block_id: BlockId,
     new_parent_id: Option<BlockId>,
-    new_position: i64,
+    new_index: i64,
 ) -> Result<MoveResponse, AppError> {
     // #107: BlockId normalises to uppercase on construction; re-derive owned
     // String form for sqlx binds / format! / the MoveResponse below.
@@ -51,35 +51,32 @@ pub async fn move_block_inner(
         }
     }
 
-    // 1b. Validate position is positive (1-based)
-    if new_position <= 0 {
-        return Err(AppError::Validation(format!(
-            "position must be positive (1-based), got {new_position}"
-        )));
-    }
+    // 1b. #400: `new_index` is a 0-based sibling slot. "Move to the top" / "nest
+    // as first child" are slot 0 — both previously rejected as `position <= 0`.
+    // The old positive-position validation is gone; clamp a stray negative.
+    let new_index = new_index.max(0);
+    // Provisional 1-based dense rank for the optimistic SQL write + response;
+    // the materializer reprojects the authoritative ranks from the engine's
+    // fractional order shortly after (eventual consistency, as for engine state).
+    // #400/#383: saturate + cap strictly below NULL_POSITION_SENTINEL so an absurd
+    // slot can't overflow (debug panic / release negative-wrap) or transiently
+    // land on the reserved keyset tail marker; reprojection sets the dense rank.
+    let provisional_position = new_index
+        .saturating_add(1)
+        .min(crate::pagination::NULL_POSITION_SENTINEL - 1);
 
-    // 1c. #383: reject the reserved NULL_POSITION_SENTINEL (i64::MAX). That
-    // value is the keyset-pagination "no explicit position" marker
-    // (`pagination::NULL_POSITION_SENTINEL`); blocks carrying it sort AFTER
-    // all positioned siblings. Accepting it as an explicit caller-supplied
-    // position would collide with that sentinel semantics and silently push
-    // the block to the synthetic tail bucket.
-    // NULL_POSITION_SENTINEL is `i64::MAX`, so `== sentinel` is the only
-    // reachable "at-or-above sentinel" case (a `>=` would trip
-    // `clippy::absurd_extreme_comparisons`).
-    if new_position == crate::pagination::NULL_POSITION_SENTINEL {
-        return Err(AppError::Validation(format!(
-            "position must be below the reserved sentinel ({}), got {new_position}",
-            crate::pagination::NULL_POSITION_SENTINEL
-        )));
-    }
-
-    // 2. Build OpPayload
+    // 2. Build OpPayload (#400: carries the 0-based `new_index`; `new_position`
+    // is a 1-based breadcrumb mirroring it for legacy readers).
+    // (#383's NULL_POSITION_SENTINEL rejection is obsolete here: callers supply
+    // a 0-based `new_index` slot, not a verbatim position. `provisional_position`
+    // is a transient optimistic rank the materializer reprojects, so a caller can
+    // no longer push a block into the synthetic sentinel tail bucket.)
     let new_parent_block_id = new_parent_id.as_ref().map(|s| BlockId::from_trusted(s));
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: BlockId::from_trusted(&block_id),
         new_parent_id: new_parent_block_id.clone(),
-        new_position,
+        new_position: provisional_position,
+        new_index: Some(new_index),
     });
 
     // 3. Single IMMEDIATE transaction: validation + op_log + move.
@@ -186,10 +183,11 @@ pub async fn move_block_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
-    // 5. Update blocks table within same transaction
+    // 5. Update blocks table within same transaction (optimistic; the
+    //    materializer reprojects the authoritative dense rank from the engine).
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
         .bind(&new_parent_id)
-        .bind(new_position)
+        .bind(provisional_position)
         .bind(&block_id)
         .execute(&mut **tx)
         .await?;
@@ -260,15 +258,18 @@ pub async fn move_block_inner(
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
 
-    // 7. Return response
+    // 7. Return response. `new_position` is the provisional 1-based dense rank;
+    // the frontend uses optimistic local splices (R5) and re-reads on navigation.
     Ok(MoveResponse {
         block_id,
         new_parent_id,
-        new_position,
+        new_position: provisional_position,
     })
 }
 
-/// Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`].
+/// Tauri command: move a block under a new parent at a 0-based sibling slot
+/// (#400). `new_index` is an insertion slot among the target parent's other
+/// children; slot 0 is "first child" / "top". Delegates to [`move_block_inner`].
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
@@ -278,7 +279,7 @@ pub async fn move_block(
     materializer: State<'_, Materializer>,
     block_id: String,
     new_parent_id: Option<String>,
-    new_position: i64,
+    new_index: i64,
 ) -> Result<MoveResponse, AppError> {
     move_block_inner(
         &pool.0,
@@ -286,7 +287,7 @@ pub async fn move_block(
         &materializer,
         block_id.into(),
         new_parent_id.map(Into::into),
-        new_position,
+        new_index,
     )
     .await
     .map_err(sanitize_internal_error)

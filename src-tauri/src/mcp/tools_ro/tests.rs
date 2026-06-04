@@ -1988,7 +1988,8 @@ async fn snapshot_list_pages_response_shape() {
         "page".into(),
         "Alpha".into(),
         None,
-        Some(1),
+        // #400: 0-based slot 0 ⇒ first page ⇒ dense `position` 1.
+        Some(0),
     )
     .await
     .unwrap();
@@ -2014,7 +2015,8 @@ async fn snapshot_get_page_response_shape() {
         "page".into(),
         "Root".into(),
         None,
-        Some(1),
+        // #400: 0-based slot 0 ⇒ first root page ⇒ dense `position` 1.
+        Some(0),
     )
     .await
     .unwrap();
@@ -2025,7 +2027,8 @@ async fn snapshot_get_page_response_shape() {
         "content".into(),
         "child".into(),
         Some(page.id.clone()),
-        Some(1),
+        // #400: 0-based slot 0 ⇒ sole first child ⇒ dense `position` 1.
+        Some(0),
     )
     .await
     .unwrap();
@@ -2060,7 +2063,8 @@ async fn snapshot_search_response_shape() {
         "content".into(),
         "findme please".into(),
         None,
-        Some(1),
+        // #400: 0-based slot 0 ⇒ sole first child ⇒ dense `position` 1.
+        Some(0),
     )
     .await
     .unwrap();
@@ -2091,7 +2095,9 @@ async fn snapshot_get_block_response_shape() {
         "content".into(),
         "text".into(),
         None,
-        Some(1),
+        // #400: `index` is now a 0-based sibling slot; slot 0 ⇒ sole first
+        // child ⇒ dense 1-based `position` 1.
+        Some(0),
     )
     .await
     .unwrap();
@@ -2189,7 +2195,8 @@ async fn snapshot_get_agenda_response_shape() {
         "content".into(),
         "recurring".into(),
         None,
-        Some(1),
+        // #400: 0-based slot 0 ⇒ sole first child ⇒ dense `position` 1.
+        Some(0),
     )
     .await
     .unwrap();

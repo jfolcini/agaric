@@ -555,7 +555,10 @@ mod tests {
         assert_eq!(row.1, "content");
         assert_eq!(row.2, "from-A");
         assert_eq!(row.3, None);
-        assert_eq!(row.4, 7);
+        // #400: the engine maps the legacy sparse position 7 to a sibling slot
+        // and the materializer reprojects the authoritative DENSE 1-based rank.
+        // BLOCK_A is the sole root child, so its rank is 1.
+        assert_eq!(row.4, 1);
     }
 
     /// PEND-76 F1 regression (end-to-end): an inbound sync that

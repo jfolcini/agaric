@@ -1557,34 +1557,50 @@ async fn apply_create_block_via_loro(
     // Acquire engine guard, apply, read-back, drop guard.  The guard
     // is `!Send` so it cannot live across an `.await` — we keep all
     // engine work inside this sync block.
-    let snapshot: BlockSnapshot = {
+    let (snapshot, siblings): (BlockSnapshot, Vec<String>) = {
         let Some(state) = crate::loro::shared::get() else {
             return apply_create_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
-        let position = p.position.unwrap_or(0);
-        engine.apply_create_block(
-            p.block_id.as_str(),
-            &p.block_type,
-            &p.content,
-            parent,
-            position,
-        )?;
+        // #400 routing: new ops carry a 0-based `index`; pre-#400 ops carry the
+        // legacy sparse `position` (mapped to a slot by the engine); neither ⇒
+        // append at the end.
+        match p.index {
+            Some(index) => engine.apply_create_block_at(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent,
+                usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+            )?,
+            None => engine.apply_create_block(
+                p.block_id.as_str(),
+                &p.block_type,
+                &p.content,
+                parent,
+                p.position.unwrap_or(i64::MAX), // None ⇒ sort last (append)
+            )?,
+        }
         let snap_opt = engine.read_block(p.block_id.as_str())?;
+        // Authoritative sibling order for the dense-rank reprojection.
+        let siblings = engine.children_ordered_block_ids(parent)?;
         drop(guard);
-        snap_opt.ok_or_else(|| {
+        let snap = snap_opt.ok_or_else(|| {
             AppError::Validation(format!(
                 "apply_create_block_via_loro: engine read_block returned None \
                  immediately after apply_create_block for {}",
                 p.block_id.as_str()
             ))
-        })?
+        })?;
+        (snap, siblings)
     };
 
-    // Project the engine's post-apply state into SQL.
+    // Project the engine's post-apply state into SQL, then reproject the whole
+    // sibling group to dense 1-based positions matching the tree order (#400).
     projection::project_create_block_to_sql(conn, &snapshot).await?;
+    projection::reproject_dense_positions(conn, &siblings).await?;
 
     // Tag inheritance — derived tag rows for the new block.
     let parent_str = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
@@ -1748,26 +1764,47 @@ async fn apply_move_block_via_loro(
         return apply_move_block_sql_only(conn, p.clone()).await;
     };
 
-    let snapshot: BlockSnapshot = {
+    // `(snapshot, old_parent_siblings, new_parent_siblings)`. A move can change
+    // parent, so both the source and the target sibling groups need a dense
+    // reprojection (#400). The resulting parent may differ from the requested
+    // one (a cyclic/unknown-parent move keeps the current parent), so the
+    // authoritative new parent is the post-apply snapshot's `parent_id`.
+    let (snapshot, old_siblings, new_siblings): (BlockSnapshot, Vec<String>, Vec<String>) = {
         let Some(state) = crate::loro::shared::get() else {
             return apply_move_block_sql_only(conn, p.clone()).await;
         };
         let mut guard = state.registry.for_space(&space_id, device_id)?;
         let engine = guard.engine_mut();
         let new_parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
-        engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?;
+        let old_parent = engine.read_parent(p.block_id.as_str())?;
+        // #400 routing: new ops carry a 0-based `new_index`; pre-#400 ops carry
+        // the legacy sparse `new_position` (mapped to a slot by the engine).
+        match p.new_index {
+            Some(index) => engine.apply_move_block_to(
+                p.block_id.as_str(),
+                new_parent,
+                usize::try_from(index.max(0)).unwrap_or(usize::MAX),
+            )?,
+            None => engine.apply_move_block(p.block_id.as_str(), new_parent, p.new_position)?,
+        }
         let snap_opt = engine.read_block(p.block_id.as_str())?;
-        drop(guard);
-        snap_opt.ok_or_else(|| {
+        let snap = snap_opt.ok_or_else(|| {
             AppError::Validation(format!(
                 "apply_move_block_via_loro: engine read_block returned None for {} \
                  (a MoveBlock op presupposes the block exists)",
                 p.block_id.as_str()
             ))
-        })?
+        })?;
+        let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
+        let new_siblings = engine.children_ordered_block_ids(snap.parent_id.as_deref())?;
+        drop(guard);
+        (snap, old_siblings, new_siblings)
     };
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
+    // Reproject the source group first (it shrank), then the target group.
+    projection::reproject_dense_positions(conn, &old_siblings).await?;
+    projection::reproject_dense_positions(conn, &new_siblings).await?;
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
@@ -2151,6 +2188,9 @@ async fn apply_create_block_sql_only(
     let parent_id_str = p.parent_id.as_ref().map(|id| id.as_str().to_owned());
     let block_id_str = p.block_id.as_str();
     let parent_id_ref = parent_id_str.as_deref();
+    // #400: a new-scheme op carries a 0-based `index` and no legacy `position`;
+    // fall back to a 1-based position for this engine-less (test-only) path.
+    let position = p.position.or_else(|| p.index.map(|i| i + 1));
     sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
              (id, block_type, content, parent_id, position) \
@@ -2159,7 +2199,7 @@ async fn apply_create_block_sql_only(
         p.block_type,
         p.content,
         parent_id_ref,
-        p.position,
+        position,
     )
     .execute(&mut *conn)
     .await?;
@@ -2273,10 +2313,13 @@ async fn apply_move_block_sql_only(
         }
     }
 
+    // #400: prefer the new-scheme 0-based `new_index` (as a 1-based position)
+    // on this engine-less (test-only) path; else the legacy `new_position`.
+    let position = p.new_index.map(|i| i + 1).unwrap_or(p.new_position);
     sqlx::query!(
         "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
         new_parent_ref,
-        p.new_position,
+        position,
         block_id_str,
     )
     .execute(&mut *conn)
@@ -3584,6 +3627,7 @@ mod engine_path_tests {
             block_type: "content".into(),
             parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             position: Some(7),
+            index: None,
             content: "loro-path content".into(),
         });
         let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
@@ -3607,7 +3651,10 @@ mod engine_path_tests {
         assert_eq!(row.0, "loro-path content");
         assert_eq!(row.1, "content");
         assert_eq!(row.2, Some(PAGE_ID.into()));
-        assert_eq!(row.3, 7);
+        // #400: the engine projects the authoritative DENSE 1-based rank from
+        // the fractional sibling order, not the legacy sparse `position`. This
+        // is the only child of PAGE_ID, so its dense rank is 1 (was 7).
+        assert_eq!(row.3, 1);
 
         // Engine actually saw the apply (proves the loro path ran).
         let state = crate::loro::shared::get().expect("Loro state present");
@@ -3623,7 +3670,9 @@ mod engine_path_tests {
             .expect("engine state has the block");
         drop(guard);
         assert_eq!(engine_snap.content, "loro-path content");
-        assert_eq!(engine_snap.position, 7);
+        // #400: the engine's projected position is the dense 1-based rank from
+        // the fractional sibling order; sole child of PAGE_ID ⇒ rank 1.
+        assert_eq!(engine_snap.position, 1);
 
         // Reset the flag for any other tests in this binary.  The
         // OnceLock-installed flag is process-global; tests that rely on
@@ -3648,6 +3697,7 @@ mod engine_path_tests {
             block_type: "content".into(),
             parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             position: Some(0),
+            index: None,
             content: "before-edit".into(),
         });
         let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
@@ -3737,6 +3787,7 @@ mod engine_path_tests {
             block_type: "page".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "page-content".into(),
         });
         let record = crate::op_log::append_local_op(pool, DEVICE_ID, create_page)
@@ -3756,6 +3807,7 @@ mod engine_path_tests {
             block_type: "content".into(),
             parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             position: Some(0),
+            index: None,
             content: "seed".into(),
         });
         let record = crate::op_log::append_local_op(pool, DEVICE_ID, create_payload)
@@ -3857,6 +3909,7 @@ mod engine_path_tests {
                 block_type: "content".into(),
                 parent_id: Some(BlockId::from_trusted(BLOCK_ID)),
                 position: Some(0),
+                index: None,
                 content: "child".into(),
             });
             let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_child)
@@ -3929,6 +3982,7 @@ mod engine_path_tests {
             block_id: BlockId::from_trusted(BLOCK_ID),
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 42,
+            new_index: None,
         });
         let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
@@ -3946,7 +4000,10 @@ mod engine_path_tests {
                 .await
                 .expect("fetch row");
         assert_eq!(row.0.as_deref(), Some(PAGE_ID));
-        assert_eq!(row.1, 42);
+        // #400: the engine projects the authoritative DENSE 1-based rank from
+        // the fractional sibling order, not the legacy sparse `new_position`.
+        // The moved block is the only child of PAGE_ID ⇒ dense rank 1 (was 42).
+        assert_eq!(row.1, 1);
 
         // Engine sees the move.
         let state = crate::loro::shared::get().expect("Loro state");
@@ -3962,7 +4019,9 @@ mod engine_path_tests {
             .expect("engine has block");
         drop(guard);
         assert_eq!(engine_snap.parent_id.as_deref(), Some(PAGE_ID));
-        assert_eq!(engine_snap.position, 42);
+        // #400: the engine's projected position is the dense 1-based rank from
+        // the fractional sibling order; sole child of PAGE_ID ⇒ rank 1.
+        assert_eq!(engine_snap.position, 1);
     }
 
     // -----------------------------------------------------------------
@@ -4106,6 +4165,7 @@ mod engine_path_tests {
             block_type: "tag".into(),
             parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             position: Some(1),
+            index: None,
             content: "tag-Y".into(),
         });
         let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
@@ -4173,6 +4233,7 @@ mod engine_path_tests {
             block_type: "tag".into(),
             parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             position: Some(1),
+            index: None,
             content: "tag-Z".into(),
         });
         let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
@@ -4422,6 +4483,7 @@ mod move_sql_only_cycle_tests {
                 block_id: BlockId::from_trusted(A),
                 new_parent_id: Some(BlockId::from_trusted(B)),
                 new_position: 1,
+                new_index: None,
             },
         )
         .await
@@ -4471,6 +4533,7 @@ mod move_sql_only_cycle_tests {
                 block_id: BlockId::from_trusted(A),
                 new_parent_id: Some(BlockId::from_trusted(B)),
                 new_position: 3,
+                new_index: None,
             },
         )
         .await

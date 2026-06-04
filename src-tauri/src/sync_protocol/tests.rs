@@ -27,6 +27,7 @@ fn test_create_payload(block_id: &str) -> OpPayload {
         block_type: "content".into(),
         parent_id: None,
         position: Some(0),
+        index: None,
         content: "test".into(),
     })
 }
@@ -1725,7 +1726,9 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
     assert_eq!(row.1, "content");
     assert_eq!(row.2, "from-A");
     assert_eq!(row.3, None);
-    assert_eq!(row.4, 7);
+    // #400: the legacy sparse position 7 is mapped to a sibling slot by the
+    // engine and reprojected to the DENSE 1-based rank. Sole root child ⇒ 1.
+    assert_eq!(row.4, 1);
 
     materializer_b.shutdown();
 }
@@ -1893,8 +1896,10 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
 
     // ── Engine convergence — every seeded block readable on B with
     // the original (block_type, content, parent_id, position).
+    // #400: positions are DENSE 1-based ranks among siblings. blk_x1 and blk_x3
+    // are root children (ranks 1, 2); blk_x2 is blk_x1's sole child (rank 1).
     let expected_x: &[(&str, &str, &str, Option<&str>, i64)] = &[
-        (blk_x1, "content", "x-one", None, 0),
+        (blk_x1, "content", "x-one", None, 1),
         (blk_x2, "content", "x-two", Some(blk_x1), 1),
         (blk_x3, "page", "x-three", None, 2),
     ];
@@ -1920,9 +1925,10 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
         }
     }
 
+    // #400: DENSE 1-based ranks — blk_y1, blk_y2 are root children ⇒ 1, 2.
     let expected_y: &[(&str, &str, &str, Option<&str>, i64)] = &[
-        (blk_y1, "content", "y-one", None, 0),
-        (blk_y2, "content", "y-two", None, 1),
+        (blk_y1, "content", "y-one", None, 1),
+        (blk_y2, "content", "y-two", None, 2),
     ];
     {
         let mut g = registry_b
@@ -2121,7 +2127,8 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .expect("Y visible after update");
         assert_eq!(snap_x.content, "x-content");
         assert_eq!(snap_y.content, "y-content");
-        assert_eq!(snap_y.position, 1);
+        // #400: DENSE 1-based rank — Y is the second root child ⇒ 2.
+        assert_eq!(snap_y.position, 2);
     }
 
     // ── SQL on B has both rows.
@@ -2257,8 +2264,12 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
             .unwrap_or_else(|| panic!("{label}: Y visible"));
         assert_eq!(snap_x.content, "from-A", "{label}: X content");
         assert_eq!(snap_y.content, "from-B", "{label}: Y content");
-        assert_eq!(snap_x.position, 0, "{label}: X position");
+        // #400: positions are DENSE 1-based ranks. X (created at slot 0 on A)
+        // and Y (slot 1 on B) are concurrent disjoint root creates; the CRDT
+        // merge converges to a deterministic sibling order with Y before X on
+        // both peers, so Y is rank 1 and X is rank 2.
         assert_eq!(snap_y.position, 1, "{label}: Y position");
+        assert_eq!(snap_x.position, 2, "{label}: X position");
 
         // SQL projection on each side mirrors the engine state.
         let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id IN (?, ?)")

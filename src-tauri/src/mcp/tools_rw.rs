@@ -390,6 +390,10 @@ async fn handle_append_block(
     // PEND-24 C2 — refuse cross-space writes at the MCP boundary
     // before opening the BEGIN IMMEDIATE in `create_block_inner`.
     validate_block_in_space(pool, &parent_id, &space_id).await?;
+    // #400: the MCP tool keeps its stable agent-facing **1-based** `position`
+    // contract; `create_block_inner` now takes a 0-based sibling `index`, so
+    // convert here (position 1 → index 0 = first child). `None` still appends.
+    let index = args.position.map(|p| (p - 1).max(0));
     let resp = create_block_inner(
         pool,
         device_id,
@@ -397,7 +401,7 @@ async fn handle_append_block(
         "content".to_string(),
         args.content,
         Some(parent_id.into()),
-        args.position,
+        index,
     )
     .await?;
     to_tool_result(&resp)

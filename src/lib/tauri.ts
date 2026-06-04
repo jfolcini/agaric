@@ -214,7 +214,8 @@ export async function createBlock(params: {
   blockType: string
   content: string
   parentId?: string | undefined
-  position?: number | undefined
+  /** #400: 0-based sibling slot among `parentId`'s children; omit to append. */
+  index?: number | undefined
   spaceId?: string | undefined
 }): Promise<BlockRow> {
   return unwrap(
@@ -222,7 +223,7 @@ export async function createBlock(params: {
       params.blockType,
       params.content,
       params.parentId ?? null,
-      params.position ?? null,
+      params.index ?? null,
       toSpaceScope(params.spaceId),
     ),
   )
@@ -690,13 +691,17 @@ export async function batchResolve(
   return unwrap(await commands.batchResolve(ids, toSpaceScope(spaceId)))
 }
 
-/** Move a block to a new parent and/or position. */
+/**
+ * Move a block under a new parent at a 0-based sibling slot (#400). `newIndex`
+ * is an insertion slot among the target parent's other children (0 = first /
+ * top); the backend derives the convergent fractional key from it.
+ */
 export async function moveBlock(
   blockId: string,
   newParentId: string | null,
-  newPosition: number,
+  newIndex: number,
 ): Promise<MoveResponse> {
-  return unwrap(await commands.moveBlock(blockId, newParentId, newPosition))
+  return unwrap(await commands.moveBlock(blockId, newParentId, newIndex))
 }
 
 /** Associate a tag with a block. */

@@ -12,7 +12,7 @@ export const commands = {
 	 *  (BUG-1 / H-3a). The optional `space_id` is required when
 	 *  `block_type == "page"` and ignored otherwise.
 	 */
-	createBlock: (blockType: string, content: string, parentId: string | null, position: number | null, scope: SpaceScope) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, position, scope })),
+	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope) => typedError<BlockRow, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope })),
 	/**
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].
@@ -58,8 +58,12 @@ export const commands = {
 	 *  Delegates to [`purge_blocks_by_ids_inner`].
 	 */
 	purgeBlocksByIds: (blockIds: BlockId[]) => typedError<BulkTrashResponse, AppError>(__TAURI_INVOKE("purge_blocks_by_ids", { blockIds })),
-	/**  Tauri command: move a block to a new parent at a given position. Delegates to [`move_block_inner`]. */
-	moveBlock: (blockId: string, newParentId: string | null, newPosition: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newPosition })),
+	/**
+	 *  Tauri command: move a block under a new parent at a 0-based sibling slot
+	 *  (#400). `new_index` is an insertion slot among the target parent's other
+	 *  children; slot 0 is "first child" / "top". Delegates to [`move_block_inner`].
+	 */
+	moveBlock: (blockId: string, newParentId: string | null, newIndex: number) => typedError<MoveResponse, AppError>(__TAURI_INVOKE("move_block", { blockId, newParentId, newIndex })),
 	/**
 	 *  Tauri command: list blocks with filtering and pagination. Delegates to [`list_blocks_inner`].
 	 *
@@ -1083,8 +1087,9 @@ export type CreateBlockSpec = {
 	 */
 	parentId: BlockId | null,
 	/**
-	 *  Optional 1-based position. When `None`, the backend appends after
-	 *  the last sibling (same convention as `create_block_inner`).
+	 *  Optional 1-based sibling position (stable wire field). `None` appends
+	 *  after the last sibling. #400: converted to the engine's 0-based sibling
+	 *  `index` at the call site (position 1 → index 0).
 	 */
 	position: number | null,
 	/**

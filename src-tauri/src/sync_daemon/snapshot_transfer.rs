@@ -661,6 +661,7 @@ mod tests {
             content: "hello".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
         });
         let record = append_local_op(pool, device_id, payload).await.unwrap();
         materializer.dispatch_op(&record).await.unwrap();
@@ -677,6 +678,7 @@ mod tests {
             content: "hello".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
         });
         append_local_op(pool, device_id, payload).await.unwrap();
     }

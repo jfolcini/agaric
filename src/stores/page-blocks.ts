@@ -27,12 +27,7 @@ import { createStore, type StoreApi, useStore } from 'zustand'
 
 import { notify } from '@/lib/notify'
 
-import {
-  computeIndentedBlocks,
-  findPrevSiblingAt,
-  midpointPosition,
-  planSplit,
-} from '../lib/block-tree-ops'
+import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/block-tree-ops'
 import { i18n } from '../lib/i18n'
 import { logger } from '../lib/logger'
 import type { BlockRow } from '../lib/tauri'
@@ -81,11 +76,18 @@ export interface PageBlockState {
    */
   splitBlock: (blockId: string, markdown: string) => Promise<void>
 
-  /** Reorder: move block to a new index within its sibling list. */
+  /**
+   * Reorder: move block to a 0-based sibling slot (#400). `newIndex` is an
+   * insertion slot among the block's same-parent siblings (0 = first / top).
+   * Applies an optimistic local splice — no `load()` (R5 / #404).
+   */
   reorder: (blockId: string, newIndex: number) => Promise<void>
 
-  /** Move block to a new parent + position (used by tree DnD). */
-  moveToParent: (blockId: string, newParentId: string | null, newPosition: number) => Promise<void>
+  /**
+   * Move block under a new parent at a 0-based sibling slot (#400). Structural,
+   * so it reloads the tree (`load()`).
+   */
+  moveToParent: (blockId: string, newParentId: string | null, newIndex: number) => Promise<void>
 
   /**
    * Indent: make block a child of its previous sibling (same depth).
@@ -119,36 +121,21 @@ function notifyUndoNewAction(rootParentId: string | null): void {
 }
 
 /**
- * Derive the target `position` value for a reorder operation in the flat tree.
+ * #400 — compute the 0-based sibling slot of a block among its same-parent
+ * siblings (excluding the block itself), reading the current flat-tree order.
  *
- * - Moving down (newIndex > oldIndex): position sits between `blocks[newIndex]`
- *   and `blocks[newIndex + 1]`; if the target is at the tail, extend past the
- *   last sibling.
- * - Moving up (newIndex <= oldIndex): position sits between
- *   `blocks[newIndex - 1]` and `blocks[newIndex]`; if the target is index 0,
- *   step before the first sibling.
+ * The slot is the index the block currently occupies in the ordered list of
+ * its siblings. Callers use it to derive the target slot for a sibling-swap
+ * (moveUp = slot - 1; moveDown = slot + 1 once the block has vacated its own
+ * slot) without any `position`-integer arithmetic — the backend assigns the
+ * dense rank from the slot.
  */
-function computeReorderPosition(
-  blocks: FlatBlock[],
-  oldIndex: number,
-  newIndex: number,
-  firstSiblingPos: number,
-  lastSiblingPos: number,
-): number {
-  if (newIndex > oldIndex) {
-    if (newIndex >= blocks.length - 1) {
-      return lastSiblingPos + 1
-    }
-    const beforePos = blocks[newIndex]?.position ?? 0
-    const afterPos = blocks[newIndex + 1]?.position ?? 0
-    return midpointPosition(beforePos, afterPos)
-  }
-  if (newIndex === 0) {
-    return firstSiblingPos - 1
-  }
-  const beforePos = blocks[newIndex - 1]?.position ?? 0
-  const afterPos = blocks[newIndex]?.position ?? 0
-  return midpointPosition(beforePos, afterPos)
+function siblingSlot(blocks: FlatBlock[], block: FlatBlock): number {
+  const parentId = block.parent_id ?? null
+  const siblings = blocks.filter(
+    (b) => (b.parent_id ?? null) === parentId && b.depth === block.depth,
+  )
+  return siblings.findIndex((b) => b.id === block.id)
 }
 
 // ── blocksById helpers (PEND-20 G) ───────────────────────────────────────
@@ -302,12 +289,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const afterBlock = blocks[idx]
       if (!afterBlock) return null
 
+      // #400: insert at the slot right after `afterBlock` among its siblings.
+      const afterSlot = siblingSlot(blocks, afterBlock)
+
       try {
         const result = await createBlock({
           blockType: 'content',
           content,
           ...(afterBlock.parent_id != null && { parentId: afterBlock.parent_id }),
-          position: (afterBlock.position ?? 0) + 1,
+          index: afterSlot + 1,
         })
 
         // Insert the new block into the local array at the right position.
@@ -473,43 +463,77 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
     reorder: async (blockId: string, newIndex: number) => {
       const { blocks, rootParentId } = get()
-      const oldIndex = blocks.findIndex((b) => b.id === blockId)
-      if (oldIndex < 0 || oldIndex === newIndex) return
-
-      const block = blocks[oldIndex]
+      const block = blocks.find((b) => b.id === blockId)
       if (!block) return
       const parentId = block.parent_id
 
-      const siblings = blocks.filter(
-        (b) => b.id !== blockId && (b.parent_id ?? null) === (parentId ?? null),
-      )
-      const lastSiblingPos =
-        siblings.length > 0 ? (siblings[siblings.length - 1]?.position ?? 0) : 0
-      const firstSiblingPos = siblings.length > 0 ? (siblings[0]?.position ?? 0) : 0
-
-      const newPosition = computeReorderPosition(
-        blocks,
-        oldIndex,
-        newIndex,
-        firstSiblingPos,
-        lastSiblingPos,
-      )
+      // #400: `newIndex` is a 0-based sibling slot among the block's OTHER
+      // same-parent children. A reorder to the block's current slot is a no-op.
+      const currentSlot = siblingSlot(blocks, block)
+      if (newIndex === currentSlot) return
 
       try {
-        await moveBlock(blockId, parentId, newPosition)
-        const newBlocks = [...blocks]
-        const [moved] = newBlocks.splice(oldIndex, 1)
-        const movedNext: FlatBlock = {
-          ...(moved as FlatBlock),
-          position: newPosition,
+        // R5 (#404): same-parent reorder applies an OPTIMISTIC local splice and
+        // does NOT call load(). The backend assigns the dense rank from the
+        // slot; we mirror the resulting sibling order locally.
+        const resp = await moveBlock(blockId, parentId, newIndex)
+
+        // Defensive: a reorder never crosses parents. If the backend echoes a
+        // different parent, fall back to a structural reload.
+        if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
+          await get().load()
+          notifyUndoNewAction(rootParentId)
+          return
         }
-        newBlocks.splice(newIndex, 0, movedNext)
-        // Single-block reorder (perf invariant): only the moved block's
-        // reference changed; the remaining `n - 1` entries are identical and
-        // can be reused from the previous Map.
+
+        // Splice the moved subtree to its new slot among the siblings in the
+        // flat tree. Build moved + remaining, then locate the insertion anchor
+        // from the target sibling slot.
+        const descendants = getDragDescendants(blocks, blockId)
+        const movedSet = new Set([blockId, ...descendants])
+        const movedItems = blocks
+          .filter((b) => movedSet.has(b.id))
+          .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+        const remaining = blocks.filter((b) => !movedSet.has(b.id))
+
+        // The flat index in `remaining` of the (newIndex)-th same-parent
+        // sibling; if newIndex is past the last sibling, insert after the last
+        // sibling's subtree. parentDepth+1 is the sibling depth.
+        const siblingsRemaining = remaining.filter(
+          (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
+        )
+        let insertAt: number
+        if (newIndex >= siblingsRemaining.length) {
+          const lastSib = siblingsRemaining[siblingsRemaining.length - 1]
+          if (lastSib) {
+            const lastSibDesc = getDragDescendants(remaining, lastSib.id)
+            insertAt = remaining.findIndex((b) => b.id === lastSib.id) + 1
+            while (
+              insertAt < remaining.length &&
+              lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
+            ) {
+              insertAt++
+            }
+          } else {
+            // No remaining siblings — insert right after the parent, or at the
+            // start of the list when at root level.
+            insertAt = parentId == null ? 0 : remaining.findIndex((b) => b.id === parentId) + 1
+          }
+        } else {
+          const anchor = siblingsRemaining[newIndex] as FlatBlock
+          insertAt = remaining.findIndex((b) => b.id === anchor.id)
+        }
+
+        const newBlocks = [...remaining]
+        newBlocks.splice(insertAt, 0, ...movedItems)
+        // Subtree-touch (perf invariant): only the moved block's `position`
+        // field changed; descendants are reused as-is.
         set((state) => ({
           blocks: newBlocks,
-          blocksById: cloneBlocksByIdWith(state.blocksById, [movedNext]),
+          blocksById: cloneBlocksByIdWith(
+            state.blocksById,
+            movedItems.filter((b) => b.id === blockId),
+          ),
         }))
         notifyUndoNewAction(rootParentId)
       } catch (err) {
@@ -518,10 +542,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       }
     },
 
-    moveToParent: async (blockId: string, newParentId: string | null, newPosition: number) => {
+    moveToParent: async (blockId: string, newParentId: string | null, newIndex: number) => {
       const { rootParentId } = get()
       try {
-        await moveBlock(blockId, newParentId, newPosition)
+        await moveBlock(blockId, newParentId, newIndex)
         // Reload the full tree to get the correct flattened order.
         await get().load()
         notifyUndoNewAction(rootParentId)
@@ -545,8 +569,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       const prevSibling = findPrevSiblingAt(blocks, idx)
       if (!prevSibling) return false
 
+      // #400: indent makes the block the LAST child of the previous sibling —
+      // its slot is the prev sibling's current child count (append).
+      const prevChildCount = blocks.filter((b) => (b.parent_id ?? null) === prevSibling.id).length
+
       try {
-        await moveBlock(blockId, prevSibling.id, 1)
+        await moveBlock(blockId, prevSibling.id, prevChildCount)
         const newBlocks = computeIndentedBlocks(blocks, blockId, prevSibling)
         // Subtree-touch (perf invariant): only the indented block and its
         // descendants got new references; reuse the rest of the prior Map.
@@ -575,9 +603,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (!parent) return false
 
       const newParentId = parent.parent_id
-      const newPosition = (parent.position ?? 0) + 1
+      // #400: dedent places the block right AFTER its parent among the
+      // grandparent's children → slot = parent's sibling slot + 1.
+      const newIndex = siblingSlot(blocks, parent) + 1
       try {
-        await moveBlock(blockId, newParentId, newPosition)
+        const resp = await moveBlock(blockId, newParentId, newIndex)
 
         const descendantIds = getDragDescendants(blocks, blockId)
         const movedSet = new Set([blockId, ...descendantIds])
@@ -587,7 +617,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           .map((b) => ({
             ...b,
             depth: b.depth - 1,
-            ...(b.id === blockId ? { parent_id: newParentId, position: newPosition } : {}),
+            ...(b.id === blockId ? { parent_id: newParentId, position: resp.new_position } : {}),
           }))
 
         const remaining = blocks.filter((b) => !movedSet.has(b.id))
@@ -629,15 +659,17 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (sibIndex <= 0) return false
 
       const prevSibling = siblings[sibIndex - 1] as FlatBlock
-      const newPosition = (prevSibling.position ?? 0) - 1
+      // #400: target slot is the previous sibling's slot (sibIndex - 1) among
+      // the OTHER children — moving up swaps with the previous sibling.
+      const newIndex = sibIndex - 1
 
       try {
         // PEND-35 Tier 4.1 — splice locally instead of full re-list.
         // The MoveResponse echoes the canonical (parent_id, position) the
-        // backend committed, so we can mirror the `reorder` path at :432-441
+        // backend committed, so we can mirror the `reorder` path
         // without a follow-up `list_blocks` IPC. Same-parent only — moveUp
         // never crosses parents (it walks the sibling list at fixed depth).
-        const resp = await moveBlock(blockId, parentId, newPosition)
+        const resp = await moveBlock(blockId, parentId, newIndex)
 
         // Defensive: if the backend echoes a different parent (shouldn't
         // happen for moveUp, but the response shape allows it), fall back
@@ -700,12 +732,16 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (sibIndex < 0 || sibIndex >= siblings.length - 1) return false
 
       const nextSibling = siblings[sibIndex + 1] as FlatBlock
-      const newPosition = (nextSibling.position ?? 0) + 1
+      // #400: moving down swaps with the next sibling. `newIndex` is a slot
+      // among the OTHER children (block excluded): once the block vacates slot
+      // `sibIndex`, the next sibling slides to `sibIndex`, so landing AFTER it
+      // is slot `sibIndex + 1`.
+      const newIndex = sibIndex + 1
 
       try {
         // PEND-35 Tier 4.1 — splice locally instead of full re-list.
         // See moveUp comment for rationale; same-parent reorder only.
-        const resp = await moveBlock(blockId, parentId, newPosition)
+        const resp = await moveBlock(blockId, parentId, newIndex)
 
         if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
           await get().load()
