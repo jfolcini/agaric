@@ -27,6 +27,30 @@ function scrollFocusedBlockIntoView(blockId: string): void {
   })
 }
 
+/**
+ * R6 (#405): announce a move's REAL outcome once the store action resolves.
+ * The store resolves `true` on a committed move and `false` on a no-op
+ * (boundary reached) or a caught backend error (which also toasts). Announcing
+ * synchronously before the promise settled meant assistive tech reported a
+ * phantom "moved" even when nothing changed. Runs `onSuccess` (e.g. scroll)
+ * only on a real move.
+ */
+function announceMoveResult(
+  result: Promise<boolean>,
+  t: TFunction,
+  successKey: string,
+  onSuccess?: () => void,
+): Promise<void> {
+  return result
+    .then((ok) => {
+      announce(t(ok ? successKey : 'announce.moveFailed'))
+      if (ok) onSuccess?.()
+    })
+    .catch(() => {
+      announce(t('announce.moveFailed'))
+    })
+}
+
 export interface UseBlockKeyboardHandlersParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
@@ -35,10 +59,10 @@ export interface UseBlockKeyboardHandlersParams {
   handleFlush: () => string | null
   remove: (id: string) => Promise<void>
   edit: (id: string, content: string) => Promise<void>
-  indent: (id: string) => Promise<void>
-  dedent: (id: string) => Promise<void>
-  moveUp: (id: string) => Promise<void>
-  moveDown: (id: string) => Promise<void>
+  indent: (id: string) => Promise<boolean>
+  dedent: (id: string) => Promise<boolean>
+  moveUp: (id: string) => Promise<boolean>
+  moveDown: (id: string) => Promise<boolean>
   createBelow: (afterBlockId: string) => Promise<string | null>
   justCreatedBlockIds: RefObject<Set<string>>
   /** Discard any persisted draft for the given block (called on Escape). */
@@ -149,20 +173,23 @@ export function useBlockKeyboardHandlers({
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return
+    const blockId = focusedBlockId
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
-    indent(focusedBlockId)
-    rovingEditorRef.current.mount(focusedBlockId, content)
-    announce(t('announce.blockIndented'))
+    // R6 (#405): announce on RESOLUTION so assistive tech reports the real
+    // outcome — a no-op (already at outermost level) or a backend rejection
+    // must not announce a phantom "indented".
+    void announceMoveResult(indent(blockId), t, 'announce.blockIndented')
+    rovingEditorRef.current.mount(blockId, content)
   }, [focusedBlockId, handleFlush, indent, t])
 
   const handleDedent = useCallback(() => {
     if (!focusedBlockId) return
+    const blockId = focusedBlockId
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
-    dedent(focusedBlockId)
-    rovingEditorRef.current.mount(focusedBlockId, content)
-    announce(t('announce.blockDedented'))
+    void announceMoveResult(dedent(blockId), t, 'announce.blockDedented')
+    rovingEditorRef.current.mount(blockId, content)
   }, [focusedBlockId, handleFlush, dedent, t])
 
   const handleMoveUp = useCallback(() => {
@@ -170,13 +197,12 @@ export function useBlockKeyboardHandlers({
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     const blockId = focusedBlockId
-    moveUp(blockId)
-      .then(() => scrollFocusedBlockIntoView(blockId))
-      .catch((err: unknown) => {
-        logger.warn('useBlockKeyboardHandlers', 'moveUp failed', { blockId }, err)
-      })
+    // R6 (#405): announce + scroll on RESOLUTION — a boundary no-op or backend
+    // rejection must not announce a phantom "moved up".
+    void announceMoveResult(moveUp(blockId), t, 'announce.blockMovedUp', () =>
+      scrollFocusedBlockIntoView(blockId),
+    )
     rovingEditorRef.current.mount(blockId, content)
-    announce(t('announce.blockMovedUp'))
   }, [focusedBlockId, handleFlush, moveUp, t])
 
   const handleMoveDown = useCallback(() => {
@@ -184,13 +210,10 @@ export function useBlockKeyboardHandlers({
     const content = rovingEditorRef.current.getMarkdown?.() ?? ''
     handleFlush()
     const blockId = focusedBlockId
-    moveDown(blockId)
-      .then(() => scrollFocusedBlockIntoView(blockId))
-      .catch((err: unknown) => {
-        logger.warn('useBlockKeyboardHandlers', 'moveDown failed', { blockId }, err)
-      })
+    void announceMoveResult(moveDown(blockId), t, 'announce.blockMovedDown', () =>
+      scrollFocusedBlockIntoView(blockId),
+    )
     rovingEditorRef.current.mount(blockId, content)
-    announce(t('announce.blockMovedDown'))
   }, [focusedBlockId, handleFlush, moveDown, t])
 
   const handleMoveUpById = useCallback(
