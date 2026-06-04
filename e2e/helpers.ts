@@ -498,6 +498,56 @@ export async function dragBlock(page: Page, source: Locator, target: Locator): P
 }
 
 /**
+ * Drag a block handle to a target row while ALSO applying a horizontal offset
+ * at the end — exercises drag-to-indent / drag-to-dedent (dnd-kit interprets
+ * the horizontal delta as a depth change via `getProjection`).
+ *
+ * `offsetX` is the final horizontal pixel delta from the source X. Use a
+ * positive value to indent (nest deeper) and a negative value to dedent. To
+ * indent a block under its previous sibling WITHOUT reordering, pass the
+ * block's own row as `target` so the drag stays "over" itself and only the
+ * horizontal offset changes the projected depth.
+ */
+export async function dragBlockWithOffset(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  offsetX: number,
+): Promise<void> {
+  const sourceBox = await source.boundingBox()
+  const targetBox = await target.boundingBox()
+  if (!sourceBox || !targetBox)
+    throw new Error('Could not get bounding boxes for drag source/target')
+
+  const sx = sourceBox.x + sourceBox.width / 2
+  const sy = sourceBox.y + sourceBox.height / 2
+  const ty = targetBox.y + targetBox.height / 2
+
+  await page.mouse.move(sx, sy)
+  await page.mouse.down()
+  await page.waitForTimeout(DND_ACTIVATION_DELAY_MS)
+
+  // Phase 1: move vertically to the target row (no horizontal drift, so the
+  // projected depth stays put until we deliberately push sideways).
+  const steps = 20
+  for (let i = 1; i <= steps; i++) {
+    const y = sy + (ty - sy) * (i / steps)
+    await page.mouse.move(sx, y)
+    if (i % 5 === 0) await page.waitForTimeout(50)
+  }
+
+  // Phase 2: apply the horizontal offset for indent/dedent projection.
+  for (let i = 1; i <= steps; i++) {
+    const x = sx + offsetX * (i / steps)
+    await page.mouse.move(x, ty)
+    if (i % 5 === 0) await page.waitForTimeout(50)
+  }
+
+  await page.waitForTimeout(150)
+  await page.mouse.up()
+}
+
+/**
  * Type a slash command filter inside the currently focused editor.
  * Moves to end of line, types ` /` + waits for the suggestion list to
  * appear, then types the query. Splitting the keystrokes around the
