@@ -61,37 +61,44 @@ export function BlockDatePicker({
         <DialogTitle className="sr-only">{t('journal.datePickerLabel')}</DialogTitle>
         <DialogDescription className="sr-only">{t('dateChip.placeholder')}</DialogDescription>
         <DialogBody>
-          <div className="pb-2">
-            <div className="flex items-center gap-2">
-              <Input
-                type="text"
-                className="flex-1"
-                placeholder={t('dateChip.placeholder')}
-                value={dateTextInput}
-                onChange={(e) => {
-                  setDateTextInput(e.target.value)
-                  const parsed = parseDate(e.target.value)
-                  setDateTextPreview(parsed)
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && dateTextPreview) {
-                    e.preventDefault()
-                    handleDateSelected(dateTextPreview)
-                    setDateTextInput('')
-                    setDateTextPreview(null)
-                  }
-                }}
-                aria-label={t('journal.typeDateLabel')}
-                // oxlint-disable-next-line jsx-a11y/no-autofocus -- block date picker opens inside a Dialog; focus the natural-language date input on open so the user can type a date immediately
-                autoFocus
-              />
-            </div>
+          {/* `pr-7` reserves room for the Dialog's absolute top-right close
+              button so it never overlaps the input. */}
+          <div className="flex flex-col gap-1.5 pb-3 pr-7">
+            <span aria-hidden className="text-xs font-medium text-muted-foreground">
+              {t('journal.datePickerLabel')}
+            </span>
+            <Input
+              type="text"
+              // Tame the focus treatment: the default red `border-ring` + 3px
+              // `ring-ring/50` doubles up into something that reads as an error
+              // in the red theme (ring ≈ destructive). A soft border + a 2px
+              // low-opacity ring keeps a clear focus cue without the alarm.
+              className="w-full focus-visible:!border-ring/40 focus-visible:!ring-2 focus-visible:!ring-ring/30"
+              placeholder={t('dateChip.placeholder')}
+              value={dateTextInput}
+              onChange={(e) => {
+                setDateTextInput(e.target.value)
+                const parsed = parseDate(e.target.value)
+                setDateTextPreview(parsed)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && dateTextPreview) {
+                  e.preventDefault()
+                  handleDateSelected(dateTextPreview)
+                  setDateTextInput('')
+                  setDateTextPreview(null)
+                }
+              }}
+              aria-label={t('journal.typeDateLabel')}
+              // oxlint-disable-next-line jsx-a11y/no-autofocus -- block date picker opens inside a Dialog; focus the natural-language date input on open so the user can type a date immediately
+              autoFocus
+            />
             {dateTextInput && (
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="text-xs text-muted-foreground">
                 {dateTextPreview ? (
                   <>
-                    {t('datePicker.parsed')} <strong>{dateTextPreview}</strong> (
-                    {t('datePicker.pressEnter')})
+                    {t('datePicker.parsed')} <strong className="text-foreground">{dateTextPreview}</strong>{' '}
+                    ({t('datePicker.pressEnter')})
                   </>
                 ) : (
                   <span className="text-destructive">{t('property.dateParseError')}</span>
@@ -99,7 +106,21 @@ export function BlockDatePicker({
               </p>
             )}
           </div>
-          <Calendar mode="single" weekStartsOn={weekStartsOn} showOutsideDays onSelect={onSelect} />
+          <div className="flex justify-center border-t border-border/60 pt-1">
+            <Calendar
+              mode="single"
+              weekStartsOn={weekStartsOn}
+              showOutsideDays
+              onSelect={onSelect}
+              className="p-0"
+              classNames={{
+                // Calmer "today" marker — the shared default fills the cell with
+                // a pink accent + `ring-primary/50`, which clashes in the red
+                // theme. Use a subtle inset ring + primary-tinted numeral.
+                today: 'rounded-md font-semibold text-primary ring-1 ring-inset ring-primary/40',
+              }}
+            />
+          </div>
         </DialogBody>
       </DialogContent>
     </Dialog>
