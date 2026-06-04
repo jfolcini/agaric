@@ -87,15 +87,19 @@ export interface PageBlockState {
   /** Move block to a new parent + position (used by tree DnD). */
   moveToParent: (blockId: string, newParentId: string | null, newPosition: number) => Promise<void>
 
-  /** Indent: make block a child of its previous sibling (same depth). */
-  indent: (blockId: string) => Promise<void>
-  /** Dedent: move block up one level to grandparent. */
-  dedent: (blockId: string) => Promise<void>
+  /**
+   * Indent: make block a child of its previous sibling (same depth).
+   * Resolves `true` when the move committed, `false` on a no-op or a caught
+   * backend error (which also toasts) — so callers can announce accurately.
+   */
+  indent: (blockId: string) => Promise<boolean>
+  /** Dedent: move block up one level to grandparent. Returns success (see `indent`). */
+  dedent: (blockId: string) => Promise<boolean>
 
-  /** Move block up among its siblings (swap with previous sibling). */
-  moveUp: (blockId: string) => Promise<void>
-  /** Move block down among its siblings (swap with next sibling). */
-  moveDown: (blockId: string) => Promise<void>
+  /** Move block up among its siblings. Returns success (see `indent`). */
+  moveUp: (blockId: string) => Promise<boolean>
+  /** Move block down among its siblings. Returns success (see `indent`). */
+  moveDown: (blockId: string) => Promise<boolean>
 
   /**
    * PEND-35 Tier 4.2 — append a single backend-returned `BlockRow` to the
@@ -537,9 +541,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     indent: async (blockId: string) => {
       const { blocks, rootParentId } = get()
       const idx = blocks.findIndex((b) => b.id === blockId)
-      if (idx <= 0) return
+      if (idx <= 0) return false
       const prevSibling = findPrevSiblingAt(blocks, idx)
-      if (!prevSibling) return
+      if (!prevSibling) return false
 
       try {
         await moveBlock(blockId, prevSibling.id, 1)
@@ -554,19 +558,21 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           blocksById: cloneBlocksByIdWith(state.blocksById, touched),
         }))
         notifyUndoNewAction(rootParentId)
+        return true
       } catch (err) {
         logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
         notify.error(i18n.t('error.indentBlockFailed'))
+        return false
       }
     },
 
     dedent: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)
-      if (!block?.parent_id) return
+      if (!block?.parent_id) return false
 
       const parent = blocksById.get(block.parent_id)
-      if (!parent) return
+      if (!parent) return false
 
       const newParentId = parent.parent_id
       const newPosition = (parent.position ?? 0) + 1
@@ -601,16 +607,18 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           blocksById: cloneBlocksByIdWith(state.blocksById, movedItems),
         }))
         notifyUndoNewAction(rootParentId)
+        return true
       } catch (err) {
         logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
         notify.error(i18n.t('error.dedentBlockFailed'))
+        return false
       }
     },
 
     moveUp: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)
-      if (!block) return
+      if (!block) return false
 
       const parentId = block.parent_id
 
@@ -618,7 +626,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
       )
       const sibIndex = siblings.findIndex((b) => b.id === blockId)
-      if (sibIndex <= 0) return
+      if (sibIndex <= 0) return false
 
       const prevSibling = siblings[sibIndex - 1] as FlatBlock
       const newPosition = (prevSibling.position ?? 0) - 1
@@ -669,9 +677,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           }
         }
         notifyUndoNewAction(rootParentId)
+        return true
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
         notify.error(i18n.t('error.moveBlockUpFailed'))
+        return false
       }
     },
 
@@ -679,7 +689,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     moveDown: async (blockId: string) => {
       const { blocks, blocksById, rootParentId } = get()
       const block = blocksById.get(blockId)
-      if (!block) return
+      if (!block) return false
 
       const parentId = block.parent_id
 
@@ -687,7 +697,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
       )
       const sibIndex = siblings.findIndex((b) => b.id === blockId)
-      if (sibIndex < 0 || sibIndex >= siblings.length - 1) return
+      if (sibIndex < 0 || sibIndex >= siblings.length - 1) return false
 
       const nextSibling = siblings[sibIndex + 1] as FlatBlock
       const newPosition = (nextSibling.position ?? 0) + 1
@@ -736,9 +746,11 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           }
         }
         notifyUndoNewAction(rootParentId)
+        return true
       } catch (err) {
         logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
         notify.error(i18n.t('error.moveBlockDownFailed'))
+        return false
       }
     },
 

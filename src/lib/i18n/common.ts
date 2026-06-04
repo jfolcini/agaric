@@ -110,6 +110,9 @@ export const common: Record<string, string> = {
   'announce.blockCreated': 'Block created',
   'announce.blockMovedUp': 'Block moved up',
   'announce.blockMovedDown': 'Block moved down',
+  // R6 (#405): announced when a move/indent fails so assistive tech does not
+  // report a phantom success. Paired with the toast in the store action.
+  'announce.moveFailed': 'Move failed',
   'announce.blockCollapsed': 'Block collapsed',
   'announce.blockExpanded': 'Block expanded',
   'announce.taskState': 'Task state: {{state}}',

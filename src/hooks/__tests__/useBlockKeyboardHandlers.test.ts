@@ -47,10 +47,10 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     handleFlush: vi.fn(() => null as string | null),
     remove: vi.fn(async () => {}),
     edit: vi.fn(async () => {}),
-    indent: vi.fn(async () => {}),
-    dedent: vi.fn(async () => {}),
-    moveUp: vi.fn(async () => {}),
-    moveDown: vi.fn(async () => {}),
+    indent: vi.fn(async () => true),
+    dedent: vi.fn(async () => true),
+    moveUp: vi.fn(async () => true),
+    moveDown: vi.fn(async () => true),
     createBelow: vi.fn(async () => 'NEW_1' as string | null),
     justCreatedBlockIds: { current: new Set<string>() },
     discardDraft: vi.fn(),
@@ -231,11 +231,13 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 })
 
 describe('useBlockKeyboardHandlers handleIndent', () => {
-  it('flushes and indents focused block', () => {
+  it('flushes and indents focused block', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
 
-    act(() => {
+    // R6 (#405): announce now fires on the action's resolution, so flush
+    // microtasks (await act) before asserting the SR announcement.
+    await act(async () => {
       result.current.handleIndent()
     })
 
@@ -257,11 +259,11 @@ describe('useBlockKeyboardHandlers handleIndent', () => {
 })
 
 describe('useBlockKeyboardHandlers handleDedent', () => {
-  it('flushes and dedents focused block', () => {
+  it('flushes and dedents focused block', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
 
-    act(() => {
+    await act(async () => {
       result.current.handleDedent()
     })
 
@@ -272,11 +274,11 @@ describe('useBlockKeyboardHandlers handleDedent', () => {
 })
 
 describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
-  it('flushes and moves block up', () => {
+  it('flushes and moves block up', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
 
-    act(() => {
+    await act(async () => {
       result.current.handleMoveUp()
     })
 
@@ -285,11 +287,11 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
     expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedUp')
   })
 
-  it('flushes and moves block down', () => {
+  it('flushes and moves block down', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockKeyboardHandlers(params))
 
-    act(() => {
+    await act(async () => {
       result.current.handleMoveDown()
     })
 
