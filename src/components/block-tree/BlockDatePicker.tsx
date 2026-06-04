@@ -97,8 +97,9 @@ export function BlockDatePicker({
               <p className="text-xs text-muted-foreground">
                 {dateTextPreview ? (
                   <>
-                    {t('datePicker.parsed')} <strong className="text-foreground">{dateTextPreview}</strong>{' '}
-                    ({t('datePicker.pressEnter')})
+                    {t('datePicker.parsed')}{' '}
+                    <strong className="text-foreground">{dateTextPreview}</strong> (
+                    {t('datePicker.pressEnter')})
                   </>
                 ) : (
                   <span className="text-destructive">{t('property.dateParseError')}</span>
