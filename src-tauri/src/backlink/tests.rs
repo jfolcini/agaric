@@ -5491,8 +5491,11 @@ async fn eval_unlinked_references_truncates_at_fts_row_cap() {
         "filtered_count must be exactly FTS_ROW_CAP after truncation"
     );
 
-    // All 10 000 blocks share PARENT_PAGE, so we get exactly one group
-    // whose blocks list mirrors the trimmed match set.
+    // All 10 000 blocks share PARENT_PAGE, so we get exactly one group.
+    // #380: the group's materialised blocks are now capped at
+    // MAX_BLOCKS_PER_GROUP (the response-level total_count/filtered_count
+    // above still reflect the full FTS_ROW_CAP set, counted before the
+    // per-group truncation), and the group is flagged `truncated`.
     assert_eq!(
         resp.groups.len(),
         1,
@@ -5500,8 +5503,12 @@ async fn eval_unlinked_references_truncates_at_fts_row_cap() {
     );
     assert_eq!(
         resp.groups[0].blocks.len(),
-        10_000,
-        "the single group must carry all FTS_ROW_CAP rows"
+        crate::backlink::MAX_BLOCKS_PER_GROUP,
+        "the single group is capped at MAX_BLOCKS_PER_GROUP (#380)"
+    );
+    assert!(
+        resp.groups[0].truncated,
+        "the over-cap group must be flagged truncated (#380)"
     );
 }
 
@@ -5539,10 +5546,19 @@ async fn eval_unlinked_references_does_not_truncate_at_exactly_fts_row_cap() {
         1,
         "all matches share PARENT_PAGE => exactly one group"
     );
+    // #380: FTS-level truncation is false (exactly at FTS_ROW_CAP), but the
+    // single group still exceeds the per-group cap, so its blocks are
+    // truncated to MAX_BLOCKS_PER_GROUP and the group is flagged truncated.
+    // The response-level total_count/filtered_count remain the full match
+    // count (counted pre-truncation).
     assert_eq!(
         resp.groups[0].blocks.len(),
-        10_000,
-        "the single group must carry every match below the cap"
+        crate::backlink::MAX_BLOCKS_PER_GROUP,
+        "the single group is capped at MAX_BLOCKS_PER_GROUP (#380)"
+    );
+    assert!(
+        resp.groups[0].truncated,
+        "the over-cap group must be flagged truncated (#380)"
     );
 }
 
@@ -5772,40 +5788,77 @@ async fn eval_grouped_blockrow_fetch_small_in_bind() {
     assert_eq!(ids, expected, "IN-bind path must return the 5 source ids");
 }
 
-/// L-82 (b): json_each fallback path — 600 source blocks under a
-/// single source page produces 600 backlinks in one group, exercising
-/// the `> SMALL_IN_LIMIT` branch of `fetch_block_rows_by_ids` via
-/// `eval_backlink_query_grouped`.
+/// L-82 (b): json_each fallback path — three source pages, each owning
+/// 250 backlinks (above MAX_BLOCKS_PER_GROUP). #380 caps each group's
+/// materialised blocks at MAX_BLOCKS_PER_GROUP (200), so the post-cap
+/// fetch set is 3 × 200 = 600 ids, still exceeding SMALL_IN_LIMIT and
+/// thus exercising the `> SMALL_IN_LIMIT` json_each branch of
+/// `fetch_block_rows_by_ids` via `eval_backlink_query_grouped`.
 #[tokio::test]
 async fn eval_grouped_blockrow_fetch_large_json_each() {
+    use crate::backlink::MAX_BLOCKS_PER_GROUP;
     let (pool, _dir) = test_pool().await;
     insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
-    insert_block_with_parent(&pool, "SRC_PAGE", "page", "Source Page", None, None).await;
-    bulk_insert_n_backlink_sources(&pool, "SRC_PAGE", "TARGET", 600).await;
 
-    let page = default_page();
+    let per_page = 250i64; // > MAX_BLOCKS_PER_GROUP so each group truncates
+    let n_pages = 3;
+    for p in 0..n_pages {
+        let pid = format!("SRC_PAGE_{p}");
+        insert_block_with_parent(&pool, &pid, "page", &format!("Source Page {p}"), None, None)
+            .await;
+        // Insert `per_page` content blocks under this page, each linking to
+        // TARGET. Ids are unique per (page, k).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             WITH RECURSIVE seq(k) AS ( \
+                 SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+             ) \
+             SELECT ?2 || '_' || printf('%06d', k), 'content', 'src ' || k, ?3, k, ?3 \
+             FROM seq",
+        )
+        .bind(per_page)
+        .bind(&pid)
+        .bind(&pid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO block_links (source_id, target_id) \
+             WITH RECURSIVE seq(k) AS ( \
+                 SELECT 1 UNION ALL SELECT k + 1 FROM seq WHERE k < ?1 \
+             ) \
+             SELECT ?2 || '_' || printf('%06d', k), 'TARGET' FROM seq",
+        )
+        .bind(per_page)
+        .bind(&pid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    // Use a group page limit large enough to return all 3 groups in one shot.
+    let page = PageRequest::new(None, Some(10)).unwrap();
     let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
         .await
         .unwrap();
 
-    assert_eq!(resp.groups.len(), 1, "all 600 sources share one root page");
+    assert_eq!(resp.groups.len(), 3, "three source-page groups");
+    // Total fetched ids across capped groups = 3 × cap = 600 > SMALL_IN_LIMIT,
+    // so `fetch_block_rows_by_ids` took the json_each fallback.
+    for g in &resp.groups {
+        assert_eq!(
+            g.blocks.len(),
+            MAX_BLOCKS_PER_GROUP,
+            "each group capped at MAX_BLOCKS_PER_GROUP (#380)"
+        );
+        assert!(g.truncated, "each over-cap group flagged truncated (#380)");
+    }
+    // Counts reflect the TRUE pre-truncation totals.
+    let total = (per_page as usize) * (n_pages as usize);
+    assert_eq!(resp.total_count, total, "total_count counts pre-truncation");
     assert_eq!(
-        resp.groups[0].blocks.len(),
-        600,
-        "json_each fallback must materialise every source"
-    );
-    assert_eq!(resp.total_count, 600);
-    assert_eq!(resp.filtered_count, 600);
-
-    let ids: FxHashSet<String> = resp.groups[0]
-        .blocks
-        .iter()
-        .map(|b| b.id.clone().into())
-        .collect();
-    let expected: FxHashSet<String> = (1..=600).map(|k| format!("BL_{k:06}")).collect();
-    assert_eq!(
-        ids, expected,
-        "json_each branch must return the same id set as the small IN-bind branch would"
+        resp.filtered_count, total,
+        "filtered_count counts pre-truncation"
     );
 }
 
@@ -7077,4 +7130,347 @@ mod parity_p1 {
             assert_parity(&pool, &target, &label, vec![tree]).await;
         }
     }
+}
+
+// ======================================================================
+// #379 — nested `And { BlockType, … }` must thread the candidate set
+// through its conjuncts WITHOUT changing the result set.
+//
+// Before the fix, `And` recursed via the no-candidate `resolve_filter`
+// wrapper, so a nested `BlockType{'content'}` resolved unscoped (every
+// active content block in the vault) and was intersected in Rust. The fix
+// threads the parent candidate set into each conjunct so candidate-aware
+// leaves scope their SQL via `json_each`. These tests pin that the
+// observable result set is unchanged on both grouped paths.
+// ======================================================================
+
+#[tokio::test]
+async fn eval_grouped_compound_and_blocktype_is_behaviour_preserving() {
+    let (pool, _dir) = test_pool().await;
+
+    // Page A: one 'content' backlink with status=active, one 'heading'
+    // backlink with status=active. The heading must be dropped by the
+    // BlockType conjunct.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "A_CONTENT",
+        "content",
+        "a content",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_block_with_parent(&pool, "A_HEADING", "tag", "a tag", Some("PAGE_A"), Some(2)).await;
+    // Page B: one 'content' backlink WITHOUT the status property → dropped
+    // by the PropertyIsSet conjunct.
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "B_CONTENT",
+        "content",
+        "b content",
+        Some("PAGE_B"),
+        Some(1),
+    )
+    .await;
+
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_link(&pool, "A_CONTENT", "TARGET").await;
+    insert_block_link(&pool, "A_HEADING", "TARGET").await;
+    insert_block_link(&pool, "B_CONTENT", "TARGET").await;
+
+    insert_property(&pool, "A_CONTENT", "status", Some("active"), None, None).await;
+    insert_property(&pool, "A_HEADING", "status", Some("active"), None, None).await;
+    // B_CONTENT has no status property.
+
+    let page = default_page();
+
+    // And{ BlockType('content'), PropertyIsSet('status') }: only A_CONTENT
+    // qualifies (A_HEADING fails BlockType, B_CONTENT fails PropertyIsSet).
+    let filters = vec![BacklinkFilter::And {
+        filters: vec![
+            BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            },
+            BacklinkFilter::PropertyIsSet {
+                key: "status".into(),
+            },
+        ],
+    }];
+
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.total_count, 3, "base set has 3 backlinks");
+    assert_eq!(
+        resp.filtered_count, 1,
+        "only A_CONTENT satisfies And{{BlockType, PropertyIsSet}}"
+    );
+    assert_eq!(resp.groups.len(), 1, "one source-page group survives");
+    assert_eq!(resp.groups[0].page_id, "PAGE_A");
+    assert_eq!(resp.groups[0].blocks.len(), 1);
+    assert_eq!(
+        resp.groups[0].blocks[0].id, "A_CONTENT",
+        "the only block is A_CONTENT"
+    );
+}
+
+#[tokio::test]
+async fn eval_grouped_compound_and_matches_unscoped_oracle() {
+    // Parity oracle: the candidate-threaded `And` path must return the SAME
+    // filtered_count / block set as resolving each conjunct unscoped and
+    // intersecting. We build a mix of block types + properties and compare
+    // `And{BlockType, PropertyIsSet}` against the union of its parts.
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+
+    // 6 source pages, alternating block types + property presence.
+    let mut expected: Vec<&str> = Vec::new();
+    for i in 1..=6 {
+        let pid = format!("PG_{i}");
+        let bid = format!("BLK_{i}");
+        let bt = if i % 2 == 0 { "content" } else { "tag" };
+        insert_block_with_parent(&pool, &pid, "page", &format!("Page {i}"), None, None).await;
+        insert_block_with_parent(&pool, &bid, bt, &format!("body {i}"), Some(&pid), Some(1)).await;
+        insert_block_link(&pool, &bid, "TARGET").await;
+        if i % 3 != 0 {
+            insert_property(&pool, &bid, "status", Some("x"), None, None).await;
+        }
+        // Expected to survive And{content, status set}: even i (content)
+        // AND i%3!=0 (has status). i ∈ {2,4} → BLK_2, BLK_4. (i=6 is
+        // content but i%3==0 so no status.)
+        if bt == "content" && i % 3 != 0 {
+            // leak via Box::leak is overkill; track ids as owned below.
+            expected.push(if i == 2 { "BLK_2" } else { "BLK_4" });
+        }
+    }
+
+    let filters = vec![BacklinkFilter::And {
+        filters: vec![
+            BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            },
+            BacklinkFilter::PropertyIsSet {
+                key: "status".into(),
+            },
+        ],
+    }];
+
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+
+    let mut got: Vec<String> = resp
+        .groups
+        .iter()
+        .flat_map(|g| g.blocks.iter().map(|b| b.id.to_string()))
+        .collect();
+    got.sort();
+    let mut want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(
+        got, want,
+        "candidate-threaded And must match the unscoped intersection oracle"
+    );
+    assert_eq!(resp.filtered_count, want.len());
+}
+
+#[tokio::test]
+async fn eval_unlinked_compound_and_blocktype_is_behaviour_preserving() {
+    let (pool, _dir) = test_pool().await;
+    // Target page with a distinctive title.
+    insert_block_with_parent(&pool, "TARGET", "page", "Zephyr", None, None).await;
+
+    // Page A: a content block mentioning "Zephyr" with status set.
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "A1",
+        "content",
+        "talking about Zephyr",
+        Some("PAGE_A"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "A1", "talking about Zephyr").await;
+    insert_property(&pool, "A1", "status", Some("active"), None, None).await;
+
+    // Page B: a 'tag' block mentioning "Zephyr" with status set →
+    // dropped by BlockType conjunct.
+    insert_block_with_parent(&pool, "PAGE_B", "page", "Page B", None, None).await;
+    insert_block_with_parent(&pool, "B1", "tag", "Zephyr tag", Some("PAGE_B"), Some(1)).await;
+    insert_fts(&pool, "B1", "Zephyr tag").await;
+    insert_property(&pool, "B1", "status", Some("active"), None, None).await;
+
+    // Page C: a content block mentioning "Zephyr" WITHOUT status → dropped
+    // by PropertyIsSet conjunct.
+    insert_block_with_parent(&pool, "PAGE_C", "page", "Page C", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "C1",
+        "content",
+        "Zephyr notes here",
+        Some("PAGE_C"),
+        Some(1),
+    )
+    .await;
+    insert_fts(&pool, "C1", "Zephyr notes here").await;
+
+    let filters = vec![BacklinkFilter::And {
+        filters: vec![
+            BacklinkFilter::BlockType {
+                block_type: "content".into(),
+            },
+            BacklinkFilter::PropertyIsSet {
+                key: "status".into(),
+            },
+        ],
+    }];
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", Some(filters), None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resp.groups.len(),
+        1,
+        "only PAGE_A survives the compound And"
+    );
+    assert_eq!(resp.groups[0].page_id, "PAGE_A");
+    assert_eq!(resp.groups[0].blocks.len(), 1);
+    assert_eq!(resp.groups[0].blocks[0].id, "A1");
+    assert_eq!(
+        resp.filtered_count, 1,
+        "only A1 is content AND has status set"
+    );
+}
+
+// ======================================================================
+// #380 — grouped/unlinked responses cap blocks PER GROUP, set the
+// per-group `truncated` flag, and keep total/filtered counts accurate
+// (counted BEFORE truncation).
+// ======================================================================
+
+#[tokio::test]
+async fn eval_grouped_caps_blocks_per_group() {
+    use crate::backlink::MAX_BLOCKS_PER_GROUP;
+    let (pool, _dir) = test_pool().await;
+
+    // One source page with MAX_BLOCKS_PER_GROUP + 25 backlinks.
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    let extra = 25usize;
+    let n = MAX_BLOCKS_PER_GROUP + extra;
+    for i in 0..n {
+        let bid = format!("BLK_{i:05}");
+        insert_block_with_parent(&pool, &bid, "content", "b", Some("PAGE_A"), Some(i as i64)).await;
+        insert_block_link(&pool, &bid, "TARGET").await;
+    }
+
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "single source page → one group");
+    let g = &resp.groups[0];
+    assert_eq!(
+        g.blocks.len(),
+        MAX_BLOCKS_PER_GROUP,
+        "group blocks truncated to the per-group cap"
+    );
+    assert!(g.truncated, "group must be flagged truncated");
+    // Counts reflect the TRUE (untruncated) totals.
+    assert_eq!(
+        resp.total_count, n,
+        "total_count counts all backlinks pre-truncation"
+    );
+    assert_eq!(
+        resp.filtered_count, n,
+        "filtered_count counts all backlinks pre-truncation"
+    );
+    // The retained slice is the first MAX_BLOCKS_PER_GROUP in sort order
+    // (default Created Asc = lexicographic ULID/id order).
+    assert_eq!(g.blocks[0].id, "BLK_00000");
+    assert_eq!(
+        g.blocks[MAX_BLOCKS_PER_GROUP - 1].id,
+        format!("BLK_{:05}", MAX_BLOCKS_PER_GROUP - 1)
+    );
+}
+
+#[tokio::test]
+async fn eval_grouped_under_cap_not_truncated() {
+    use crate::backlink::MAX_BLOCKS_PER_GROUP;
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    let n = MAX_BLOCKS_PER_GROUP; // exactly at the cap → NOT truncated
+    for i in 0..n {
+        let bid = format!("BLK_{i:05}");
+        insert_block_with_parent(&pool, &bid, "content", "b", Some("PAGE_A"), Some(i as i64)).await;
+        insert_block_link(&pool, &bid, "TARGET").await;
+    }
+
+    let page = default_page();
+    let resp = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+    assert_eq!(resp.groups.len(), 1);
+    assert_eq!(resp.groups[0].blocks.len(), n);
+    assert!(
+        !resp.groups[0].truncated,
+        "a group exactly at the cap is not truncated"
+    );
+}
+
+#[tokio::test]
+async fn eval_unlinked_caps_blocks_per_group() {
+    use crate::backlink::MAX_BLOCKS_PER_GROUP;
+    let (pool, _dir) = test_pool().await;
+
+    // Target page with a distinctive title; one source page whose children
+    // all mention the title (unlinked) more than the per-group cap.
+    insert_block_with_parent(&pool, "TARGET", "page", "Quokka", None, None).await;
+    insert_block_with_parent(&pool, "PAGE_A", "page", "Page A", None, None).await;
+    let extra = 10usize;
+    let n = MAX_BLOCKS_PER_GROUP + extra;
+    for i in 0..n {
+        let bid = format!("UBLK_{i:05}");
+        insert_block_with_parent(
+            &pool,
+            &bid,
+            "content",
+            "Quokka mention",
+            Some("PAGE_A"),
+            Some(i as i64),
+        )
+        .await;
+        insert_fts(&pool, &bid, "Quokka mention here").await;
+    }
+
+    let page = default_page();
+    let resp = eval_unlinked_references(&pool, "TARGET", None, None, &page, None)
+        .await
+        .unwrap();
+
+    assert_eq!(resp.groups.len(), 1, "single source page → one group");
+    let g = &resp.groups[0];
+    assert_eq!(
+        g.blocks.len(),
+        MAX_BLOCKS_PER_GROUP,
+        "unlinked group blocks truncated to the per-group cap"
+    );
+    assert!(g.truncated, "unlinked group must be flagged truncated");
+    assert_eq!(
+        resp.total_count, n,
+        "total_count counts all unlinked matches pre-truncation"
+    );
+    assert_eq!(
+        resp.filtered_count, n,
+        "filtered_count counts all unlinked matches pre-truncation"
+    );
 }

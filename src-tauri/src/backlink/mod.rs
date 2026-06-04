@@ -25,3 +25,21 @@ pub use types::*;
 /// `backlink::grouped`, and `backlink::filters` so the threshold lives in
 /// one place. (L-82/L-83/L-84)
 pub(crate) const SMALL_IN_LIMIT: usize = 500;
+
+/// Per-group ceiling on the number of backlink blocks materialised and
+/// fetched for a single source page in the grouped/unlinked responses.
+///
+/// #380: the grouped paths paginate on *groups* (source pages) but placed
+/// no cap on the blocks *within* a group, so one busy source page could
+/// force `fetch_block_rows_by_ids` to load thousands of rows for a single
+/// group. The vault-wide FTS ceiling is `FTS_ROW_CAP = 10_000`
+/// (`grouped.rs`); this per-group cap is two orders of magnitude smaller
+/// because it bounds a *single* page's contribution, not the whole match
+/// set. 200 comfortably exceeds the number of backlink rows a desktop UI
+/// renders for one source page before the reader scrolls (the group list
+/// itself is paginated), while keeping the per-query fetch + render cost
+/// bounded. When a group is truncated its `BacklinkGroup::truncated` flag
+/// is set so the UI can surface "showing first 200" affordances; the
+/// response-level `total_count` / `filtered_count` are still counted
+/// BEFORE truncation so the badges stay accurate.
+pub(crate) const MAX_BLOCKS_PER_GROUP: usize = 200;
