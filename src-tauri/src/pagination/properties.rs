@@ -264,14 +264,38 @@ pub async fn query_by_property(
         //   ?11  value_text_in (JSON array) bound against `bp.value_text`
         //   ?12/?13  value_date_range half-open `[from, to)` against `bp.value_date`
         // MAINT-229: shared with BLOCK_ROW_RUNTIME_SELECT — alias variant for value/null routing
+        // #384: `neq` must not silently drop rows whose value lives in the
+        // OTHER value column. A `block_properties` row stores its value in
+        // exactly one of value_text / value_date, leaving the other NULL.
+        // For `!=`, `NULL != 'X'` evaluates to NULL (not TRUE), so the bare
+        // `(?N IS NULL OR bp.col != ?N)` predicate would exclude a row whose
+        // queried value is in the sibling column. Adding `bp.col IS NULL OR`
+        // restores those rows for the neq case. The L-23 boundary guarantees
+        // at most one of ?2/?3 is non-NULL, so only the queried column's
+        // predicate is ever active; the inactive one short-circuits via
+        // `?N IS NULL`. eq/lt/gt/lte/gte keep the original `(?N IS NULL OR
+        // col {op} ?N)` shape — for those operators a NULL column correctly
+        // fails the predicate (a NULL value should not equal/order-compare
+        // equal to a non-NULL target).
+        let (text_pred, date_pred): (String, String) = if sql_op == "!=" {
+            (
+                "(?2 IS NULL OR bp.value_text IS NULL OR bp.value_text != ?2)".to_string(),
+                "(?3 IS NULL OR bp.value_date IS NULL OR bp.value_date != ?3)".to_string(),
+            )
+        } else {
+            (
+                format!("(?2 IS NULL OR bp.value_text {sql_op} ?2)"),
+                format!("(?3 IS NULL OR bp.value_date {sql_op} ?3)"),
+            )
+        };
         let sql = format!(
             "SELECT {cols} \
              FROM block_properties bp \
              JOIN blocks b ON b.id = bp.block_id \
              WHERE bp.key = ?1 \
                AND b.deleted_at IS NULL \
-               AND (?2 IS NULL OR bp.value_text {sql_op} ?2) \
-               AND (?3 IS NULL OR bp.value_date {sql_op} ?3) \
+               AND {text_pred} \
+               AND {date_pred} \
                AND (?4 IS NULL OR b.id > ?5) \
                AND (?7 IS NULL OR b.page_id IN ( \
                     SELECT bp_sp.block_id FROM block_properties bp_sp \
@@ -285,7 +309,6 @@ pub async fn query_by_property(
              ORDER BY b.id ASC \
              LIMIT ?6",
             cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS,
-            sql_op = sql_op,
         );
         sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(key) // ?1

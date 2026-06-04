@@ -1626,6 +1626,79 @@ async fn query_by_property_filters_by_value() {
     assert_eq!(resp.items[0].id, "BLOCK001", "block matching value filter");
 }
 
+/// #384 regression: a `neq` filter must NOT silently drop rows whose value
+/// lives in the OTHER value column. A `block_properties` row stores its value
+/// in exactly one of `value_text` / `value_date`, leaving the sibling NULL.
+/// Before the fix, `neq` combined `(?3 IS NULL OR bp.value_date != ?3)`, and for
+/// a row whose value is in `value_text` (so `value_date` is NULL) the
+/// predicate evaluated `NULL != 'X'` → NULL (not TRUE), excluding it.
+#[tokio::test]
+async fn query_by_property_neq_keeps_other_column_rows() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two rows store the value in value_text, two in value_date — all under
+    // the same key.
+    insert_block(&pool, "BLOCKTXT1", "content", "t1", None, None).await;
+    insert_block(&pool, "BLOCKTXT2", "content", "t2", None, None).await;
+    insert_block(&pool, "BLOCKDAT1", "content", "d1", None, None).await;
+    insert_block(&pool, "BLOCKDAT2", "content", "d2", None, None).await;
+
+    insert_property(&pool, "BLOCKTXT1", "when", "sometext").await;
+    insert_property(&pool, "BLOCKTXT2", "when", "othertext").await;
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'when', ?)")
+        .bind("BLOCKDAT1")
+        .bind("2026-01-01")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_date) VALUES (?, 'when', ?)")
+        .bind("BLOCKDAT2")
+        .bind("2026-02-02")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // neq against a value_date target: must return the two text rows (their
+    // value_date is NULL — different column) AND the one date row whose date
+    // differs, while EXCLUDING the date row equal to the target.
+    let page = PageRequest::new(None, Some(10)).unwrap();
+    let resp = query_by_property(
+        &pool,
+        "when",
+        None,
+        Some("2026-01-01"),
+        "neq",
+        &page,
+        None,
+        None,
+        false,
+        None,
+        &[],
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+    assert!(
+        ids.contains(&"BLOCKTXT1") && ids.contains(&"BLOCKTXT2"),
+        "neq must keep rows whose value is in the OTHER (value_text) column; got {ids:?}"
+    );
+    assert!(
+        ids.contains(&"BLOCKDAT2"),
+        "neq must keep the date row whose value differs from the target; got {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"BLOCKDAT1"),
+        "neq must exclude the date row equal to the target; got {ids:?}"
+    );
+    assert_eq!(
+        resp.items.len(),
+        3,
+        "expected 3 rows (2 text + 1 differing date)"
+    );
+}
+
 #[tokio::test]
 async fn query_by_property_paginates_with_cursor() {
     let (pool, _dir) = test_pool().await;

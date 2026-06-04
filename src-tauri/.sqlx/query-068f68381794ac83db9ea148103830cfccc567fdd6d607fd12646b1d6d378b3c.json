@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT key AS \"key!\", value_text, value_date, value_num, value_ref\n           FROM block_properties\n           WHERE block_id = ?1\n             AND key NOT IN (\n                'space', 'is_space', 'created_at', 'completed_at',\n                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',\n                'repeat-origin', 'template'\n             )",
+  "describe": {
+    "columns": [
+      {
+        "name": "key!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_text",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
+      },
+      {
+        "name": "value_date",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      },
+      {
+        "name": "value_num",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_ref",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "068f68381794ac83db9ea148103830cfccc567fdd6d607fd12646b1d6d378b3c"
+}

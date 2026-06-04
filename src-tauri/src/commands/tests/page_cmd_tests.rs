@@ -1032,6 +1032,98 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
     }
 }
 
+/// #384 regression: exported frontmatter must
+///   (a) EXCLUDE internal/system-managed keys (space, is_space, template,
+///       created_at, repeat-*, …), and
+///   (b) RENDER value_ref (resolved to the referenced page's title) and
+///       value_num (the number) instead of dropping them to empty — the
+///       old query only projected value_text + value_date.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const REF_TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
+
+    // The exported page.
+    insert_block(&pool, PAGE, "page", "Props Page", None, Some(1)).await;
+    // The page a value_ref property points at.
+    insert_block(&pool, REF_TARGET, "page", "Linked Page", None, Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Seed a mix of properties on the page block.
+    let seed = |key: &'static str, col: &'static str, val: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let sql =
+                format!("INSERT INTO block_properties (block_id, key, {col}) VALUES (?, ?, ?)");
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(PAGE)
+                .bind(key)
+                .bind(val)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    };
+    // User-visible text + date properties (must survive).
+    seed("status", "value_text", "active").await;
+    seed("due", "value_date", "2026-01-15").await;
+    // Numeric property (must render the number, not empty).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'effort', 3)")
+        .bind(PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Ref property (must render the target page title, not empty / ULID).
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'parent', ?)")
+        .bind(PAGE)
+        .bind(REF_TARGET)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Internal keys (must NOT leak into frontmatter).
+    seed("space", "value_text", "SPACEVAL").await;
+    seed("is_space", "value_text", "true").await;
+    seed("template", "value_text", "weekly").await;
+    seed("created_at", "value_text", "2020-01-01").await;
+    seed("repeat", "value_text", "daily").await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    // Internal keys absent.
+    for internal in ["space:", "is_space:", "template:", "created_at:", "repeat:"] {
+        assert!(
+            !md.contains(internal),
+            "internal key {internal:?} must NOT appear in frontmatter, got:\n{md}"
+        );
+    }
+    assert!(
+        !md.contains("SPACEVAL"),
+        "internal 'space' value must not leak, got:\n{md}"
+    );
+
+    // User properties present, with non-empty values.
+    assert!(
+        md.contains("status: active"),
+        "text prop missing, got:\n{md}"
+    );
+    assert!(
+        md.contains("due: 2026-01-15"),
+        "date prop missing, got:\n{md}"
+    );
+    // Numeric renders the number (not empty, no trailing .0).
+    assert!(
+        md.contains("effort: 3\n"),
+        "numeric prop must render, got:\n{md}"
+    );
+    // Ref resolves to the target page title (non-empty).
+    assert!(
+        md.contains("parent: Linked Page"),
+        "value_ref must resolve to the referenced page title, got:\n{md}"
+    );
+}
+
 // ======================================================================
 // export_page_markdown — error paths (REVIEW-LATER TEST-11)
 // ======================================================================

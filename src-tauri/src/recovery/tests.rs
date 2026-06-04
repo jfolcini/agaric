@@ -246,6 +246,78 @@ async fn already_flushed_draft_just_gets_deleted() {
     assert!(drafts.is_empty());
 }
 
+/// #384 regression: a real `edit_block` op at the EXACT same millisecond as
+/// the draft's `updated_at`, but with DIFFERENT content, must NOT be
+/// clobbered by recovery. `op_log.created_at` and `block_drafts.updated_at`
+/// are both INTEGER ms from `now_ms()`, so same-ms collisions are real. The
+/// old strict `created_at > updated_at` missed the same-ms edit → recovery
+/// re-applied the (older) draft content over the newer edit. The fix counts
+/// a same-ms op as superseding when its content differs from the draft, so
+/// the draft is classified "already flushed" and the newer edit survives.
+#[tokio::test]
+async fn same_ms_real_edit_is_not_clobbered_by_recovery() {
+    let (pool, _dir) = test_pool().await;
+    let device_id = "dev-1";
+    let block_id = "block-sm";
+    const TS: i64 = 1_700_000_000_000;
+
+    insert_test_block(&pool, block_id, "old content").await;
+
+    // A genuine, newer edit landed at exactly TS with content that DIFFERS
+    // from the draft below.
+    let op = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::test_id(block_id),
+        to_text: "newer real edit".to_owned(),
+        prev_edit: None,
+    });
+    append_local_op_at(&pool, device_id, op, TS).await.unwrap();
+
+    // The crashed draft has updated_at == TS (same ms) with stale content.
+    sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind("stale draft content")
+        .bind(TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let before: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let report = recover_at_boot_test(&pool, device_id).await.unwrap();
+
+    // The draft must be treated as already flushed — NOT recovered.
+    assert!(
+        report.drafts_recovered.is_empty(),
+        "same-ms real edit must not trigger draft recovery; report={report:?}"
+    );
+    assert_eq!(report.drafts_already_flushed, 1);
+
+    // No synthetic op appended → the newer edit content is preserved.
+    let after: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before, after,
+        "no synthetic clobbering op should be created"
+    );
+
+    // blocks.content must still reflect the real edit, not the stale draft.
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(block_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_ne!(
+        content.as_deref(),
+        Some("stale draft content"),
+        "recovery must not have clobbered the block with stale draft content"
+    );
+}
+
 // === 3. Empty / no-op cases ===
 
 #[tokio::test]
