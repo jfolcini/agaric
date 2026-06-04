@@ -340,6 +340,17 @@ pub(crate) fn backoff_delay_for(attempts: i64) -> chrono::Duration {
 /// the first-failure and escalation paths. The `CASE` mirrors
 /// [`backoff_delay_for`] step-for-step:
 ///   attempts 1 → +1 min, 2 → +5 min, 3 → +30 min, 4+ → +1 hour.
+///
+/// Issue #378: the `DO UPDATE` branch deliberately does NOT assign
+/// `created_at`, so the original first-failure timestamp is preserved
+/// across every re-failure. Combined with the sweeper no longer
+/// pre-clearing the row on enqueue (it leases instead — see
+/// [`lease_entry`] / [`sweep_once`]), a fail-on-run task now keeps the
+/// SAME row across cycles: `attempts` accumulates (1, 2, 3, …) and
+/// `created_at` ages, so both `give_up_reason` triggers
+/// (`attempts >= MAX_ATTEMPTS`, `now - created_at >= GIVE_UP_AGE_DAYS`)
+/// can finally fire. The `created_at` default (migration 0077) only
+/// applies on the INSERT (first-failure) branch.
 pub(crate) async fn record_failure(
     pool: &SqlitePool,
     task: &MaterializeTask,
@@ -511,7 +522,17 @@ pub(crate) async fn fetch_due(pool: &SqlitePool, limit: i64) -> Result<Vec<DueRo
         .collect())
 }
 
-/// Delete a retry row after a successful re-run.
+/// Delete a retry row after a confirmed, durable successful re-run.
+///
+/// Issue #378: this is the canonical clear site. It is called from the
+/// consumer's *durable-success* path (after the apply/work has been
+/// committed) for any task that is retryable
+/// ([`RetryKind::from_task`] returns `Some`), and from [`sweep_once`]
+/// only on the give-up / unknown-kind retirement paths. The sweeper no
+/// longer pre-clears a row on successful *enqueue* — see
+/// [`lease_entry`] and the [`sweep_once`] doc-comment for why that broke
+/// attempt accumulation and the give-up triggers (the issue #157 / #378
+/// infinite-loop pathology).
 pub(crate) async fn clear_entry(
     pool: &SqlitePool,
     block_id: &str,
@@ -519,6 +540,68 @@ pub(crate) async fn clear_entry(
 ) -> Result<(), AppError> {
     sqlx::query!(
         "DELETE FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+        block_id,
+        task_kind,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Issue #378: clear the retry row for a task that has just completed
+/// **durably and successfully** on a sweep-driven re-run.
+///
+/// This is a thin wrapper over [`clear_entry`] that first checks the
+/// task is retryable (so callers on the hot consumer success path can
+/// blindly hand it any [`MaterializeTask`] — non-retryable tasks never
+/// created a row and are a cheap no-op). It is the ONLY confirmed-success
+/// clear site now that [`sweep_once`] leases instead of pre-clearing.
+///
+/// MUST be called only after the work is committed — clearing before
+/// durable success risks losing the retry entry on a crash, trading the
+/// old infinite-retry bug for a silent never-retry. See the consumer
+/// success-path call sites in `consumer.rs`.
+pub(crate) async fn clear_on_success(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+) -> Result<(), AppError> {
+    let Some((kind, block_id)) = RetryKind::from_task(task) else {
+        return Ok(());
+    };
+    clear_entry(pool, &block_id, kind.task_kind_str().as_ref()).await
+}
+
+/// Issue #378: lease a due row by pushing its `next_attempt_at` forward
+/// so the sweeper does not re-sweep (double-dispatch) the same row while
+/// the just-enqueued re-run is still in flight.
+///
+/// The lease interval reuses the existing backoff schedule
+/// ([`backoff_delay_for`]) keyed on the row's *current* `attempts`. The
+/// minimum delay in that schedule is 1 minute, which equals the
+/// sweeper's tick interval (`spawn_sweeper`, 60 s), so a leased row is
+/// never visible to the very next sweep tick — by which time the
+/// re-run's in-memory retry budget (sub-second) has long since resolved
+/// and, on failure, `record_failure` has already bumped `next_attempt_at`
+/// to its own (longer) backoff. The lease is therefore a lower bound: a
+/// subsequent `record_failure` UPSERT overwrites it with the
+/// attempts-appropriate delay, and a subsequent `clear_on_success`
+/// deletes the row outright.
+///
+/// Unlike `record_failure`, the lease does NOT touch `attempts`,
+/// `last_error`, or `created_at` — it only moves the visibility window so
+/// the same in-flight task is not swept twice. Attempt accumulation and
+/// `created_at` aging are owned exclusively by `record_failure`.
+pub(crate) async fn lease_entry(
+    pool: &SqlitePool,
+    block_id: &str,
+    task_kind: &str,
+    attempts: i64,
+) -> Result<(), AppError> {
+    let next_attempt_at = crate::db::now_ms() + backoff_delay_for(attempts).num_milliseconds();
+    sqlx::query!(
+        "UPDATE materializer_retry_queue SET next_attempt_at = ? \
+         WHERE block_id = ? AND task_kind = ?",
+        next_attempt_at,
         block_id,
         task_kind,
     )
@@ -543,13 +626,25 @@ pub(crate) fn task_from_row(row: &DueRow) -> Option<MaterializeTask> {
 
 /// Scan the retry queue once: fetch due rows, re-enqueue each via the
 /// materializer's normal background queue, and on successful enqueue
-/// delete the row. Failures to enqueue leave the row in place so the next
-/// sweep can try again.
+/// *lease* the row (push `next_attempt_at` forward) rather than deleting
+/// it. Failures to enqueue leave the row in place so the next sweep can
+/// try again.
+///
+/// Issue #378: the row is intentionally NOT cleared on enqueue. The
+/// previous pre-clear meant a re-run that then failed re-INSERTed a fresh
+/// row (`attempts = 1`, `created_at = now`) every cycle, so attempts
+/// never accumulated and the `give_up_reason` triggers could never fire —
+/// a permanently-failing task looped forever. Now the row survives the
+/// re-enqueue; on failure `record_failure` UPSERTs it (attempts += 1,
+/// `created_at` preserved) and on durable success the consumer clears it
+/// via [`clear_on_success`]. The give-up / unknown-kind retirement paths
+/// below are the only places `sweep_once` itself deletes a row.
 ///
 /// I-Materializer-1: split the pool into `read_pool` (for the `fetch_due`
-/// SELECT) and `write_pool` (for the `clear_entry` DELETE) to match the
-/// "background tasks use split read/write pools" pattern documented in
-/// AGENTS.md. Tests pass the same pool for both arguments.
+/// SELECT) and `write_pool` (for the `clear_entry` / `lease_entry`
+/// writes) to match the "background tasks use split read/write pools"
+/// pattern documented in AGENTS.md. Tests pass the same pool for both
+/// arguments.
 ///
 /// Returns the number of rows re-enqueued.
 pub async fn sweep_once(
@@ -590,7 +685,14 @@ pub async fn sweep_once(
         if let Some(RetryKind::ApplyOp { device_id, seq }) = RetryKind::from_str(&row.task_kind) {
             match try_reenqueue_apply_op(read_pool, materializer, &device_id, seq).await {
                 Ok(()) => {
-                    clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                    // Issue #378: lease (do NOT clear) on successful
+                    // enqueue. The row stays so a subsequent failure's
+                    // `record_failure` UPSERT finds it and increments
+                    // `attempts` (preserving `created_at`); the consumer
+                    // clears it via `clear_on_success` only on durable
+                    // success. The lease prevents the same in-flight op
+                    // being swept twice before it resolves.
+                    lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
                     re_enqueued += 1;
                 }
                 Err(e) => {
@@ -618,9 +720,20 @@ pub async fn sweep_once(
         };
         match materializer.try_enqueue_background(task) {
             Ok(()) => {
-                // Re-enqueued. Clear the row — the consumer will re-persist
-                // the entry with incremented attempts if it fails again.
-                clear_entry(write_pool, &row.block_id, &row.task_kind).await?;
+                // Issue #378: lease (do NOT clear) the row on successful
+                // enqueue. Pre-clearing here meant a task that then
+                // FAILED on its re-run hit `record_failure`'s INSERT
+                // branch every cycle — `attempts` never accumulated and
+                // `created_at` never aged, so `give_up_reason` could
+                // NEVER fire and a permanently-failing task looped
+                // forever (issue #157 / #378). Keeping the row present
+                // means a subsequent failure UPSERTs it (attempts += 1,
+                // created_at preserved); the consumer clears it via
+                // `clear_on_success` only after the re-run succeeds
+                // durably. The lease bumps `next_attempt_at` forward so
+                // the same in-flight task is not swept twice before it
+                // resolves.
+                lease_entry(write_pool, &row.block_id, &row.task_kind, row.attempts).await?;
                 re_enqueued += 1;
             }
             Err(e) => {
@@ -1159,8 +1272,19 @@ mod tests {
 
     // --- sweeper ---
 
+    /// Issue #378: a due row is re-enqueued by the sweeper and then
+    /// cleared by the live background consumer's durable-success path
+    /// (`clear_on_success`) — NOT pre-deleted by the sweeper on enqueue.
+    /// `Materializer::new` spawns a real background consumer that drains
+    /// the re-enqueued `UpdateFtsBlock` (a no-op success on the empty
+    /// test DB), so the row is cleared asynchronously after the success.
+    /// We poll for that confirmed-success clear. The lease mechanics
+    /// (next_attempt_at bump, attempts/created_at untouched, no
+    /// double-sweep) are pinned deterministically in
+    /// `lease_entry_defers_row_without_touching_attempts_378` and the
+    /// full-cycle test, which do not race a live consumer.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn sweep_once_reenqueues_due_rows_and_removes_them() {
+    async fn sweep_once_reenqueues_due_rows_then_consumer_clears_them_378() {
         use crate::materializer::Materializer;
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
@@ -1182,11 +1306,278 @@ mod tests {
 
         let n = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(n, 1, "one due row must be re-enqueued");
-        // Clear: after re-enqueue, row is deleted (consumer will re-add on failure).
-        let remaining = pending_count(&pool).await.unwrap();
+
+        // The live consumer drains the re-enqueued task (no-op success on
+        // the empty DB) and clears the leased row via clear_on_success.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if pending_count(&pool).await.unwrap() == 0 {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!(
+                    "issue #378: swept row must be cleared by the consumer's \
+                     durable-success path; row never cleared"
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+
+        mat.shutdown();
+    }
+
+    /// Issue #378 regression — the core bug. Drive the FULL
+    /// sweep → run → fail → re-persist cycle against a deterministically
+    /// failing task MORE than MAX_ATTEMPTS times and assert:
+    ///   1. `attempts` actually ACCUMULATES across cycles (1, 2, 3, …) —
+    ///      under the old pre-clear-on-enqueue code it was stuck at 1
+    ///      forever, because every re-run re-INSERTed a fresh row.
+    ///   2. `created_at` is PRESERVED across cycles (never reset to now).
+    ///   3. Give-up FIRES at the bound: once attempts reach MAX_ATTEMPTS
+    ///      the sweeper retires (deletes) the row and bumps the give-up
+    ///      metric — the loop stops instead of running forever.
+    ///
+    /// The cycle is simulated at the retry-queue layer because that is
+    /// exactly how the live system composes it: the consumer's failure
+    /// path calls `record_failure` (UPSERT, attempts += 1) and the
+    /// sweeper re-enqueues + leases. We model "the re-run failed again"
+    /// as the next `record_failure`, and backdate `next_attempt_at` to
+    /// simulate the wall-clock passage between sweeps so `fetch_due`
+    /// keeps seeing the row.
+    ///
+    /// WITHOUT the fix (sweep_once pre-clearing the row on enqueue), step
+    /// 1 fails: `record_failure` always hits its INSERT branch, attempts
+    /// never exceeds 1, give_up_reason("max_attempts") never fires, and
+    /// the row is re-enqueued indefinitely.
+    ///
+    /// The cycle is driven against the retry-queue layer directly,
+    /// composing the exact two writes the live system performs each
+    /// cycle: the sweeper's enqueue-time `lease_entry` (the row is kept,
+    /// not pre-cleared — the heart of the #378 fix) followed by the
+    /// re-run's `record_failure` (the consumer's failure path, UPSERT
+    /// attempts += 1). We deliberately do NOT route through the live
+    /// background consumer here: `Materializer::new` spawns a real
+    /// consumer that would drain the re-enqueued no-op task, succeed, and
+    /// `clear_on_success` the row — a real, correct behaviour that this
+    /// unit test isolates away from so the fail-on-run cycle is
+    /// deterministic. The give-up retirement IS driven through the real
+    /// `sweep_once` (the give-up arm deletes without enqueue, so the live
+    /// consumer is not involved).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_cycle_accumulates_attempts_and_gives_up_378() {
+        use crate::materializer::Materializer;
+        use std::sync::atomic::Ordering;
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        const BID: &str = "BLK_378_CYCLE";
+        const KIND: &str = "UpdateFtsBlock";
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: BID.into(),
+        };
+
+        async fn make_due(pool: &SqlitePool) {
+            let past = crate::db::now_ms() - 5 * 60_000;
+            sqlx::query!(
+                "UPDATE materializer_retry_queue SET next_attempt_at = ? \
+                 WHERE block_id = ? AND task_kind = ?",
+                past,
+                BID,
+                KIND,
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        async fn read_row(pool: &SqlitePool) -> Option<(i64, i64)> {
+            sqlx::query!(
+                "SELECT attempts AS \"attempts!: i64\", \
+                        created_at AS \"created_at!: i64\" \
+                 FROM materializer_retry_queue \
+                 WHERE block_id = ? AND task_kind = ?",
+                BID,
+                KIND,
+            )
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .map(|r| (r.attempts, r.created_at))
+        }
+
+        // First failure creates the row (attempts == 1).
+        record_failure(&pool, &task, "fail-1").await.unwrap();
+        let (attempts0, created0) = read_row(&pool)
+            .await
+            .expect("row exists after first failure");
+        assert_eq!(attempts0, 1, "first failure lands attempts == 1");
+
+        // Drive cycles: each iteration models one sweep (lease) + one
+        // failed re-run (record_failure) until attempts reach the
+        // give-up bound. The row must SURVIVE every lease and accumulate
+        // attempts across cycles — this is exactly what the old
+        // pre-clear-on-enqueue code broke (attempts stuck at 1 forever).
+        let mut expected_attempts = attempts0;
+        while expected_attempts < MAX_ATTEMPTS {
+            make_due(&pool).await;
+
+            // Sweeper enqueue-time action: lease the row (do NOT clear).
+            let (lease_attempts, _) = read_row(&pool).await.expect("row due for lease");
+            lease_entry(&pool, BID, KIND, lease_attempts).await.unwrap();
+            let (after_lease_attempts, after_lease_created) = read_row(&pool)
+                .await
+                .expect("leased row must survive the sweep");
+            assert_eq!(
+                after_lease_attempts, expected_attempts,
+                "lease must NOT change attempts; only record_failure does"
+            );
+            assert_eq!(
+                after_lease_created, created0,
+                "created_at must be preserved across the lease"
+            );
+
+            // The re-run fails again → consumer's record_failure path.
+            record_failure(&pool, &task, "fail-loop").await.unwrap();
+            expected_attempts += 1;
+            let (acc_attempts, acc_created) = read_row(&pool)
+                .await
+                .expect("row survives the failure UPSERT");
+            assert_eq!(
+                acc_attempts, expected_attempts,
+                "attempts MUST accumulate across cycles (1,2,3,…) — the issue #378 regression"
+            );
+            assert_eq!(
+                acc_created, created0,
+                "created_at MUST be preserved across the failure UPSERT (never reset to now)"
+            );
+        }
+
+        // attempts now == MAX_ATTEMPTS. The next due sweep must GIVE UP:
+        // retire (delete) the row and bump the give-up metric, instead of
+        // re-enqueuing forever. Driven through the real `sweep_once`.
+        assert_eq!(expected_attempts, MAX_ATTEMPTS);
+        make_due(&pool).await;
+        let re_enqueued = sweep_once(&pool, &pool, &mat).await.unwrap();
         assert_eq!(
-            remaining, 0,
-            "swept row must be deleted after successful enqueue"
+            re_enqueued, 0,
+            "give-up sweep must not count the retired row as re-enqueued"
+        );
+        assert!(
+            read_row(&pool).await.is_none(),
+            "give-up MUST retire (delete) the row once attempts reach MAX_ATTEMPTS — \
+             the task must stop looping (issue #157 / #378)"
+        );
+        let remaining = pending_count(&pool).await.unwrap();
+        assert_eq!(remaining, 0, "the retired row must be deleted");
+        let giveups = mat
+            .metrics()
+            .retry_queue_giveup_total
+            .load(Ordering::Relaxed);
+        assert_eq!(
+            giveups, 1,
+            "retry_queue_giveup_total must increment exactly once when the cycle gives up"
+        );
+
+        mat.shutdown();
+    }
+
+    /// Issue #378 — confirmed-success clear. A task that fails once
+    /// (creating a row) then SUCCEEDS on retry must leave NO row. We
+    /// simulate the consumer's durable-success path by calling
+    /// `clear_on_success` (the exact helper the fg/bg consumer success
+    /// branches invoke), and assert the row is gone.
+    #[tokio::test]
+    async fn success_clears_the_row_378() {
+        let (pool, _dir) = test_pool().await;
+        let task = MaterializeTask::UpdateFtsBlock {
+            block_id: "BLK_378_SUCCESS".into(),
+        };
+
+        // Fail once — row created.
+        record_failure(&pool, &task, "transient").await.unwrap();
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            1,
+            "failure must create a retry row"
+        );
+
+        // Re-run succeeds durably → consumer clears the row.
+        clear_on_success(&pool, &task).await.unwrap();
+        assert_eq!(
+            pending_count(&pool).await.unwrap(),
+            0,
+            "confirmed durable success must clear the retry row"
+        );
+
+        // Idempotent: clearing again (or clearing a task that never had a
+        // row) is a harmless no-op.
+        clear_on_success(&pool, &task).await.unwrap();
+        assert_eq!(pending_count(&pool).await.unwrap(), 0);
+    }
+
+    /// Issue #378 — `clear_on_success` no-ops for non-retryable tasks
+    /// (the hot consumer success path hands it every task).
+    #[tokio::test]
+    async fn clear_on_success_ignores_non_retryable_378() {
+        let (pool, _dir) = test_pool().await;
+        // RebuildFtsIndex is non-retryable; from_task returns None.
+        clear_on_success(&pool, &MaterializeTask::RebuildFtsIndex)
+            .await
+            .unwrap();
+        assert_eq!(pending_count(&pool).await.unwrap(), 0);
+    }
+
+    /// Issue #378 — `lease_entry` pushes next_attempt_at forward without
+    /// touching attempts/created_at, and a leased row drops out of
+    /// `fetch_due` until the lease expires.
+    #[tokio::test]
+    async fn lease_entry_defers_row_without_touching_attempts_378() {
+        let (pool, _dir) = test_pool().await;
+        let past = crate::db::now_ms() - 5 * 60_000;
+        let created = crate::db::now_ms() - 1_000;
+        sqlx::query!(
+            "INSERT INTO materializer_retry_queue \
+                 (block_id, task_kind, attempts, created_at, next_attempt_at) \
+             VALUES (?, ?, ?, ?, ?)",
+            "BLK_378_LEASE",
+            "UpdateFtsBlock",
+            3_i64,
+            created,
+            past,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Due before the lease.
+        assert_eq!(fetch_due(&pool, 10).await.unwrap().len(), 1);
+
+        lease_entry(&pool, "BLK_378_LEASE", "UpdateFtsBlock", 3)
+            .await
+            .unwrap();
+
+        let row = sqlx::query!(
+            "SELECT attempts AS \"attempts!: i64\", \
+                    created_at AS \"created_at!: i64\", \
+                    next_attempt_at AS \"next_attempt_at!: i64\" \
+             FROM materializer_retry_queue \
+             WHERE block_id = ? AND task_kind = ?",
+            "BLK_378_LEASE",
+            "UpdateFtsBlock",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.attempts, 3, "lease must not change attempts");
+        assert_eq!(row.created_at, created, "lease must not change created_at");
+        assert!(
+            row.next_attempt_at > past,
+            "lease must defer next_attempt_at"
+        );
+        // Not due anymore.
+        assert!(
+            fetch_due(&pool, 10).await.unwrap().is_empty(),
+            "leased row must not be due until the lease expires"
         );
     }
 
