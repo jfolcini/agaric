@@ -462,16 +462,82 @@ pub async fn export_page_markdown_inner(
         }
     }
 
-    // 4. Get page properties for frontmatter
-    let properties: Vec<(String, Option<String>, Option<String>)> = sqlx::query!(
-        r#"SELECT key AS "key!", value_text, value_date FROM block_properties WHERE block_id = ?1"#,
+    // 4. Get page properties for frontmatter.
+    //
+    // #384: exclude internal/system-managed keys so they don't leak into the
+    // exported frontmatter. The explicit list is required because
+    // `op::is_builtin_property_key` does NOT cover `space` / `is_space` /
+    // `template` (those are space-membership + template markers, not
+    // builtin lifecycle keys). The list below is the union of those three
+    // plus the lifecycle keys from `is_builtin_property_key` that get
+    // stored in `block_properties` (the reserved-column keys —
+    // todo_state/priority/due_date/scheduled_date — live on the `blocks`
+    // table, never in `block_properties`, so they never appear here).
+    //
+    // #384: also project value_ref and value_num so numeric and
+    // page-reference properties render instead of silently dropping to
+    // empty (the old query only selected value_text + value_date).
+    struct FrontmatterRow {
+        key: String,
+        value_text: Option<String>,
+        value_date: Option<String>,
+        value_num: Option<f64>,
+        value_ref: Option<String>,
+    }
+    let property_rows = sqlx::query!(
+        r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref
+           FROM block_properties
+           WHERE block_id = ?1
+             AND key NOT IN (
+                'space', 'is_space', 'created_at', 'completed_at',
+                'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
+                'repeat-origin', 'template'
+             )"#,
         page_id,
     )
     .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|r| (r.key, r.value_text, r.value_date))
-    .collect();
+    .await?;
+
+    // Resolve value_ref ULIDs to page titles where possible. Unresolved
+    // refs (target missing/deleted) fall back to the raw ULID so the value
+    // never renders empty.
+    let mut ref_ids: HashSet<String> = HashSet::new();
+    for r in &property_rows {
+        if let Some(rf) = r.value_ref.as_deref() {
+            if !rf.is_empty() {
+                ref_ids.insert(rf.to_string());
+            }
+        }
+    }
+    let mut ref_titles: HashMap<String, String> = HashMap::new();
+    if !ref_ids.is_empty() {
+        let ids: Vec<String> = ref_ids.into_iter().collect();
+        let ids_json = serde_json::to_string(&ids)?;
+        let rows = sqlx::query!(
+            r#"SELECT id, content FROM blocks
+               WHERE id IN (SELECT value FROM json_each(?1))
+                 AND deleted_at IS NULL"#,
+            ids_json,
+        )
+        .fetch_all(pool)
+        .await?;
+        for r in rows {
+            if let Some(c) = r.content {
+                ref_titles.insert(r.id, c);
+            }
+        }
+    }
+
+    let properties: Vec<FrontmatterRow> = property_rows
+        .into_iter()
+        .map(|r| FrontmatterRow {
+            key: r.key,
+            value_text: r.value_text,
+            value_date: r.value_date,
+            value_num: r.value_num,
+            value_ref: r.value_ref,
+        })
+        .collect();
 
     // 5. Build markdown output
     let mut output = String::new();
@@ -483,9 +549,29 @@ pub async fn export_page_markdown_inner(
     // Frontmatter (if properties exist)
     if !properties.is_empty() {
         output.push_str("---\n");
-        for (key, text, date) in &properties {
-            let value = date.as_deref().or(text.as_deref()).unwrap_or("");
-            output.push_str(&format!("{key}: {value}\n"));
+        for prop in &properties {
+            // Precedence: date, then text, then ref (resolved to page title
+            // or raw ULID), then numeric. A `block_properties` row stores
+            // its value in exactly one column, so at most one of these is
+            // populated; the order is a defensive fallback.
+            let num_str;
+            let value: &str = if let Some(d) = prop.value_date.as_deref() {
+                d
+            } else if let Some(t) = prop.value_text.as_deref() {
+                t
+            } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
+                ref_titles.get(rf).map_or(rf, String::as_str)
+            } else if let Some(n) = prop.value_num {
+                // Render integers without a trailing ".0"; keep fractional
+                // values as-is. `{n}` on an f64 already emits "3" for 3.0 in
+                // Rust's default float formatting, so no lossy `as i64` cast
+                // is needed.
+                num_str = format!("{n}");
+                &num_str
+            } else {
+                ""
+            };
+            output.push_str(&format!("{}: {value}\n", prop.key));
         }
         output.push_str("---\n\n");
     }

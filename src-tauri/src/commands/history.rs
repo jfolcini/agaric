@@ -908,7 +908,17 @@ pub async fn find_undo_group_inner(
                  ROW_NUMBER() OVER (ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC) AS rn, \
                  ol.device_id, ol.seq, ol.created_at \
              FROM op_log ol \
-             WHERE ol.block_id IN (SELECT id FROM page_blocks) \
+             WHERE ( \
+                 ol.block_id IN (SELECT id FROM page_blocks) \
+                 OR ( \
+                     ol.op_type = 'delete_attachment' \
+                     AND EXISTS ( \
+                         SELECT 1 FROM attachments a \
+                         WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
+                         AND a.block_id IN (SELECT id FROM page_blocks) \
+                     ) \
+                 ) \
+             ) \
                AND ol.op_type NOT LIKE 'undo\\_%' ESCAPE '\\' \
                AND ol.op_type NOT LIKE 'redo\\_%' ESCAPE '\\' \
          ), \
@@ -1468,5 +1478,119 @@ mod tests {
             !diff.is_empty(),
             "diff must contain at least one DiffSpan; got an empty Vec"
         );
+    }
+
+    /// #384 regression: `find_undo_group_inner`'s `ordered_ops` CTE must
+    /// enumerate the SAME op set as `undo_page_op_inner` — including
+    /// `delete_attachment` ops, whose `block_id` index column is NULL but
+    /// which target an attachment on a page block (resolved via the
+    /// `attachments.block_id IN page_blocks` EXISTS branch).
+    ///
+    /// Setup: a page with one child block carrying an attachment, then three
+    /// consecutive same-device, within-window ops on that subtree where the
+    /// MIDDLE op is a `delete_attachment`. Before the fix the middle op was
+    /// absent from `ordered_ops`, so the walk saw only two rows that were no
+    /// longer rn-adjacent and the group collapsed; with the fix all three
+    /// ops are enumerated and the group spans them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn find_undo_group_includes_delete_attachment_ops() {
+        use crate::op::{AddAttachmentPayload, DeleteAttachmentPayload, EditBlockPayload};
+
+        let (pool, _dir) = test_pool().await;
+
+        // Page block + child block (child is a descendant of the page).
+        let page_id = BlockId::test_id("PAGE1");
+        let child_id = BlockId::test_id("CHILD1");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, position) VALUES (?, 'page', 'P', 0)",
+        )
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, parent_id, block_type, content, position) \
+             VALUES (?, ?, 'content', 'c', 0)",
+        )
+        .bind(child_id.as_str())
+        .bind(page_id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Attachment row on the child block — the EXISTS branch resolves the
+        // delete_attachment op back to the page subtree through this row.
+        let att_id = BlockId::test_id("ATT1");
+        sqlx::query(
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'image/png', 'f.png', 1, 'p/f.png', ?)",
+        )
+        .bind(att_id.as_str())
+        .bind(child_id.as_str())
+        .bind(FIXED_TS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Three consecutive same-device ops within a 1s window. The middle
+        // op is the delete_attachment (block_id index column NULL).
+        let edit1 = OpPayload::EditBlock(EditBlockPayload {
+            block_id: child_id.clone(),
+            to_text: "v1".into(),
+            prev_edit: None,
+        });
+        append_local_op_at(&pool, DEV, edit1, FIXED_TS)
+            .await
+            .unwrap();
+
+        let del = OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: att_id.clone(),
+            fs_path: "p/f.png".into(),
+        });
+        append_local_op_at(&pool, DEV, del, FIXED_TS + 1)
+            .await
+            .unwrap();
+
+        // (The add_attachment is appended last so the edit set is interesting;
+        // it also lives on the page subtree via its block_id index column.)
+        let add = OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT2"),
+            block_id: child_id.clone(),
+            mime_type: "image/png".into(),
+            filename: "g.png".into(),
+            size_bytes: 1,
+            fs_path: "p/g.png".into(),
+        });
+        append_local_op_at(&pool, DEV, add, FIXED_TS + 2)
+            .await
+            .unwrap();
+
+        // depth=0 seeds at the newest op; a 1s window covers all three. The
+        // group must span all three consecutive same-device ops — which is
+        // only possible if the delete_attachment is enumerated in
+        // ordered_ops (otherwise the chain breaks and the count is < 3).
+        let group = find_undo_group_inner(&pool, page_id.as_str(), 0, 1000)
+            .await
+            .unwrap();
+        assert_eq!(
+            group, 3,
+            "undo group must span all three consecutive ops including the \
+             delete_attachment; got {group}"
+        );
+
+        // Guard against a false pass: if the delete_attachment were silently
+        // EXCLUDED from ordered_ops (the pre-fix bug), the same setup minus
+        // the EXISTS branch would yield a group of 2. Assert the op log
+        // actually holds the three ops we appended so the count reflects real
+        // enumeration rather than an empty page.
+        let total: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM op_log WHERE op_type IN \
+             ('edit_block', 'delete_attachment', 'add_attachment')"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(total, 3, "expected exactly three seeded ops; got {total}");
     }
 }

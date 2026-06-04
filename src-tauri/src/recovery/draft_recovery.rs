@@ -67,7 +67,35 @@ pub(super) async fn recover_single_draft(
     }
 
     // Check if an edit_block or create_block op exists for this block_id
-    // with created_at strictly after the draft's updated_at.
+    // that supersedes the draft.
+    //
+    // #384 — same-ms disambiguation by op provenance. `op_log.created_at`
+    // and `block_drafts.updated_at` are both INTEGER epoch-ms from
+    // `now_ms()`, so a real edit and a draft autosave can land in the SAME
+    // millisecond. The previous strict `created_at > draft.updated_at`
+    // missed a same-ms edit entirely, so recovery would re-apply the (older)
+    // draft content over the newer edit — a silent clobber.
+    //
+    // The draft row carries no seq/device anchor (block_drafts is just
+    // block_id/content/updated_at), so we disambiguate same-ms collisions
+    // by *content provenance* instead of timestamp alone:
+    //
+    //   * Any op with created_at STRICTLY AFTER the draft supersedes it.
+    //   * An op at the EXACT same ms supersedes the draft only when its
+    //     resulting content DIFFERS from the draft content — that signals a
+    //     genuine concurrent/newer edit which must not be clobbered. A
+    //     same-ms op whose content EQUALS the draft is this draft's own
+    //     flush (harmless), and an equal-content same-ms op does not need to
+    //     block recovery (re-applying identical content is a no-op).
+    //
+    // A bare `>=` is deliberately avoided: it would treat the draft's own
+    // same-ms flush (identical content) as "newer" purely on the timestamp,
+    // conflating a no-op flush with a real superseding edit. Keying the
+    // same-ms case on content difference is the precise signal.
+    //
+    // The resulting content lives in `$.to_text` for edit_block and
+    // `$.content` for create_block, so COALESCE across both reads the right
+    // field for either op_type.
     //
     // PERF-26: uses the indexed op_log.block_id column (migration 0030)
     // for O(log N) block-scoped lookups instead of json_extract across the
@@ -88,11 +116,21 @@ pub(super) async fn recover_single_draft(
     let bid_upper = draft.block_id.as_str().to_ascii_uppercase();
     let row: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log \
-         WHERE block_id = ? \
+         WHERE block_id = ?1 \
          AND op_type IN ('edit_block', 'create_block') \
-         AND created_at > ?",
+         AND ( \
+             created_at > ?2 \
+             OR ( \
+                 created_at = ?2 \
+                 AND COALESCE( \
+                     json_extract(payload, '$.to_text'), \
+                     json_extract(payload, '$.content') \
+                 ) IS NOT ?3 \
+             ) \
+         )",
         bid_upper,
-        draft.updated_at
+        draft.updated_at,
+        draft.content
     )
     .fetch_one(pool)
     .await?;
