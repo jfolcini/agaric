@@ -66,6 +66,15 @@ pub const MAX_SQL_PARAMS: usize = 999;
 /// Returns `i64` so the value lands directly in `sqlx`'s `INTEGER`
 /// binding without a `try_from` step. `i64` covers ±292M years around
 /// 1970, well past any horizon that matters.
+///
+/// **Not OS-monotonic.** This is `chrono::Utc::now().timestamp_millis()`,
+/// i.e. wall-clock epoch-ms. It can step *backward* (NTP adjustments,
+/// manual clock changes) and two successive calls may even return the
+/// same value. `created_at` is therefore not a monotonic ordering key on
+/// its own — total ordering of writes is established by the composite
+/// `(created_at, seq)` key the query layer implements (`seq` being the
+/// per-device monotonic sequence number that breaks ties / repairs
+/// backward steps).
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -1132,21 +1141,20 @@ mod tests {
         (pools, dir)
     }
 
-    /// Issue #109 Phase 1 — `now_ms()` returns a sensible, monotonically
-    /// non-decreasing value for every call within the same process. The
-    /// test deliberately doesn't pin a value range against
-    /// `chrono::Utc::now()` to avoid a circular self-test; it pins the
-    /// invariants every downstream call site relies on (positive value,
-    /// non-decreasing within a tight loop, well below i64::MAX).
+    /// Issue #109 Phase 1 — `now_ms()` returns a plausible wall-clock
+    /// epoch-ms value. The test deliberately doesn't pin a value range
+    /// against `chrono::Utc::now()` to avoid a circular self-test; it
+    /// pins only the shape every downstream call site relies on (positive
+    /// value, well below i64::MAX). It does NOT assert monotonicity:
+    /// `now_ms()` is wall-clock, not OS-monotonic, and may step backward
+    /// (NTP) — ordering of writes is the `(created_at, seq)` query layer's
+    /// job, not this helper's.
     #[test]
-    fn now_ms_returns_positive_monotonically_nondecreasing_109() {
+    fn now_ms_returns_plausible_epoch_ms_109() {
         let a = now_ms();
         let b = now_ms();
         assert!(a > 0, "now_ms() must be positive (post-epoch)");
-        assert!(
-            b >= a,
-            "now_ms() must be non-decreasing across successive calls in the same process"
-        );
+        assert!(b > 0, "now_ms() must be positive (post-epoch)");
         // Well below i64::MAX, where chrono panics. Year 2262-04-11
         // overflows i64 milliseconds; current date is in the 2020s, so
         // there's ~7 orders of magnitude of headroom.

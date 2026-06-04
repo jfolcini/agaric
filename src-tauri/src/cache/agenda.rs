@@ -109,8 +109,10 @@ async fn apply_agenda_diff(
 /// Top-level tags have `page_id IS NULL` and pass the `NOT EXISTS`
 /// check vacuously.
 ///
-/// Conflict-aware ( on every block reference,
-/// invariant #9). Soft-deleted rows excluded.
+/// Liveness: `deleted_at IS NULL` on every block reference is the sole
+/// liveness guard. (The former `is_conflict` column / conflict-copy
+/// exclusion was dropped in migration 0058; soft-delete is now the only
+/// way a block is hidden.)
 ///
 /// SQL/C9(c) (#345): the `date/YYYY-MM-DD` tag projection (the second
 /// UNION arm) validates only the *digit shape* via `GLOB`
