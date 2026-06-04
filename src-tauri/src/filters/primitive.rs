@@ -612,9 +612,18 @@ impl Projection for PagesProjection {
                                  // by `validate_last_edited_date`; the fallback to `0` keeps a
                                  // malformed value from panicking (it would simply match nothing).
         fn to_ms(ts: &str) -> i64 {
-            chrono::DateTime::parse_from_rfc3339(ts)
-                .map(|d| d.timestamp_millis())
-                .unwrap_or(0)
+            let parsed = chrono::DateTime::parse_from_rfc3339(ts);
+            // #383: bounds are pre-validated by `validate_last_edited_date`, so
+            // a parse failure here means a validation bypass. Fail loudly in
+            // debug (mirrors the `none`-sentinel debug_assert! in
+            // metadata_filter.rs) while keeping the `unwrap_or(0)` no-panic
+            // fallback in release — an epoch-0 bound simply matches nothing.
+            debug_assert!(
+                parsed.is_ok(),
+                "last_edited Range bound must be a valid RFC 3339 timestamp \
+                 (pre-validated by validate_last_edited_date), got: '{ts}'"
+            );
+            parsed.map(|d| d.timestamp_millis()).unwrap_or(0)
         }
         match spec {
             LastEditedSpec::Rolling { days } => WhereClause::new(

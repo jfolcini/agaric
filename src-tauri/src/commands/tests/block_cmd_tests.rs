@@ -390,6 +390,67 @@ async fn create_block_position_negative_returns_validation_error() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_block_position_sentinel_returns_validation_error() {
+    // #383: i64::MAX is the reserved NULL_POSITION_SENTINEL (the keyset
+    // "no explicit position" marker). An explicit create at it must be
+    // rejected so it cannot collide with the synthetic tail bucket.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let result = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(crate::pagination::NULL_POSITION_SENTINEL),
+    )
+    .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "position=NULL_POSITION_SENTINEL should return Validation error, got: {err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_position_sentinel_returns_validation_error() {
+    // #383: moving to the reserved NULL_POSITION_SENTINEL (i64::MAX) must be
+    // rejected for the same reason the create path rejects it.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    insert_block(&pool, "MV_SENT_PAR", "page", "parent", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "MV_SENT_CHD",
+        "content",
+        "child",
+        Some("MV_SENT_PAR"),
+        Some(1),
+    )
+    .await;
+
+    let result = move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "MV_SENT_CHD".into(),
+        None,
+        crate::pagination::NULL_POSITION_SENTINEL,
+    )
+    .await;
+
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::Validation(_)),
+        "move to NULL_POSITION_SENTINEL should return Validation error, got: {err:?}"
+    );
+}
+
 // ======================================================================
 // BUG-1 / H-3a — `create_block_inner_with_space` (IPC tightening)
 // ======================================================================

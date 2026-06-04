@@ -2234,6 +2234,45 @@ async fn apply_move_block_sql_only(
     let new_parent_str = p.new_parent_id.as_ref().map(|id| id.as_str().to_owned());
     let new_parent_ref = new_parent_str.as_deref();
     let block_id_str = p.block_id.as_str();
+
+    // #383: defensive cycle probe before the bare UPDATE. The engine path
+    // (`commands/blocks/move_ops.rs::move_block_inner`) rejects a move that
+    // would make the new parent a descendant of (or equal to) the block being
+    // moved, but this SQL-only fallback wrote `parent_id` unconditionally — a
+    // malformed/replayed op could install a parent_id cycle that then makes
+    // every recursive CTE walk this subtree saturate at the depth-100 bound.
+    // Mirror the cycle check from `move_block_inner`: walk the new parent's
+    // ancestors (via `ancestors_cte_standard!`) and, if `block_id` appears
+    // among them — or `new_parent == block_id` — skip the write and warn
+    // rather than persisting the cycle. No-op-warn (not error) because this is
+    // the sync-replay fallback arm; aborting would wedge inbound sync, whereas
+    // dropping a self-evidently invalid move is recoverable.
+    if let Some(parent) = new_parent_ref {
+        let would_cycle = if parent == block_id_str {
+            true
+        } else {
+            sqlx::query(concat!(
+                crate::ancestors_cte_standard!(),
+                "SELECT 1 FROM ancestors WHERE id = ?",
+            ))
+            .bind(parent)
+            .bind(block_id_str)
+            .fetch_optional(&mut *conn)
+            .await?
+            .is_some()
+        };
+        if would_cycle {
+            tracing::warn!(
+                block_id = %block_id_str,
+                new_parent_id = %parent,
+                "apply_move_block_sql_only: move would create a parent_id cycle \
+                 (new parent is the block itself or one of its descendants); \
+                 skipping the UPDATE (#383)"
+            );
+            return Ok(());
+        }
+    }
+
     sqlx::query!(
         "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
         new_parent_ref,
@@ -4288,6 +4327,128 @@ mod static_source_checks {
             "production code in src/materializer/handlers.rs must not call bare \
              `pool.begin()` (DEFERRED isolation) — use `begin_immediate_logged` \
              so sync-burst contention serialises upfront. See SQL-review M-1.",
+        );
+    }
+}
+
+#[cfg(test)]
+mod move_sql_only_cycle_tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::op::MoveBlockPayload;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    const A: &str = "01HZ0000000000000000000MVA";
+    const B: &str = "01HZ0000000000000000000MVB";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("move_cycle.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        (pool, dir)
+    }
+
+    /// #383: the SQL-only MoveBlock fallback must refuse to write a
+    /// `parent_id` cycle. Seed A → B (B is a child of A); a replayed/malformed
+    /// op that tries to move A *under* B would make B (A's descendant) A's
+    /// parent — a cycle. The fallback must detect it and skip the UPDATE,
+    /// leaving A's parent_id untouched.
+    #[tokio::test]
+    async fn apply_move_block_sql_only_skips_cycle() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'A', NULL, 1)",
+        )
+        .bind(A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'B', ?, 1)",
+        )
+        .bind(B)
+        .bind(A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Attempt the cycle: move A under B (B is A's descendant).
+        apply_move_block_sql_only(
+            &mut conn,
+            MoveBlockPayload {
+                block_id: BlockId::from_trusted(A),
+                new_parent_id: Some(BlockId::from_trusted(B)),
+                new_position: 1,
+            },
+        )
+        .await
+        .expect("fallback returns Ok (no-op-warn, not error)");
+        drop(conn);
+
+        // A's parent_id must still be NULL — the cycle write was skipped.
+        let parent: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(A)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            parent.is_none(),
+            "cycle move must be skipped; A.parent_id should remain NULL, got {parent:?}"
+        );
+    }
+
+    /// Control: a legitimate (non-cycle) move via the SQL-only fallback still
+    /// writes the new parent_id.
+    #[tokio::test]
+    async fn apply_move_block_sql_only_allows_non_cycle() {
+        let (pool, _dir) = fresh_pool().await;
+        // Two unrelated blocks: A (root) and B (root). Move A under B — no cycle.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'A', NULL, 1)",
+        )
+        .bind(A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'B', NULL, 2)",
+        )
+        .bind(B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        apply_move_block_sql_only(
+            &mut conn,
+            MoveBlockPayload {
+                block_id: BlockId::from_trusted(A),
+                new_parent_id: Some(BlockId::from_trusted(B)),
+                new_position: 3,
+            },
+        )
+        .await
+        .expect("non-cycle move");
+        drop(conn);
+
+        let parent: Option<String> =
+            sqlx::query_scalar("SELECT parent_id FROM blocks WHERE id = ?")
+                .bind(A)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            parent.as_deref(),
+            Some(B),
+            "non-cycle move must write the new parent_id"
         );
     }
 }

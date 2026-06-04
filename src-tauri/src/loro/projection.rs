@@ -627,7 +627,25 @@ pub async fn reproject_block_properties_from_engine(
                     String::as_str,
                 );
                 match value_type {
-                    "number" => value_num = s.parse::<f64>().ok(),
+                    "number" => {
+                        value_num = s.parse::<f64>().ok();
+                        // #383: a `number`-typed property whose Str payload
+                        // fails to parse routes to no column and is dropped
+                        // (the all-None guard below `continue`s). Warn so the
+                        // silent drop is observable (matches the undefined-
+                        // definition warn above). We deliberately do NOT fall
+                        // back to `value_text` — that would corrupt the typed
+                        // column contract.
+                        if value_num.is_none() {
+                            tracing::warn!(
+                                key = %key,
+                                block_id = %block_id.as_str(),
+                                value = %s,
+                                "reproject_block_properties_from_engine: 'number' property \
+                                 value failed to parse as f64; dropping (row-absent)"
+                            );
+                        }
+                    }
                     "boolean" => value_bool = Some(i64::from(s == "true")),
                     "date" => value_date = Some(s.as_str()),
                     "ref" => value_ref = Some(s.as_str()),
@@ -1979,6 +1997,43 @@ mod tests {
         .await
         .expect("fetch mystery");
         assert_eq!(row.0, Some("raw".into()));
+    }
+
+    #[tokio::test]
+    async fn reproject_number_parse_failure_drops_row() {
+        // #383: a `number`-typed property whose Str payload fails to parse as
+        // f64 routes to no column. The all-None guard then `continue`s, so the
+        // row is correctly absent (the `exactly_one_value` CHECK forbids an
+        // all-NULL row; row-absent is the right SQL representation). We do NOT
+        // fall back to value_text. A warn (asserted only by code review) makes
+        // the silent drop observable.
+        let (pool, _dir) = fresh_pool().await;
+        seed_block_and_property_defs(&pool).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        // `effort` is a `number`-typed def (see seed); "not-a-number" cannot
+        // parse as f64.
+        let props = vec![("effort".to_string(), pv("not-a-number"))];
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        // No row should exist for `effort` — neither value_num nor a
+        // value_text fallback.
+        let row: Option<(Option<f64>, Option<String>)> = sqlx::query_as(
+            "SELECT value_num, value_text FROM block_properties \
+             WHERE block_id = ? AND key = 'effort'",
+        )
+        .bind(BLOCK_A)
+        .fetch_optional(&pool)
+        .await
+        .expect("fetch effort");
+        assert!(
+            row.is_none(),
+            "unparseable number must drop to row-absent (no value_text fallback), got {row:?}"
+        );
     }
 
     #[tokio::test]

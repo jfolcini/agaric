@@ -174,10 +174,16 @@ pub async fn find_prev_edit(
             // No edit_block heads — fall back to the create_block op (root
             // of the edit chain). If no create_block exists either, there
             // are no ops for this block and prev_edit is None.
+            // #383: deterministic LIMIT 1 — without an ORDER BY, SQLite is
+            // free to return any matching row, so the create_block "chain
+            // root" picked here could vary between runs. Order by
+            // (created_at, device_id, seq) ascending so the earliest create
+            // op (the true chain root) is always selected.
             let maybe_create = sqlx::query!(
                 "SELECT device_id, seq FROM op_log \
                  WHERE block_id = ? \
                  AND op_type = 'create_block' \
+                 ORDER BY created_at ASC, device_id ASC, seq ASC \
                  LIMIT 1",
                 bid_upper
             )

@@ -114,6 +114,18 @@ pub(crate) async fn find_prev_edit_in_tx(
 ///
 /// Returns the new [`BlockRow`] and the [`op_log::OpRecord`] so the caller
 /// can commit the transaction and dispatch background work afterward.
+///
+/// # Position contract (#383)
+///
+/// `position` is **NOT unique** among siblings. The canonical sibling
+/// ordering is `(position ASC, id ASC)` — `id` (a monotonically increasing
+/// ULID) breaks ties when two siblings share a `position`. When `position`
+/// is `None`, the next position is computed as `MAX(position) + 1` over the
+/// live siblings (excluding rows carrying `NULL_POSITION_SENTINEL`). When an
+/// explicit `position` is supplied this function writes it verbatim and
+/// performs **no in-transaction shift / renumber** of the existing
+/// siblings; a caller that needs collision-free positions must renumber the
+/// siblings itself.
 pub(crate) async fn create_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -137,6 +149,22 @@ pub(crate) async fn create_block_in_tx(
         if pos <= 0 {
             return Err(AppError::Validation(format!(
                 "position must be positive (1-based), got {pos}"
+            )));
+        }
+        // #383: reject the reserved NULL_POSITION_SENTINEL (i64::MAX) when an
+        // explicit position is supplied. That value is the keyset-pagination
+        // "no explicit position" marker (`pagination::NULL_POSITION_SENTINEL`);
+        // an explicit create at it would collide with the synthetic tail
+        // bucket. The append path (position = None) computes a real position
+        // and already excludes sentinel rows from the MAX (see below), so it
+        // is unaffected.
+        // NULL_POSITION_SENTINEL is `i64::MAX`, so `== sentinel` is the only
+        // reachable "at-or-above sentinel" case (a `>=` would trip
+        // `clippy::absurd_extreme_comparisons`).
+        if pos == crate::pagination::NULL_POSITION_SENTINEL {
+            return Err(AppError::Validation(format!(
+                "position must be below the reserved sentinel ({}), got {pos}",
+                crate::pagination::NULL_POSITION_SENTINEL
             )));
         }
     }

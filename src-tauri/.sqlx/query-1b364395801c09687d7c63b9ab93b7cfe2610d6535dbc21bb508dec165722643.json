@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'create_block' LIMIT 1",
+  "query": "SELECT device_id, seq FROM op_log WHERE block_id = ? AND op_type = 'create_block' ORDER BY created_at ASC, device_id ASC, seq ASC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "4ff6d558dbf4d855e9239737b2b146d8cd70ac05b8f8f55e9f1e0f1964269b30"
+  "hash": "1b364395801c09687d7c63b9ab93b7cfe2610d6535dbc21bb508dec165722643"
 }
