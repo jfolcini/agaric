@@ -444,10 +444,13 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 }
 
                 // Fallback: no candidate set — scan every active block of
-                // this type.  Kept for callers that don't (yet) thread a
-                // candidate set through; And/Or combinators currently
-                // resolve sub-filters via the no-candidate `resolve_filter`
-                // helper.
+                // this type.  Reached when no candidate set is in scope:
+                // top-level grouped queries, or nested inside `Or`/`Not`
+                // (which deliberately stay unscoped — see those arms). The
+                // `And` combinator now threads the parent candidate set
+                // through its conjuncts (#379), so `And { BlockType, … }`
+                // takes the scoped json_each path above instead of this
+                // whole-vault scan.
                 let rows = sqlx::query_scalar::<_, String>(
                     "SELECT id FROM blocks \
                      WHERE block_type = ?1 AND deleted_at IS NULL",
@@ -534,10 +537,24 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 if filters.is_empty() {
                     return Ok(FxHashSet::default());
                 }
+                // #379: thread the parent candidate set through every
+                // conjunct. `And` is a set INTERSECTION, and the final
+                // result is a subset of every conjunct — so scoping each
+                // conjunct to `candidates` only drops ids that the
+                // intersection (and, for the top-level caller, the outer
+                // intersection against `candidates`) would drop anyway.
+                // This is provably behaviour-preserving while letting
+                // candidate-aware leaves (e.g. `BlockType`,
+                // `PropertyIsEmpty`) scope their SQL to the candidate set
+                // via `json_each` instead of scanning the whole vault and
+                // discarding the surplus in Rust.
+                //
                 // Resolve all sub-filters concurrently (#319) instead of
                 // sequentially, turning N serial DB round-trips into N
                 // concurrent ones.
-                let futures = filters.iter().map(|f| resolve_filter(pool, f, depth + 1));
+                let futures = filters
+                    .iter()
+                    .map(|f| resolve_filter_with_candidates(pool, f, depth + 1, candidates));
                 let results = try_join_all(futures).await?;
                 let mut iter = results.into_iter();
                 let mut result = iter.next().unwrap();
@@ -548,6 +565,16 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::Or { filters } => {
+                // #379: `Or` is a set UNION, NOT an intersection. Scoping a
+                // disjunct to `candidates` would WRONGLY drop matches that
+                // lie outside `candidates` but should still appear in the
+                // union (the union may legitimately exceed `candidates`,
+                // and the parent And/intersection — if any — has not yet
+                // been applied at this point). So we deliberately resolve
+                // disjuncts UNSCOPED via the no-candidate `resolve_filter`
+                // wrapper. Correctness is preserved; only perf is left on
+                // the table for `Or` subtrees.
+                //
                 // Resolve all sub-filters concurrently (#319) instead of
                 // sequentially, turning N serial DB round-trips into N
                 // concurrent ones.
@@ -561,6 +588,13 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
             }
 
             BacklinkFilter::Not { filter } => {
+                // #379: `Not` is a set COMPLEMENT over all non-deleted
+                // blocks. Scoping the INNER filter to `candidates` would
+                // shrink the set being complemented, which inverts to a
+                // LARGER (wrong) complement. The complement itself must
+                // also range over the whole vault, not `candidates`. So the
+                // inner filter is resolved UNSCOPED. Correctness is
+                // preserved; only perf is left on the table for `Not`.
                 let inner_set = resolve_filter(pool, filter, depth + 1).await?;
 
                 if inner_set.is_empty() {

@@ -927,6 +927,14 @@ export type BacklinkGroup = {
 	page_id: string,
 	page_title: string | null,
 	blocks: ActiveBlockRow[],
+	/**
+	 *  `true` when this group held more than `MAX_BLOCKS_PER_GROUP`
+	 *  matching backlinks and `blocks` was truncated to the cap (#380).
+	 *  The response-level `total_count` / `filtered_count` are counted
+	 *  before truncation, so the UI can show e.g. "showing first 200 of
+	 *  N" for this source page.
+	 */
+	truncated?: boolean,
 };
 
 /**

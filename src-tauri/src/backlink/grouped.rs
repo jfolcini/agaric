@@ -232,7 +232,10 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 7. Sort all block IDs across groups by the user-specified sort, then distribute
+    // 7. Sort all block IDs across groups by the user-specified sort, then
+    //    distribute. Sorting only orders ids (cheap); the expensive
+    //    `fetch_block_rows_by_ids` below runs AFTER the per-group cap so we
+    //    never load full rows for blocks the response will discard (#380).
     let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
     let all_block_ids: FxHashSet<String> = actual_groups
         .iter()
@@ -240,30 +243,21 @@ pub async fn eval_backlink_query_grouped(
         .collect();
     let sorted_all = sort_ids(pool, &all_block_ids, &sort).await?;
 
-    // 8. Fetch full BlockRow data for all blocks in one batch
-    let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
-    let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
-
-    // Build a lookup map from id -> BlockRow
-    // L-5 (PEND-25): both lookup tables are short-lived per-query maps
-    // keyed on borrowed `&str`s — `FxHashMap` skips SipHash setup with
-    // no behavioural change.
-    let row_map: FxHashMap<&str, &BlockRow> =
-        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
-
-    // Build a position map from sorted order
+    // Build a position map from sorted order.
     let sort_order: FxHashMap<&str, usize> = sorted_all
         .iter()
         .enumerate()
         .map(|(i, id)| (id.as_str(), i))
         .collect();
 
-    // 9. Distribute fetched rows back into groups, maintaining sort order.
-    //    MAINT-113 M2 — `all_block_ids` traces back to active candidates
-    //    (the grouped query's base set filters `deleted_at IS NULL`), so
-    //    the per-group rows are also active. The boundary cast records
-    //    that claim in the type system.
-    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    // 8. Build each group's sorted, capped id list FIRST, recording
+    //    truncation. `filtered_count` was summed from the untruncated group
+    //    sizes above, so the badge stays accurate (#380); only the
+    //    materialised slice is bounded. The cap is applied AFTER sorting so
+    //    the visible window is the first `MAX_BLOCKS_PER_GROUP` ids in the
+    //    user's sort order, deterministically.
+    let mut capped_groups: Vec<(&String, &Option<String>, Vec<&str>, bool)> =
+        Vec::with_capacity(actual_groups.len());
     for (page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group
             .iter()
@@ -271,9 +265,38 @@ pub async fn eval_backlink_query_grouped(
             .collect();
         blocks.sort_by_key(|&(_, pos)| pos);
 
-        let block_rows: Vec<crate::pagination::ActiveBlockRow> = blocks
+        let group_truncated = blocks.len() > super::MAX_BLOCKS_PER_GROUP;
+        if group_truncated {
+            blocks.truncate(super::MAX_BLOCKS_PER_GROUP);
+        }
+        let ids: Vec<&str> = blocks.into_iter().map(|(bid, _)| bid).collect();
+        capped_groups.push((page_id, page_title, ids, group_truncated));
+    }
+
+    // 9. Fetch full BlockRow data for ONLY the capped, post-truncation id
+    //    set — one batch, bounded by `#groups * MAX_BLOCKS_PER_GROUP`.
+    let fetch_ids: Vec<&str> = capped_groups
+        .iter()
+        .flat_map(|(_, _, ids, _)| ids.iter().copied())
+        .collect();
+    let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
+
+    // Build a lookup map from id -> BlockRow.
+    // L-5 (PEND-25): short-lived per-query map keyed on borrowed `&str`s —
+    // `FxHashMap` skips SipHash setup with no behavioural change.
+    let row_map: FxHashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // 10. Distribute fetched rows back into groups (already in sort order).
+    //     MAINT-113 M2 — `all_block_ids` traces back to active candidates
+    //     (the grouped query's base set filters `deleted_at IS NULL`), so
+    //     the per-group rows are also active. The boundary cast records
+    //     that claim in the type system.
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
+    for (page_id, page_title, ids, group_truncated) in capped_groups {
+        let block_rows: Vec<crate::pagination::ActiveBlockRow> = ids
             .iter()
-            .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
             .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
@@ -281,10 +304,11 @@ pub async fn eval_backlink_query_grouped(
             page_id: page_id.clone(),
             page_title: page_title.clone(),
             blocks: block_rows,
+            truncated: group_truncated,
         });
     }
 
-    // 10. Build cursor from last group's page_id if has_more
+    // 11. Build cursor from last group's page_id if has_more
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
         Some(Cursor::for_id(last.0.clone()).encode()?)
@@ -615,8 +639,10 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 9. Sort all block IDs across groups by the user-specified sort, then distribute.
-    //    Mirrors eval_backlink_query_grouped step #7 — default to Created Asc (ULID order).
+    // 9. Sort all block IDs across groups by the user-specified sort, then
+    //    distribute. Mirrors eval_backlink_query_grouped step #7 — default
+    //    to Created Asc (ULID order). The expensive
+    //    `fetch_block_rows_by_ids` runs AFTER the per-group cap (#380).
     let sort = sort.unwrap_or(BacklinkSort::Created { dir: SortDir::Asc });
     let all_block_ids_set: FxHashSet<String> = actual_groups
         .iter()
@@ -624,28 +650,19 @@ pub async fn eval_unlinked_references(
         .collect();
     let sorted_all = sort_ids(pool, &all_block_ids_set, &sort).await?;
 
-    // 10. Fetch full BlockRow data for all blocks in one batch
-    let all_ids_vec: Vec<&str> = sorted_all.iter().map(String::as_str).collect();
-    let fetched_rows = fetch_block_rows_by_ids(pool, &all_ids_vec).await?;
-
-    // Build a lookup map from id -> BlockRow
-    // L-5 (PEND-25): same `FxHashMap` swap as the sister
-    // `eval_backlink_query_grouped` block-row lookup.
-    let row_map: FxHashMap<&str, &BlockRow> =
-        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
-
-    // Build a position map from sorted order
+    // Build a position map from sorted order.
     let sort_order: FxHashMap<&str, usize> = sorted_all
         .iter()
         .enumerate()
         .map(|(i, id)| (id.as_str(), i))
         .collect();
 
-    // 11. Distribute fetched rows back into groups, maintaining sort order.
-    //     MAINT-113 M2 — same active-only invariant as step 9 above; the
-    //     unlinked-references query path also filters
-    //     deleted_at IS NULL` upstream.
-    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(actual_groups.len());
+    // 10. Build each group's sorted, capped id list FIRST, recording
+    //     truncation (#380). `filtered_count` (step #7) reflects the
+    //     untruncated sizes, so the badge stays accurate; only the
+    //     materialised slice is bounded to `MAX_BLOCKS_PER_GROUP`.
+    let mut capped_groups: Vec<(&String, &Option<String>, Vec<&str>, bool)> =
+        Vec::with_capacity(actual_groups.len());
     for (group_page_id, page_title, block_ids_in_group) in &actual_groups {
         let mut blocks: Vec<(&str, usize)> = block_ids_in_group
             .iter()
@@ -653,9 +670,37 @@ pub async fn eval_unlinked_references(
             .collect();
         blocks.sort_by_key(|&(_, pos)| pos);
 
-        let block_rows: Vec<crate::pagination::ActiveBlockRow> = blocks
+        let group_truncated = blocks.len() > super::MAX_BLOCKS_PER_GROUP;
+        if group_truncated {
+            blocks.truncate(super::MAX_BLOCKS_PER_GROUP);
+        }
+        let ids: Vec<&str> = blocks.into_iter().map(|(bid, _)| bid).collect();
+        capped_groups.push((group_page_id, page_title, ids, group_truncated));
+    }
+
+    // 11. Fetch full BlockRow data for ONLY the capped, post-truncation id
+    //     set — one batch, bounded by `#groups * MAX_BLOCKS_PER_GROUP`.
+    let fetch_ids: Vec<&str> = capped_groups
+        .iter()
+        .flat_map(|(_, _, ids, _)| ids.iter().copied())
+        .collect();
+    let fetched_rows = fetch_block_rows_by_ids(pool, &fetch_ids).await?;
+
+    // Build a lookup map from id -> BlockRow.
+    // L-5 (PEND-25): same `FxHashMap` swap as the sister
+    // `eval_backlink_query_grouped` block-row lookup.
+    let row_map: FxHashMap<&str, &BlockRow> =
+        fetched_rows.iter().map(|r| (r.id.as_str(), r)).collect();
+
+    // 12. Distribute fetched rows back into groups (already in sort order).
+    //     MAINT-113 M2 — same active-only invariant as above; the
+    //     unlinked-references query path also filters
+    //     deleted_at IS NULL` upstream.
+    let mut groups: Vec<BacklinkGroup> = Vec::with_capacity(capped_groups.len());
+    for (group_page_id, page_title, ids, group_truncated) in capped_groups {
+        let block_rows: Vec<crate::pagination::ActiveBlockRow> = ids
             .iter()
-            .filter_map(|&(bid, _)| row_map.get(bid).map(|r| (*r).clone()))
+            .filter_map(|&bid| row_map.get(bid).map(|r| (*r).clone()))
             .map(crate::pagination::ActiveBlockRow::from_block_row_unchecked)
             .collect();
 
@@ -663,10 +708,11 @@ pub async fn eval_unlinked_references(
             page_id: group_page_id.clone(),
             page_title: page_title.clone(),
             blocks: block_rows,
+            truncated: group_truncated,
         });
     }
 
-    // 12. Build cursor from last group's page_id if has_more
+    // 13. Build cursor from last group's page_id if has_more
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
         Some(Cursor::for_id(last.0.clone()).encode()?)

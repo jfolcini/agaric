@@ -136,6 +136,13 @@ pub struct BacklinkGroup {
     pub page_id: String,
     pub page_title: Option<String>,
     pub blocks: Vec<ActiveBlockRow>,
+    /// `true` when this group held more than `MAX_BLOCKS_PER_GROUP`
+    /// matching backlinks and `blocks` was truncated to the cap (#380).
+    /// The response-level `total_count` / `filtered_count` are counted
+    /// before truncation, so the UI can show e.g. "showing first 200 of
+    /// N" for this source page.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 /// Response for grouped backlink queries — backlinks organized by source page.
