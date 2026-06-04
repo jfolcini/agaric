@@ -130,7 +130,11 @@ export function BlockHistoryItem({
     if (comparedDiff != null || comparedLoading || comparedFailed) return
     let cancelled = false
     setComparedLoading(true)
-    computeBlockVsCurrentDiff({ blockId, historicalSeq: entry.seq })
+    computeBlockVsCurrentDiff({
+      blockId,
+      historicalCreatedAt: entry.created_at,
+      historicalSeq: entry.seq,
+    })
       .then((spans) => {
         if (cancelled) return
         setComparedDiff(spans)

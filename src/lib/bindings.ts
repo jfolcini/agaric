@@ -302,10 +302,17 @@ export const commands = {
 	computeEditDiff: (deviceId: string, seq: number) => typedError<DiffSpan[] | null, AppError>(__TAURI_INVOKE("compute_edit_diff", { deviceId, seq })),
 	/**
 	 *  Tauri command: compute word-level diff between a block's historical
-	 *  content (as of `historical_seq`) and its current live content.
-	 *  Delegates to [`compute_block_vs_current_diff_inner`].
+	 *  content (as of the selected point `(historical_created_at,
+	 *  historical_seq)`) and its current live content. Delegates to
+	 *  [`compute_block_vs_current_diff_inner`].
+	 *
+	 *  #382: the caller passes BOTH `historical_created_at` and
+	 *  `historical_seq` (the history entry already carries both columns) so
+	 *  the historical lookup can bound on the canonical `(created_at, seq)`
+	 *  keyset instead of bare per-device `seq`, which is not a valid global
+	 *  upper bound across devices.
 	 */
-	computeBlockVsCurrentDiff: (blockId: BlockId, historicalSeq: number) => typedError<DiffSpan[], AppError>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalSeq })),
+	computeBlockVsCurrentDiff: (blockId: BlockId, historicalCreatedAt: number, historicalSeq: number) => typedError<DiffSpan[], AppError>(__TAURI_INVOKE("compute_block_vs_current_diff", { blockId, historicalCreatedAt, historicalSeq })),
 	/**  Tauri command: filtered backlink query. Delegates to [`query_backlinks_filtered_inner`]. */
 	queryBacklinksFiltered: (blockId: BlockId, filters: BacklinkFilter[] | null, sort: { type: "Created"; dir: SortDir } | { type: "PropertyText"; key: string; dir: SortDir } | { type: "PropertyNum"; key: string; dir: SortDir } | { type: "PropertyDate"; key: string; dir: SortDir } | null, cursor: string | null, limit: number | null, scope: SpaceScope) => typedError<BacklinkQueryResponse, AppError>(__TAURI_INVOKE("query_backlinks_filtered", { blockId, filters, sort, cursor, limit, scope })),
 	/**  Tauri command: grouped backlink query. Delegates to [`list_backlinks_grouped_inner`]. */

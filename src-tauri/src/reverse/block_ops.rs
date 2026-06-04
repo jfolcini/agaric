@@ -35,6 +35,7 @@ pub async fn reverse_edit_block(
         payload.block_id.as_str(),
         record.created_at,
         record.seq,
+        &record.device_id,
     )
     .await?
     .ok_or_else(|| {
@@ -60,6 +61,7 @@ pub async fn reverse_move_block(
         payload.block_id.as_str(),
         record.created_at,
         record.seq,
+        &record.device_id,
     )
     .await?
     .ok_or_else(|| {
@@ -109,6 +111,7 @@ pub async fn find_prior_text(
     block_id: &str,
     created_at: i64,
     seq: i64,
+    device_id: &str,
 ) -> Result<Option<String>, AppError> {
     // M-63: use the indexed `block_id` column (migration 0030) instead of
     // `json_extract(payload, '$.block_id')` so undo of `edit_block` is
@@ -116,16 +119,26 @@ pub async fn find_prior_text(
     // uppercase for hash determinism, so normalize the bound parameter to
     // match — mirrors `recovery/draft_recovery.rs`.
     let bid_upper = block_id.to_ascii_uppercase();
+    // #382: the op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE
+    // counter, so the "strictly before" predicate must tie-break on the
+    // full canonical `(created_at, seq, device_id)` total order — the same
+    // order used by `commands/history.rs` and `pagination/history.rs`.
+    // Omitting `device_id` leaves the bound ambiguous when two devices
+    // share a `(created_at, seq)` pair: the equal-key op could fall on
+    // either side of the boundary. Including `device_id` makes "the op
+    // immediately before this one" well-defined cross-device.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('edit_block', 'create_block') \
-           AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
-         ORDER BY created_at DESC, seq DESC \
+           AND (created_at < ?2 \
+                OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4)))) \
+         ORDER BY created_at DESC, seq DESC, device_id DESC \
          LIMIT 1",
         bid_upper,
         created_at,
         seq,
+        device_id,
     )
     .fetch_optional(pool)
     .await?;
@@ -148,20 +161,25 @@ async fn find_prior_position(
     block_id: &str,
     created_at: i64,
     seq: i64,
+    device_id: &str,
 ) -> Result<Option<(Option<BlockId>, i64)>, AppError> {
     // M-63: see `find_prior_text` — use the indexed `block_id` column and
     // normalize to uppercase per AGENTS.md invariant #8.
     let bid_upper = block_id.to_ascii_uppercase();
+    // #382: tie-break on the canonical `(created_at, seq, device_id)`
+    // total order — see the matching note in `find_prior_text`.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('move_block', 'create_block') \
-           AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3)) \
-         ORDER BY created_at DESC, seq DESC \
+           AND (created_at < ?2 \
+                OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4)))) \
+         ORDER BY created_at DESC, seq DESC, device_id DESC \
          LIMIT 1",
         bid_upper,
         created_at,
         seq,
+        device_id,
     )
     .fetch_optional(pool)
     .await?;
@@ -296,9 +314,15 @@ mod tests_m63 {
         .await
         .unwrap();
 
-        let prior = find_prior_text(&pool, "BLKA", rec_a2.created_at, rec_a2.seq)
-            .await
-            .unwrap();
+        let prior = find_prior_text(
+            &pool,
+            "BLKA",
+            rec_a2.created_at,
+            rec_a2.seq,
+            &rec_a2.device_id,
+        )
+        .await
+        .unwrap();
         assert_eq!(prior, Some("A first edit".into()));
     }
 
@@ -379,9 +403,15 @@ mod tests_m63 {
         .await
         .unwrap();
 
-        let prior = find_prior_position(&pool, "BLKMA", rec_a_move2.created_at, rec_a_move2.seq)
-            .await
-            .unwrap();
+        let prior = find_prior_position(
+            &pool,
+            "BLKMA",
+            rec_a_move2.created_at,
+            rec_a_move2.seq,
+            &rec_a_move2.device_id,
+        )
+        .await
+        .unwrap();
         assert_eq!(prior, Some((Some(BlockId::test_id("P2")), 3)));
     }
 
@@ -420,12 +450,14 @@ mod tests_m63 {
         .await
         .unwrap();
 
-        let upper_result = find_prior_text(&pool, "BLKLOWER", rec.created_at, rec.seq)
-            .await
-            .unwrap();
-        let lower_result = find_prior_text(&pool, "blklower", rec.created_at, rec.seq)
-            .await
-            .unwrap();
+        let upper_result =
+            find_prior_text(&pool, "BLKLOWER", rec.created_at, rec.seq, &rec.device_id)
+                .await
+                .unwrap();
+        let lower_result =
+            find_prior_text(&pool, "blklower", rec.created_at, rec.seq, &rec.device_id)
+                .await
+                .unwrap();
         assert_eq!(upper_result, Some("seed".into()));
         assert_eq!(
             lower_result, upper_result,

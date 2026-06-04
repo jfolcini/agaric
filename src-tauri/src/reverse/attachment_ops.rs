@@ -44,16 +44,24 @@ pub async fn reverse_delete_attachment(
     // — the partial index `idx_op_log_attachment_id` covers the
     // `WHERE attachment_id IS NOT NULL` subset, so `add_attachment`
     // and `delete_attachment` rows are O(log N) lookups.
+    //
+    // #382: the op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE
+    // counter, so the "strictly before" predicate tie-breaks on the full
+    // canonical `(created_at, seq, device_id)` total order — matching the
+    // other reverse-op prior-context lookups and `commands/history.rs` /
+    // `pagination/history.rs`.
     let original = sqlx::query!(
         r#"SELECT payload FROM op_log
          WHERE op_type = 'add_attachment'
          AND attachment_id = ?1
-         AND (created_at < ?2 OR (created_at = ?2 AND seq < ?3))
-         ORDER BY created_at DESC, seq DESC
+         AND (created_at < ?2
+              OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4))))
+         ORDER BY created_at DESC, seq DESC, device_id DESC
          LIMIT 1"#,
         attachment_id,
         record.created_at,
-        record.seq
+        record.seq,
+        record.device_id
     )
     .fetch_optional(pool)
     .await?;

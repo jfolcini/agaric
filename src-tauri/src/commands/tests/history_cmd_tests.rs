@@ -235,15 +235,20 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
     // Pick the FIRST edit's seq as `historical_seq` so the diff is
     // "hello universe" → "goodbye universe" (current).
     let first_edit = sqlx::query!(
-        "SELECT seq FROM op_log WHERE op_type = 'edit_block' ORDER BY seq ASC LIMIT 1"
+        "SELECT created_at, seq FROM op_log WHERE op_type = 'edit_block' ORDER BY seq ASC LIMIT 1"
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let spans = compute_block_vs_current_diff_inner(&pool, created.id, first_edit.seq)
-        .await
-        .unwrap();
+    let spans = compute_block_vs_current_diff_inner(
+        &pool,
+        created.id,
+        first_edit.created_at,
+        first_edit.seq,
+    )
+    .await
+    .unwrap();
 
     use crate::word_diff::DiffTag;
     assert!(
@@ -291,15 +296,16 @@ async fn compute_block_vs_current_diff_returns_no_spans_for_unmodified_block() {
     mat.flush_background().await.unwrap();
 
     let create_op = sqlx::query!(
-        "SELECT seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
+        "SELECT created_at, seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let spans = compute_block_vs_current_diff_inner(&pool, created.id, create_op.seq)
-        .await
-        .unwrap();
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, created.id, create_op.created_at, create_op.seq)
+            .await
+            .unwrap();
 
     use crate::word_diff::DiffTag;
     assert!(
@@ -337,13 +343,15 @@ async fn compute_block_vs_current_diff_returns_not_found_for_soft_deleted_block(
     mat.flush_background().await.unwrap();
 
     let create_op = sqlx::query!(
-        "SELECT seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
+        "SELECT created_at, seq FROM op_log WHERE op_type = 'create_block' ORDER BY seq DESC LIMIT 1"
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let result = compute_block_vs_current_diff_inner(&pool, created.id, create_op.seq).await;
+    let result =
+        compute_block_vs_current_diff_inner(&pool, created.id, create_op.created_at, create_op.seq)
+            .await;
 
     assert!(
         matches!(result, Err(AppError::NotFound(ref msg)) if msg.contains("soft-deleted")),
@@ -427,9 +435,16 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
     // Equal). With the fix, this must be dev2's text — proving the
     // ORDER BY `created_at DESC, seq DESC` tie-break picked the newer
     // op even though dev1 was inserted first.
-    let spans = compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 5)
-        .await
-        .unwrap();
+    //
+    // #382: the selected point is dev2's `(created_at, seq) =
+    // (4_102_444_800_500, 5)`. dev1's op (smaller created_at) clears the
+    // `created_at < ?c` arm; dev2's op clears `created_at = ?c AND
+    // seq <= ?s`. Both are in range, and the canonical ORDER BY tie-break
+    // picks dev2.
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 4_102_444_800_500, 5)
+            .await
+            .unwrap();
     use crate::word_diff::DiffTag;
     let historical: String = spans
         .iter()
@@ -440,6 +455,97 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
         historical, "from dev2 (newer)",
         "tie-break on seq must pick the later-created_at op (dev2's text), \
          not the earlier-inserted op (dev1's text). spans: {spans:?}"
+    );
+}
+
+/// #382 (sub-fix A): the historical lookup must bound on the canonical
+/// `(created_at, seq)` keyset, not bare per-device `seq`. `seq` is a
+/// PER-DEVICE counter, so a cross-device op with a numerically SMALLER
+/// seq but a LATER `created_at` must NOT leak past the selected point.
+///
+/// Seed: the SELECTED point is dev1's op `(created_at=1000, seq=10)`.
+/// dev2 has an op `(created_at=2000, seq=3)` — smaller seq, later
+/// wall-clock. Under the OLD `seq <= ?` bound, dev2's seq=3 passed the
+/// filter and, sorted by `created_at DESC`, won the LIMIT 1 — returning
+/// content NEWER than the point the user selected. Under the canonical
+/// `(created_at < ?c OR (created_at = ?c AND seq <= ?s))` bound, dev2's
+/// later `created_at` is excluded, so dev1's selected text wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_bounds_by_created_at_not_bare_seq() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "current text".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let block_id_upper = created.id.as_str().to_string();
+
+    // dev1: the SELECTED historical point — seq=10, created_at=1000.
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev1")
+    .bind(10_i64)
+    .bind("hash-dev1-sel")
+    .bind("edit_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","to_text":"SELECTED dev1"}}"#
+    ))
+    .bind(4_102_444_800_000_i64)
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // dev2: smaller seq=3 but LATER created_at=2000. A bare-`seq <= 10`
+    // bound would wrongly include this and, under `created_at DESC`,
+    // surface it as the winner.
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+    )
+    .bind("dev2")
+    .bind(3_i64)
+    .bind("hash-dev2-future")
+    .bind("edit_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","to_text":"FUTURE dev2 (must not win)"}}"#
+    ))
+    .bind(4_102_444_800_900_i64)
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Selected point = dev1's (created_at=…000, seq=10).
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 4_102_444_800_000, 10)
+            .await
+            .unwrap();
+
+    use crate::word_diff::DiffTag;
+    let historical: String = spans
+        .iter()
+        .filter(|s| s.tag != DiffTag::Insert)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(
+        historical, "SELECTED dev1",
+        "bound must be the canonical (created_at, seq) keyset: dev2's smaller-seq \
+         but later-created_at op must NOT leak past the selected point. spans: {spans:?}"
     );
 }
 

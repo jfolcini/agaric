@@ -52,19 +52,22 @@ use crate::ulid::BlockId;
 // UNION-ALL with one subquery per op; to keep every executed statement
 // under SQLite's `SQLITE_MAX_VARIABLE_NUMBER` we process `idxs` in
 // chunks of `MAX_SQL_PARAMS / BINDS_PER_OP`. The widths below count the
-// `push_bind` calls in each helper's per-op subquery:
-//   * text / position: idx, block_id, created_at, created_at, seq      → 5
-//   * property:        idx, block_id, key, created_at, created_at, seq → 6
-//   * attachment:      idx, attachment_id, created_at, created_at, seq → 5
-//   * op-record fetch: idx, device_id, seq                             → 3
+// `push_bind` calls in each helper's per-op subquery. #382 added a
+// `device_id` bind (and a second `seq` bind) to every prior-context
+// predicate so the "strictly before" bound tie-breaks on the canonical
+// `(created_at, seq, device_id)` total order — each width grew by 2:
+//   * text / position: idx, block_id, created_at, created_at, seq, seq, device_id      → 7
+//   * property:        idx, block_id, key, created_at, created_at, seq, seq, device_id → 8
+//   * attachment:      idx, attachment_id, created_at, created_at, seq, seq, device_id → 7
+//   * op-record fetch: idx, device_id, seq                                             → 3
 // `MAX_SQL_PARAMS` is the crate-wide 999 bound from `crate::db` (the
 // same conservative `SQLITE_MAX_VARIABLE_NUMBER` floor the snapshot
 // `batch_insert_snapshot_rows!` chunker uses) — well under the real
 // 3.32+ limit of 32766, so the chunked statements never overflow.
-const TEXT_BINDS_PER_OP: usize = 5;
-const POSITION_BINDS_PER_OP: usize = 5;
-const PROPERTY_BINDS_PER_OP: usize = 6;
-const ATTACHMENT_BINDS_PER_OP: usize = 5;
+const TEXT_BINDS_PER_OP: usize = 7;
+const POSITION_BINDS_PER_OP: usize = 7;
+const PROPERTY_BINDS_PER_OP: usize = 8;
+const ATTACHMENT_BINDS_PER_OP: usize = 7;
 const OP_RECORD_BINDS_PER_OP: usize = 3;
 
 /// Batch-compute reverse payloads for a sequence of [`OpRecord`]s.
@@ -218,11 +221,15 @@ async fn fetch_prior_text_batch(
     if idxs.is_empty() {
         return Ok(Vec::new());
     }
-    // Predicate per op (mirrors block_ops::find_prior_text):
+    // Predicate per op (mirrors block_ops::find_prior_text). #382: the
+    // tie-break is the canonical `(created_at, seq, device_id)` total
+    // order, so the bound carries `device_id` too:
     //   block_id = ?bid
     //   AND op_type IN ('edit_block','create_block')
-    //   AND (created_at < ?ts OR (created_at = ?ts AND seq < ?seq))
-    //   ORDER BY created_at DESC, seq DESC
+    //   AND (created_at < ?ts
+    //        OR (created_at = ?ts
+    //            AND (seq < ?seq OR (seq = ?seq AND device_id < ?dev))))
+    //   ORDER BY created_at DESC, seq DESC, device_id DESC
     //   LIMIT 1
     // SQLite parses an `ORDER BY … LIMIT …` immediately after a
     // `UNION ALL` as belonging to the whole compound query, not to
@@ -257,9 +264,13 @@ async fn fetch_prior_text_batch(
             qb.push_bind(ops[op_idx].created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(ops[op_idx].created_at);
-            qb.push(" AND seq < ");
+            qb.push(" AND (seq < ");
             qb.push_bind(ops[op_idx].seq);
-            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+            qb.push(" OR (seq = ");
+            qb.push_bind(ops[op_idx].seq);
+            qb.push(" AND device_id < ");
+            qb.push_bind(ops[op_idx].device_id.clone());
+            qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
@@ -306,9 +317,13 @@ async fn fetch_prior_position_batch(
             qb.push_bind(ops[op_idx].created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(ops[op_idx].created_at);
-            qb.push(" AND seq < ");
+            qb.push(" AND (seq < ");
             qb.push_bind(ops[op_idx].seq);
-            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+            qb.push(" OR (seq = ");
+            qb.push_bind(ops[op_idx].seq);
+            qb.push(" AND device_id < ");
+            qb.push_bind(ops[op_idx].device_id.clone());
+            qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
@@ -385,9 +400,13 @@ async fn fetch_prior_property_batch(
             qb.push_bind(record.created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(record.created_at);
-            qb.push(" AND seq < ");
+            qb.push(" AND (seq < ");
             qb.push_bind(record.seq);
-            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+            qb.push(" OR (seq = ");
+            qb.push_bind(record.seq);
+            qb.push(" AND device_id < ");
+            qb.push_bind(record.device_id.clone());
+            qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {
@@ -439,9 +458,13 @@ async fn fetch_prior_attachment_batch(
             qb.push_bind(record.created_at);
             qb.push(" OR (created_at = ");
             qb.push_bind(record.created_at);
-            qb.push(" AND seq < ");
+            qb.push(" AND (seq < ");
             qb.push_bind(record.seq);
-            qb.push(")) ORDER BY created_at DESC, seq DESC LIMIT 1)");
+            qb.push(" OR (seq = ");
+            qb.push_bind(record.seq);
+            qb.push(" AND device_id < ");
+            qb.push_bind(record.device_id.clone());
+            qb.push(")))) ORDER BY created_at DESC, seq DESC, device_id DESC LIMIT 1)");
         }
         let rows: Vec<(i64, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, payload) in rows {

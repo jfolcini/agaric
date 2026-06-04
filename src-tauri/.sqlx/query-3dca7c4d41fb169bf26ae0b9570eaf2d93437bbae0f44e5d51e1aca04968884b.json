@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND json_extract(payload, '$.key') = ?2 AND op_type IN ('set_property', 'delete_property') AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) ORDER BY created_at DESC, seq DESC LIMIT 1",
+  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND (created_at < ?2 OR (created_at = ?2 AND seq <= ?3)) ORDER BY created_at DESC, seq DESC LIMIT 1",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 4
+      "Right": 3
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "545cd564223489f10ec891d3f82b888be670f2d6b0846255e97375fc1abffc8c"
+  "hash": "3dca7c4d41fb169bf26ae0b9570eaf2d93437bbae0f44e5d51e1aca04968884b"
 }

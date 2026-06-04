@@ -1104,9 +1104,17 @@ pub async fn compute_edit_diff_inner(
             "op ({device_id}, {seq}) payload not parseable as EditBlockPayload: {e}"
         ))
     })?;
-    let prior =
-        crate::reverse::find_prior_text(pool, payload.block_id.as_str(), row.created_at, seq)
-            .await?;
+    // #382: pass the op's own `device_id` so `find_prior_text` tie-breaks
+    // strictly before this op on the canonical `(created_at, seq,
+    // device_id)` order — this op is identified by `(device_id, seq)`.
+    let prior = crate::reverse::find_prior_text(
+        pool,
+        payload.block_id.as_str(),
+        row.created_at,
+        seq,
+        &device_id,
+    )
+    .await?;
 
     let old_text = prior.unwrap_or_default();
     Ok(Some(crate::word_diff::compute_word_diff(
@@ -1149,11 +1157,13 @@ pub async fn compute_edit_diff(
 ///
 /// * `AppError::NotFound` if the live block does not exist (purged) or
 ///   has been soft-deleted, or if no `create_block` / `edit_block` op
-///   exists for the block at or before `historical_seq`.
+///   exists for the block at or before the selected point
+///   `(historical_created_at, historical_seq)`.
 #[instrument(skip(pool), err)]
 pub async fn compute_block_vs_current_diff_inner(
     pool: &SqlitePool,
     block_id: BlockId,
+    historical_created_at: i64,
     historical_seq: i64,
 ) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
     // AGENTS.md invariant #8: ULIDs are stored uppercase; `BlockId`
@@ -1187,28 +1197,39 @@ pub async fn compute_block_vs_current_diff_inner(
     };
     let current = current_content_opt.unwrap_or_default();
 
-    // 2. Historical content as of `historical_seq` — the most recent
-    //    `edit_block` or `create_block` payload for this block whose
-    //    seq is `<=` the target. Mirrors `find_prior_text` (which uses
-    //    `<`); the inclusive bound is what makes this snap to the
-    //    state PRODUCED by `historical_seq` rather than the state
-    //    immediately before it.
+    // 2. Historical content as of the selected point
+    //    `(historical_created_at, historical_seq)` — the most recent
+    //    `edit_block` or `create_block` payload for this block at or
+    //    before that point in the canonical `(created_at, seq, device_id)`
+    //    total order. Mirrors `find_prior_text` (which uses a strict `<`
+    //    to find the state IMMEDIATELY BEFORE an op); here the bound is
+    //    INCLUSIVE of the selected op (`seq <= ?`) so this snaps to the
+    //    state PRODUCED by the historical op rather than the one before it.
+    //
+    // #382: bound on the canonical `(created_at, seq)` keyset rather than
+    // on bare per-device `seq`. The op_log PK is `(device_id, seq)` and
+    // `seq` is a PER-DEVICE counter, so `seq <= ?` alone is not a valid
+    // global upper bound: a cross-device op with a numerically SMALLER
+    // seq but a LATER `created_at` would pass `seq <= ?` yet sort first
+    // under `ORDER BY created_at DESC`, returning content NEWER than the
+    // selected point. Bounding by `(created_at < ?c OR (created_at = ?c
+    // AND seq <= ?s))` makes the bound agree with the ORDER BY.
     //
     // MAINT-218: ORDER BY `created_at DESC, seq DESC` (not `seq DESC`
-    // alone) to mirror `find_prior_text`'s cross-device tie-break. The
-    // op_log PK is (device_id, seq); seq alone is not globally unique,
-    // so when two devices have ops at the same seq value for the same
-    // block, sorting by seq alone leaves the LIMIT 1 winner undefined.
-    // Sorting by `created_at` first picks the latest wall-clock op,
-    // matching the user's mental model of "most recent change".
+    // alone) to mirror `find_prior_text`'s cross-device tie-break and the
+    // canonical total order used by `commands/history.rs` /
+    // `pagination/history.rs`. Sorting by `created_at` first picks the
+    // latest wall-clock op, matching the user's mental model of "most
+    // recent change".
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND op_type IN ('edit_block', 'create_block') \
-           AND seq <= ?2 \
+           AND (created_at < ?2 OR (created_at = ?2 AND seq <= ?3)) \
          ORDER BY created_at DESC, seq DESC \
          LIMIT 1",
         block_id_upper,
+        historical_created_at,
         historical_seq,
     )
     .fetch_optional(pool)
@@ -1216,7 +1237,8 @@ pub async fn compute_block_vs_current_diff_inner(
 
     let Some(row) = row else {
         return Err(AppError::NotFound(format!(
-            "no create_block or edit_block op for '{block_id_upper}' at or before seq {historical_seq}"
+            "no create_block or edit_block op for '{block_id_upper}' at or before \
+             ({historical_created_at}, {historical_seq})"
         )));
     };
 
@@ -1244,17 +1266,25 @@ pub async fn compute_block_vs_current_diff_inner(
 }
 
 /// Tauri command: compute word-level diff between a block's historical
-/// content (as of `historical_seq`) and its current live content.
-/// Delegates to [`compute_block_vs_current_diff_inner`].
+/// content (as of the selected point `(historical_created_at,
+/// historical_seq)`) and its current live content. Delegates to
+/// [`compute_block_vs_current_diff_inner`].
+///
+/// #382: the caller passes BOTH `historical_created_at` and
+/// `historical_seq` (the history entry already carries both columns) so
+/// the historical lookup can bound on the canonical `(created_at, seq)`
+/// keyset instead of bare per-device `seq`, which is not a valid global
+/// upper bound across devices.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn compute_block_vs_current_diff(
     pool: State<'_, ReadPool>,
     block_id: BlockId,
+    historical_created_at: i64,
     historical_seq: i64,
 ) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
-    compute_block_vs_current_diff_inner(&pool.0, block_id, historical_seq)
+    compute_block_vs_current_diff_inner(&pool.0, block_id, historical_created_at, historical_seq)
         .await
         .map_err(sanitize_internal_error)
 }
