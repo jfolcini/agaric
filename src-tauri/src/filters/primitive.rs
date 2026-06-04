@@ -311,7 +311,7 @@ impl FilterPrimitive {
     ///
     /// - **0 (index-backed):** `Tag`, `HasProperty`, `Space`,
     ///   `Stub`, `HasNoInboundLinks` — each hits an existing index
-    ///   (`idx_block_props_key`, `idx_block_links_target/source`,
+    ///   (`idx_block_props_key`, `idx_block_links_target_source`,
     ///   `idx_blocks_page_id`) or reads a materialised `pages_cache`
     ///   column.
     /// - **1 (per-row, cheap):** `Priority` (a single equality scan over

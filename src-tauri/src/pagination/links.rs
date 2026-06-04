@@ -5,8 +5,9 @@ use crate::error::AppError;
 
 /// List backlinks — blocks that link *to* `target_id`, paginated.
 ///
-/// Ordered by `b.id ASC` (ULID ≈ chronological).
-/// Uses index `idx_block_links_target(target_id)`.
+/// Ordered by `bl.source_id ASC` (≡ `b.id`, ULID ≈ chronological).
+/// Uses covering index `idx_block_links_target_source(target_id, source_id)`,
+/// so the order is index-supplied and no temp B-tree is built (audit #415).
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to
 /// source blocks whose owning page (`b.page_id`)
@@ -48,11 +49,11 @@ pub async fn list_backlinks(
          FROM block_links bl
          JOIN blocks b ON b.id = bl.source_id
          WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR b.id > ?3)
+           AND (?2 IS NULL OR bl.source_id > ?3)
            AND (?5 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?5))
-         ORDER BY b.id ASC
+         ORDER BY bl.source_id ASC
          LIMIT ?4"#,
         target_id,   // ?1
         cursor_flag, // ?2

@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\"\n         FROM block_tags bt\n         JOIN blocks b ON b.id = bt.block_id\n         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR b.id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY b.id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\"\n         FROM block_tags bt\n         JOIN blocks b ON b.id = bt.block_id\n         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR bt.block_id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY bt.block_id ASC\n         LIMIT ?4",
   "describe": {
     "columns": [
       {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "bf361a73b550eeb80e28506b21e1b828124dcb51d10a8a2f1c97538a7c2dfdb9"
+  "hash": "66abe7e5509c309c4f02e0f025949e44321584c6b0f9433ecfdaf25b06d04e34"
 }
