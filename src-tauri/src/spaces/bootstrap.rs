@@ -265,6 +265,7 @@ async fn ensure_space_block(
         block_type: "page".into(),
         parent_id: None,
         position: Some(1),
+        index: None,
         content: name.into(),
     });
     let record = op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;

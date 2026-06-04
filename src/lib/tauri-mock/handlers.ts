@@ -416,6 +416,55 @@ function buildPageMetaRow(
   }
 }
 
+/**
+ * #400 — assign dense 1-based `position` to every live child of `parentId`,
+ * in their current sort order, so the mock mirrors the backend's dense-rank
+ * semantics (`position ASC, id ASC`, no gaps, no collisions).
+ */
+function renumberSiblings(parentId: string | null): void {
+  const siblings = [...blocks.values()].filter(
+    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'],
+  )
+  siblings.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  siblings.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+}
+
+/**
+ * #400 — place `blockId` at the 0-based `slot` among `parentId`'s OTHER live
+ * children, then renumber the whole group to dense 1-based positions. `slot`
+ * is clamped to `[0, otherCount]`; a value >= otherCount (e.g.
+ * `Number.MAX_SAFE_INTEGER` for "append") lands the block last.
+ */
+function insertAtSlotAndRenumber(parentId: string | null, blockId: string, slot: number): void {
+  const moved = blocks.get(blockId)
+  if (!moved) return
+  const others = [...blocks.values()].filter(
+    (b) => (b['parent_id'] ?? null) === parentId && !b['deleted_at'] && b['id'] !== blockId,
+  )
+  others.sort((x, y) => {
+    const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+    if (px !== py) return px - py
+    return (x['id'] as string).localeCompare(y['id'] as string)
+  })
+  const clamped = Math.max(0, Math.min(slot, others.length))
+  // Pre-rank the OTHER siblings 1..N, then give the moved block a fractional
+  // key that sits just after the (clamped)-th other sibling. `renumberSiblings`
+  // then collapses everything back to dense integers in that order.
+  others.forEach((b, i) => {
+    b['position'] = i + 1
+  })
+  moved['position'] = clamped + 0.5
+  renumberSiblings(parentId)
+}
+
 export const HANDLERS: Record<string, Handler> = {
   // ---------------------------------------------------------------------------
   // Block listing & CRUD
@@ -729,14 +778,6 @@ export const HANDLERS: Record<string, Handler> = {
     // space. Global scope skips the stamp (legacy unscoped behaviour).
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
-    // Compute position: if not provided, append after existing siblings
-    let position = a['position'] as number | undefined
-    if (position == null) {
-      const siblings = [...blocks.values()].filter(
-        (b) => b['parent_id'] === parentId && !b['deleted_at'],
-      )
-      position = siblings.length
-    }
     const blockType = a['blockType'] as string
     const row = {
       id,
@@ -744,7 +785,8 @@ export const HANDLERS: Record<string, Handler> = {
       content: (a['content'] as string) ?? null,
       parent_id: parentId,
       page_id: blockType === 'page' ? id : parentId,
-      position,
+      // #400: position is the dense 1-based rank assigned by the renumber pass.
+      position: 0,
       deleted_at: null,
       todo_state: null,
       priority: null,
@@ -752,6 +794,11 @@ export const HANDLERS: Record<string, Handler> = {
       scheduled_date: null,
     }
     blocks.set(id, row)
+    // #400: `index` is a 0-based sibling slot; null appends at the end. Insert
+    // at the slot and renumber the sibling group to dense 1-based positions.
+    const rawIndex = a['index'] as number | null | undefined
+    insertAtSlotAndRenumber(parentId, id, rawIndex == null ? Number.MAX_SAFE_INTEGER : rawIndex)
+    const position = row['position'] as number
     // Stamp the `space` ref property on new pages so the rest of the
     // scope-aware mock handlers (`count_backlinks_batch`,
     // `resolve_page_by_alias`, etc.) treat the page as living in the
@@ -1167,15 +1214,21 @@ export const HANDLERS: Record<string, Handler> = {
 
   move_block: (args) => {
     const a = args as Record<string, unknown>
-    const b = blocks.get(a['blockId'] as string)
+    const blockId = a['blockId'] as string
+    const b = blocks.get(blockId)
     if (!b) throw new Error('not found')
-    const oldParentId = b['parent_id']
+    const oldParentId = (b['parent_id'] as string | null) ?? null
     const oldPosition = b['position']
-    b['parent_id'] = a['newParentId'] as string | null
-    b['position'] = a['newPosition'] as number
+    const newParentId = (a['newParentId'] as string | null) ?? null
+    // #400: `newIndex` is a 0-based insertion slot among the target parent's
+    // OTHER children. Set the new parent, place the block at the slot, and
+    // renumber BOTH the old and new sibling groups to dense 1-based positions
+    // (matches the backend's `LoroTree::mov_to` + dense-rank materialization).
+    const newIndex = a['newIndex'] as number
+    b['parent_id'] = newParentId
     // Compute page_id from new parent (like the real backend)
-    if (a['newParentId']) {
-      const newParent = blocks.get(a['newParentId'] as string)
+    if (newParentId) {
+      const newParent = blocks.get(newParentId)
       if (newParent) {
         b['page_id'] =
           newParent['block_type'] === 'page'
@@ -1185,17 +1238,22 @@ export const HANDLERS: Record<string, Handler> = {
     } else {
       b['page_id'] = null
     }
+    insertAtSlotAndRenumber(newParentId, blockId, newIndex)
+    // Renumber the old sibling group too (the vacated slot collapses). Skip
+    // when the parent didn't change — the insert already renumbered it.
+    if (oldParentId !== newParentId) renumberSiblings(oldParentId)
+    const newPosition = b['position'] as number
     pushOp('move_block', {
-      block_id: a['blockId'],
-      new_parent_id: b['parent_id'],
-      new_position: b['position'],
+      block_id: blockId,
+      new_parent_id: newParentId,
+      new_position: newPosition,
       old_parent_id: oldParentId,
       old_position: oldPosition,
     })
     return {
-      block_id: a['blockId'],
-      new_parent_id: b['parent_id'],
-      new_position: b['position'],
+      block_id: blockId,
+      new_parent_id: newParentId,
+      new_position: newPosition,
     }
   },
 

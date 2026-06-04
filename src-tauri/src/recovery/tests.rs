@@ -359,6 +359,7 @@ async fn recovered_draft_uses_prev_edit_from_existing_op() {
         block_type: "content".to_owned(),
         parent_id: None,
         position: Some(0),
+        index: None,
         content: "initial".to_owned(),
     });
     let create_record = append_local_op(&pool, device_id, create_op).await.unwrap();
@@ -415,6 +416,7 @@ async fn prev_edit_uses_latest_op_when_both_create_and_edit_exist() {
         block_type: "content".to_owned(),
         parent_id: None,
         position: Some(0),
+        index: None,
         content: "initial".to_owned(),
     });
     append_local_op(&pool, device_id, create_op).await.unwrap();
@@ -696,6 +698,7 @@ async fn find_prev_edit_returns_most_recent_op_not_first() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "v1".to_owned(),
         }),
     )
@@ -1090,6 +1093,7 @@ async fn find_prev_edit_falls_back_to_create_block_when_no_edit_heads() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "initial".to_owned(),
         }),
     )
@@ -1120,6 +1124,7 @@ async fn find_prev_edit_returns_single_dag_head() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "v1".to_owned(),
         }),
     )
@@ -1173,6 +1178,7 @@ async fn find_prev_edit_prefers_local_device_head_when_multiple_heads_exist() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "initial".to_owned(),
         }),
         1_736_942_400_000,
@@ -1254,6 +1260,7 @@ async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "initial".to_owned(),
         }),
         1_736_942_400_000,
@@ -1601,6 +1608,7 @@ async fn perf26_local_append_populates_block_id_column() {
         block_type: "content".into(),
         parent_id: None,
         position: Some(1),
+        index: None,
         content: "hello".into(),
     });
     append_local_op(&pool, "dev-perf26", op).await.unwrap();
@@ -1708,6 +1716,7 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "initial".into(),
         });
         append_local_op_at(&pool, device_id, op, FAR_PAST)
@@ -1803,6 +1812,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "n".into(),
             }),
             FAR_PAST,
@@ -1990,6 +2000,7 @@ async fn apply_advances_cursor_atomic_c2b() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "cursor-test".into(),
         }),
     )
@@ -2027,6 +2038,7 @@ async fn batch_apply_advances_cursor_to_max_c2b() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(i),
+                index: None,
                 content: format!("batch-{i}"),
             }),
         )
@@ -2073,6 +2085,7 @@ async fn batch_apply_with_failure_does_not_advance_cursor_c2b() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "ok1".into(),
         }),
     )
@@ -2086,6 +2099,7 @@ async fn batch_apply_with_failure_does_not_advance_cursor_c2b() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(2),
+            index: None,
             content: "ok2".into(),
         }),
     )
@@ -2134,6 +2148,7 @@ async fn replay_walks_unmaterialized_ops_c2b() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(i),
+                index: None,
                 content: format!("replay-{i}"),
             }),
         )
@@ -2185,6 +2200,7 @@ async fn replay_is_idempotent_c2b() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(i),
+                index: None,
                 content: format!("idem-{i}"),
             }),
         )
@@ -2243,6 +2259,7 @@ async fn recover_at_boot_includes_replay_step_c2b() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(i),
+                index: None,
                 content: format!("boot-{i}"),
             }),
         )
@@ -2311,6 +2328,7 @@ async fn replay_progress_marker_survives_second_crash_c2b() {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(i),
+                index: None,
                 content: format!("crash-{i}"),
             }),
         )

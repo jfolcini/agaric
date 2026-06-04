@@ -177,7 +177,7 @@ describe('TagList', () => {
       blockType: 'tag',
       content: 'my-new-tag',
       parentId: null,
-      position: null,
+      index: null,
       scope: { kind: 'global' },
     })
 

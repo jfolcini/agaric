@@ -24,7 +24,9 @@ fn create_block_round_trips_through_loro() {
             block_type: "page".into(),
             content: "Hello".into(),
             parent_id: None,
-            position: 0,
+            // #400: `position` is the dense 1-based rank among siblings, not the
+            // legacy meta value — a sole root child is rank 1.
+            position: 1,
         }
     );
 }

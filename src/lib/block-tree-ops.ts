@@ -12,16 +12,6 @@ import { parse, serialize } from '../editor/markdown-serializer'
 import type { BlockLevelNode } from '../editor/types'
 import { type FlatBlock, getDragDescendants } from './tree-utils'
 
-/**
- * Compute a midpoint position between two sibling positions, nudging up by one
- * when the floored midpoint would collide with `beforePos`. Callers rely on
- * the returned value being strictly greater than `beforePos`.
- */
-export function midpointPosition(beforePos: number, afterPos: number): number {
-  const mid = Math.floor((beforePos + afterPos) / 2)
-  return mid <= beforePos ? beforePos + 1 : mid
-}
-
 // ── splitBlock helpers ───────────────────────────────────────────────────
 
 /**
@@ -105,7 +95,9 @@ export function findPrevSiblingAt(blocks: readonly FlatBlock[], idx: number): Fl
  * `blockId` under `prevSibling`:
  *
  * - `blockId` and all of its descendants have their `depth` incremented by 1.
- * - `blockId` itself is re-parented to `prevSibling.id` with `position: 1`.
+ * - `blockId` itself is re-parented to `prevSibling.id` with a provisional
+ *   `position: 1` (the real dense rank — #400 — is assigned by the backend;
+ *   ordering here is governed by the splice, not the integer).
  * - The moved subtree is spliced back after `prevSibling` and any existing
  *   descendants of `prevSibling` (so it lands at the tail of the new parent).
  *

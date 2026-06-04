@@ -1394,6 +1394,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "hello".into(),
         });
         let record = append_local_op_at(&pool, DEV, payload, FIXED_TS)

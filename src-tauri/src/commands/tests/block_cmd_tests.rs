@@ -19,7 +19,7 @@ async fn create_block_returns_correct_fields_and_persists() {
         "content".into(),
         "hello world".into(),
         None,
-        Some(1),
+        Some(0),
     )
     .await
     .unwrap();
@@ -31,7 +31,8 @@ async fn create_block_returns_correct_fields_and_persists() {
         "content should match input"
     );
     assert!(resp.parent_id.is_none(), "top-level block has no parent");
-    assert_eq!(resp.position, Some(1), "position should match input");
+    // #400: index 0 (first child) ⇒ provisional dense 1-based rank 1.
+    assert_eq!(resp.position, Some(1), "index 0 ⇒ position 1");
     assert!(resp.deleted_at.is_none(), "new block should not be deleted");
 
     // Verify persistence in DB via direct query
@@ -345,11 +346,14 @@ async fn create_block_accepts_content_at_max_length() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_block_position_zero_returns_validation_error() {
+async fn create_block_index_zero_creates_as_first_child() {
+    // #400: `index` is a 0-based sibling slot. Slot 0 ("first child") is valid
+    // — the old "position must be positive" rejection is gone. The optimistic
+    // write carries the provisional dense 1-based rank = index + 1.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let result = create_block_inner(
+    let resp = create_block_inner(
         &pool,
         DEV,
         &mat,
@@ -358,21 +362,24 @@ async fn create_block_position_zero_returns_validation_error() {
         None,
         Some(0),
     )
-    .await;
+    .await
+    .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "position=0 should return Validation error, got: {err:?}"
+    assert_eq!(
+        resp.position,
+        Some(1),
+        "index 0 (first child) ⇒ provisional dense rank 1"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_block_position_negative_returns_validation_error() {
+async fn create_block_negative_index_clamps_to_first() {
+    // #400: a stray negative `index` is silently clamped to 0 (first child)
+    // rather than rejected — the old "position must be positive" error is gone.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let result = create_block_inner(
+    let resp = create_block_inner(
         &pool,
         DEV,
         &mat,
@@ -381,24 +388,29 @@ async fn create_block_position_negative_returns_validation_error() {
         None,
         Some(-1),
     )
-    .await;
+    .await
+    .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "position=-1 should return Validation error, got: {err:?}"
+    assert_eq!(
+        resp.position,
+        Some(1),
+        "negative index clamps to 0 ⇒ provisional dense rank 1"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_block_position_sentinel_returns_validation_error() {
-    // #383: i64::MAX is the reserved NULL_POSITION_SENTINEL (the keyset
-    // "no explicit position" marker). An explicit create at it must be
-    // rejected so it cannot collide with the synthetic tail bucket.
+async fn create_block_huge_index_clamps_below_sentinel() {
+    // #400 supersedes #383: `index` is now a 0-based slot, not a verbatim
+    // position, so an explicit create can no longer be *rejected* for targeting
+    // the reserved NULL_POSITION_SENTINEL (i64::MAX). Instead an absurdly large
+    // slot must clamp gracefully: no overflow panic / negative-wrap, and the
+    // provisional position must stay strictly below the sentinel so it never
+    // collides with the keyset tail bucket (the materializer reprojects the
+    // dense rank shortly after regardless).
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let result = create_block_inner(
+    let resp = create_block_inner(
         &pool,
         DEV,
         &mat,
@@ -407,19 +419,24 @@ async fn create_block_position_sentinel_returns_validation_error() {
         None,
         Some(crate::pagination::NULL_POSITION_SENTINEL),
     )
-    .await;
+    .await
+    .expect("a huge slot index clamps to the end, it is not rejected (#400)");
 
-    let err = result.unwrap_err();
+    let pos = resp
+        .position
+        .expect("created block has a provisional position");
     assert!(
-        matches!(err, AppError::Validation(_)),
-        "position=NULL_POSITION_SENTINEL should return Validation error, got: {err:?}"
+        pos < crate::pagination::NULL_POSITION_SENTINEL,
+        "provisional position must stay below the reserved sentinel, got {pos}"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn move_block_position_sentinel_returns_validation_error() {
-    // #383: moving to the reserved NULL_POSITION_SENTINEL (i64::MAX) must be
-    // rejected for the same reason the create path rejects it.
+async fn move_block_huge_index_clamps_below_sentinel() {
+    // #400 supersedes #383: `new_index` is a 0-based slot, so a move can no
+    // longer be rejected for targeting the sentinel. An absurd slot must clamp
+    // gracefully (no overflow) and the provisional `new_position` must stay
+    // strictly below NULL_POSITION_SENTINEL.
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -434,7 +451,7 @@ async fn move_block_position_sentinel_returns_validation_error() {
     )
     .await;
 
-    let result = move_block_inner(
+    let resp = move_block_inner(
         &pool,
         DEV,
         &mat,
@@ -442,12 +459,13 @@ async fn move_block_position_sentinel_returns_validation_error() {
         None,
         crate::pagination::NULL_POSITION_SENTINEL,
     )
-    .await;
+    .await
+    .expect("a huge slot index clamps to the end, it is not rejected (#400)");
 
-    let err = result.unwrap_err();
     assert!(
-        matches!(err, AppError::Validation(_)),
-        "move to NULL_POSITION_SENTINEL should return Validation error, got: {err:?}"
+        resp.new_position < crate::pagination::NULL_POSITION_SENTINEL,
+        "provisional new_position must stay below the reserved sentinel, got {}",
+        resp.new_position
     );
 }
 
@@ -2416,9 +2434,10 @@ async fn move_block_basic_reparent() {
         Some("MV_PAR_B".into()),
         "new_parent_id should be parent B"
     );
+    // #400: new_index 5 ⇒ provisional dense 1-based rank = new_index + 1 = 6.
     assert_eq!(
-        resp.new_position, 5,
-        "new_position should match requested value"
+        resp.new_position, 6,
+        "new_index 5 ⇒ provisional dense rank 6"
     );
 
     // Verify DB state
@@ -2434,7 +2453,11 @@ async fn move_block_basic_reparent() {
         Some("MV_PAR_B".into()),
         "parent_id should be updated in DB"
     );
-    assert_eq!(row.position, Some(5), "position should be updated in DB");
+    assert_eq!(
+        row.position,
+        Some(6),
+        "provisional rank should be updated in DB"
+    );
 
     // Verify op_log entry
     let count: i64 = sqlx::query_scalar!(
@@ -2477,9 +2500,10 @@ async fn move_block_to_root() {
         resp.new_parent_id.is_none(),
         "new_parent_id should be None for root move"
     );
+    // #400: new_index 10 ⇒ provisional dense 1-based rank = new_index + 1 = 11.
     assert_eq!(
-        resp.new_position, 10,
-        "new_position should match requested value"
+        resp.new_position, 11,
+        "new_index 10 ⇒ provisional dense rank 11"
     );
 
     // Verify DB state
@@ -2494,7 +2518,11 @@ async fn move_block_to_root() {
         row.parent_id.is_none(),
         "parent_id should be NULL in DB after move to root"
     );
-    assert_eq!(row.position, Some(10), "position should be updated in DB");
+    assert_eq!(
+        row.position,
+        Some(11),
+        "provisional rank should be updated in DB"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

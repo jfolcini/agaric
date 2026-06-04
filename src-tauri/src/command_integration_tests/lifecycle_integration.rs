@@ -556,7 +556,8 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
 
     let moved = get_block_inner(&pool, block.id.clone()).await.unwrap();
     assert!(moved.parent_id.is_none(), "block moved to root");
-    assert_eq!(moved.position, Some(99), "position updated");
+    // #400: new_index 99 ⇒ provisional dense 1-based rank = new_index + 1 = 100.
+    assert_eq!(moved.position, Some(100), "new_index 99 ⇒ rank 100");
 
     // 5. Remove tag
     remove_tag_inner(&pool, DEV, &mat, block.id.clone(), tag.id.clone())
@@ -604,15 +605,19 @@ async fn full_lifecycle_create_tag_move_remove_tag() {
 }
 
 // ======================================================================
-// Fix #25: position validation — create_block & move_block
+// #400: index-based create/move — slot 0 and negative slots are valid
+// (the old 1-based "position must be positive" validation is gone).
 // ======================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_create_block_rejects_zero_position() {
+async fn test_create_block_index_zero_creates_as_first_child() {
+    // #400: `index` is a 0-based sibling slot. Slot 0 ("first child") is
+    // valid — the old "position must be positive" rejection is gone. The
+    // optimistic write carries the provisional dense 1-based rank = index + 1.
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let result = create_block_inner(
+    let resp = create_block_inner(
         &pool,
         DEV,
         &mat,
@@ -621,25 +626,24 @@ async fn test_create_block_rejects_zero_position() {
         None,
         Some(0),
     )
-    .await;
+    .await
+    .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "position=0 must return Validation error, got: {err:?}"
-    );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message must mention positive position, got: {err}"
+    assert_eq!(
+        resp.position,
+        Some(1),
+        "index 0 (first child) ⇒ provisional dense rank 1"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_create_block_rejects_negative_position() {
+async fn test_create_block_negative_index_clamps_to_first() {
+    // #400: a stray negative `index` is silently clamped to 0 (first child)
+    // rather than rejected — the old "position must be positive" error is gone.
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    let result = create_block_inner(
+    let resp = create_block_inner(
         &pool,
         DEV,
         &mat,
@@ -648,25 +652,21 @@ async fn test_create_block_rejects_negative_position() {
         None,
         Some(-5),
     )
-    .await;
+    .await
+    .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "negative position must return Validation error, got: {err:?}"
-    );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message must mention positive position, got: {err}"
-    );
-    assert!(
-        err.to_string().contains("-5"),
-        "error message must include the bad value, got: {err}"
+    assert_eq!(
+        resp.position,
+        Some(1),
+        "negative index clamps to 0 ⇒ provisional dense rank 1"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_move_block_rejects_zero_position() {
+async fn test_move_block_index_zero_moves_to_top() {
+    // #400: `new_index` is a 0-based slot. Slot 0 ("move to top") is valid —
+    // the old "position must be positive" rejection is gone. This is the whole
+    // point of #400. Provisional dense 1-based rank = new_index + 1.
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -677,26 +677,25 @@ async fn test_move_block_rejects_zero_position() {
         "content".into(),
         "test".into(),
         None,
-        Some(1),
+        Some(0),
     )
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id, None, 0).await;
+    let resp = move_block_inner(&pool, DEV, &mat, block.id, None, 0)
+        .await
+        .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "move with position=0 must return Validation error, got: {err:?}"
-    );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message must mention positive position, got: {err}"
+    assert_eq!(
+        resp.new_position, 1,
+        "new_index 0 (top) ⇒ provisional dense rank 1"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_move_block_rejects_negative_position() {
+async fn test_move_block_negative_index_clamps_to_top() {
+    // #400: a stray negative `new_index` is silently clamped to 0 (top)
+    // rather than rejected — the old "position must be positive" error is gone.
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -707,25 +706,18 @@ async fn test_move_block_rejects_negative_position() {
         "content".into(),
         "test".into(),
         None,
-        Some(1),
+        Some(0),
     )
     .await
     .unwrap();
 
-    let result = move_block_inner(&pool, DEV, &mat, block.id, None, -3).await;
+    let resp = move_block_inner(&pool, DEV, &mat, block.id, None, -3)
+        .await
+        .unwrap();
 
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, AppError::Validation(_)),
-        "move with negative position must return Validation error, got: {err:?}"
-    );
-    assert!(
-        err.to_string().contains("position must be positive"),
-        "error message must mention positive position, got: {err}"
-    );
-    assert!(
-        err.to_string().contains("-3"),
-        "error message must include the bad value, got: {err}"
+    assert_eq!(
+        resp.new_position, 1,
+        "negative new_index clamps to 0 ⇒ provisional dense rank 1"
     );
 }
 

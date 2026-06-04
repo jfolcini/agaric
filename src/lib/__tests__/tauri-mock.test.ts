@@ -432,25 +432,37 @@ describe('get_status', () => {
 // ---------------------------------------------------------------------------
 
 describe('move_block', () => {
-  it('updates parent_id and position', () => {
+  it('updates parent_id and assigns a dense 1-based position from the slot (#400)', () => {
+    // QUICK_NOTES has 2 seed children (slots 0,1). A slot of 99 clamps to the
+    // end → the moved block lands last with dense rank 3.
     const result = invoke('move_block', {
       blockId: SEED_IDS.BLOCK_GS_1,
       newParentId: SEED_IDS.PAGE_QUICK_NOTES,
-      newPosition: 99,
+      newIndex: 99,
     }) as Record<string, unknown>
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
     expect(result['new_parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
-    expect(result['new_position']).toBe(99)
+    expect(result['new_position']).toBe(3)
     // verify persisted
     const block = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
     expect(block['parent_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
-    expect(block['position']).toBe(99)
+    expect(block['position']).toBe(3)
     expect(block['page_id']).toBe(SEED_IDS.PAGE_QUICK_NOTES)
+  })
+
+  it('places the block at slot 0 (first child) when newIndex is 0', () => {
+    const result = invoke('move_block', {
+      blockId: SEED_IDS.BLOCK_GS_1,
+      newParentId: SEED_IDS.PAGE_QUICK_NOTES,
+      newIndex: 0,
+    }) as Record<string, unknown>
+    // First child → dense rank 1 (no `position <= 0` rejection anymore).
+    expect(result['new_position']).toBe(1)
   })
 
   it('throws for non-existent block', () => {
     expect(() =>
-      invoke('move_block', { blockId: 'NONEXISTENT', newParentId: null, newPosition: 0 }),
+      invoke('move_block', { blockId: 'NONEXISTENT', newParentId: null, newIndex: 0 }),
     ).toThrow('not found')
   })
 })
@@ -2656,9 +2668,8 @@ describe('trash_descendant_counts', () => {
 
 describe('first_child_for_blocks', () => {
   it('returns the first child per parent ordered by (position, id)', () => {
-    // Seed parent + 3 children at distinct positions; last-created child
-    // is at position 0 so the helper must surface it (not the
-    // insertion-order first).
+    // Seed parent + 3 children; the last-created child is inserted at slot 0
+    // (#400), so the helper must surface it (not the insertion-order first).
     const parent = invoke('create_block', {
       blockType: 'content',
       content: 'parent',
@@ -2669,19 +2680,18 @@ describe('first_child_for_blocks', () => {
       blockType: 'content',
       content: 'second',
       parentId,
-      position: 2,
     })
     invoke('create_block', {
       blockType: 'content',
       content: 'third',
       parentId,
-      position: 3,
     })
+    // Insert 'first' at slot 0 → it becomes the dense rank-1 child.
     invoke('create_block', {
       blockType: 'content',
       content: 'first',
       parentId,
-      position: 1,
+      index: 0,
     })
 
     const result = invoke('first_child_for_blocks', {

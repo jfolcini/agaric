@@ -203,6 +203,7 @@ mod engine_apply_unit_tests {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: content.into(),
         })
     }
@@ -617,6 +618,7 @@ mod dispatch_for_record_regression {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "hello-from-record".into(),
         });
         let record = append_local_op(&pool, DEVICE_ID, payload)
@@ -661,6 +663,7 @@ mod dispatch_for_record_regression {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "v1".into(),
         });
         let r1 = append_local_op(&pool, DEVICE_ID, create_payload)

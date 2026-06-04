@@ -496,6 +496,7 @@ async fn dispatch_op_create_block_page() {
             block_type: "page".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "My page".into(),
         }),
     )
@@ -522,6 +523,7 @@ async fn dispatch_op_create_block_tag() {
             block_type: "tag".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "urgent".into(),
         }),
     )
@@ -548,6 +550,7 @@ async fn dispatch_op_create_block_content() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "just content".into(),
         }),
     )
@@ -578,6 +581,7 @@ async fn dispatch_op_edit_block() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "original".into(),
         }),
     )
@@ -786,6 +790,7 @@ async fn dispatch_op_move_block() {
             block_id: BlockId::test_id("blk-6"),
             new_parent_id: Some(BlockId::test_id("blk-parent")),
             new_position: 2,
+            new_index: None,
         }),
     )
     .await;
@@ -1402,6 +1407,7 @@ async fn metrics_fg() {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "hello".into(),
         }),
     )
@@ -1450,6 +1456,7 @@ async fn flush_fg() {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "flush fg".into(),
         }),
     )
@@ -1489,6 +1496,7 @@ async fn flush_both() {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "flush both".into(),
         }),
     )
@@ -1844,6 +1852,7 @@ async fn high_water_fg() {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "hw".into(),
         }),
     )
@@ -1887,6 +1896,7 @@ async fn status_info() {
             block_type: "page".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "status".into(),
         }),
     )
@@ -2189,6 +2199,7 @@ async fn tags_cache_after_create_tag() {
             block_type: "tag".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "urgent".into(),
         }),
     )
@@ -2228,6 +2239,7 @@ async fn pages_cache_after_create_page() {
             block_type: "page".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "My Test Page".into(),
         }),
     )
@@ -2307,6 +2319,7 @@ async fn tags_cache_after_delete() {
             block_type: "tag".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "to-delete".into(),
         }),
     )
@@ -2354,6 +2367,7 @@ async fn tags_usage_count() {
             block_type: "tag".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "important".into(),
         }),
     )
@@ -2445,6 +2459,7 @@ async fn apply_op_create() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "hello from remote".into(),
         }),
     )
@@ -2487,6 +2502,7 @@ async fn apply_op_create_idempotent() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "from remote".into(),
         }),
     )
@@ -2621,6 +2637,7 @@ async fn apply_op_move() {
             block_id: BlockId::test_id("APPLY_MOVE_1"),
             new_parent_id: Some(BlockId::test_id("APPLY_MOVE_PARENT")),
             new_position: 5,
+            new_index: None,
         }),
     )
     .await;
@@ -2716,6 +2733,7 @@ async fn fg_retry_success() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "retry test".into(),
         }),
     )
@@ -2803,6 +2821,7 @@ async fn fg_lifecycle() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "lifecycle".into(),
         }),
     )
@@ -2849,6 +2868,7 @@ async fn batch_partial_failure() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "batch good".into(),
         }),
     )
@@ -2876,6 +2896,7 @@ async fn apply_op_success() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "success".into(),
         }),
     )
@@ -3155,6 +3176,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "recovered content".into(),
         }),
     )
@@ -3660,6 +3682,7 @@ async fn batch_apply_ops_atomic_rollback_on_failure() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "should be rolled back".into(),
         }),
     )
@@ -3697,6 +3720,7 @@ async fn batch_apply_ops_all_succeed_commits() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "first".into(),
         }),
     )
@@ -3709,6 +3733,7 @@ async fn batch_apply_ops_all_succeed_commits() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(2),
+            index: None,
             content: "second".into(),
         }),
     )
@@ -4163,6 +4188,7 @@ async fn dispatch_create_block_enqueues_projected_agenda_cache() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "test dispatch".into(),
         }),
     )
@@ -5366,6 +5392,7 @@ async fn dispatch_create_block_with_inline_ref_populates_row() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: format!("fresh with inline ref: #[{tag}]"),
         }),
     )
@@ -5747,6 +5774,7 @@ async fn h5_parent_and_child_create_both_land_under_strict_fifo() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "parent".into(),
         }),
     )
@@ -5759,6 +5787,7 @@ async fn h5_parent_and_child_create_both_land_under_strict_fifo() {
             // Forces parent→child FK ordering.
             parent_id: Some(BlockId::test_id("H5_PARENT")),
             position: Some(1),
+            index: None,
             content: "child".into(),
         }),
     )
@@ -5839,6 +5868,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "x-initial".into(),
         }),
     )
@@ -5850,6 +5880,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(2),
+            index: None,
             content: "y-initial".into(),
         }),
     )
@@ -5951,6 +5982,7 @@ async fn apply_op_permanent_failure_leaves_op_log_populated_l15() {
             block_type: "content".into(),
             parent_id: Some(BlockId::test_id("L15_NONEXISTENT_PARENT")),
             position: Some(0),
+            index: None,
             content: "orphan".into(),
         }),
     )
@@ -6031,6 +6063,7 @@ async fn apply_op_parent_child_same_batch_fk_ordering_l15() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "parent".into(),
         }),
     )
@@ -6045,6 +6078,7 @@ async fn apply_op_parent_child_same_batch_fk_ordering_l15() {
             // child INSERT runs.
             parent_id: Some(BlockId::test_id("L15_BATCH_PARENT")),
             position: Some(1),
+            index: None,
             content: "child".into(),
         }),
     )

@@ -2045,7 +2045,7 @@ async fn revert_move_block_restores_original_position() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Create child under P1 at position 3
+    // Create child under P1 at index 3 (0-based slot ⇒ provisional rank 4).
     let child = create_block_inner(
         &pool,
         DEV,
@@ -2059,13 +2059,13 @@ async fn revert_move_block_restores_original_position() {
     .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Move child to P2 at position 7
+    // Move child to P2 at index 7 (0-based slot ⇒ provisional rank 8).
     move_block_inner(&pool, DEV, &mat, child.id.clone(), Some(p2.id.clone()), 7)
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Verify it's at P2, pos 7
+    // Verify it's at P2, provisional rank 8 (new_index 7 + 1).
     let before = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         before.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
@@ -2074,8 +2074,8 @@ async fn revert_move_block_restores_original_position() {
     );
     assert_eq!(
         before.position,
-        Some(7),
-        "block position should be 7 after move"
+        Some(8),
+        "new_index 7 ⇒ provisional dense rank 8 after move"
     );
 
     // Get the move_block op
@@ -2097,14 +2097,19 @@ async fn revert_move_block_restores_original_position() {
     .await
     .unwrap();
 
-    // Verify it's back at P1, pos 3
+    // Verify it's back at P1. The reverse move reads the original create
+    // op (index 3) and restores that 0-based slot ⇒ provisional rank 4.
     let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
         after.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
         Some(p1.id.as_str()),
         "parent should be restored to P1"
     );
-    assert_eq!(after.position, Some(3), "position should be restored to 3");
+    assert_eq!(
+        after.position,
+        Some(4),
+        "original index 3 ⇒ provisional dense rank 4 after revert"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

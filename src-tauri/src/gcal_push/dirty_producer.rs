@@ -856,6 +856,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "hello".into(),
         }));
         let prior = BlockDateSnapshot::default();
@@ -881,6 +882,7 @@ mod tests {
             block_id: bid(),
             new_parent_id: None,
             new_position: 0,
+            new_index: None,
         }));
         let prior = BlockDateSnapshot {
             due_date: Some(date("2026-04-25")),

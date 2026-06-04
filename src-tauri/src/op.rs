@@ -112,12 +112,24 @@ impl FromStr for OpType {
 // ---------------------------------------------------------------------------
 
 /// Payload for the `create_block` op — creates a new block with the given type, content, and optional parent.
+///
+/// Sibling placement (#400): new ops carry [`Self::index`] — a 0-based slot
+/// among `parent_id`'s children — and Loro derives the convergent fractional
+/// key at apply time. Pre-#400 ops carry only the legacy sparse [`Self::position`];
+/// op-log replay maps that to a slot (see `LoroEngine::apply_create_block`).
+/// Both fields are optional + omitted-when-`None` so old and new payloads
+/// round-trip without a wire-format break (issue #400 mandates this extension).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreateBlockPayload {
     pub block_id: BlockId,
     pub block_type: String,
     pub parent_id: Option<BlockId>,
+    /// Legacy sparse 1-based sibling position (pre-#400 ops only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
+    /// New-scheme 0-based sibling slot among `parent_id`'s children (#400).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<i64>,
     pub content: String,
 }
 
@@ -153,12 +165,28 @@ pub struct PurgeBlockPayload {
     pub block_id: BlockId,
 }
 
-/// Payload for the `move_block` op — reparents a block under a new parent at the given position.
+/// Payload for the `move_block` op — reparents a block under a new parent at a
+/// given sibling slot.
+///
+/// Sibling placement (#400): new ops carry [`Self::new_index`] — a 0-based
+/// insertion slot among the target parent's *other* children (the moved node is
+/// excluded, matching `LoroTree::mov_to`) — and Loro derives the convergent
+/// fractional key at apply time. Pre-#400 ops carry only the legacy sparse
+/// [`Self::new_position`]; op-log replay maps that to a slot (see
+/// `LoroEngine::apply_move_block`). `new_position` is retained (and, for new
+/// ops, mirrors `new_index` as a breadcrumb) so it never needs to change type;
+/// `new_index` is omitted-when-`None` so old payloads round-trip unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveBlockPayload {
     pub block_id: BlockId,
     pub new_parent_id: Option<BlockId>,
+    /// Legacy sparse 1-based sibling position. For new (#400) ops this mirrors
+    /// `new_index` (0-based) as a non-authoritative breadcrumb; the materializer
+    /// routes on `new_index` when present.
     pub new_position: i64,
+    /// New-scheme 0-based sibling slot (#400). `None` ⇒ a pre-#400 op.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_index: Option<i64>,
 }
 
 /// Payload for the `add_tag` op — associates a tag block with a content/page block.
@@ -545,6 +573,7 @@ mod tests {
                 block_type: "content".into(),
                 parent_id: Some(BlockId::from_string(TEST_PID).unwrap()),
                 position: Some(1),
+                index: None,
                 content: "hello".into(),
             }),
             OpPayload::EditBlock(EditBlockPayload {
@@ -566,6 +595,7 @@ mod tests {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
                 new_parent_id: Some(BlockId::from_string(TEST_PID).unwrap()),
                 new_position: 3,
+                new_index: None,
             }),
             OpPayload::AddTag(AddTagPayload {
                 block_id: BlockId::from_string(TEST_BID).unwrap(),
@@ -665,6 +695,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: "".into(),
         });
         let json = serde_json::to_string(&p).unwrap();
@@ -672,9 +703,16 @@ mod tests {
             json.contains("\"parent_id\":null"),
             "parent_id should serialize as null"
         );
+        // #400: the sibling-slot fields are `skip_serializing_if = is_none`, so
+        // a `None` is OMITTED (keeps new-op payloads minimal). The old behaviour
+        // serialized `"position":null`; legacy rows still deserialize (below).
         assert!(
-            json.contains("\"position\":null"),
-            "position should serialize as null"
+            !json.contains("\"position\""),
+            "position should be omitted when None, got {json}"
+        );
+        assert!(
+            !json.contains("\"index\""),
+            "index should be omitted when None, got {json}"
         );
 
         let deser: OpPayload = serde_json::from_str(&json).unwrap();
@@ -683,6 +721,46 @@ mod tests {
         };
         assert!(inner.parent_id.is_none(), "parent_id should be None");
         assert!(inner.position.is_none(), "position should be None");
+        assert!(inner.index.is_none(), "index should be None");
+    }
+
+    /// #400 backwards-compat: a pre-#400 `create_block` row serialized
+    /// `"position":null` (and no `index`). It must still deserialize, with
+    /// `position` → `None` and `index` → `None` (serde default).
+    #[test]
+    fn create_block_legacy_json_with_explicit_null_position_deserializes() {
+        let legacy = r#"{
+            "op_type": "create_block",
+            "block_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "block_type": "content",
+            "parent_id": null,
+            "position": null,
+            "content": "x"
+        }"#;
+        let deser: OpPayload = serde_json::from_str(legacy).unwrap();
+        let OpPayload::CreateBlock(inner) = deser else {
+            panic!("expected CreateBlock variant");
+        };
+        assert!(inner.position.is_none());
+        assert!(inner.index.is_none());
+    }
+
+    /// #400 backwards-compat: a pre-#400 `move_block` row carried `new_position`
+    /// and no `new_index`. It must deserialize with `new_index` → `None`.
+    #[test]
+    fn move_block_legacy_json_without_new_index_deserializes() {
+        let legacy = r#"{
+            "op_type": "move_block",
+            "block_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "new_parent_id": null,
+            "new_position": 3
+        }"#;
+        let deser: OpPayload = serde_json::from_str(legacy).unwrap();
+        let OpPayload::MoveBlock(inner) = deser else {
+            panic!("expected MoveBlock variant");
+        };
+        assert_eq!(inner.new_position, 3);
+        assert!(inner.new_index.is_none());
     }
 
     /// PEND-14 backwards-compat: pre-existing op-log rows for `set_property`
@@ -970,6 +1048,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: None,
+            index: None,
             content: text.into(),
         });
         let json = serde_json::to_string(&payload).unwrap();
@@ -1094,6 +1173,7 @@ mod tests {
             block_id: BlockId::from_string(TEST_BID).unwrap(),
             new_parent_id: None,
             new_position: 0,
+            new_index: None,
         });
         let json = serde_json::to_string(&payload).unwrap();
         assert!(
@@ -1124,6 +1204,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: Some(BlockId::from_string(lower).unwrap()),
             position: Some(1),
+            index: None,
             content: "test".into(),
         });
         // Already uppercase from construction

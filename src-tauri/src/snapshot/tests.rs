@@ -103,6 +103,7 @@ async fn insert_op_at(pool: &SqlitePool, device_id: &str, block_id: &str, ts: i6
         block_type: "content".to_owned(),
         parent_id: None,
         position: Some(0),
+        index: None,
         content: "test".to_owned(),
     });
     append_local_op_at(pool, device_id, op, ts).await.unwrap();
@@ -4095,6 +4096,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
             content: "post-restore op".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
         }),
         1_748_736_000_000,
     )

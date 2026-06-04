@@ -959,7 +959,7 @@ describe('JournalPage', () => {
           blockType: 'content',
           content: '',
           parentId: 'DP1',
-          position: null,
+          index: null,
           scope: { kind: 'global' },
         })
       })

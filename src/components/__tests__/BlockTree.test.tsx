@@ -4011,7 +4011,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'B',
         newParentId: 'A',
-        newPosition: 1,
+        newIndex: 0, // #400: indent appends as first child of A (no children)
       })
     })
   })
@@ -4044,7 +4044,7 @@ describe('BlockTree handleIndent / handleDedent', () => {
       expect(mockedInvoke).toHaveBeenCalledWith('move_block', {
         blockId: 'B',
         newParentId: null,
-        newPosition: 1,
+        newIndex: 1, // #400: dedent slot = parent A's sibling slot (0) + 1
       })
     })
   })
@@ -5071,7 +5071,8 @@ describe('BlockTree Enter creates new sibling block', () => {
         blockType: 'content',
         content: '',
         parentId: null,
-        position: 1,
+        // #400: createBelow inserts at afterBlock's slot (0) + 1.
+        index: 1,
         scope: { kind: 'global' },
       })
     })
@@ -6056,7 +6057,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: null,
+        index: null,
         scope: { kind: 'global' },
       })
     })
@@ -6228,7 +6229,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: null,
+        index: null,
         scope: { kind: 'global' },
       })
     })
@@ -6252,7 +6253,7 @@ describe('H-9: auto-create first block on empty page', () => {
         blockType: 'content',
         content: '',
         parentId: 'PAGE_1',
-        position: null,
+        index: null,
         scope: { kind: 'global' },
       })
     })

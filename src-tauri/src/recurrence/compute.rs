@@ -4,11 +4,12 @@
 use sqlx::SqlitePool;
 
 use super::parser::shift_date;
-use crate::block_positions::next_sibling_position_excluding_sentinel;
 use crate::commands::{create_block_in_tx, is_valid_iso_date, set_property_in_tx};
 use crate::materializer::Materializer;
 use crate::op_log;
-use crate::pagination::{BlockRow, NULL_POSITION_SENTINEL};
+use crate::pagination::BlockRow;
+#[cfg(test)]
+use crate::pagination::NULL_POSITION_SENTINEL;
 
 /// Handle recurrence when a task transitions to DONE.
 ///
@@ -223,29 +224,11 @@ pub(crate) async fn handle_recurrence_in_tx(
     // All writes below happen in the same IMMEDIATE tx opened above.
     let mut op_records: Vec<op_log::OpRecord> = Vec::new();
 
-    // M-78: Use MAX(position) + 1 among living siblings to avoid collision.
-    // Naive `original.position + 1` collides with whatever sibling already
-    // occupies that slot, leaving two siblings sharing one position and
-    // the agenda's order non-deterministic.
-    //
-    // - If the original carries the NULL_POSITION_SENTINEL, the sibling
-    //   keeps the sentinel (incrementing would overflow i64::MAX).
-    // - Sentinel-bearing siblings are excluded from the MAX scan to avoid
-    //   the same overflow.
-    let new_position = match original.position {
-        Some(p) if p == NULL_POSITION_SENTINEL => Some(NULL_POSITION_SENTINEL),
-        Some(_) => Some(
-            next_sibling_position_excluding_sentinel(
-                &mut ***tx,
-                original
-                    .parent_id
-                    .as_ref()
-                    .map(super::super::ulid::BlockId::as_str),
-            )
-            .await?,
-        ),
-        None => Some(NULL_POSITION_SENTINEL),
-    };
+    // M-78 (#400): append the next occurrence after the last living sibling.
+    // The pre-#400 code computed `MAX(position) + 1` to avoid collisions; with
+    // the fractional-index scheme a bare append (`index = None`) is the engine's
+    // "after last sibling" placement and carries no collision/overflow concern.
+    let new_index = None;
 
     // Create next occurrence as a sibling
     let (new_block, op) = create_block_in_tx(
@@ -257,7 +240,7 @@ pub(crate) async fn handle_recurrence_in_tx(
             .parent_id
             .clone()
             .map(super::super::ulid::BlockId::into_string),
-        new_position,
+        new_index,
     )
     .await?;
     op_records.push(op);

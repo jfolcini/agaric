@@ -56,7 +56,7 @@ pub async fn reverse_move_block(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: MoveBlockPayload = serde_json::from_str(&record.payload)?;
-    let (old_parent, old_pos) = find_prior_position(
+    let prior = find_prior_position(
         pool,
         payload.block_id.as_str(),
         record.created_at,
@@ -70,11 +70,11 @@ pub async fn reverse_move_block(
             payload.block_id, record.device_id, record.seq
         ))
     })?;
-    Ok(OpPayload::MoveBlock(MoveBlockPayload {
-        block_id: payload.block_id,
-        new_parent_id: old_parent,
-        new_position: old_pos,
-    }))
+    // #400: restore the block to its prior sibling slot. New-scheme prior ops
+    // carry a 0-based `index`; legacy prior ops carry a sparse `position`.
+    Ok(OpPayload::MoveBlock(
+        prior.into_move_payload(payload.block_id),
+    ))
 }
 
 // M-71: Reverse-of-restore is a bare `DeleteBlock(block_id)`. The
@@ -156,13 +156,45 @@ pub async fn find_prior_text(
     }
 }
 
+/// A block's parent + sibling slot reconstructed from its last create/move op,
+/// used to build the inverse of a `MoveBlock` (#400). The slot is index-based
+/// for new-scheme prior ops and position-based for pre-#400 ops; `into_move_payload`
+/// emits the matching `MoveBlockPayload`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PriorPlacement {
+    parent: Option<BlockId>,
+    /// 0-based slot when `Some` (new scheme); falls back to `position`.
+    index: Option<i64>,
+    /// Legacy 1-based position when `Some` (pre-#400 ops).
+    position: Option<i64>,
+}
+
+impl PriorPlacement {
+    fn into_move_payload(self, block_id: BlockId) -> MoveBlockPayload {
+        match self.index {
+            Some(idx) => MoveBlockPayload {
+                block_id,
+                new_parent_id: self.parent,
+                new_position: idx + 1, // 1-based breadcrumb mirroring new_index
+                new_index: Some(idx),
+            },
+            None => MoveBlockPayload {
+                block_id,
+                new_parent_id: self.parent,
+                new_position: self.position.unwrap_or(1),
+                new_index: None,
+            },
+        }
+    }
+}
+
 async fn find_prior_position(
     pool: &SqlitePool,
     block_id: &str,
     created_at: i64,
     seq: i64,
     device_id: &str,
-) -> Result<Option<(Option<BlockId>, i64)>, AppError> {
+) -> Result<Option<PriorPlacement>, AppError> {
     // M-63: see `find_prior_text` — use the indexed `block_id` column and
     // normalize to uppercase per AGENTS.md invariant #8.
     let bid_upper = block_id.to_ascii_uppercase();
@@ -187,22 +219,32 @@ async fn find_prior_position(
         Some(r) => {
             if r.op_type == "move_block" {
                 let p: MoveBlockPayload = serde_json::from_str(&r.payload)?;
-                Ok(Some((p.new_parent_id, p.new_position)))
+                Ok(Some(PriorPlacement {
+                    parent: p.new_parent_id,
+                    index: p.new_index,
+                    position: Some(p.new_position),
+                }))
             } else {
                 let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
-                // BUG-26: block positions are 1-based and `move_block_inner`
-                // rejects position 0 (and negatives) with a Validation error.
-                // Ancient `create_block` payloads serialized before position
-                // became part of the wire format carry `position = None`; we
-                // cannot fabricate a valid reverse move for them. Surface this
-                // as a `NonReversible` error — matching the pattern used for
-                // `DeleteAttachment` when the paired `AddAttachment` is gone —
-                // instead of silently defaulting to 0 (which overflows into a
-                // downstream Validation error) or 1 (which pretends to know
-                // where the block started).
-                match p.position {
-                    Some(pos) => Ok(Some((p.parent_id, pos))),
-                    None => Err(AppError::NonReversible {
+                // #400: a new-scheme create carries a 0-based `index`; restore
+                // to it. A pre-#400 create carries a 1-based `position`.
+                // BUG-26: ancient `create_block` payloads predate the position
+                // wire field (both `index` and `position` absent); we cannot
+                // fabricate a valid reverse move for them — surface a
+                // `NonReversible` error (matching `DeleteAttachment` when the
+                // paired `AddAttachment` is gone) rather than guessing a slot.
+                match (p.index, p.position) {
+                    (Some(idx), _) => Ok(Some(PriorPlacement {
+                        parent: p.parent_id,
+                        index: Some(idx),
+                        position: None,
+                    })),
+                    (None, Some(pos)) => Ok(Some(PriorPlacement {
+                        parent: p.parent_id,
+                        index: None,
+                        position: Some(pos),
+                    })),
+                    (None, None) => Err(AppError::NonReversible {
                         op_type: "move_block".into(),
                     }),
                 }
@@ -252,6 +294,7 @@ mod tests_m63 {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "A original".into(),
             }),
             1_736_942_400_000,
@@ -280,6 +323,7 @@ mod tests_m63 {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(2),
+                index: None,
                 content: "B original".into(),
             }),
             1_736_942_520_000,
@@ -342,6 +386,7 @@ mod tests_m63 {
                 block_type: "content".into(),
                 parent_id: Some(BlockId::test_id("P1")),
                 position: Some(1),
+                index: None,
                 content: "A".into(),
             }),
             1_736_942_400_000,
@@ -355,6 +400,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKMA"),
                 new_parent_id: Some(BlockId::test_id("P2")),
                 new_position: 3,
+                new_index: None,
             }),
             1_736_942_460_000,
         )
@@ -370,6 +416,7 @@ mod tests_m63 {
                 block_type: "content".into(),
                 parent_id: Some(BlockId::test_id("P9")),
                 position: Some(9),
+                index: None,
                 content: "B".into(),
             }),
             1_736_942_520_000,
@@ -383,6 +430,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKMB"),
                 new_parent_id: Some(BlockId::test_id("P9X")),
                 new_position: 99,
+                new_index: None,
             }),
             1_736_942_580_000,
         )
@@ -397,6 +445,7 @@ mod tests_m63 {
                 block_id: BlockId::test_id("BLKMA"),
                 new_parent_id: Some(BlockId::test_id("P3")),
                 new_position: 5,
+                new_index: None,
             }),
             1_736_942_640_000,
         )
@@ -412,7 +461,15 @@ mod tests_m63 {
         )
         .await
         .unwrap();
-        assert_eq!(prior, Some((Some(BlockId::test_id("P2")), 3)));
+        // Legacy (pre-#400) prior move op → position-based PriorPlacement.
+        assert_eq!(
+            prior,
+            Some(PriorPlacement {
+                parent: Some(BlockId::test_id("P2")),
+                index: None,
+                position: Some(3),
+            })
+        );
     }
 
     /// Stored block_id is uppercase (BlockId serializes uppercase per
@@ -431,6 +488,7 @@ mod tests_m63 {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "seed".into(),
             }),
             1_736_942_400_000,

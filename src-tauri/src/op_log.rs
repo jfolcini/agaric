@@ -559,6 +559,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "test".into(),
         })
     }
@@ -573,6 +574,7 @@ mod tests {
                     block_type: "content".into(),
                     parent_id: None,
                     position: Some(1),
+                    index: None,
                     content: "hello".into(),
                 }),
             ),
@@ -609,6 +611,7 @@ mod tests {
                     block_id: BlockId::test_id("BLK001"),
                     new_parent_id: Some(BlockId::test_id("BLK000")),
                     new_position: 3,
+                    new_index: None,
                 }),
             ),
             (
@@ -799,6 +802,7 @@ mod tests {
             block_type: "heading".into(),
             parent_id: Some(BlockId::test_id("ROOT")),
             position: Some(42),
+            index: None,
             content: "round-trip test".into(),
         };
         let record = append_local_op(&pool, "dev-rt", OpPayload::CreateBlock(original.clone()))
@@ -947,6 +951,7 @@ mod tests {
                 block_type: "content".into(),
                 parent_id: None,
                 position: None,
+                index: None,
                 content: "first".into(),
             }),
             OpPayload::EditBlock(EditBlockPayload {
@@ -1158,6 +1163,7 @@ mod tests {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "test".into(),
             }),
             FIXED_TS,
@@ -1191,6 +1197,7 @@ mod tests {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "test".into(),
             }),
             FIXED_TS,
@@ -1206,6 +1213,7 @@ mod tests {
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
+                index: None,
                 content: "test".into(),
             }),
             FIXED_TS,
@@ -1523,6 +1531,7 @@ mod tests {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "hello".into(),
         });
         let json = serialize_inner_payload(&payload).unwrap();

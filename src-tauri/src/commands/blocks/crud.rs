@@ -132,7 +132,9 @@ pub(crate) async fn create_block_in_tx(
     block_type: String,
     content: String,
     parent_id: Option<String>,
-    position: Option<i64>,
+    // #400: 0-based sibling slot among `parent_id`'s children; `None` appends
+    // after the last sibling. (Was a legacy 1-based `position`.)
+    index: Option<i64>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1. Validate block_type
     match block_type.as_str() {
@@ -144,30 +146,12 @@ pub(crate) async fn create_block_in_tx(
         }
     }
 
-    // 1b. Validate position is positive (1-based) when provided
-    if let Some(pos) = position {
-        if pos <= 0 {
-            return Err(AppError::Validation(format!(
-                "position must be positive (1-based), got {pos}"
-            )));
-        }
-        // #383: reject the reserved NULL_POSITION_SENTINEL (i64::MAX) when an
-        // explicit position is supplied. That value is the keyset-pagination
-        // "no explicit position" marker (`pagination::NULL_POSITION_SENTINEL`);
-        // an explicit create at it would collide with the synthetic tail
-        // bucket. The append path (position = None) computes a real position
-        // and already excludes sentinel rows from the MAX (see below), so it
-        // is unaffected.
-        // NULL_POSITION_SENTINEL is `i64::MAX`, so `== sentinel` is the only
-        // reachable "at-or-above sentinel" case (a `>=` would trip
-        // `clippy::absurd_extreme_comparisons`).
-        if pos == crate::pagination::NULL_POSITION_SENTINEL {
-            return Err(AppError::Validation(format!(
-                "position must be below the reserved sentinel ({}), got {pos}",
-                crate::pagination::NULL_POSITION_SENTINEL
-            )));
-        }
-    }
+    // 1b. #400: `index` is a 0-based slot; slot 0 ("first child") is valid. The
+    // old positive-1-based-position validation is gone. A stray negative clamps.
+    // (#383's NULL_POSITION_SENTINEL rejection is obsolete here: `index` is a
+    // sibling slot, not a verbatim position — the engine derives the dense
+    // position via reprojection, so a caller can no longer target the sentinel.)
+    let index = index.map(|i| i.max(0));
 
     // 1c. Validate content length
     if content.len() > MAX_CONTENT_LENGTH {
@@ -222,9 +206,20 @@ pub(crate) async fn create_block_in_tx(
         }
     }
 
-    // Compute next position when none provided: append after last sibling
-    let effective_position = match position {
-        Some(p) => p,
+    // Provisional 1-based `position` for the optimistic SQL INSERT below. When a
+    // slot is given it's `index + 1`; otherwise append after the last sibling.
+    // The materializer reprojects the authoritative dense rank from the engine's
+    // fractional order shortly after (eventual consistency).
+    let effective_position = match index {
+        // #400/#383: a 0-based slot maps to a 1-based provisional rank. Saturate
+        // and cap strictly below NULL_POSITION_SENTINEL so an absurdly large slot
+        // can neither overflow (debug panic / release negative-wrap) nor land on
+        // the reserved keyset tail marker; the materializer reprojects the dense
+        // rank regardless. (Supersedes #383's outright sentinel rejection: under
+        // #400 the caller supplies a slot, not a verbatim position.)
+        Some(i) => i
+            .saturating_add(1)
+            .min(crate::pagination::NULL_POSITION_SENTINEL - 1),
         None => {
             let row = sqlx::query!(
                 "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \
@@ -237,13 +232,15 @@ pub(crate) async fn create_block_in_tx(
         }
     };
 
-    // 3b. Build OpPayload with the resolved position
+    // 3b. Build OpPayload (#400: carries the 0-based `index`; `None` index ⇒ a
+    // bare append, which the engine resolves to the end of the sibling list).
     let parent_block_id = parent_id.as_ref().map(|s| BlockId::from_trusted(s));
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: block_id.clone(),
         block_type: block_type.clone(),
         parent_id: parent_block_id,
-        position: Some(effective_position),
+        position: None,
+        index,
         content: content.clone(),
     });
 
@@ -324,13 +321,13 @@ pub async fn create_block_inner(
     block_type: String,
     content: String,
     parent_id: Option<BlockId>,
-    position: Option<i64>,
+    index: Option<i64>,
 ) -> Result<BlockRow, AppError> {
     // MAINT-112: CommandTx couples commit + post-commit dispatch.
     let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
     let (block, op_record) =
-        create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, position).await?;
+        create_block_in_tx(&mut tx, device_id, block_type, content, parent_id, index).await?;
     tx.enqueue_background(op_record);
     tx.commit_and_dispatch(materializer).await?;
     Ok(block)
@@ -381,7 +378,7 @@ pub async fn create_block_inner_with_space(
     block_type: String,
     content: String,
     parent_id: Option<BlockId>,
-    position: Option<i64>,
+    index: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<BlockRow, AppError> {
     if block_type == "page" {
@@ -407,7 +404,7 @@ pub async fn create_block_inner_with_space(
         // via `CommandTx::commit_and_dispatch`; the previous re-fetch
         // + loop is gone because the op records never leave the
         // transaction scope.
-        let _position = position;
+        let _index = index;
         let new_page_id = crate::commands::create_page_in_space_inner(
             pool,
             device_id,
@@ -441,7 +438,7 @@ pub async fn create_block_inner_with_space(
         block_type,
         content,
         parent_id,
-        position,
+        index,
     )
     .await
 }
@@ -2853,7 +2850,8 @@ pub async fn create_block(
     block_type: String,
     content: String,
     parent_id: Option<BlockId>,
-    position: Option<i64>,
+    // #400: 0-based sibling slot among `parent_id`'s children; `None` appends.
+    index: Option<i64>,
     scope: SpaceScope,
 ) -> Result<BlockRow, AppError> {
     create_block_inner_with_space(
@@ -2863,7 +2861,7 @@ pub async fn create_block(
         block_type,
         content,
         parent_id,
-        position,
+        index,
         &scope,
     )
     .await
@@ -3033,8 +3031,9 @@ pub struct CreateBlockSpec {
     /// created EARLIER in the same batch. When `None`, the new block is
     /// top-level.
     pub parent_id: Option<BlockId>,
-    /// Optional 1-based position. When `None`, the backend appends after
-    /// the last sibling (same convention as `create_block_inner`).
+    /// Optional 1-based sibling position (stable wire field). `None` appends
+    /// after the last sibling. #400: converted to the engine's 0-based sibling
+    /// `index` at the call site (position 1 → index 0).
     pub position: Option<i64>,
     /// Optional `key -> value_text` map. Each entry expands to a
     /// `SetProperty` op inside the same transaction. Empty map → no
@@ -3105,13 +3104,17 @@ pub async fn create_blocks_batch_inner(
     for spec in specs {
         // L-30 contract — any failure here rolls back the whole tx via
         // `?`. Mirrors `import_markdown_inner`'s per-block loop.
+        // #400: the spec keeps its stable 1-based `position` wire field;
+        // `create_block_in_tx` now takes a 0-based `index`, so convert
+        // (position 1 → index 0 = first child). `None` still appends.
+        let index = spec.position.map(|p| (p - 1).max(0));
         let (block, block_op) = create_block_in_tx(
             &mut tx,
             device_id,
             spec.block_type,
             spec.content,
             spec.parent_id.map(BlockId::into_string),
-            spec.position,
+            index,
         )
         .await?;
         tx.enqueue_background(block_op);

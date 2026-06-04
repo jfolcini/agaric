@@ -387,6 +387,7 @@ async fn purge_block_is_rejected_not_mis_reversed() {
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
+            index: None,
             content: "x".into(),
         }),
         1_736_942_400_000,

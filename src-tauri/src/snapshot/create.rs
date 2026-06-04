@@ -566,6 +566,7 @@ mod tests_m69 {
             block_type: "content".to_owned(),
             parent_id: None,
             position: Some(0),
+            index: None,
             content: "test".to_owned(),
         });
         append_local_op_at(pool, device_id, op, ts).await.unwrap();

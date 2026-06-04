@@ -297,6 +297,7 @@ impl ChainModel {
                     block_type: "content".into(),
                     parent_id,
                     position: Some(*position),
+                    index: None,
                     content: content.clone(),
                 }))
             }
@@ -366,6 +367,7 @@ impl ChainModel {
                     block_id: BlockId::from_trusted(&target),
                     new_parent_id,
                     new_position: *position,
+                    new_index: None,
                 }))
             }
             OpKind::SetProperty {

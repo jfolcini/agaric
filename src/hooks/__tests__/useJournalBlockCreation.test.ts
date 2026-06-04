@@ -152,7 +152,7 @@ describe('useJournalBlockCreation', () => {
       blockType: 'content',
       content: '',
       parentId: 'PEXIST',
-      position: null,
+      index: null,
       scope: { kind: 'global' },
     })
     expect(pageCreatedCalls).toHaveLength(0)

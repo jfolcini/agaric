@@ -34,7 +34,7 @@ vi.mock('@dnd-kit/sortable', () => ({
 vi.mock('../../lib/tree-utils', () => ({
   getDragDescendants: vi.fn(() => new Set<string>()),
   getProjection: vi.fn(() => null),
-  computePosition: vi.fn(() => 0),
+  computeDropIndex: vi.fn(() => 0),
   SENTINEL_ID: '__drop-after-last__',
 }))
 
@@ -59,13 +59,13 @@ vi.mock('@/lib/logger', () => ({
 
 import { makeBlock } from '../../__tests__/fixtures'
 import type { Projection } from '../../lib/tree-utils'
-import { computePosition, getDragDescendants, getProjection } from '../../lib/tree-utils'
+import { computeDropIndex, getDragDescendants, getProjection } from '../../lib/tree-utils'
 import { useBlockDnD } from '../useBlockDnD'
 import { useIsMobile } from '../useIsMobile'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)
-const mockedComputePosition = vi.mocked(computePosition)
+const mockedComputeDropIndex = vi.mocked(computeDropIndex)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -121,7 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedGetDragDescendants.mockReturnValue(new Set<string>())
   mockedGetProjection.mockReturnValue(null as unknown as Projection)
-  mockedComputePosition.mockReturnValue(0)
+  mockedComputeDropIndex.mockReturnValue(0)
 })
 
 describe('useBlockDnD', () => {
@@ -270,7 +270,7 @@ describe('useBlockDnD', () => {
       // Set up projection to indicate a depth change (B dragged under A)
       const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(0)
+      mockedComputeDropIndex.mockReturnValue(0)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -284,7 +284,7 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('B', 'C') as never)
       })
 
-      expect(mockedComputePosition).toHaveBeenCalled()
+      expect(mockedComputeDropIndex).toHaveBeenCalled()
       expect(params.moveToParent).toHaveBeenCalledWith('B', 'A', 0)
     })
 
@@ -299,7 +299,7 @@ describe('useBlockDnD', () => {
       // B is child of A (depth 1, parent A). Projection says move to root (depth 0, parent null)
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(2)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -316,7 +316,7 @@ describe('useBlockDnD', () => {
       expect(params.moveToParent).toHaveBeenCalledWith('B', null, 2)
     })
 
-    it('calls moveToParent when active.id !== over.id even at same depth', () => {
+    it('calls reorder (not moveToParent) for a same-parent move at same depth (R5 #404)', () => {
       const blocks = [
         makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
         makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
@@ -324,10 +324,12 @@ describe('useBlockDnD', () => {
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
-      // Projection at same depth/parent but different position (A over C)
+      // Projection at same depth/parent but different slot (A over C). The
+      // parent did not change, so R5 routes through the optimistic reorder
+      // path instead of moveToParent's structural reload.
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(2)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -339,8 +341,8 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', 'C') as never)
       })
 
-      // active.id ('A') !== over.id ('C'), so moveToParent is called
-      expect(params.moveToParent).toHaveBeenCalledWith('A', null, 2)
+      expect(params.reorder).toHaveBeenCalledWith('A', 2)
+      expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
     it('resets DnD state after dragEnd', () => {
@@ -352,7 +354,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(0)
+      mockedComputeDropIndex.mockReturnValue(0)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -402,12 +404,13 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', 'C') as never)
       })
 
-      // overIndex for 'C' in blocks is 2
-      expect(params.reorder).toHaveBeenCalledWith('A', 2)
+      // The fallback path calls reorder with the computed 0-based slot
+      // (computeDropIndex mocked to 0 here).
+      expect(params.reorder).toHaveBeenCalledWith('A', 0)
       expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
-    it('does not call reorder when overIndex is -1', () => {
+    it('still routes to reorder (slot append) when over target is unknown', () => {
       const blocks = [
         makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
         makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
@@ -415,6 +418,8 @@ describe('useBlockDnD', () => {
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
       mockedGetProjection.mockReturnValue(null as unknown as Projection)
+      // computeDropIndex resolves an unknown over to an append slot.
+      mockedComputeDropIndex.mockReturnValue(1)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -427,7 +432,8 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', 'Z') as never)
       })
 
-      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.reorder).toHaveBeenCalledWith('A', 1)
+      expect(params.moveToParent).not.toHaveBeenCalled()
     })
   })
 
@@ -775,7 +781,7 @@ describe('useBlockDnD', () => {
       // Projection says same depth but different parent (moving out of ROOT)
       const projection: Projection = { depth: 0, parentId: 'OTHER', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(0)
+      mockedComputeDropIndex.mockReturnValue(0)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -804,10 +810,10 @@ describe('useBlockDnD', () => {
       })
 
       // projected.parentId = 'ROOT' (same as currentParentId which is null ?? 'ROOT' = 'ROOT')
-      // depth same => no change, but A !== B so moveToParent still called
+      // depth same, parent same => R5 routes to reorder (not moveToParent).
       const projection: Projection = { depth: 0, parentId: 'ROOT', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(1)
+      mockedComputeDropIndex.mockReturnValue(1)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -819,11 +825,10 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', 'B') as never)
       })
 
-      // currentParentId = null ?? 'ROOT' = 'ROOT'
-      // projected.parentId = 'ROOT'
-      // depthChanged = false, parentChanged = false
-      // But active.id ('A') !== over.id ('B') => moveToParent called
-      expect(params.moveToParent).toHaveBeenCalledWith('A', 'ROOT', 1)
+      // currentParentId = null ?? 'ROOT' = 'ROOT'; projected.parentId = 'ROOT'
+      // → parentChanged = false → optimistic reorder by slot.
+      expect(params.reorder).toHaveBeenCalledWith('A', 1)
+      expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
     it('handles multiple sequential drag operations', () => {
@@ -860,7 +865,7 @@ describe('useBlockDnD', () => {
   // ── 13. Sentinel drop handling (UX-176) ──────────────────────────────
 
   describe('handleDragEnd (sentinel)', () => {
-    it('calls moveToParent when dropping on sentinel', () => {
+    it('calls reorder when dropping on sentinel at the same parent (R5 #404)', () => {
       const blocks = [
         makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
         makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
@@ -868,10 +873,12 @@ describe('useBlockDnD', () => {
       ]
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks })
 
-      // Set up projection for sentinel drop (root level)
+      // Sentinel drop at root level — A is already a root block, so the parent
+      // does not change → the SENTINEL branch of the same-parent reorder path
+      // fires (reorder, not moveToParent).
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(3)
+      mockedComputeDropIndex.mockReturnValue(3)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -890,12 +897,11 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
       })
 
-      // moveToParent should be called with projected parentId and computed position
-      expect(params.moveToParent).toHaveBeenCalledWith('A', null, 3)
-      expect(params.reorder).not.toHaveBeenCalled()
+      expect(params.reorder).toHaveBeenCalledWith('A', 3)
+      expect(params.moveToParent).not.toHaveBeenCalled()
     })
 
-    it('passes visibleItems.length as overIndex for sentinel', () => {
+    it('passes the SENTINEL overId to computeDropIndex for sentinel', () => {
       const blocks = [
         makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
         makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
@@ -904,7 +910,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 0, parentId: null, maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(5)
+      mockedComputeDropIndex.mockReturnValue(5)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -916,14 +922,15 @@ describe('useBlockDnD', () => {
         result.current.handleDragEnd(makeDragEndEvent('A', '__drop-after-last__') as never)
       })
 
-      // computePosition should be called with overIndex = visibleItems.length
-      expect(mockedComputePosition).toHaveBeenCalledWith(
+      // computeDropIndex is called with (visibleItems, parentId, overId, activeId).
+      expect(mockedComputeDropIndex).toHaveBeenCalledWith(
         expect.any(Array),
         null,
-        expect.any(Number), // visibleItems.length
+        '__drop-after-last__', // overId (sentinel)
         'A',
       )
-      expect(params.moveToParent).toHaveBeenCalledWith('A', null, 5)
+      // Same-parent sentinel drop → optimistic reorder by slot (R5 #404).
+      expect(params.reorder).toHaveBeenCalledWith('A', 5)
     })
   })
 
@@ -940,7 +947,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(0)
+      mockedComputeDropIndex.mockReturnValue(0)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -969,6 +976,7 @@ describe('useBlockDnD', () => {
 
       // No projection → falls through to same-level reorder branch.
       mockedGetProjection.mockReturnValue(null as unknown as Projection)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -998,7 +1006,7 @@ describe('useBlockDnD', () => {
 
       const projection: Projection = { depth: 1, parentId: 'A', maxDepth: 1, minDepth: 0 }
       mockedGetProjection.mockReturnValue(projection)
-      mockedComputePosition.mockReturnValue(0)
+      mockedComputeDropIndex.mockReturnValue(0)
 
       const { result } = renderHook(() => useBlockDnD(params))
 
@@ -1034,6 +1042,7 @@ describe('useBlockDnD', () => {
       const params = makeDefaultParams({ blocks, collapsedVisible: blocks, reorder })
 
       mockedGetProjection.mockReturnValue(null as unknown as Projection)
+      mockedComputeDropIndex.mockReturnValue(2)
 
       const { result } = renderHook(() => useBlockDnD(params))
 

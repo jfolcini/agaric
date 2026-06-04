@@ -17,7 +17,7 @@ import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../logger'
 import {
   buildFlatTree,
-  computePosition,
+  computeDropIndex,
   DEAD_ZONE_PX,
   type FlatBlock,
   getDragDescendants,
@@ -400,93 +400,94 @@ describe('getProjection', () => {
   })
 })
 
-// ── computePosition ──────────────────────────────────────────────────────
+// ── computeDropIndex (#400) ────────────────────────────────────────────────
+//
+// `computeDropIndex(items, parentId, overId, activeId)` returns the 0-based
+// sibling slot the dragged block should land in among the target parent's
+// OTHER children (0 = first child / top). The active block is excluded from
+// the sibling scan; dnd-kit direction semantics decide before/after the
+// drop target.
 
-describe('computePosition', () => {
-  it('returns 1 for first child of empty parent', () => {
-    const items: FlatBlock[] = [mkFlat('A', null, 1, 0)]
-    expect(computePosition(items, 'A', 1, 'dragged')).toBe(1)
-  })
-
-  it('returns position after last sibling', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 1, 1),
-      mkFlat('C2', 'P', 2, 1),
-    ]
-    // Drop at end (index 3) under parent P
-    expect(computePosition(items, 'P', 3, 'dragged')).toBe(3)
-  })
-
-  it('returns position before first sibling', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 5, 1),
-      mkFlat('C2', 'P', 10, 1),
-    ]
-    // Drop at start (index 1, before C1) under parent P
-    expect(computePosition(items, 'P', 1, 'dragged')).toBe(4)
-  })
-
-  it('returns negative position when first sibling is at position 0', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 0, 1),
-      mkFlat('C2', 'P', 1, 1),
-    ]
-    // Drop before C1 (which is at position 0) — must go negative
-    expect(computePosition(items, 'P', 1, 'dragged')).toBe(-1)
-  })
-
-  it('uses gap between siblings when available', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 1, 1),
-      mkFlat('C2', 'P', 5, 1),
-    ]
-    // Drop between C1 and C2 (index 2)
-    expect(computePosition(items, 'P', 2, 'dragged')).toBe(2)
-  })
-
-  it('returns position + 1 when no gap (consecutive)', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 1, 1),
-      mkFlat('C2', 'P', 2, 1),
-    ]
-    // Drop between C1 and C2 (index 2) — consecutive positions
-    expect(computePosition(items, 'P', 2, 'dragged')).toBe(2)
-  })
-
-  it('excludes active item from sibling scan', () => {
-    const items: FlatBlock[] = [
-      mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 1, 1),
-      mkFlat('dragged', 'P', 2, 1),
-      mkFlat('C2', 'P', 3, 1),
-    ]
-    // The dragged item is excluded from siblings
-    const pos = computePosition(items, 'P', 3, 'dragged')
-    expect(pos).toBe(2)
-  })
-
-  it('handles root-level items (null parent)', () => {
+describe('computeDropIndex', () => {
+  it('returns 0 when dropping a block onto the first sibling above it (drag up to top)', () => {
     const items: FlatBlock[] = [mkFlat('A', null, 1, 0), mkFlat('B', null, 2, 0)]
-    expect(computePosition(items, null, 2, 'dragged')).toBe(3)
+    // Drag B UP onto A → lands before A → slot 0.
+    expect(computeDropIndex(items, null, 'A', 'B')).toBe(0)
   })
 
-  it('returns 1 for first child when parent has no other children', () => {
-    const items: FlatBlock[] = [mkFlat('P', null, 1, 0), mkFlat('Q', null, 2, 0)]
-    expect(computePosition(items, 'P', 1, 'dragged')).toBe(1)
+  it('returns the post-vacate slot when dragging down onto the next sibling', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('B', null, 2, 0),
+      mkFlat('C', null, 3, 0),
+    ]
+    // Drag A DOWN onto B → after B (which slides up once A vacates) → slot 1.
+    expect(computeDropIndex(items, null, 'B', 'A')).toBe(1)
   })
 
-  it('returns position before first sibling when dropping at parent index + 1', () => {
+  it('returns the appended slot for SENTINEL (drop after last)', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('B', null, 2, 0),
+      mkFlat('C', null, 3, 0),
+    ]
+    // Drag A to the very end → 2 other siblings remain (B, C) → slot 2.
+    expect(computeDropIndex(items, null, SENTINEL_ID, 'A')).toBe(2)
+  })
+
+  it('returns the slot among only the target parent children (nesting)', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('C1', 'A', 1, 1),
+      mkFlat('B', null, 2, 0),
+    ]
+    // Drag B UP onto C1, projected parent A → before C1 → first child → slot 0.
+    expect(computeDropIndex(items, 'A', 'C1', 'B')).toBe(0)
+  })
+
+  it('counts only same-parent siblings before the insertion point', () => {
     const items: FlatBlock[] = [
       mkFlat('P', null, 1, 0),
-      mkFlat('C1', 'P', 10, 1),
-      mkFlat('C2', 'P', 20, 1),
+      mkFlat('C1', 'P', 1, 1),
+      mkFlat('C2', 'P', 2, 1),
+      mkFlat('dragged', 'P', 3, 1),
     ]
-    expect(computePosition(items, 'P', 1, 'dragged')).toBe(9)
+    // Drag the last child UP onto C2 → before C2 → slot 1 (after C1).
+    expect(computeDropIndex(items, 'P', 'C2', 'dragged')).toBe(1)
+  })
+
+  it('appends as last child when dragging a block down onto the last sibling', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('B', null, 2, 0),
+      mkFlat('C1', 'A', 1, 1),
+      mkFlat('C2', 'A', 2, 1),
+    ]
+    // B sits ABOVE the children; drag B DOWN onto C2 with projected parent A →
+    // drops AFTER C2 (downward drag) → after both children → slot 2.
+    expect(computeDropIndex(items, 'A', 'C2', 'B')).toBe(2)
+  })
+
+  it('returns slot among root-level items (null parent)', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 1, 0),
+      mkFlat('B', null, 2, 0),
+      mkFlat('C', null, 3, 0),
+    ]
+    // Drag C UP onto B → before B → slot 1 (after A).
+    expect(computeDropIndex(items, null, 'B', 'C')).toBe(1)
+  })
+
+  it('returns 0 for the first child of a parent with no other children', () => {
+    const items: FlatBlock[] = [mkFlat('A', null, 1, 0), mkFlat('B', null, 2, 0)]
+    // Drag B onto A with projected parent A (nest as A's only child) → slot 0.
+    expect(computeDropIndex(items, 'A', 'A', 'B')).toBe(0)
+  })
+
+  it('appends after an unknown over target', () => {
+    const items: FlatBlock[] = [mkFlat('A', null, 1, 0), mkFlat('B', null, 2, 0)]
+    // overId not present → append → 1 other sibling (A) → slot 1.
+    expect(computeDropIndex(items, null, 'UNKNOWN', 'B')).toBe(1)
   })
 })
 

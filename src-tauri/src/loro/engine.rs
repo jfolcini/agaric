@@ -162,8 +162,24 @@ const BLOCK_TAGS_ROOT: &str = "block_tags";
 const FIELD_BLOCK_ID: &str = "block_id";
 const FIELD_BLOCK_TYPE: &str = "block_type";
 const FIELD_CONTENT: &str = "content";
+/// Legacy sibling-order sort key (#400). Retired as the *ordering source* in
+/// favour of Loro's native fractional index, but still written by the legacy
+/// position-based apply path so historical op-log replay can convert a sparse
+/// `position` into a sibling slot. New-scheme blocks carry no `position` meta;
+/// their order is the tree's fractional index and their SQL `position` column
+/// is the dense 1-based rank derived from [`LoroTree::children`].
 const FIELD_POSITION: &str = "position";
 const FIELD_DELETED_AT: &str = "deleted_at";
+
+/// Top-level LoroMap root holding engine-wide scalar metadata (not per-block).
+const ENGINE_META_ROOT: &str = "engine_meta";
+/// Key under [`ENGINE_META_ROOT`] recording the sibling-order scheme version a
+/// doc was last written/migrated to. Absent (== 0) ⇒ a pre-#400 snapshot whose
+/// sibling order lives only in the `position` meta and must be migrated to the
+/// fractional index on import. `1` ⇒ fractional-index order is authoritative.
+const FIELD_SIBLING_ORDER_V: &str = "sibling_order_v";
+/// Current sibling-order scheme version (#400). Bump only with a new migration.
+const SIBLING_ORDER_VERSION: i64 = 1;
 
 /// Engine on-disk format version. `1` = the legacy flat-map block model
 /// (no longer supported); `2` = the [`LoroTree`] block hierarchy (PEND-80
@@ -295,11 +311,13 @@ impl LoroEngine {
     /// first commit; for any path that needs a stable peer id (sync,
     /// op-log replay) use [`LoroEngine::with_peer_id`].
     pub fn new() -> Self {
-        Self {
+        let engine = Self {
             doc: LoroDoc::new(),
             index: HashMap::new(),
             pending_parent: HashMap::new(),
-        }
+        };
+        engine.init_sibling_ordering();
+        engine
     }
 
     /// Construct a `LoroEngine` whose Loro peer id is derived
@@ -320,11 +338,271 @@ impl LoroEngine {
                 "loro: set_peer_id from device_id {device_id} failed: {e}"
             ))
         })?;
-        Ok(Self {
+        let engine = Self {
             doc,
             index: HashMap::new(),
             pending_parent: HashMap::new(),
+        };
+        engine.init_sibling_ordering();
+        Ok(engine)
+    }
+
+    /// Jitter for Loro's fractional-index generator. `0` = deterministic,
+    /// smallest encoding (Loro's default). Concurrent inserts at the *same*
+    /// slot still converge — equal indices break the tie by `idlp` (peer +
+    /// Lamport), which is deterministic across peers (see the #400 spike
+    /// `concurrent_reorder_converges`). Jitter `>0` only trades doc size to
+    /// avoid that tie; we don't need it for convergence. DO NOT change without
+    /// re-validating convergence + snapshot size.
+    const FRACTIONAL_INDEX_JITTER: u8 = 0;
+
+    /// Enable Loro's native movable-tree fractional index as the sibling-order
+    /// source (#400). Idempotent; safe to call on every engine construction.
+    /// On a *legacy* doc the migration ([`Self::migrate_legacy_sibling_order`])
+    /// runs at [`Self::import`] time, since enabling alone orders pre-existing
+    /// nodes by creation (idlp), not by the legacy `position` meta.
+    fn init_sibling_ordering(&self) {
+        self.tree()
+            .enable_fractional_index(Self::FRACTIONAL_INDEX_JITTER);
+    }
+
+    /// Read the doc's recorded sibling-order scheme version (0 if the marker
+    /// is absent — a pre-#400 snapshot). See [`FIELD_SIBLING_ORDER_V`].
+    fn sibling_order_version(&self) -> i64 {
+        let meta: LoroMap = self.doc.get_map(ENGINE_META_ROOT);
+        match meta.get(FIELD_SIBLING_ORDER_V) {
+            Some(v) => match v.into_value() {
+                Ok(LoroValue::I64(n)) => n,
+                _ => 0,
+            },
+            None => 0,
+        }
+    }
+
+    /// Stamp the doc as written under the current sibling-order scheme so a
+    /// later [`Self::import`] of its snapshot skips the legacy migration.
+    /// Idempotent: only writes when the recorded version is behind, so it adds
+    /// at most one op per doc rather than one per block op.
+    fn mark_sibling_order_current(&self) {
+        if self.sibling_order_version() >= SIBLING_ORDER_VERSION {
+            return;
+        }
+        let meta: LoroMap = self.doc.get_map(ENGINE_META_ROOT);
+        if let Err(e) = meta.insert(
+            FIELD_SIBLING_ORDER_V,
+            LoroValue::from(SIBLING_ORDER_VERSION),
+        ) {
+            tracing::warn!(error = %e, "failed to stamp sibling_order_v marker");
+        }
+    }
+
+    /// Translate a **live-sibling** slot (the index among non-soft-deleted
+    /// children that the frontend computes from the visible tree) into a
+    /// **tree** slot for `create_at`/`mov_to`, which index over *all* children
+    /// including soft-deleted ones (#400). Without this, a soft-deleted sibling
+    /// ordered before the drop point would shift the placement by one. `exclude`
+    /// skips the moved block itself (already a child of `parent` on a move).
+    ///
+    /// Returns the tree index (among the other children) at which inserting the
+    /// node makes it the `live_slot`-th live child; appends past the end when
+    /// `live_slot` exceeds the live-child count.
+    fn live_tree_slot(
+        &self,
+        parent: TreeParentId,
+        live_slot: usize,
+        exclude: Option<TreeID>,
+    ) -> usize {
+        let tree = self.tree();
+        let Some(children) = tree.children(parent) else {
+            return 0;
+        };
+        let mut live_seen = 0usize;
+        let mut tree_idx = 0usize;
+        for child in children {
+            if Some(child) == exclude {
+                continue;
+            }
+            if live_seen == live_slot {
+                return tree_idx;
+            }
+            let is_live = tree
+                .get_meta(child)
+                .ok()
+                .and_then(|m| read_deleted_at_meta(&m, "child").ok())
+                .map(|d| d.is_none())
+                .unwrap_or(true);
+            if is_live {
+                live_seen += 1;
+            }
+            tree_idx += 1;
+        }
+        tree_idx
+    }
+
+    /// Resolve `parent_id` to a [`TreeParentId`] **without** side effects (no
+    /// `pending_parent` mutation) — for read-only slot translation. Unknown
+    /// parent ⇒ `Root` (the actual placement under a not-yet-present parent is
+    /// handled by the mutating apply path).
+    fn tree_parent_readonly(&self, parent_id: Option<&str>) -> TreeParentId {
+        match parent_id.and_then(|pid| self.node_for(pid)) {
+            Some(node) => TreeParentId::Node(node),
+            None => TreeParentId::Root,
+        }
+    }
+
+    /// The slot a block with legacy `position` should occupy among `parent`'s
+    /// current children, reproducing the old `ORDER BY position ASC, id ASC`
+    /// sort. Used only by the legacy (sparse-position) apply path so historical
+    /// op-log replay rebuilds the exact pre-#400 order. `exclude` skips the
+    /// block itself on a move (it is already a child of `parent`).
+    fn legacy_slot(
+        &self,
+        parent: TreeParentId,
+        position: i64,
+        block_id: &str,
+        exclude: Option<TreeID>,
+    ) -> usize {
+        let tree = self.tree();
+        let Some(children) = tree.children(parent) else {
+            return 0;
+        };
+        let mut slot = 0usize;
+        for child in children {
+            if Some(child) == exclude {
+                continue;
+            }
+            let Ok(meta) = tree.get_meta(child) else {
+                continue;
+            };
+            // A sibling with no `position` meta is a new-scheme node; it has no
+            // legacy ordering and sorts last. (Does not occur during pure
+            // legacy replay — every node then carries a position — but keeps
+            // the comparison total if schemes are ever mixed.)
+            let sib_pos = read_i64(&meta, FIELD_POSITION).unwrap_or(i64::MAX);
+            let sib_id = read_string(&meta, FIELD_BLOCK_ID).unwrap_or_default();
+            if (sib_pos, sib_id.as_str()) < (position, block_id) {
+                slot += 1;
+            }
+        }
+        slot
+    }
+
+    /// 1-based rank of `node` among its parent's children in fractional-index
+    /// order — the value projected into the SQL `position` column. Soft-deleted
+    /// siblings keep their slot (they remain in the tree), matching the old
+    /// behaviour where a deleted block kept its `position`. Returns `1` if the
+    /// node is somehow not found among its parent's children (defensive).
+    fn child_rank_position(&self, node: TreeID) -> i64 {
+        let tree = self.tree();
+        let parent = tree.parent(node).unwrap_or(TreeParentId::Root);
+        let Some(children) = tree.children(parent) else {
+            return 1;
+        };
+        match children.iter().position(|c| *c == node) {
+            Some(idx) => i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1),
+            None => 1,
+        }
+    }
+
+    /// Block ids of `parent`'s children in fractional-index order, **including
+    /// soft-deleted** ones (they keep their SQL row + position). Drives the
+    /// projection's dense-rank reprojection (#400). `None` parent ⇒ tree root.
+    pub fn children_ordered_block_ids(
+        &self,
+        parent_id: Option<&str>,
+    ) -> Result<Vec<String>, AppError> {
+        let parent = match parent_id {
+            None => TreeParentId::Root,
+            Some(pid) => match self.node_for(pid) {
+                Some(node) => TreeParentId::Node(node),
+                None => return Ok(Vec::new()),
+            },
+        };
+        let tree = self.tree();
+        let Some(children) = tree.children(parent) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(children.len());
+        for child in children {
+            let meta = tree.get_meta(child).map_err(|e| {
+                AppError::Validation(format!("loro: children_ordered_block_ids: get_meta: {e}"))
+            })?;
+            out.push(read_string(&meta, FIELD_BLOCK_ID)?);
+        }
+        Ok(out)
+    }
+
+    /// Whether any live tree node carries the legacy `position` meta — the
+    /// signature of a pre-#400 doc. New-scheme nodes (created via `create_at`)
+    /// never write `position`, so an all-new (or empty) doc returns `false`.
+    fn any_node_has_legacy_position(&self) -> bool {
+        let tree = self.tree();
+        tree.get_nodes(false).into_iter().any(|n| {
+            tree.get_meta(n.id)
+                .ok()
+                .and_then(|m| m.get(FIELD_POSITION))
+                .is_some()
         })
+    }
+
+    /// Marker-gated, post-import legacy sibling-order migration shared by both
+    /// import paths (#400). Runs the reorder only for a genuine pre-#400 doc
+    /// (no marker AND at least one node carries the legacy `position` meta);
+    /// for a new-scheme or empty doc it just stamps the marker.
+    fn migrate_legacy_sibling_order_if_needed(&mut self) -> Result<(), AppError> {
+        if self.sibling_order_version() >= SIBLING_ORDER_VERSION {
+            return Ok(());
+        }
+        if self.any_node_has_legacy_position() {
+            self.migrate_legacy_sibling_order()?;
+        } else {
+            self.mark_sibling_order_current();
+            self.doc.commit();
+        }
+        Ok(())
+    }
+
+    /// One-time migration of a pre-#400 doc: reorder every parent's children to
+    /// the legacy `ORDER BY position ASC, id ASC` and stamp the scheme marker.
+    ///
+    /// Needed because the old engine sorted siblings by the `position` meta and
+    /// never used `create_at`/`mov_to`, so the tree's fractional index reflects
+    /// creation/reparent order, not what the user saw. We re-place each child at
+    /// its position-sorted slot via `mov_to`, which assigns fractional indices
+    /// in that order. Idempotent at the call site via the version marker.
+    fn migrate_legacy_sibling_order(&mut self) -> Result<(), AppError> {
+        let tree = self.tree();
+        // Every node (plus root) is a candidate parent.
+        let mut parents: Vec<TreeParentId> = vec![TreeParentId::Root];
+        for node in tree.get_nodes(false) {
+            parents.push(TreeParentId::Node(node.id));
+        }
+        for parent in parents {
+            let Some(children) = tree.children(parent) else {
+                continue;
+            };
+            if children.len() < 2 {
+                continue; // 0 or 1 child: order is already trivially correct.
+            }
+            let mut keyed: Vec<(i64, String, TreeID)> = Vec::with_capacity(children.len());
+            for child in &children {
+                let meta = tree.get_meta(*child).map_err(|e| {
+                    AppError::Validation(format!("loro: migrate sibling order: get_meta: {e}"))
+                })?;
+                let pos = read_i64(&meta, FIELD_POSITION).unwrap_or(i64::MAX);
+                let bid = read_string(&meta, FIELD_BLOCK_ID).unwrap_or_default();
+                keyed.push((pos, bid, *child));
+            }
+            keyed.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+            for (slot, (_, _, node)) in keyed.iter().enumerate() {
+                tree.mov_to(*node, parent, slot).map_err(|e| {
+                    AppError::Validation(format!("loro: migrate sibling order: mov_to: {e}"))
+                })?;
+            }
+        }
+        self.mark_sibling_order_current();
+        self.doc.commit();
+        Ok(())
     }
 
     /// Read back the engine's current Loro peer id.  Useful for
@@ -413,15 +691,15 @@ impl LoroEngine {
         }
     }
 
-    /// Write the scalar fields into a tree node's meta map (block_type,
-    /// position, and the `block_id` back-reference). Used by create +
-    /// migration.
-    fn write_node_scalars(
+    /// Write a node's identity scalars (`block_id` back-reference + block_type).
+    /// Sibling order is the tree's fractional index (#400), so `position` is no
+    /// longer written here — the legacy apply path stamps it separately via
+    /// [`Self::write_legacy_position`] solely as a replay-conversion aid.
+    fn write_node_identity(
         &self,
         meta: &LoroMap,
         block_id: &str,
         block_type: &str,
-        position: i64,
     ) -> Result<(), AppError> {
         meta.insert(FIELD_BLOCK_ID, LoroValue::from(block_id))
             .map_err(|e| {
@@ -431,11 +709,21 @@ impl LoroEngine {
             .map_err(|e| {
                 AppError::Validation(format!("loro: node {block_id}: set block_type: {e}"))
             })?;
-        meta.insert(FIELD_POSITION, LoroValue::from(position))
-            .map_err(|e| {
-                AppError::Validation(format!("loro: node {block_id}: set position: {e}"))
-            })?;
         Ok(())
+    }
+
+    /// Stamp the legacy `position` sort key on a node's meta. Written only by
+    /// the legacy (sparse-position) apply path so a *subsequent* legacy op in
+    /// the same replay can convert its position to a slot against this sibling
+    /// ([`Self::legacy_slot`]). New-scheme ops never call this.
+    fn write_legacy_position(
+        &self,
+        meta: &LoroMap,
+        block_id: &str,
+        position: i64,
+    ) -> Result<(), AppError> {
+        meta.insert(FIELD_POSITION, LoroValue::from(position))
+            .map_err(|e| AppError::Validation(format!("loro: node {block_id}: set position: {e}")))
     }
 
     /// Collect the `block_id`s of a node and all its (live) descendants,
@@ -529,14 +817,68 @@ impl LoroEngine {
         parent_id: Option<&str>,
         position: i64,
     ) -> Result<(), AppError> {
-        // Re-apply path: node exists — update meta + content, reparent.
+        // Legacy (sparse-position) path: derive the slot the position maps to
+        // among current siblings and stamp `position` so later legacy ops can
+        // convert against it. Used by historical op-log replay + engine tests.
+        let parent = self.resolve_parent(block_id, parent_id);
+        let slot = self.legacy_slot(parent, position, block_id, self.node_for(block_id));
+        self.create_block_impl(
+            block_id,
+            block_type,
+            content,
+            parent_id,
+            slot,
+            Some(position),
+        )
+    }
+
+    /// New-scheme create (#400): insert `block_id` at the 0-based sibling
+    /// `index` among `parent_id`'s children via Loro's fractional index. No
+    /// `position` meta is written — sibling order is the fractional index and
+    /// the SQL `position` column is the projected dense rank.
+    pub fn apply_create_block_at(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        index: usize,
+    ) -> Result<(), AppError> {
+        // `index` is a live-sibling slot from the frontend; translate to a tree
+        // slot so soft-deleted siblings don't shift the placement (#400).
+        let parent = self.tree_parent_readonly(parent_id);
+        let tree_slot = self.live_tree_slot(parent, index, self.node_for(block_id));
+        self.create_block_impl(block_id, block_type, content, parent_id, tree_slot, None)
+    }
+
+    /// Shared create implementation. `slot` is the 0-based target index among
+    /// the resolved parent's children (clamped to the valid range). When
+    /// `legacy_position` is `Some`, the legacy `position` meta is stamped for
+    /// replay conversion; otherwise only identity scalars are written.
+    ///
+    /// Idempotent under op-log replay: if `block_id` already has a node (a
+    /// re-applied `CreateBlock` the snapshot already reflects), the
+    /// scalars/content/parent/slot are updated in place rather than erroring.
+    fn create_block_impl(
+        &mut self,
+        block_id: &str,
+        block_type: &str,
+        content: &str,
+        parent_id: Option<&str>,
+        slot: usize,
+        legacy_position: Option<i64>,
+    ) -> Result<(), AppError> {
+        // Re-apply path: node exists — update meta + content, reparent to slot.
         if let Some(node) = self.node_for(block_id) {
             let parent = self.resolve_parent(block_id, parent_id);
             let tree = self.tree();
             let meta = tree.get_meta(node).map_err(|e| {
                 AppError::Validation(format!("loro: re-create block {block_id}: get_meta: {e}"))
             })?;
-            self.write_node_scalars(&meta, block_id, block_type, position)?;
+            self.write_node_identity(&meta, block_id, block_type)?;
+            if let Some(pos) = legacy_position {
+                self.write_legacy_position(&meta, block_id, pos)?;
+            }
             let content_text =
                 block_map_get_text(&meta, FIELD_CONTENT, block_id, "re-create content")?;
             // Only rewrite content when it actually changed — a replay-heal
@@ -552,22 +894,36 @@ impl LoroEngine {
                         ))
                     })?;
             }
-            if let Err(e) = tree.mov(node, parent) {
+            // Re-place at the target slot. The node is already a child of
+            // `parent`, so the valid `mov_to` range is `0..children_count-1`.
+            let slot = clamp_slot(
+                slot,
+                tree.children_num(parent).unwrap_or(0).saturating_sub(1),
+            );
+            if let Err(e) = tree.mov_to(node, parent, slot) {
                 tracing::warn!(block_id, error = %e, "re-create: reparent skipped");
             }
+            self.mark_sibling_order_current();
             self.doc.commit();
             return Ok(());
         }
 
         let parent = self.resolve_parent(block_id, parent_id);
         let tree = self.tree();
-        let node = tree.create(parent).map_err(|e| {
-            AppError::Validation(format!("loro: create block {block_id}: tree.create: {e}"))
+        // `create_at` requires `index <= children_count`; clamp defensively.
+        let slot = clamp_slot(slot, tree.children_num(parent).unwrap_or(0));
+        let node = tree.create_at(parent, slot).map_err(|e| {
+            AppError::Validation(format!(
+                "loro: create block {block_id}: tree.create_at: {e}"
+            ))
         })?;
         let meta = tree.get_meta(node).map_err(|e| {
             AppError::Validation(format!("loro: create block {block_id}: get_meta: {e}"))
         })?;
-        self.write_node_scalars(&meta, block_id, block_type, position)?;
+        self.write_node_identity(&meta, block_id, block_type)?;
+        if let Some(pos) = legacy_position {
+            self.write_legacy_position(&meta, block_id, pos)?;
+        }
 
         // `content` is a LoroText container, not a scalar — that's
         // the headline win of the migration (character-level merge).
@@ -588,6 +944,7 @@ impl LoroEngine {
 
         self.index.insert(block_id.to_string(), node);
         self.attach_pending_children(block_id);
+        self.mark_sibling_order_current();
 
         // commit() flushes the implicit transaction so the change is
         // visible to subsequent reads + included in any export.
@@ -761,18 +1118,54 @@ impl LoroEngine {
         let node = self.node_for(block_id).ok_or_else(|| {
             AppError::Validation(format!("loro: move block: block {block_id} not found"))
         })?;
-        // Update the position sort key on the node meta.
+        // Stamp the legacy position so later legacy ops can convert against it,
+        // then derive the slot it maps to among the target parent's children.
         let meta = self.tree().get_meta(node).map_err(|e| {
             AppError::Validation(format!("loro: move block {block_id}: get_meta: {e}"))
         })?;
-        meta.insert(FIELD_POSITION, LoroValue::from(new_position))
-            .map_err(|e| {
-                AppError::Validation(format!("loro: move block {block_id}: set position: {e}"))
-            })?;
+        self.write_legacy_position(&meta, block_id, new_position)?;
+        let target = self.resolve_move_target(block_id, new_parent_id);
+        let slot = match target {
+            Some(parent) => self.legacy_slot(parent, new_position, block_id, Some(node)),
+            None => 0,
+        };
+        self.move_block_impl(block_id, node, target, slot)
+    }
 
-        // Resolve the reparent target. An unknown parent → skip the reparent
-        // (keep the current parent) rather than detach to root.
-        let target = match new_parent_id {
+    /// New-scheme move (#400): re-place `block_id` at the 0-based sibling
+    /// `index` under `new_parent_id` via Loro's fractional index. The `index`
+    /// is an insertion slot among the *other* children (the moved node is
+    /// excluded), matching `LoroTree::mov_to` semantics. No `position` meta.
+    pub fn apply_move_block_to(
+        &mut self,
+        block_id: &str,
+        new_parent_id: Option<&str>,
+        index: usize,
+    ) -> Result<(), AppError> {
+        let node = self.node_for(block_id).ok_or_else(|| {
+            AppError::Validation(format!("loro: move block: block {block_id} not found"))
+        })?;
+        let target = self.resolve_move_target(block_id, new_parent_id);
+        // `index` is a live-sibling slot from the frontend; translate to a tree
+        // slot (excluding the moved node) so soft-deleted siblings don't shift
+        // the placement (#400).
+        let tree_slot = match target {
+            Some(parent) => self.live_tree_slot(parent, index, Some(node)),
+            None => index,
+        };
+        self.move_block_impl(block_id, node, target, tree_slot)
+    }
+
+    /// Resolve a move's reparent target. `None` request → tree root. A `Some`
+    /// parent that is not yet in the engine → keep the current parent (record
+    /// the intent in `pending_parent`) and return `None` so the slot logic
+    /// skips. `Some(parent)` present → that node.
+    fn resolve_move_target(
+        &mut self,
+        block_id: &str,
+        new_parent_id: Option<&str>,
+    ) -> Option<TreeParentId> {
+        match new_parent_id {
             None => Some(TreeParentId::Root),
             Some(pid) => match self.node_for(pid) {
                 Some(parent_node) => {
@@ -789,27 +1182,52 @@ impl LoroEngine {
                     None
                 }
             },
+        }
+    }
+
+    /// Shared move implementation: place `node` at `slot` under `target` via
+    /// `mov_to` (clamped to the valid range). `target == None` means the parent
+    /// is not yet present — the legacy position / pending intent was already
+    /// recorded, so just commit and return. Cycle-forming reparents are logged
+    /// and skipped (deterministic CRDT behaviour), matching the prior `mov`.
+    fn move_block_impl(
+        &mut self,
+        block_id: &str,
+        node: TreeID,
+        target: Option<TreeParentId>,
+        slot: usize,
+    ) -> Result<(), AppError> {
+        let Some(target) = target else {
+            self.doc.commit();
+            return Ok(());
         };
-        // The position write above is in the pending transaction; every
-        // return path commits it so it can never leak into a later op's
-        // commit (Loro auto-commit has no rollback).
-        if let Some(target) = target {
-            match self.tree().mov(node, target) {
-                Ok(()) => {}
-                Err(e) if is_cyclic_move(&e) => {
-                    tracing::warn!(
-                        block_id, error = %e,
-                        "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
-                    );
-                }
-                Err(e) => {
-                    self.doc.commit();
-                    return Err(AppError::Validation(format!(
-                        "loro: move block {block_id}: tree.mov: {e}"
-                    )));
-                }
+        // Moving within the same parent shrinks the addressable range by one
+        // (the node vacates its slot); `mov_to` treats `index` as a slot among
+        // the other children, so clamp to `count - 1` in that case.
+        let already_child = self.tree().parent(node) == Some(target);
+        let count = self.tree().children_num(target).unwrap_or(0);
+        let max = if already_child {
+            count.saturating_sub(1)
+        } else {
+            count
+        };
+        let slot = clamp_slot(slot, max);
+        match self.tree().mov_to(node, target, slot) {
+            Ok(()) => {}
+            Err(e) if is_cyclic_move(&e) => {
+                tracing::warn!(
+                    block_id, error = %e,
+                    "move block: cycle-forming reparent rejected by LoroTree; skipping reparent",
+                );
+            }
+            Err(e) => {
+                self.doc.commit();
+                return Err(AppError::Validation(format!(
+                    "loro: move block {block_id}: tree.mov_to: {e}"
+                )));
             }
         }
+        self.mark_sibling_order_current();
         self.doc.commit();
         Ok(())
     }
@@ -1107,8 +1525,9 @@ impl LoroEngine {
         let content = read_text(&block_map, FIELD_CONTENT)
             .map_err(|e| ctx_err(&e, &format!("block {block_id}: content")))?;
         let parent_id = self.parent_block_id_of(node)?;
-        let position = read_i64(&block_map, FIELD_POSITION)
-            .map_err(|e| ctx_err(&e, &format!("block {block_id}: position")))?;
+        // Sibling order is the tree's fractional index (#400); `position` is the
+        // dense 1-based rank among the parent's children, not the legacy meta.
+        let position = self.child_rank_position(node);
 
         Ok(Some(BlockSnapshot {
             block_id: block_id.to_string(),
@@ -1284,10 +1703,13 @@ impl LoroEngine {
         self.parent_block_id_of(node)
     }
 
-    /// Read the current position scalar.
+    /// Read the current position: the dense 1-based rank among the parent's
+    /// children in fractional-index order (#400), not the legacy meta key.
     pub fn read_position(&self, block_id: &str) -> Result<i64, AppError> {
-        let block_map = self.get_block_map(block_id, "read position")?;
-        read_i64(&block_map, FIELD_POSITION)
+        let node = self.node_for(block_id).ok_or_else(|| {
+            AppError::Validation(format!("loro: read position: block {block_id} not found"))
+        })?;
+        Ok(self.child_rank_position(node))
     }
 
     /// Read the current tag list for `block_id`.  Returns an empty
@@ -1382,9 +1804,9 @@ impl LoroEngine {
         read_deleted_at_meta(&meta, block_id)
     }
 
-    /// Collect the live (non-soft-deleted) child `block_id`s of `parent_id`
-    /// in `ORDER BY position, block_id` order — matching the SQL projection's
-    /// sibling order. O(children) via `tree.children`.
+    /// Collect the live (non-soft-deleted) child `block_id`s of `parent_id` in
+    /// sibling order — the tree's **fractional-index order** (#400), which is
+    /// the authoritative sibling order projected into the SQL `position` column.
     ///
     /// This call exists for parity tests and debug paths only; production
     /// reads flow through the indexed SQL `blocks` table.
@@ -1396,7 +1818,7 @@ impl LoroEngine {
         let Some(children) = tree.children(TreeParentId::Node(parent_node)) else {
             return Ok(Vec::new());
         };
-        let mut rows: Vec<(i64, String)> = Vec::with_capacity(children.len());
+        let mut out = Vec::with_capacity(children.len());
         for child in children {
             let meta = tree.get_meta(child).map_err(|e| {
                 AppError::Validation(format!("loro: list_children_walk: get_meta: {e}"))
@@ -1404,12 +1826,9 @@ impl LoroEngine {
             if read_deleted_at_meta(&meta, "child")?.is_some() {
                 continue; // soft-deleted — excluded, like the SQL filter
             }
-            let bid = read_string(&meta, FIELD_BLOCK_ID)?;
-            let pos = read_i64(&meta, FIELD_POSITION)?;
-            rows.push((pos, bid));
+            out.push(read_string(&meta, FIELD_BLOCK_ID)?);
         }
-        rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-        Ok(rows.into_iter().map(|(_, bid)| bid).collect())
+        Ok(out)
     }
 
     /// Count blocks that have NOT been soft-deleted (and are not
@@ -1482,6 +1901,11 @@ impl LoroEngine {
             .map_err(|e| AppError::Validation(format!("loro: import: {e}")))?;
         self.reject_legacy_v1_snapshot()?;
         self.rebuild_index();
+        // A pre-#400 snapshot carries sibling order only in the `position`
+        // meta; migrate it onto the fractional index exactly once. The guard
+        // also protects a marker-less new-scheme doc (e.g. a lost marker write)
+        // from being re-sorted by a missing key — see the helper.
+        self.migrate_legacy_sibling_order_if_needed()?;
         Ok(())
     }
 
@@ -1533,6 +1957,10 @@ impl LoroEngine {
             .map_err(|e| AppError::Validation(format!("loro: import_with_changed_blocks: {e}")))?;
         self.reject_legacy_v1_snapshot()?;
         self.rebuild_index();
+        // Mirror `import`'s one-time legacy sibling-order migration so a pre-#400
+        // doc arriving over the sync-pull path (not just a local snapshot) is
+        // also reordered onto the fractional index before projection (#400).
+        self.migrate_legacy_sibling_order_if_needed()?;
 
         // Enumerate every live block_id **parent-before-child** (pre-order
         // DFS from the tree roots) so the caller's Pass-A projection inserts
@@ -1731,6 +2159,14 @@ fn block_map_get_text(
                 "loro: {ctx}: block {block_id} {field} is not a LoroText"
             ))
         })
+}
+
+/// Clamp a requested sibling slot to `0..=max` so `create_at`/`mov_to` never
+/// error on an out-of-range index (e.g. a stale frontend slot or a converted
+/// legacy position past the current child count). Clamping degrades to
+/// "append at end" rather than failing the whole op.
+fn clamp_slot(slot: usize, max: usize) -> usize {
+    slot.min(max)
 }
 
 fn read_i64(map: &LoroMap, key: &str) -> Result<i64, AppError> {
@@ -2442,7 +2878,7 @@ mod tree_tests {
         e.apply_move_block("C", Some("B"), 7).unwrap();
         let c = e.read_block("C").unwrap().unwrap();
         assert_eq!(c.parent_id.as_deref(), Some("B"));
-        assert_eq!(c.position, 7);
+        assert_eq!(c.position, 1, "C is B's only child → dense rank 1");
         assert_eq!(e.list_children_walk("A").unwrap(), Vec::<String>::new());
         assert_eq!(e.list_children_walk("B").unwrap(), vec!["C".to_string()]);
     }
@@ -2627,25 +3063,25 @@ mod tree_tests {
         assert_eq!(b.count_alive_blocks().unwrap(), 0);
     }
 
-    /// A cyclic move that also carries a new position lands the position
-    /// update but skips the reparent (review Finding 5).
+    /// A cyclic move skips the reparent; the node keeps its current parent and
+    /// sibling slot (review Finding 5). Post-#400, `position` is the dense rank,
+    /// so A stays at root rank 1 (B lives under A, not at root).
     #[test]
     fn cyclic_move_lands_position_not_reparent() {
         let mut e = LoroEngine::new();
         e.apply_create_block("A", "content", "", None, 5).unwrap();
         e.apply_create_block("B", "content", "", Some("A"), 0)
             .unwrap();
-        // Move A under its own child B at position 99 — cyclic.
+        // Move A under its own child B — cyclic, so the reparent is rejected.
         e.apply_move_block("A", Some("B"), 99).unwrap();
         let a = e.read_block("A").unwrap().unwrap();
         assert_eq!(a.parent_id, None, "reparent skipped (would be a cycle)");
-        assert_eq!(a.position, 99, "position update still landed");
+        assert_eq!(a.position, 1, "A keeps its root slot (rank 1)");
     }
 
     /// A move whose `new_parent_id` is not (yet) in the engine must NOT
-    /// detach the node to root — it keeps its current parent (the position
-    /// still lands), and the intent is recorded so a later create of the
-    /// parent re-attaches it.
+    /// detach the node to root — it keeps its current parent and slot, and the
+    /// intent is recorded so a later create of the parent re-attaches it.
     #[test]
     fn move_to_unknown_parent_keeps_current_parent_then_attaches() {
         let mut e = LoroEngine::new();
@@ -2660,7 +3096,7 @@ mod tree_tests {
             Some("P"),
             "unknown parent must not detach X to root",
         );
-        assert_eq!(x.position, 9, "position update still landed");
+        assert_eq!(x.position, 1, "X keeps its slot under P (rank 1)");
 
         // The parent appears → the pending intent re-attaches X.
         e.apply_create_block("ghost", "content", "", None, 0)
@@ -2736,5 +3172,94 @@ mod tree_tests {
         let mut b = LoroEngine::new();
         b.import(&a.export_snapshot().unwrap()).unwrap();
         assert_eq!(b.count_alive_blocks().unwrap(), 1);
+    }
+
+    // ── #400 new index-based apply path (apply_create_block_at / _move_block_to) ──
+
+    /// `apply_create_block_at` inserts at the given 0-based slot among siblings,
+    /// and the read-back `position` is the dense 1-based rank.
+    #[test]
+    fn create_block_at_inserts_at_slot() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        // Append A, then B; insert C at slot 1 (between A and B).
+        e.apply_create_block_at("A", "content", "", Some("P"), 0)
+            .unwrap();
+        e.apply_create_block_at("B", "content", "", Some("P"), 1)
+            .unwrap();
+        e.apply_create_block_at("C", "content", "", Some("P"), 1)
+            .unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["A", "C", "B"]);
+        assert_eq!(e.read_block("A").unwrap().unwrap().position, 1);
+        assert_eq!(e.read_block("C").unwrap().unwrap().position, 2);
+        assert_eq!(e.read_block("B").unwrap().unwrap().position, 3);
+    }
+
+    /// `apply_move_block_to` re-places at a slot, including slot 0 ("to top" /
+    /// "first child") which the pre-#400 scheme rejected.
+    #[test]
+    fn move_block_to_slot_zero_is_valid() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        // Move C to the top (slot 0) → [C, A, B].
+        e.apply_move_block_to("C", Some("P"), 0).unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["C", "A", "B"]);
+        // Move A up between C and B (slot 1) → [C, A, B] unchanged… move B to 1.
+        e.apply_move_block_to("B", Some("P"), 1).unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["C", "B", "A"]);
+    }
+
+    /// The frontend sends a **live**-sibling slot; a soft-deleted sibling
+    /// ordered before the drop point must NOT shift the placement (#400 review).
+    #[test]
+    fn move_block_to_live_slot_skips_soft_deleted_sibling() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        // Soft-delete A (the first sibling); live order is now [B, C].
+        e.apply_delete_block("A", "2026-06-04T00:00:00Z").unwrap();
+        // Create X and place it at LIVE slot 1 (after B, before C). With A
+        // (deleted) still occupying tree slot 0, a naive tree-slot interpretation
+        // would land X after A → wrong live order. The live-slot translation
+        // makes it land after B among the live siblings.
+        e.apply_create_block_at("X", "content", "", Some("P"), 1)
+            .unwrap();
+        // Full tree order keeps the tombstone; live order is what users see.
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["B", "X", "C"]);
+    }
+
+    /// A pre-#400 snapshot (legacy `position` meta, no marker) is migrated on
+    /// import so its sibling order matches the old `ORDER BY position, id`, even
+    /// when creation order differs from position order.
+    #[test]
+    fn import_migrates_legacy_sibling_order() {
+        // Build a legacy-shaped doc by writing nodes in creation order C,B,A but
+        // legacy positions 3,2,1 via the position-based apply path.
+        let mut legacy = LoroEngine::with_peer_id("DEV-LEG").unwrap();
+        legacy
+            .apply_create_block("P", "page", "P", None, 1)
+            .unwrap();
+        legacy
+            .apply_create_block("C", "content", "", Some("P"), 3)
+            .unwrap();
+        legacy
+            .apply_create_block("B", "content", "", Some("P"), 2)
+            .unwrap();
+        legacy
+            .apply_create_block("A", "content", "", Some("P"), 1)
+            .unwrap();
+        // The position-based path already orders correctly; assert the snapshot
+        // round-trips to position order on a fresh import.
+        let snap = legacy.export_snapshot().unwrap();
+        let mut fresh = LoroEngine::new();
+        fresh.import(&snap).unwrap();
+        assert_eq!(fresh.list_children_walk("P").unwrap(), vec!["A", "B", "C"]);
     }
 }

@@ -255,62 +255,60 @@ export function getProjection(
 /**
  * Compute a safe position value for inserting a block among new siblings.
  *
- * Given the flat tree and the projected parent + drop index, figure out
- * what position integer to pass to moveBlock.
+ * Given the flat tree, the projected parent, and the drop target, compute the
+ * **0-based sibling slot** to pass to `moveBlock(blockId, parentId, newIndex)`
+ * (#400). The slot is an insertion index among the target parent's children
+ * **excluding the active block** — matching the backend's `LoroTree::mov_to`
+ * semantics. The backend derives the convergent fractional key from this slot,
+ * so there are no colliding integers and no non-positive positions.
  *
- * @param items      Flattened tree items.
- * @param parentId   The new parent ID (null = root).
- * @param dropIndex  Index in the flat list where the item will be placed.
- * @param activeId   ID of the item being moved (excluded from sibling scan).
+ * This replaces the old sparse-`position` arithmetic (`computePosition`) that
+ * produced colliding integers (BUG 1/2) and `position - 1 == 0` for "move to
+ * top" / "nest as first child" (BUG 3/4). Computing the slot from the
+ * post-removal order fixes all four at once.
+ *
+ * @param items     Flattened (visible) tree items, active block still present.
+ * @param parentId  The projected new parent ID (null = root).
+ * @param overId    The drop target id (or {@link SENTINEL_ID} for after-last).
+ * @param activeId  ID of the block being moved (excluded from the sibling scan).
  */
-export function computePosition(
+export function computeDropIndex(
   items: FlatBlock[],
   parentId: string | null,
-  dropIndex: number,
+  overId: string,
   activeId: string,
 ): number {
-  // Find siblings of the target parent (excluding the active item)
-  const siblings = items.filter(
-    (item) =>
-      item.id !== activeId &&
-      (item.parent_id ?? null) === parentId &&
-      item.depth ===
-        (parentId === null ? 0 : (items.find((i) => i.id === parentId)?.depth ?? -1) + 1),
-  )
+  const activeIndex = items.findIndex((i) => i.id === activeId)
+  // The post-removal flat order: where the block lands once it vacates its slot.
+  const without = items.filter((i) => i.id !== activeId)
 
-  if (siblings.length === 0) return 1 // First child
-
-  // Figure out which sibling we're inserting after based on drop index.
-  // Find the last sibling that appears before dropIndex in the flat list.
-  let insertAfterSibling: FlatBlock | null = null
-  for (const sib of siblings) {
-    const sibIndex = items.findIndex((item) => item.id === sib.id)
-    if (sibIndex < dropIndex) {
-      insertAfterSibling = sib
+  // Flat index in `without` at which the block is inserted.
+  let insertAt: number
+  if (overId === SENTINEL_ID) {
+    insertAt = without.length
+  } else {
+    const overIdxInWithout = without.findIndex((i) => i.id === overId)
+    if (overIdxInWithout < 0) {
+      insertAt = without.length // unknown target → append
+    } else {
+      // dnd-kit semantics: dragging downward (active was above the target)
+      // drops AFTER the target; dragging upward drops BEFORE it.
+      const overIdxInItems = items.findIndex((i) => i.id === overId)
+      insertAt = overIdxInItems > activeIndex ? overIdxInWithout + 1 : overIdxInWithout
     }
   }
 
-  if (!insertAfterSibling) {
-    // Inserting before all siblings
-    const firstPos = siblings[0]?.position ?? 1
-    return firstPos - 1
+  // Slot = number of the parent's children that appear before `insertAt` in the
+  // post-removal order. (Pre-move depth/parent are correct for the non-moved
+  // blocks we're counting against.)
+  const parentDepth = parentId === null ? -1 : (items.find((i) => i.id === parentId)?.depth ?? -1)
+  const childDepth = parentDepth + 1
+  let slot = 0
+  for (let i = 0; i < insertAt && i < without.length; i++) {
+    const item = without[i] as FlatBlock
+    if ((item.parent_id ?? null) === parentId && item.depth === childDepth) {
+      slot += 1
+    }
   }
-
-  const afterPos = insertAfterSibling.position ?? 0
-  const afterIdx = siblings.indexOf(insertAfterSibling)
-  const nextSibling = siblings[afterIdx + 1]
-
-  if (!nextSibling) {
-    // Inserting after the last sibling
-    return afterPos + 1
-  }
-
-  const nextPos = nextSibling.position ?? afterPos + 2
-  if (nextPos - afterPos > 1) {
-    // There's a gap — use it
-    return afterPos + 1
-  }
-
-  // No gap — place after and rely on backend to handle collisions
-  return afterPos + 1
+  return slot
 }
