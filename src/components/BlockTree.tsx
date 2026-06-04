@@ -666,6 +666,11 @@ export function BlockTree({
 
   // ── Active item for DragOverlay ────────────────────────────────────
   const activeBlock = dnd.activeId ? (blocksById.get(dnd.activeId) ?? null) : null
+  // R8 (#407): how many blocks the drag is actually moving (the active block
+  // plus its descendant subtree) — surfaced as a badge on the overlay.
+  const draggingCount = dnd.activeId
+    ? getDragDescendants(collapsedVisible, dnd.activeId).size + 1
+    : 1
 
   // ── Action / resolver bags published via context (MAINT-118) ────────
   // Memoised so descendants only re-render when callbacks change.
@@ -768,6 +773,7 @@ export function BlockTree({
           activeBlock={activeBlock}
           projected={dnd.projected}
           activeId={dnd.activeId}
+          count={draggingCount}
         />
       </DndContext>
 
