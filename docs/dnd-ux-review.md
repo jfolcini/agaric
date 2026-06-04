@@ -14,8 +14,8 @@ The drag-and-drop / keyboard-move feature has **four confirmed correctness
 bugs**, all rooted in one design flaw: blocks use a **gapless 1-based integer
 `position`** per parent, but neither the backend `move_block` nor the frontend
 position arithmetic ever **renumbers siblings to make room**. The frontend hands
-the backend either a *colliding* integer (which the DB then disambiguates by
-ULID, i.e. creation order, not drop intent) or a *non-positive* integer (which
+the backend either a _colliding_ integer (which the DB then disambiguates by
+ULID, i.e. creation order, not drop intent) or a _non-positive_ integer (which
 the backend rejects outright with an error toast). The result: dragging a block
 one slot down no-ops, dragging up between siblings lands in the wrong place,
 and dropping at the top / nesting as a first child fails with an error.
@@ -23,7 +23,7 @@ and dropping at the top / nesting as a first child fails with an error.
 Severities: **2 × P0** (silent wrong-place / no-op moves — data the user
 believes they reordered, didn't), **2 × P1** (hard failures with an error toast
 for the very common "move to top" and "nest as first child" gestures). A
-secondary **P1 architectural defect** routes essentially *every* pointer drag
+secondary **P1 architectural defect** routes essentially _every_ pointer drag
 through a full page reload, and the bugs are **partly hidden** by a more
 permissive web mock — a real testing-gap risk.
 
@@ -79,9 +79,9 @@ doesn't work.
 `handleDragEnd` then computes the position from the **raw** `overIndex`, not the
 adjusted one: `computePosition(visibleItems, projected.parentId, overIndex, blockId)`
 (`useBlockDnD.ts:161-164`). Because the active block still occupies the slot
-*above* the drop target, `computePosition` scans for the last sibling whose flat
+_above_ the drop target, `computePosition` scans for the last sibling whose flat
 index is `< dropIndex` (`tree-utils.ts:285-291`) and concludes it should insert
-*before* B — returning A's own position. Verified by
+_before_ B — returning A's own position. Verified by
 `dnd-pipeline.test.ts:159-170` (`position` comes back as `1`, equal to A's own).
 
 **Recommended fix.** Pass the projection-adjusted index (the same
@@ -104,7 +104,7 @@ sees no gap (`nextPos - afterPos === 1`), and falls through to
 final branch at 314-315 explicitly "rely on backend to handle collisions").
 The backend does **not** renumber (`move_ops.rs:162`), so C and B now share a
 position and the `position ASC, id ASC` ordering breaks the tie by ULID. Since B
-was created before C (`B < C`), B sorts first → C ends up *after* B, unchanged.
+was created before C (`B < C`), B sorts first → C ends up _after_ B, unchanged.
 Verified by `dnd-pipeline.test.ts:176-187`.
 
 The same defect affects the keyboard path: `midpointPosition` returns `a+1`
@@ -158,9 +158,9 @@ already has children. Error toast; the block does not nest.
 **Root cause.** Same arithmetic as BUG 3: dropping before the parent's existing
 first child computes `firstPos - 1 = 0`, rejected by `move_ops.rs:43-47`.
 Verified by `dnd-pipeline.test.ts:223-241`. (Note: nesting as the first child of
-an *empty* parent works, because `computePosition` short-circuits to `return 1`
+an _empty_ parent works, because `computePosition` short-circuits to `return 1`
 when `siblings.length === 0` — `tree-utils.ts:281`. It is specifically
-*populated* parents that fail.)
+_populated_ parents that fail.)
 
 **Recommended fix.** Identical to BUG 3.
 
@@ -174,6 +174,7 @@ The four bugs share one cure. In rough order of robustness:
 `BEGIN IMMEDIATE` transaction, shift siblings to open a slot:
 `UPDATE blocks SET position = position + 1 WHERE parent_id IS ? AND position >= ? AND deleted_at IS NULL`,
 then insert the moved block at the requested 1-based position.
+
 - _Pros:_ keeps the simple integer scheme; fixes all four bugs at the source;
   the frontend can stop emitting `firstPos - 1` and `afterPos + 1` collisions
   and instead pass a clean 1-based target index.
@@ -187,6 +188,7 @@ then insert the moved block at the requested 1-based position.
 **(b) Fractional / LexoRank-style ordering key (most robust, larger change).**
 Replace the integer `position` with a string/rational rank; "insert between X and
 Y" computes a key strictly between them with no neighbor mutation.
+
 - _Pros:_ O(1) moves, **no sibling renumber**, so the op-log stays one-op-per-move
   and sync conflicts are minimal; "before first" is always `> 0`. Naturally kills
   all four bugs and the ULID-tiebreak ambiguity.
@@ -201,6 +203,7 @@ gaps (`MAX(position) + GAP`), have `computePosition` use the midpoint of the gap
 (so adjacent inserts don't collide), clamp the "before first" case to
 `firstPos / 2` (or renumber only that group when the gap is exhausted), and never
 emit `<= 0`.
+
 - _Pros:_ smallest change; most moves touch one row; preserves the integer
   scheme and most of the existing code.
 - _Cons:_ still needs an occasional renumber when a gap fills; the frontend
@@ -218,22 +221,24 @@ thing that decides user-visible order.
 ## 3. Interaction / visual UX review
 
 ### Drop indicator
+
 A 5px primary-colored pill renders above the over-target row, left-indented to
 the **projected** depth: `SortableBlockWrapper.tsx:141-146`
 (`marginLeft: calc(var(--indent-width) * projected.depth)`), and a matching one
 for the end-of-list sentinel (`BlockListRenderer.tsx:266-271`). This is clear
 and correctly previews the landing depth. Supporting cues are good: the dragged
 source row both fades to `opacity: 0.35` and gets a dashed outline
-(`SortableBlock.tsx:195`, `226`), the over-target *and* source rows preview the
+(`SortableBlock.tsx:195`, `226`), the over-target _and_ source rows preview the
 projected indent (`SortableBlockWrapper.tsx:91-94`), and faint full-height
 vertical indent guides appear during a drag (`BlockListRenderer.tsx:179`,
 `231-248`). **Critique:** the indicator only renders on the row the cursor is
 over (`overId === block.id`); with the empty-pill overlay (below) and a fast
-drag the user can briefly lose any sign of *where* the drop will land between
+drag the user can briefly lose any sign of _where_ the drop will land between
 rows. Consider a persistent gap-style indicator that survives between hover
 targets.
 
 ### DEAD_ZONE_PX (20px) for indent
+
 `DEAD_ZONE_PX = 20` (`tree-utils.ts:17`) suppresses small horizontal movement
 before any indent change, applied in both the sentinel and normal branches
 (`tree-utils.ts:179-181`, `211-213`). With `INDENT_WIDTH = 24`
@@ -245,12 +250,13 @@ at the halfway point; worth a quick dogfood. It is **not** user-configurable and
 ignores any indent-density preference, but that is acceptable.
 
 ### Drag-handle discoverability / affordance
+
 The grip (`GripVertical`) lives in a 68px gutter and is **hidden at rest**
 (`opacity-0`, `pointer-events-none`), revealed only on row hover / focus-within
 / `.block-active` (`BlockGutterControls.tsx:36-37`, `158-184`). The comment at
 `158-172` documents a deliberate reversal of an earlier always-visible grip
 (#370) to keep the gutter calm. **Critique:** this is the calm-vs-discoverable
-tradeoff — a first-time user has *no* persistent visual hint that rows are
+tradeoff — a first-time user has _no_ persistent visual hint that rows are
 draggable. There is no onboarding affordance and the whole row is **not** a drag
 handle (only the grip is). For a power-user outliner this is defensible, but a
 subtle always-on grip at very low opacity, or a one-time coach-mark, would help
@@ -258,19 +264,21 @@ discoverability. The handle correctly exposes `aria-keyshortcuts`
 (`BlockGutterControls.tsx:177`) and `cursor-grab`.
 
 ### DragOverlay is an empty pill (no content preview)
+
 The overlay is a tiny `h-1.5 w-20` primary pill with **no block content**,
 `pointer-events-none`, `aria-hidden`, `dropAnimation={null}`
 (`BlockDndOverlay.tsx:39-47`). The stated rationale (lines 36-38) is that an
 empty overlay lets the user see the list reflow underneath. **Assessment:** this
-is a defensible and somewhat unusual choice. It works *because* the source row
+is a defensible and somewhat unusual choice. It works _because_ the source row
 stays visible (faded + outlined) and the drop indicator + projected-depth
 previews carry the "where will it land" information. The downside is the dragged
-*identity* is ambiguous during fast multi-row drags — the user tracks a
+_identity_ is ambiguous during fast multi-row drags — the user tracks a
 featureless dot, not their block. For deeply nested subtree drags (where the
 whole subtree moves), a small "N blocks" count badge on the pill would reduce
 ambiguity without reintroducing a heavy content preview.
 
 ### Auto-scroll
+
 `useAutoScrollOnDrag` (`useAutoScrollOnDrag.ts`) runs a RAF loop while dragging,
 scrolling when the pointer is within `SCROLL_ZONE = 50px` of the container edge,
 speed ramping to `MAX_SPEED = 15px/frame` (~900px/s) proportional to edge
@@ -285,6 +293,7 @@ internal ref (`useBlockDnD.ts:79-80`) which would no-op if the real scroll
 container isn't passed.
 
 ### Touch long-press (250ms) vs desktop 8px activation
+
 Sensors: desktop `PointerSensor` activates at `{ distance: 8 }`; mobile at
 `{ delay: 250, tolerance: 5 }` (`useBlockDnD.ts:106-111`). The 250ms press-hold
 on touch is necessary to disambiguate drag from scroll/tap and from the
@@ -298,19 +307,21 @@ worth a touch-device dogfood. The touch drag handle also carries an
 `aria-label` hint since tooltips never fire on touch (`BlockGutterControls.tsx:193-206`).
 
 ### Collapsed / nested subtrees during drag
+
 Descendants of the dragged block are excluded from the visible/sortable list for
 the duration of the drag (`useBlockDnD.ts:86-95` via `getDragDescendants`), so a
 parent drags as a unit and the projection math doesn't trip over its own
 children. `dnd-pipeline.test.ts:268-291` confirms a moved parent keeps its
-subtree intact (modulo BUG 1, which also defeats *subtree* downward drags —
+subtree intact (modulo BUG 1, which also defeats _subtree_ downward drags —
 `dnd-pipeline.test.ts:282-290`). Collapsed subtrees: the input list is
 `collapsedVisible` (collapsed children already pruned), so a collapsed parent
 moves its hidden descendants implicitly via the backend page-id cascade
 (`move_ops.rs:206-226`). This is correct. The one rough edge is purely the
-position bugs above — the *structure* moves fine; the *order among siblings* is
+position bugs above — the _structure_ moves fine; the _order among siblings_ is
 what breaks.
 
 ### Dead fast-path / full reload on every drag (architectural defect, P1)
+
 In `handleDragEnd`, the branch condition is
 `if (isSentinel || depthChanged || parentChanged || active.id !== over.id)`
 (`useBlockDnD.ts:159`). Because `active.id !== over.id` is true for **virtually
@@ -335,6 +346,7 @@ once the position scheme is fixed).
 ## 4. Keyboard & accessibility review
 
 ### Discoverability of move / indent shortcuts
+
 All move/indent bindings are catalogued and surfaced in the keyboard-shortcuts
 help dialog + Settings: `indentBlock` `Ctrl+Shift+→`, `dedentBlock`
 `Ctrl+Shift+←` (`catalog.ts:53-64`), `moveBlockUp` `Ctrl+Shift+↑`,
@@ -346,13 +358,14 @@ indent/move carry no `condition` qualifier, so the help dialog doesn't tell the
 user these only act on a focused block.
 
 ### Screen-reader announcements
+
 Every keyboard move emits a polite live-region announcement via `announce()`:
 `blockIndented` / `blockDedented` (`useBlockKeyboardHandlers.ts:156`, `165`),
 `blockMovedUp` / `blockMovedDown` (lines 179, 193). `announce()`
 (`src/lib/announcer.ts`) is a well-built singleton `aria-live="polite"`,
 `role="status"`, `aria-atomic` region that clears-then-sets on a RAF to force
 re-read (lines 18-56) and coalesces identical messages within 500ms (lines
-14-15, 42-48). **Critique:** the announcements are *fire-and-forget* — they
+14-15, 42-48). **Critique:** the announcements are _fire-and-forget_ — they
 fire **before** the async `moveUp/moveDown/indent/dedent` promise resolves and
 regardless of success. So when a move **fails** (BUGs 3/4: position rejected),
 the SR user hears "Block moved up" while the block did **not** move and an error
@@ -362,6 +375,7 @@ toast appears — a false confirmation. The drag path's SR region announces only
 promise resolution, and announce a distinct failure message on rejection.
 
 ### Keyboard drag via KeyboardSensor
+
 A `KeyboardSensor` with `sortableKeyboardCoordinates` is wired
 (`useBlockDnD.ts:110`), so dnd-kit's keyboard drag (focus handle → Space →
 arrows → Space) is technically available. **However**, the handle is in a gutter
@@ -370,17 +384,18 @@ that is `opacity-0`/`pointer-events-none` until hover/focus
 `group-focus-within`/`focus-visible` (so tabbing to it reveals it), but it is
 **not** in a discoverable tab path next to the content, and the empty overlay +
 "Moving to depth N" announcement give a keyboard-drag user very little spatial
-feedback. In practice keyboard *reordering* is far better served by the explicit
+feedback. In practice keyboard _reordering_ is far better served by the explicit
 `Ctrl+Shift+↑/↓/←/→` shortcuts, which is the right primary mechanism.
 
 ### Reachable without a mouse?
+
 **Yes** for move/indent: the `Ctrl+Shift`+arrow shortcuts route through
 `useBlockKeyboardHandlers` → store actions and need no pointer. The
 `aria-keyshortcuts` and help-dialog entries make them discoverable. The
 keyboard-drag fallback exists but is secondary. The main accessibility gap is
 the **false-success announcement on failed moves** (above) and the fact that the
 underlying position bugs mean a keyboard move-to-top (`Ctrl+Shift+↑` onto a
-position-1 sibling) *fails* — so an AT user is told it worked when it didn't
+position-1 sibling) _fails_ — so an AT user is told it worked when it didn't
 (BUG 3).
 
 ---
@@ -394,15 +409,15 @@ diverges from the real backend on exactly the two axes that cause these bugs:
   `b['position'] = a['newPosition']` with **no positivity validation**
   (`src/lib/tauri-mock/handlers.ts:1168` ff., the assignment around 1175). The
   real backend rejects it (`move_ops.rs:43-47`). So BUGs 3 & 4 — which
-  *throw* against the real backend — **silently succeed** against the mock.
+  _throw_ against the real backend — **silently succeed** against the mock.
 - **Mock `list_blocks` sorts by position only, no `id` tiebreak.**
   `handlers.ts:464-465` (`items.sort((x,y) => posX - posY)`), a stable sort, so
   equal positions keep insertion order rather than ULID order. The real backend
   tie-breaks by `id ASC` (`pages.rs:372`, `hierarchy.rs:69`). So BUGs 1 & 2 —
   whose wrong-place behavior depends on the ULID tiebreak — manifest
-  *differently* (or not at all) in the mock.
+  _differently_ (or not at all) in the mock.
 
-Note one subtlety: the mock `load_page_subtree` *does* tie-break by id
+Note one subtlety: the mock `load_page_subtree` _does_ tie-break by id
 (`handlers.ts:585-590`), but the frontend `buildFlatTree` then **re-sorts
 siblings by position only** with no id tiebreak (`tree-utils.ts:63-66`), using a
 stable sort — so even the mock page-tree path can mask the ULID-ordering bug.
