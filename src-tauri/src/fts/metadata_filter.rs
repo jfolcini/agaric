@@ -524,7 +524,13 @@ struct PropParsedValue {
 
 fn parse_prop_value(raw: &str) -> PropParsedValue {
     PropParsedValue {
-        num: raw.parse::<f64>().ok(),
+        // #383: reject non-finite parses (`inf`/`infinity`/`NaN`). `f64`'s
+        // `FromStr` accepts those spellings, but `value_num` rows are always
+        // finite, so an `=` against inf/NaN can never match (NaN `=` is even
+        // FALSE against itself). Filtering them to `None` makes the numeric
+        // branch bind SQL NULL — the same no-match outcome — without leaving
+        // a non-finite literal in the bound parameters.
+        num: raw.parse::<f64>().ok().filter(|n| n.is_finite()),
         date: NaiveDate::parse_from_str(raw, "%Y-%m-%d")
             .ok()
             .map(|d| d.format("%Y-%m-%d").to_string()),
@@ -718,6 +724,26 @@ mod tests {
     fn fixed_today() -> NaiveDate {
         // 2026-05-18 is a Monday — pinned so `this-week` math is stable.
         NaiveDate::from_ymd_opt(2026, 5, 18).unwrap()
+    }
+
+    #[test]
+    fn parse_prop_value_rejects_non_finite_numbers() {
+        // #383: `f64::from_str` accepts `inf`/`infinity`/`NaN`, but a
+        // `value_num` row is always finite so an `=` against those can never
+        // match (NaN `=` is FALSE even against itself). The numeric branch
+        // must therefore stay `None` for those inputs so it binds SQL NULL.
+        for raw in ["inf", "+inf", "-inf", "infinity", "INFINITY", "NaN", "nan"] {
+            let parsed = parse_prop_value(raw);
+            assert!(
+                parsed.num.is_none(),
+                "non-finite input {raw:?} must not produce a numeric bind, got {:?}",
+                parsed.num
+            );
+        }
+        // Finite values still parse.
+        assert_eq!(parse_prop_value("3.5").num, Some(3.5));
+        assert_eq!(parse_prop_value("0").num, Some(0.0));
+        assert_eq!(parse_prop_value("-42").num, Some(-42.0));
     }
 
     #[test]

@@ -4270,6 +4270,55 @@ async fn update_property_def_options_preserves_user_facing_errors_through_saniti
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_property_def_options_reads_back_committed_row() {
+    // #383: the update now wraps check + orphan-count + UPDATE in one
+    // BEGIN IMMEDIATE tx, checks the UPDATE's rows_affected, and reads the
+    // post-update row back INSIDE the tx (instead of reconstructing from the
+    // pre-update snapshot). The returned options must reflect exactly what was
+    // persisted, and the persisted row must match.
+    let (pool, _dir) = test_pool().await;
+    create_property_def_inner(
+        &pool,
+        "flavour".into(),
+        "select".into(),
+        Some(r#"["sweet"]"#.into()),
+    )
+    .await
+    .unwrap();
+
+    let updated =
+        update_property_def_options_inner(&pool, "flavour".into(), r#"["sweet","sour"]"#.into())
+            .await
+            .unwrap();
+
+    // Returned shape reflects the committed row.
+    assert_eq!(updated.key, "flavour");
+    assert_eq!(updated.value_type, "select");
+    assert_eq!(updated.options.as_deref(), Some(r#"["sweet","sour"]"#));
+
+    // The persisted row matches what was returned (read-back is authoritative).
+    let stored: (String,) =
+        sqlx::query_as("SELECT options FROM property_definitions WHERE key = 'flavour'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(stored.0, r#"["sweet","sour"]"#);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_property_def_options_missing_key_returns_not_found() {
+    // #383: a missing definition must surface NotFound (the existence check
+    // now runs inside the tx; this exercises the early-return rollback path).
+    let (pool, _dir) = test_pool().await;
+    let result =
+        update_property_def_options_inner(&pool, "no-such-key".into(), r#"["a"]"#.into()).await;
+    assert!(
+        matches!(result, Err(AppError::NotFound(_))),
+        "missing definition must return NotFound, got: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_def_preserves_user_facing_errors_through_sanitize() {
     // NotFound / Validation are user-facing — sanitize must not rewrite them.
     let (pool, _dir) = test_pool().await;

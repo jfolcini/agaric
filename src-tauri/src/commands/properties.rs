@@ -976,13 +976,21 @@ pub async fn update_property_def_options_inner(
         return Err(AppError::Validation("options must not be empty".into()));
     }
 
+    // #383: open a BEGIN IMMEDIATE tx so the existence/type check, the orphan
+    // count, and the UPDATE are TOCTOU-safe — a concurrent
+    // `delete_property_def`/`set_property` cannot race in between the read and
+    // the write. Mirrors the sibling `delete_property_def_inner`. Dropping the
+    // tx without commit (early returns below) rolls it back automatically.
+    // allow-raw-tx: updates property_definitions (schema metadata), no op_log (#110)
+    let mut tx = crate::db::begin_immediate_logged(pool, "update_property_def_options").await?;
+
     // Fetch existing to verify it's select-type
     let existing = sqlx::query_as!(
         PropertyDefinition,
         "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
         key
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("property definition '{key}'")))?;
 
@@ -1009,7 +1017,7 @@ pub async fn update_property_def_options_inner(
         key,
         options,
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
     if orphan_count > 0 {
@@ -1023,18 +1031,34 @@ pub async fn update_property_def_options_inner(
         );
     }
 
-    sqlx::query("UPDATE property_definitions SET options = ? WHERE key = ?")
+    let result = sqlx::query("UPDATE property_definitions SET options = ? WHERE key = ?")
         .bind(&options)
         .bind(&key)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
-    Ok(PropertyDefinition {
-        key: existing.key,
-        value_type: existing.value_type,
-        options: Some(options),
-        created_at: existing.created_at,
-    })
+    // #383: guard against a silent no-op write. The existence check above ran
+    // inside the same tx, so a 0-row UPDATE here means the row vanished under
+    // an impossible concurrency window (or a schema mismatch) — surface it
+    // rather than returning a row that was never persisted.
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!("property definition '{key}'")));
+    }
+
+    // #383: read the post-update row back INSIDE the tx instead of
+    // reconstructing the return value from the pre-update snapshot, so the
+    // returned shape reflects exactly what is committed.
+    let updated = sqlx::query_as!(
+        PropertyDefinition,
+        "SELECT key, value_type, options, created_at FROM property_definitions WHERE key = ?",
+        key
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(updated)
 }
 
 /// Delete a property definition by key.

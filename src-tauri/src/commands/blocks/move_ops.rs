@@ -11,6 +11,18 @@ use super::super::*;
 /// ancestor-walking CTE, appends a `MoveBlock` op, updates `parent_id` and
 /// `position` in the `blocks` table, and dispatches background cache tasks.
 ///
+/// # Position contract (#383)
+///
+/// `position` is **NOT unique** among siblings. The canonical sibling
+/// ordering is `(position ASC, id ASC)` — `id` (a monotonically increasing
+/// ULID) breaks ties when two siblings share a `position`. This function
+/// performs **no in-transaction shift / renumber** of the other siblings:
+/// it writes only the moved block's `position` verbatim. If a caller needs
+/// gap-free or collision-free positions, it must renumber the siblings
+/// itself (e.g. via its own pass before/after this call). Reusing an
+/// existing sibling's `position` is therefore legal and simply places the
+/// moved block adjacent to that sibling, ordered by `id`.
+///
 /// # Errors
 ///
 /// - [`AppError::InvalidOperation`] — block cannot be its own parent
@@ -43,6 +55,22 @@ pub async fn move_block_inner(
     if new_position <= 0 {
         return Err(AppError::Validation(format!(
             "position must be positive (1-based), got {new_position}"
+        )));
+    }
+
+    // 1c. #383: reject the reserved NULL_POSITION_SENTINEL (i64::MAX). That
+    // value is the keyset-pagination "no explicit position" marker
+    // (`pagination::NULL_POSITION_SENTINEL`); blocks carrying it sort AFTER
+    // all positioned siblings. Accepting it as an explicit caller-supplied
+    // position would collide with that sentinel semantics and silently push
+    // the block to the synthetic tail bucket.
+    // NULL_POSITION_SENTINEL is `i64::MAX`, so `== sentinel` is the only
+    // reachable "at-or-above sentinel" case (a `>=` would trip
+    // `clippy::absurd_extreme_comparisons`).
+    if new_position == crate::pagination::NULL_POSITION_SENTINEL {
+        return Err(AppError::Validation(format!(
+            "position must be below the reserved sentinel ({}), got {new_position}",
+            crate::pagination::NULL_POSITION_SENTINEL
         )));
     }
 
