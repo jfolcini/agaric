@@ -1461,6 +1461,117 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // DnD position-safety invariants (regression markers).
+  //
+  // The store's move actions persist an integer `position` that the real
+  // backend interprets as 1-based and NEVER renumbers (commands/blocks/
+  // move_ops.rs): it rejects position <= 0 and orders ties by ULID. The mock
+  // backend is more permissive, so the happy-path tests above bless positions
+  // the real backend would reject or mis-order (e.g. moveUp asserting
+  // `newPosition: -1`). These tests assert the *desired* contract and are
+  // marked `it.fails` until the position scheme is fixed (see the matching
+  // `it.fails` cases in src/lib/__tests__/dnd-pipeline.test.ts). When a fix
+  // lands these flip to red — delete the `.fails` and keep the assertion.
+  // ---------------------------------------------------------------------------
+  describe('position-safety invariants (DnD regression markers)', () => {
+    /** Pull the `newPosition` from the most recent move_block IPC call. */
+    function lastMovePosition(): number | undefined {
+      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'move_block')
+      const last = calls[calls.length - 1]?.[1] as { newPosition?: number } | undefined
+      return last?.newPosition
+    }
+
+    it.fails('moveUp must not emit a non-positive position when the prev sibling is at the floor', async () => {
+      // First sibling at position 1 (1-based, as the real backend creates them).
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 1 })
+
+      await store.getState().moveUp('B')
+
+      // DESIRED: never send position <= 0 (the real backend rejects it).
+      // ACTUAL: sends prevSibling.position(1) - 1 = 0 → rejected in prod.
+      expect(lastMovePosition()).toBeGreaterThan(0)
+    })
+
+    it('CHARACTERIZATION: moveUp emits prevSibling.position - 1 (0 at the floor)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
+
+      await store.getState().moveUp('B')
+
+      expect(lastMovePosition()).toBe(0) // the real backend rejects this
+    })
+
+    it.fails('reorder to the top must not emit a non-positive position', async () => {
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
+
+      await store.getState().reorder('B', 0)
+
+      expect(lastMovePosition()).toBeGreaterThan(0) // DESIRED — currently 0
+    })
+
+    it.fails('moveDown must not collide with the position of an existing sibling', async () => {
+      // Consecutive positions 1,2,3 (no gaps) — the common real-world case.
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+      const blockC = makeBlock({ id: 'C', position: 3, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 3 })
+
+      // Move A down past B → should sit between B(2) and C(3). With no gap the
+      // only safe integer doesn't exist without renumbering, so it emits 3,
+      // colliding with C → order then decided by ULID, not intent.
+      await store.getState().moveDown('A')
+
+      const existingPositions = new Set([2, 3]) // B and C
+      expect(existingPositions.has(lastMovePosition() as number)).toBe(false) // DESIRED
+    })
+
+    it('CHARACTERIZATION: moveDown emits nextSibling.position + 1 (collides with the block after)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 })
+      const blockC = makeBlock({ id: 'C', position: 3, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB, blockC] })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 3 })
+
+      await store.getState().moveDown('A')
+
+      expect(lastMovePosition()).toBe(3) // == C.position → collision
+    })
+
+    it.fails('dedent must not collide with the parent’s following sibling', async () => {
+      // GP > P(pos 1) { X(pos 1) }, and P has a following sibling S at pos 2.
+      // Dedent X → it should sit between P(1) and S(2) under GP. dedent emits
+      // parent.position + 1 = 2, colliding with S.
+      const gp = makeBlock({ id: 'GP', position: 1, parent_id: null, depth: 0 })
+      const p = makeBlock({ id: 'P', position: 1, parent_id: 'GP', depth: 1 })
+      const x = makeBlock({ id: 'X', position: 1, parent_id: 'P', depth: 2 })
+      const s = makeBlock({ id: 'S', position: 2, parent_id: 'GP', depth: 1 })
+      store.setState({
+        blocks: [gp, p, x, s],
+        blocksById: new Map([
+          ['GP', gp],
+          ['P', p],
+          ['X', x],
+          ['S', s],
+        ]),
+      })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'X', new_parent_id: 'GP', new_position: 2 })
+
+      await store.getState().dedent('X')
+
+      expect(lastMovePosition()).not.toBe(2) // DESIRED — currently 2 (collides with S)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // appendBlock (PEND-35 Tier 4.2)
   // ---------------------------------------------------------------------------
   describe('appendBlock', () => {
