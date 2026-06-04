@@ -115,6 +115,80 @@ async fn get_status_total_ops_in_log_reflects_op_log_count() {
     );
 }
 
+/// #385: the cached op_log count must (a) reflect the real row count on a
+/// cold/stale call and (b) be rate-limited — a row inserted within the TTL
+/// window after a refresh is NOT reflected until the cache is invalidated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_status_total_ops_in_log_is_rate_limited_cache() {
+    use std::sync::atomic::Ordering;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    async fn seed_op(pool: &sqlx::SqlitePool, seq: i64) {
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("dev-cache")
+        .bind(seq)
+        .bind(format!("hash-{seq}"))
+        .bind("create_block")
+        .bind(r#"{"block_id":"BLK_C","block_type":"content","content":""}"#)
+        .bind(1_749_988_800_000_i64)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Seed 3 rows, then the first (cold) status call must recompute and
+    // report the true count.
+    for i in 1..=3 {
+        seed_op(&pool, i).await;
+    }
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(3),
+        "cold call must reflect the real op_log count"
+    );
+
+    // Insert 2 more rows WITHOUT invalidating the cache; the next call is
+    // within the TTL window, so it must serve the cached (stale) 3.
+    for i in 4..=5 {
+        seed_op(&pool, i).await;
+    }
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(3),
+        "within-TTL call must serve the cached value, not re-COUNT"
+    );
+
+    // Force the cache stale (timestamp = 0) and confirm the next call
+    // recomputes to the now-current count of 5.
+    mat.metrics()
+        .cached_op_log_count_at_ms
+        .store(0, Ordering::Relaxed);
+    let status = get_status_inner(&mat, None).await;
+    assert_eq!(
+        status.total_ops_in_log,
+        Some(5),
+        "post-invalidation call must recompute the fresh op_log count"
+    );
+
+    // The cached atomic must now match SELECT COUNT(*).
+    let actual: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let cached = mat.metrics().cached_op_log_count.load(Ordering::Relaxed);
+    assert_eq!(
+        i64::try_from(cached).unwrap(),
+        actual,
+        "cached op_log count must equal SELECT COUNT(*) after refresh"
+    );
+}
+
 /// bg_dropped must increment whenever the retry queue receives a persisted
 /// failure OR a global rebuild task is silently dropped after retries.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

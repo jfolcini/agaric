@@ -2523,8 +2523,27 @@ const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 ///
 /// Returns `Ok(())` always — failures are logged, never propagated,
 /// because a partial GC pass is strictly better than no GC pass.
+///
+/// # Pool usage (#385)
+///
+/// The set of referenced `fs_path`s is loaded **once** via a single
+/// `SELECT fs_path FROM attachments` on `read_pool` (the dedicated
+/// reader, when configured) into an in-memory `HashSet`, and membership
+/// is tested per file in memory. This replaces the historical
+/// per-file `SELECT 1 FROM attachments WHERE fs_path = ?` against the
+/// write pool, which (a) contended with the foreground apply path for
+/// the single SQLite writer and (b) could not use the *partial*
+/// `fs_path` index (`WHERE deleted_at IS NULL`, migrations 0061/0081)
+/// because the predicate-less lookup forced a per-file scan.
+///
+/// Semantics are preserved exactly: the old query had **no**
+/// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
+/// the bulk `SELECT fs_path FROM attachments` likewise loads every row
+/// (active and soft-deleted). A file is an orphan iff its normalized
+/// relative path is not present in the set.
 pub(super) async fn cleanup_orphaned_attachments(
     pool: &SqlitePool,
+    read_pool: Option<&SqlitePool>,
     app_data_dir: &Path,
 ) -> Result<(), AppError> {
     let attachments_root = app_data_dir.join("attachments");
@@ -2613,6 +2632,40 @@ pub(super) async fn cleanup_orphaned_attachments(
         return Ok(());
     }
 
+    // #385: load the full set of referenced `fs_path`s ONCE on the read
+    // pool, rather than issuing one write-pool `SELECT 1 WHERE fs_path = ?`
+    // per walked file. The read pool (when configured) keeps this off the
+    // single SQLite writer; falling back to the write pool preserves the
+    // legacy behaviour for single-pool (test / legacy) materializers.
+    //
+    // The legacy per-file query had NO `deleted_at IS NULL` predicate, so
+    // it matched soft-deleted rows too — we replicate that by selecting
+    // every row's `fs_path` (no predicate). `fs_path` is stored as a
+    // relative, forward-slash path by `add_attachment_inner`, which is the
+    // exact normalized shape we compute per walked file below, so an
+    // in-memory `HashSet` membership test is byte-equivalent to the old
+    // `WHERE fs_path = ?` comparison.
+    let lookup_pool = read_pool.unwrap_or(pool);
+    let referenced_paths: std::collections::HashSet<String> = match sqlx::query_scalar!(
+        r#"SELECT fs_path as "fs_path!: String" FROM attachments"#
+    )
+    .fetch_all(lookup_pool)
+    .await
+    {
+        Ok(rows) => rows.into_iter().collect(),
+        Err(e) => {
+            // A failure to load the reference set must NOT cause the
+            // GC to treat every file as an orphan. Abort the pass
+            // (Ok, since the contract is "never propagate") and leave
+            // all files untouched.
+            tracing::warn!(
+                error = %e,
+                "cleanup_orphaned_attachments: failed to load referenced fs_paths; aborting pass"
+            );
+            return Ok(());
+        }
+    };
+
     let mut scanned: u64 = 0;
     let mut unlinked: u64 = 0;
     let mut errors: u64 = 0;
@@ -2643,50 +2696,35 @@ pub(super) async fn cleanup_orphaned_attachments(
             };
             let relative_str = relative_str_raw.replace('\\', "/");
 
-            let referenced = sqlx::query_scalar!(
-                r#"SELECT 1 as "v: i32" FROM attachments WHERE fs_path = ?"#,
-                relative_str,
-            )
-            .fetch_optional(pool)
-            .await;
+            // #385: in-memory membership test against the pre-loaded set,
+            // replacing the per-file write-pool `SELECT 1 WHERE fs_path = ?`.
+            if referenced_paths.contains(&relative_str) {
+                // File is referenced — keep it.
+                continue;
+            }
 
-            match referenced {
-                Ok(Some(_)) => {
-                    // File is referenced — keep it.
+            // Orphan: unlink. Errors are logged but never propagated, so
+            // the rest of the pass continues.
+            match tokio::fs::remove_file(&full_path).await {
+                Ok(()) => {
+                    unlinked += 1;
+                    tracing::debug!(
+                        path = %full_path.display(),
+                        "cleanup_orphaned_attachments: removed orphan"
+                    );
                 }
-                Ok(None) => {
-                    // Orphan: unlink. Errors are logged but never
-                    // propagated, so the rest of the pass continues.
-                    match tokio::fs::remove_file(&full_path).await {
-                        Ok(()) => {
-                            unlinked += 1;
-                            tracing::debug!(
-                                path = %full_path.display(),
-                                "cleanup_orphaned_attachments: removed orphan"
-                            );
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            tracing::info!(
-                                path = %full_path.display(),
-                                "cleanup_orphaned_attachments: orphan already missing; skipping"
-                            );
-                        }
-                        Err(e) => {
-                            errors += 1;
-                            tracing::warn!(
-                                path = %full_path.display(),
-                                error = %e,
-                                "cleanup_orphaned_attachments: failed to unlink orphan"
-                            );
-                        }
-                    }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::info!(
+                        path = %full_path.display(),
+                        "cleanup_orphaned_attachments: orphan already missing; skipping"
+                    );
                 }
                 Err(e) => {
                     errors += 1;
                     tracing::warn!(
                         path = %full_path.display(),
                         error = %e,
-                        "cleanup_orphaned_attachments: DB lookup failed; skipping file"
+                        "cleanup_orphaned_attachments: failed to unlink orphan"
                     );
                 }
             }
@@ -2862,7 +2900,7 @@ pub(super) async fn handle_background_task(
         }
         MaterializeTask::FtsOptimize => fts::fts_optimize(pool).await,
         MaterializeTask::CleanupOrphanedAttachments => match app_data_dir {
-            Some(dir) => cleanup_orphaned_attachments(pool, dir).await,
+            Some(dir) => cleanup_orphaned_attachments(pool, read_pool, dir).await,
             None => {
                 // C-3c — without `app_data_dir` we cannot locate the
                 // `attachments/` subtree. This is the expected state in

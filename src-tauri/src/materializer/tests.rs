@@ -5436,7 +5436,7 @@ async fn cleanup_orphaned_attachments_dir_missing_is_noop() {
     // C-3c safety check: no `attachments/` subdirectory under
     // `app_data_dir` → handler returns Ok and touches nothing.
     let (pool, dir) = test_pool().await;
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
     assert!(
@@ -5451,7 +5451,7 @@ async fn cleanup_orphaned_attachments_dir_empty_is_noop() {
     let (pool, dir) = test_pool().await;
     let attachments = dir.path().join("attachments");
     tokio::fs::create_dir_all(&attachments).await.unwrap();
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
     assert!(
@@ -5475,7 +5475,7 @@ async fn cleanup_orphaned_attachments_all_referenced_keeps_files() {
         insert_attachment_row(&pool, &format!("ATT_{i}"), &format!("BLK_{i}"), &rel).await;
     }
 
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
 
@@ -5502,7 +5502,7 @@ async fn cleanup_orphaned_attachments_all_orphaned_are_removed() {
         tokio::fs::write(&full, b"orphaned").await.unwrap();
     }
 
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
 
@@ -5541,7 +5541,7 @@ async fn cleanup_orphaned_attachments_mixed_referenced_and_orphaned() {
     insert_attachment_row(&pool, "ATT_A", "BLK_A", &rel_a).await;
     insert_attachment_row(&pool, "ATT_B", "BLK_B", &rel_b).await;
 
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
 
@@ -5560,6 +5560,44 @@ async fn cleanup_orphaned_attachments_mixed_referenced_and_orphaned() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_uses_read_pool() {
+    // #385: when a dedicated read pool is supplied, the referenced
+    // fs_path set is loaded through it (not the write pool) and the
+    // orphan/keep decision is byte-identical to the single-pool path.
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let write_pool = init_pool(&db_path).await.unwrap();
+    // Second pool over the same DB file stands in for the reader pool.
+    let read_pool = init_pool(&db_path).await.unwrap();
+
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    let rel_keep = "attachments/keep.dat".to_string();
+    let rel_orphan = "attachments/orphan.dat".to_string();
+    tokio::fs::write(dir.path().join(&rel_keep), b"k")
+        .await
+        .unwrap();
+    tokio::fs::write(dir.path().join(&rel_orphan), b"o")
+        .await
+        .unwrap();
+    insert_attachment_row(&write_pool, "ATT_K", "BLK_K", &rel_keep).await;
+
+    super::handlers::cleanup_orphaned_attachments(&write_pool, Some(&read_pool), dir.path())
+        .await
+        .unwrap();
+
+    assert!(
+        dir.path().join(&rel_keep).exists(),
+        "referenced file must remain when set is loaded via the read pool"
+    );
+    assert!(
+        !dir.path().join(&rel_orphan).exists(),
+        "orphan file must be removed when set is loaded via the read pool"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cleanup_orphaned_attachments_subdir_walk() {
     // C-3c subdirectory walk: a file under `attachments/sub/` must be
     // walked into and removed if unreferenced. FEAT-3 large-vault
@@ -5570,7 +5608,7 @@ async fn cleanup_orphaned_attachments_subdir_walk() {
     let nested = sub.join("x.dat");
     tokio::fs::write(&nested, b"nested orphan").await.unwrap();
 
-    super::handlers::cleanup_orphaned_attachments(&pool, dir.path())
+    super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
         .await
         .unwrap();
 
@@ -5610,7 +5648,7 @@ async fn cleanup_orphaned_attachments_unlink_error_is_non_fatal() {
     let removable = attachments.join("removable.dat");
     tokio::fs::write(&removable, b"orphan").await.unwrap();
 
-    let result = super::handlers::cleanup_orphaned_attachments(&pool, dir.path()).await;
+    let result = super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path()).await;
 
     // Restore write perms so TempDir can clean up.
     let mut perms = std::fs::metadata(&locked).unwrap().permissions();
