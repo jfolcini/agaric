@@ -16,12 +16,13 @@ import {
  * at consecutive positions 0,1,2,3,4 with ULID-ascending ids (BLOCK01…BLOCK05).
  *
  * Assertions are made primarily on the recorded `move_block` IPC payload
- * (`{ blockId, newParentId, newPosition }`) via the IPC recorder, NOT on the
+ * (`{ blockId, newParentId, newIndex }`) via the IPC recorder, NOT on the
  * mock's resulting visual order. This is deliberate: the web/Tauri MOCK backend
- * is more permissive than the real Rust backend — it accepts `position <= 0`
- * and tie-breaks equal positions by insertion order — so several real-backend
- * bugs are HIDDEN at the visual layer and only visible in the payload the UI
- * sends. See docs/dnd-ux-review.md and src/lib/__tests__/dnd-pipeline.test.ts.
+ * is more permissive than the real Rust backend, so the slot the UI *sends* is
+ * the deterministic signal. Since #400 the slot is a 0-based `newIndex` (slot 0
+ * = "first child" / "top"); the four original bugs (off-by-one, collision,
+ * non-positive top/first-child) are fixed at the root, so these specs assert the
+ * CORRECT slot. See docs/dnd-ux-review.md and src/lib/__tests__/dnd-pipeline.test.ts.
  */
 
 const PAGE = 'Getting Started'
@@ -36,7 +37,7 @@ async function blockIds(page: import('@playwright/test').Page): Promise<string[]
 /** Most recent recorded move_block payload, or null. */
 async function lastMove(
   page: import('@playwright/test').Page,
-): Promise<{ blockId?: string; newParentId?: string | null; newPosition?: number } | null> {
+): Promise<{ blockId?: string; newParentId?: string | null; newIndex?: number } | null> {
   const calls = await getInvokeCalls(page, 'move_block')
   return (calls[calls.length - 1] as never) ?? null
 }
@@ -49,7 +50,7 @@ test.describe('Keyboard block movement', () => {
 
   // ── Indent / dedent (these work correctly) ─────────────────────────────
 
-  test('Ctrl+Shift+ArrowRight indents under the previous sibling (parent + position 1)', async ({
+  test('Ctrl+Shift+ArrowRight indents under the previous sibling (parent + slot 0)', async ({
     page,
   }) => {
     await openPage(page, PAGE)
@@ -64,7 +65,7 @@ test.describe('Keyboard block movement', () => {
     await expect.poll(async () => (await lastMove(page))?.blockId).toBe(gs3)
     const move = await lastMove(page)
     expect(move?.newParentId).toBe(gs2) // becomes a child of GS_2
-    expect(move?.newPosition).toBe(1) // first (only) child — a SAFE position
+    expect(move?.newIndex).toBe(0) // #400: first (only) child = slot 0
     void gs1
   })
 
@@ -94,24 +95,24 @@ test.describe('Keyboard block movement', () => {
     expect(move?.newParentId).not.toBe(gs2) // no longer nested under GS_2
   })
 
-  // ── Move up — reveals the position<=0 rejection bug ────────────────────
+  // ── Move up — "move to top" used to emit a rejected position<=0 ─────────
 
-  test('BUG: moving the 2nd block up emits a non-positive position the real backend rejects', async ({
+  test('moving the 2nd block up emits slot 0 (top), the previously-rejected case', async ({
     page,
   }) => {
     await openPage(page, PAGE)
     const ids = await blockIds(page)
     const gs2 = ids[1] as string
 
-    await focusBlock(page, 1) // GS_2 (prev sibling GS_1 is at position 0)
+    await focusBlock(page, 1) // GS_2 (sibling slot 1)
     await clearInvokeCalls(page)
     await page.keyboard.press('Control+Shift+ArrowUp')
 
     await expect.poll(async () => (await lastMove(page))?.blockId).toBe(gs2)
     const move = await lastMove(page)
-    // prevSibling(GS_1).position(0) - 1 = -1. The mock accepts it; the real
-    // backend rejects `position <= 0` ("position must be positive").
-    expect(move?.newPosition as number).toBeLessThanOrEqual(0)
+    // #400: moving up = previous sibling's slot (sibIndex - 1) = 0. Pre-#400 this
+    // emitted `position - 1 = -1`, which the real backend rejected.
+    expect(move?.newIndex).toBe(0)
   })
 
   test('moving the FIRST block up is a no-op (no move_block IPC)', async ({ page }) => {
@@ -125,24 +126,25 @@ test.describe('Keyboard block movement', () => {
     expect(await getInvokeCalls(page, 'move_block')).toHaveLength(0)
   })
 
-  // ── Move down — reveals the position-collision bug ─────────────────────
+  // ── Move down — used to emit a position colliding with the next-next sibling
 
-  test('BUG: moving a block down emits a position that collides with an existing sibling', async ({
+  test('moving a block down emits the slot that swaps it past the next sibling', async ({
     page,
   }) => {
     await openPage(page, PAGE)
     const ids = await blockIds(page)
     const gs1 = ids[0] as string
 
-    await focusBlock(page, 0) // GS_1 (next sibling GS_2 at position 1, GS_3 at 2)
+    await focusBlock(page, 0) // GS_1 (sibling slot 0)
     await clearInvokeCalls(page)
     await page.keyboard.press('Control+Shift+ArrowDown')
 
     await expect.poll(async () => (await lastMove(page))?.blockId).toBe(gs1)
     const move = await lastMove(page)
-    // nextSibling(GS_2).position(1) + 1 = 2, which EQUALS GS_3's position →
-    // with no backend renumbering the order is then decided by ULID, not intent.
-    expect(move?.newPosition).toBe(2)
+    // #400: moving down = slot `sibIndex + 1` among the OTHER children (block
+    // excluded) = 1, landing it just after GS_2. Pre-#400 this emitted a 1-based
+    // position colliding with GS_3, so ULID (not intent) decided the order.
+    expect(move?.newIndex).toBe(1)
   })
 
   test('moving the LAST block down is a no-op (no move_block IPC)', async ({ page }) => {
