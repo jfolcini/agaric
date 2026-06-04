@@ -58,12 +58,9 @@ pub async fn move_block_inner(
     // Provisional 1-based dense rank for the optimistic SQL write + response;
     // the materializer reprojects the authoritative ranks from the engine's
     // fractional order shortly after (eventual consistency, as for engine state).
-    // #400/#383: saturate + cap strictly below NULL_POSITION_SENTINEL so an absurd
-    // slot can't overflow (debug panic / release negative-wrap) or transiently
-    // land on the reserved keyset tail marker; reprojection sets the dense rank.
-    let provisional_position = new_index
-        .saturating_add(1)
-        .min(crate::pagination::NULL_POSITION_SENTINEL - 1);
+    // #400/#383: overflow-safe 0-based slot → 1-based provisional rank, capped
+    // below the reserved keyset tail marker; reprojection sets the dense rank.
+    let provisional_position = crate::pagination::index_to_provisional_position(new_index);
 
     // 2. Build OpPayload (#400: carries the 0-based `new_index`; `new_position`
     // is a 1-based breadcrumb mirroring it for legacy readers).

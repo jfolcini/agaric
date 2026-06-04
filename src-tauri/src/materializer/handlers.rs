@@ -1796,15 +1796,25 @@ async fn apply_move_block_via_loro(
             ))
         })?;
         let old_siblings = engine.children_ordered_block_ids(old_parent.as_deref())?;
-        let new_siblings = engine.children_ordered_block_ids(snap.parent_id.as_deref())?;
+        // Same-parent reorder (the common DnD / moveUp / moveDown case): source
+        // and target groups are identical, so reproject once. Only fetch the
+        // second group when the parent actually changed (#400, review perf).
+        let new_siblings = if old_parent.as_deref() == snap.parent_id.as_deref() {
+            Vec::new()
+        } else {
+            engine.children_ordered_block_ids(snap.parent_id.as_deref())?
+        };
         drop(guard);
         (snap, old_siblings, new_siblings)
     };
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
-    // Reproject the source group first (it shrank), then the target group.
+    // Reproject the source group (it shrank, or — for a same-parent move — it is
+    // the single affected group). `new_siblings` is empty on a same-parent move.
     projection::reproject_dense_positions(conn, &old_siblings).await?;
-    projection::reproject_dense_positions(conn, &new_siblings).await?;
+    if !new_siblings.is_empty() {
+        projection::reproject_dense_positions(conn, &new_siblings).await?;
+    }
     tag_inheritance::recompute_subtree_inheritance(&mut *conn, p.block_id.as_str()).await?;
     Ok(())
 }
@@ -2190,7 +2200,10 @@ async fn apply_create_block_sql_only(
     let parent_id_ref = parent_id_str.as_deref();
     // #400: a new-scheme op carries a 0-based `index` and no legacy `position`;
     // fall back to a 1-based position for this engine-less (test-only) path.
-    let position = p.position.or_else(|| p.index.map(|i| i + 1));
+    let position = p.position.or_else(|| {
+        p.index
+            .map(crate::pagination::index_to_provisional_position)
+    });
     sqlx::query!(
         "INSERT OR IGNORE INTO blocks \
              (id, block_type, content, parent_id, position) \
@@ -2315,7 +2328,10 @@ async fn apply_move_block_sql_only(
 
     // #400: prefer the new-scheme 0-based `new_index` (as a 1-based position)
     // on this engine-less (test-only) path; else the legacy `new_position`.
-    let position = p.new_index.map(|i| i + 1).unwrap_or(p.new_position);
+    let position = p
+        .new_index
+        .map(crate::pagination::index_to_provisional_position)
+        .unwrap_or(p.new_position);
     sqlx::query!(
         "UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?",
         new_parent_ref,

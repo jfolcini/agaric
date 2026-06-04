@@ -337,6 +337,57 @@ proptest! {
         }
     }
 
+    /// #400: random NEW-SCHEME (0-based slot) create/move streams must keep the
+    /// engine's projected dense `position` a contiguous `1..=N` permutation per
+    /// parent. The mixed-op stream above only emits legacy position-based ops
+    /// (`index`/`new_index = None`), so this is the only property coverage of
+    /// `apply_create_block_at` / `apply_move_block_to` and their live-slot math.
+    #[test]
+    fn new_scheme_slot_stream_keeps_dense_positions_contiguous(
+        actions in proptest::collection::vec((proptest::bool::ANY, 0usize..6usize), 1..=40),
+    ) {
+        let mut engine = LoroEngine::with_peer_id("DEV-PROP-SLOT").expect("peer");
+        engine
+            .apply_create_block_at("P", "page", "P", None, 0)
+            .expect("root");
+        let mut ids: Vec<String> = Vec::new();
+        let mut counter = 0u32;
+
+        for (is_create, slot) in &actions {
+            if *is_create || ids.is_empty() {
+                let id = format!("B{counter:04}");
+                counter += 1;
+                let s = (*slot).min(ids.len()); // clamp into a valid insert slot
+                engine
+                    .apply_create_block_at(&id, "content", "", Some("P"), s)
+                    .expect("create_at");
+                ids.push(id);
+            } else {
+                let s = *slot % ids.len();
+                let target = ids[s].clone();
+                engine
+                    .apply_move_block_to(&target, Some("P"), s)
+                    .expect("move_to");
+            }
+
+            // Invariant: the live children's dense ranks are exactly {1..=N}.
+            let order = engine.list_children_walk("P").expect("walk");
+            let mut positions: Vec<i64> = order
+                .iter()
+                .map(|id| {
+                    engine
+                        .read_block(id)
+                        .expect("read")
+                        .expect("alive")
+                        .position
+                })
+                .collect();
+            positions.sort_unstable();
+            let expected: Vec<i64> = (1..=order.len() as i64).collect();
+            prop_assert_eq!(positions, expected);
+        }
+    }
+
     /// Single-author MIXED-OP streams (Create + Edit + Delete + Move +
     /// SetProperty over the 3-block pool).  Every well-formed op must
     /// apply without error against a fresh engine — the resolver's

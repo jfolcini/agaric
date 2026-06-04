@@ -86,7 +86,18 @@ pub async fn project_create_block_to_sql(
 /// is unchanged while `ORDER BY position` stays consistent with the tree.
 ///
 /// Called after every create/move on each affected parent. A move that changes
-/// parent must reproject **both** the source and the target parent.
+/// parent must reproject **both** the source and the target parent (a
+/// same-parent move reprojects the single group once — see the caller).
+///
+/// ## Cost
+///
+/// O(N) `UPDATE`s, N = the full sibling group (incl. soft-deleted tombstones),
+/// every rank rewritten unconditionally regardless of whether it changed. This
+/// replaces the pre-#400 single-row `UPDATE` and is bounded by realistic
+/// sibling-group size (tens). If a group ever grows large, batch the rows into
+/// one statement and/or skip rows whose rank already matches. During op-log
+/// replay/recovery this fires once per replayed op (O(M·N̄)); a bulk-replay
+/// fast-path that defers reprojection to the end is a future option (#400, review).
 pub async fn reproject_dense_positions(
     conn: &mut SqliteConnection,
     ordered_block_ids: &[String],

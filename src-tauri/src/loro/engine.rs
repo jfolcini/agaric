@@ -122,12 +122,15 @@ const LEGACY_BLOCKS_ROOT: &str = "blocks";
 /// (`tree.get_meta(node)`) carries the scalar fields ([`FIELD_BLOCK_ID`],
 /// [`FIELD_BLOCK_TYPE`], [`FIELD_CONTENT`] as a `LoroText`, [`FIELD_POSITION`],
 /// [`FIELD_DELETED_AT`]). Parent = the tree parent (convergent, cycle-safe
-/// move-CRDT); sibling order is the `i64` [`FIELD_POSITION`] sort key (kept as
-/// the SQL projection's `ORDER BY position` key — see the type-level docstring
-/// on [`LoroEngine`] for why the tree's fractional index is *not* the SQL
-/// order). Soft-delete sets/clears [`FIELD_DELETED_AT`] (the node survives in
-/// the tree for restore + the SQL descendant-cascade derivation); purge calls
-/// `tree.delete` (hard remove).
+/// move-CRDT); sibling order is the tree's native **fractional index** (#400) —
+/// the SQL `position` column is a *derived* dense 1-based rank reprojected from
+/// [`Self::children_ordered_block_ids`], not an independent sort key. The `i64`
+/// [`FIELD_POSITION`] meta is now written only on the legacy op-replay path (to
+/// reproduce the pre-#400 `ORDER BY position ASC, id ASC` while converting an
+/// old op to a fractional slot) and as the migration's read-once input; it is
+/// not the live sibling-order source. Soft-delete sets/clears
+/// [`FIELD_DELETED_AT`] (the node survives in the tree for restore + the SQL
+/// descendant-cascade derivation); purge calls `tree.delete` (hard remove).
 const BLOCKS_TREE_ROOT: &str = "blocks_tree";
 
 /// Top-level LoroMap key holding per-block properties.  Each value is
@@ -202,6 +205,9 @@ pub struct BlockSnapshot {
     pub block_type: String,
     pub content: String,
     pub parent_id: Option<String>,
+    /// Dense 1-based rank among the parent's children in fractional-index order
+    /// (#400), projected into the SQL `position` column — not the legacy
+    /// [`FIELD_POSITION`] meta value.
     pub position: i64,
 }
 
@@ -275,16 +281,20 @@ impl PropertyValue {
 /// for free, replacing the old per-key-LWW `parent_id` scalar and the
 /// hand-rolled cycle/position edge-case handling.
 ///
-/// **Sibling order stays the `i64` [`FIELD_POSITION`] sort key**, *not* the
-/// tree's fractional index. This is a deliberate scoping decision for Phase
-/// 3: the SQL `position` column, its `ORDER BY position, id` pagination
-/// cursors, and the frontend's sparse-integer position arithmetic
-/// (`midpointPosition`, indent → `1`, etc.) are kept byte-for-byte
-/// unchanged, so this change carries zero blast radius into the query/UI
-/// layers and does not take on §3a's "open risk #1" (ordinal stability
-/// under concurrent sibling inserts). Convergent fractional-index *reorder*
-/// is a future refinement; the headline wins (convergent reparent +
-/// cycle-safety) land now.
+/// **Sibling order is the tree's native fractional index** (#400). The SQL
+/// `position` column is a *derived* dense 1-based rank, reprojected from
+/// [`Self::children_ordered_block_ids`] after every create/move, so
+/// `ORDER BY position, id` pagination and the frontend stay on integer
+/// positions while the CRDT owns rank + concurrent-reorder convergence (equal
+/// fractional indices tie-break by `idlp`; see [`Self::FRACTIONAL_INDEX_JITTER`]).
+/// Ops carry a 0-based sibling **slot** (`index`/`new_index`); Loro derives the
+/// convergent fractional key at apply time. The legacy `i64` [`FIELD_POSITION`]
+/// meta survives only as the replay-conversion input for pre-#400 ops and the
+/// one-time import migration ([`Self::migrate_legacy_sibling_order_if_needed`]);
+/// the old `midpointPosition`/`computePosition` frontend arithmetic is gone.
+/// Phase-3's original deferral of fractional reorder (§3a "open risk #1") is
+/// resolved here. Cross-peer reorder convergence under future sync is the one
+/// remaining open question (PEND-81).
 ///
 /// ## `block_id ↔ TreeID` indirection
 ///
@@ -549,6 +559,43 @@ impl LoroEngine {
     /// import paths (#400). Runs the reorder only for a genuine pre-#400 doc
     /// (no marker AND at least one node carries the legacy `position` meta);
     /// for a new-scheme or empty doc it just stamps the marker.
+    /// Test-only: forge a genuine pre-#400 doc in place. Stamps each named
+    /// node's legacy [`FIELD_POSITION`] meta to the given value (so
+    /// [`Self::any_node_has_legacy_position`] is true) and removes the scheme
+    /// marker (so [`Self::sibling_order_version`] reads 0). Lets a test create a
+    /// doc whose tree (fractional) order disagrees with position order — the
+    /// only shape that actually drives the migration reorder loop.
+    #[cfg(test)]
+    fn force_legacy_scheme_for_test(&self, positions: &[(&str, i64)]) {
+        let tree = self.tree();
+        for (id, pos) in positions {
+            let node = self.node_for(id).expect("force_legacy: node exists");
+            let meta = tree.get_meta(node).expect("force_legacy: get_meta");
+            meta.insert(FIELD_POSITION, LoroValue::from(*pos))
+                .expect("force_legacy: insert position");
+        }
+        let engine_meta: LoroMap = self.doc.get_map(ENGINE_META_ROOT);
+        let _ = engine_meta.delete(FIELD_SIBLING_ORDER_V);
+        self.doc.commit();
+    }
+
+    /// Non-fatal wrapper used by the import paths: a migration failure is logged
+    /// but never propagated, so a single bad doc cannot abort import and leave
+    /// the space without an engine (#400, review).
+    fn migrate_legacy_sibling_order_best_effort(&mut self) {
+        if let Err(e) = self.migrate_legacy_sibling_order_if_needed() {
+            tracing::error!(
+                error = %e,
+                "loro import: legacy sibling-order migration failed; installing the \
+                 doc UNMIGRATED rather than failing import (siblings may be \
+                 transiently mis-ordered until the next reorder)"
+            );
+        }
+    }
+
+    /// Migrate the doc's sibling order onto the fractional index if it is a
+    /// genuine pre-#400 doc; otherwise just stamp the marker. Returns `Err` only
+    /// on a Loro failure; callers on the import path use the best-effort wrapper.
     fn migrate_legacy_sibling_order_if_needed(&mut self) -> Result<(), AppError> {
         if self.sibling_order_version() >= SIBLING_ORDER_VERSION {
             return Ok(());
@@ -1105,10 +1152,13 @@ impl LoroEngine {
     /// data-destructive vs the prior tree state (unlike a create, which had
     /// no prior home). `None` is an explicit move to top-level (root).
     ///
-    /// Sibling order is the `i64` [`FIELD_POSITION`] meta value (LWW),
-    /// which the SQL projection reads as the `ORDER BY position` key — see
-    /// the [`LoroEngine`] type docstring for why the tree's fractional
-    /// index is not the SQL order.
+    /// **Legacy op-replay path** (pre-#400 ops carrying a 1-based `position`).
+    /// It writes the `i64` [`FIELD_POSITION`] meta and derives a fractional slot
+    /// via [`Self::legacy_slot`] so a replayed historical op reproduces the old
+    /// `ORDER BY position ASC, id ASC`. New ops carry a 0-based slot and go
+    /// through [`Self::apply_move_block_to`]; sibling order is the tree's
+    /// fractional index (the SQL `position` is a derived dense rank — see the
+    /// [`LoroEngine`] type docstring).
     pub fn apply_move_block(
         &mut self,
         block_id: &str,
@@ -1902,10 +1952,17 @@ impl LoroEngine {
         self.reject_legacy_v1_snapshot()?;
         self.rebuild_index();
         // A pre-#400 snapshot carries sibling order only in the `position`
-        // meta; migrate it onto the fractional index exactly once. The guard
-        // also protects a marker-less new-scheme doc (e.g. a lost marker write)
-        // from being re-sorted by a missing key — see the helper.
-        self.migrate_legacy_sibling_order_if_needed()?;
+        // meta; migrate it onto the fractional index exactly once. The guard (a
+        // marker-less doc that still carries a legacy `position` meta) keeps
+        // this a true "is pre-#400" signal — see the helper.
+        //
+        // Best-effort: a migration failure must NOT fail import. Propagating it
+        // would make `rehydrate_registry` skip the space and the next op mint a
+        // fresh EMPTY engine, diverging the CRDT from the populated SQL blocks
+        // for the whole space. Log loudly and install the doc UNMIGRATED (tree
+        // fractional / creation order); the next successful create/move
+        // reprojects the affected sibling group (#400, review).
+        self.migrate_legacy_sibling_order_best_effort();
         Ok(())
     }
 
@@ -1960,7 +2017,9 @@ impl LoroEngine {
         // Mirror `import`'s one-time legacy sibling-order migration so a pre-#400
         // doc arriving over the sync-pull path (not just a local snapshot) is
         // also reordered onto the fractional index before projection (#400).
-        self.migrate_legacy_sibling_order_if_needed()?;
+        // Best-effort for the same reason as `import` — a migration error must
+        // not abort the sync-pull and drop the space's engine.
+        self.migrate_legacy_sibling_order_best_effort();
 
         // Enumerate every live block_id **parent-before-child** (pre-order
         // DFS from the tree roots) so the caller's Pass-A projection inserts
@@ -3215,8 +3274,9 @@ mod tree_tests {
 
     /// The frontend sends a **live**-sibling slot; a soft-deleted sibling
     /// ordered before the drop point must NOT shift the placement (#400 review).
+    /// CREATE path (`exclude = None`: the new node counts no live sibling out).
     #[test]
-    fn move_block_to_live_slot_skips_soft_deleted_sibling() {
+    fn create_block_at_live_slot_skips_soft_deleted_sibling() {
         let mut e = LoroEngine::new();
         e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
         for (i, id) in ["A", "B", "C"].iter().enumerate() {
@@ -3235,31 +3295,106 @@ mod tree_tests {
         assert_eq!(e.list_children_walk("P").unwrap(), vec!["B", "X", "C"]);
     }
 
-    /// A pre-#400 snapshot (legacy `position` meta, no marker) is migrated on
-    /// import so its sibling order matches the old `ORDER BY position, id`, even
-    /// when creation order differs from position order.
+    /// MOVE path of the live-slot translation (`exclude = Some(moved node)`):
+    /// the harder branch that must skip BOTH the tombstone and the moved node
+    /// itself when counting live slots (#400 review).
     #[test]
-    fn import_migrates_legacy_sibling_order() {
-        // Build a legacy-shaped doc by writing nodes in creation order C,B,A but
-        // legacy positions 3,2,1 via the position-based apply path.
-        let mut legacy = LoroEngine::with_peer_id("DEV-LEG").unwrap();
-        legacy
-            .apply_create_block("P", "page", "P", None, 1)
-            .unwrap();
-        legacy
-            .apply_create_block("C", "content", "", Some("P"), 3)
-            .unwrap();
-        legacy
-            .apply_create_block("B", "content", "", Some("P"), 2)
-            .unwrap();
-        legacy
-            .apply_create_block("A", "content", "", Some("P"), 1)
-            .unwrap();
-        // The position-based path already orders correctly; assert the snapshot
-        // round-trips to position order on a fresh import.
-        let snap = legacy.export_snapshot().unwrap();
-        let mut fresh = LoroEngine::new();
-        fresh.import(&snap).unwrap();
-        assert_eq!(fresh.list_children_walk("P").unwrap(), vec!["A", "B", "C"]);
+    fn move_block_to_live_slot_skips_soft_deleted_sibling() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C", "D"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        // Soft-delete A (first sibling). Live order: [B, C, D].
+        e.apply_delete_block("A", "2026-06-04T00:00:00Z").unwrap();
+        // Move D to LIVE slot 1 — among the OTHER live children [B, C], slot 1
+        // is after B / before C. The exclude branch must skip the tombstone A
+        // AND the moved node D, landing D between B and C.
+        e.apply_move_block_to("D", Some("P"), 1).unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["B", "D", "C"]);
+    }
+
+    /// A genuine pre-#400 doc (legacy `position` meta, NO marker, tree order
+    /// DISAGREEING with position order) is reordered to the old
+    /// `ORDER BY position ASC, id ASC` by the migration. This actually drives
+    /// the reorder loop, unlike a doc built via the legacy apply path (which
+    /// already inserts in position order, leaving nothing to reorder).
+    #[test]
+    fn migrate_legacy_sibling_order_reorders_divergent_doc() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        // Tree (fractional) order is A, B, C.
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        // Forge legacy positions that DISAGREE with tree order: A=3, B=2, C=1
+        // → position order is C, B, A. Also drops the scheme marker.
+        e.force_legacy_scheme_for_test(&[("A", 3), ("B", 2), ("C", 1)]);
+        assert_eq!(e.sibling_order_version(), 0, "marker must be cleared");
+
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+
+        // Tree is now reordered to position order, and the marker is stamped.
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["C", "B", "A"]);
+        assert_eq!(e.sibling_order_version(), SIBLING_ORDER_VERSION);
+
+        // Idempotent: a second run (marker set) is a no-op.
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["C", "B", "A"]);
+    }
+
+    /// `legacy_slot`'s `(position, id)` tie-break reproduces the pre-#400
+    /// `ORDER BY position ASC, id ASC`: two siblings sharing a position order by
+    /// ascending block-id.
+    #[test]
+    fn migrate_legacy_sibling_order_tie_breaks_by_id() {
+        let mut e = LoroEngine::new();
+        e.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        // Insert in non-id order Z, A, M so tree order != id order.
+        for (i, id) in ["Z", "A", "M"].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        // All three share position 5 → migration must tie-break by id: A, M, Z.
+        e.force_legacy_scheme_for_test(&[("Z", 5), ("A", 5), ("M", 5)]);
+        e.migrate_legacy_sibling_order_if_needed().unwrap();
+        assert_eq!(e.list_children_walk("P").unwrap(), vec!["A", "M", "Z"]);
+    }
+
+    /// jitter=0 soundness: two peers concurrently reordering siblings (including
+    /// to the SAME slot) converge to an identical sibling order after a snapshot
+    /// exchange — equal fractional indices tie-break deterministically by idlp.
+    /// This is the property the `FRACTIONAL_INDEX_JITTER` docstring rests on.
+    #[test]
+    fn concurrent_reorder_converges() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        let mut b = LoroEngine::with_peer_id("DEV-B").unwrap();
+        a.apply_create_block_at("P", "page", "P", None, 0).unwrap();
+        for (i, id) in ["A", "B", "C"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "", Some("P"), i)
+                .unwrap();
+        }
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        assert_eq!(b.list_children_walk("P").unwrap(), vec!["A", "B", "C"]);
+
+        // Concurrent reorders, both targeting slot 0 of the same parent.
+        a.apply_move_block_to("C", Some("P"), 0).unwrap();
+        b.apply_move_block_to("A", Some("P"), 0).unwrap();
+
+        // Exchange full snapshots both ways.
+        let a_bytes = a.export_snapshot().unwrap();
+        let b_bytes = b.export_snapshot().unwrap();
+        a.import(&b_bytes).unwrap();
+        b.import(&a_bytes).unwrap();
+
+        let oa = a.list_children_walk("P").unwrap();
+        let ob = b.list_children_walk("P").unwrap();
+        assert_eq!(oa, ob, "both peers must converge on one sibling order");
+        // No loss: all three children survive the concurrent reorder.
+        let mut sorted = oa.clone();
+        sorted.sort();
+        assert_eq!(sorted, vec!["A", "B", "C"]);
     }
 }

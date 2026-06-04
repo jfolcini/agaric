@@ -543,7 +543,10 @@ fn build_reverse_move_block(
             }
         };
     let (new_position, new_index) = match old_index {
-        Some(idx) => (idx + 1, Some(idx)),
+        Some(idx) => (
+            crate::pagination::index_to_provisional_position(idx),
+            Some(idx),
+        ),
         None => (old_pos.unwrap_or(1), None),
     };
     Ok(OpPayload::MoveBlock(MoveBlockPayload {

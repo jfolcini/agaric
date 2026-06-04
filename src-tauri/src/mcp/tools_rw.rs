@@ -393,7 +393,9 @@ async fn handle_append_block(
     // #400: the MCP tool keeps its stable agent-facing **1-based** `position`
     // contract; `create_block_inner` now takes a 0-based sibling `index`, so
     // convert here (position 1 → index 0 = first child). `None` still appends.
-    let index = args.position.map(|p| (p - 1).max(0));
+    // Clamp the 1-based input to >=1 BEFORE subtracting so an extreme/hostile
+    // negative position (e.g. i64::MIN from an LLM agent) can't underflow.
+    let index = args.position.map(|p| p.max(1).saturating_sub(1));
     let resp = create_block_inner(
         pool,
         device_id,
