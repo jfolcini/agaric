@@ -2575,4 +2575,527 @@ mod tests {
             .unwrap();
         assert_eq!(total, 1, "recovery must be idempotent across boots");
     }
+
+    // ======================================================================
+    // Issue #376 — data-preservation across destructive migrations.
+    //
+    // Every other db-level test runs `sqlx::migrate!` against an EMPTY
+    // database (see `test_pool` above), so no existing test seeds
+    // pre-existing rows and migrates them forward. The two destructive
+    // classes that were previously unvalidated:
+    //   1. The `blocks` table rebuild in 0073 / 0080 (DROP/RENAME under
+    //      `foreign_keys = ON`; the class that caused the #374 attachments
+    //      data loss).
+    //   2. The TEXT->INTEGER millisecond backfills in 0074-0082 that convert
+    //      legacy RFC-3339 timestamps via
+    //      `CAST(ROUND((julianday(col) - 2440587.5) * 86400000.0) AS INTEGER)`.
+    //
+    // The harness below applies migrations INCREMENTALLY up to a target
+    // version, lets a test seed rows into the intermediate schema, then
+    // applies the remaining migrations to head — something `sqlx::migrate!`
+    // (all-or-nothing against an empty DB) cannot do.
+    // ======================================================================
+
+    /// Build a raw pool with the SAME pragmas production uses
+    /// ([`base_connect_options`] — notably `foreign_keys = ON`), but WITHOUT
+    /// running any migrations. Migrations are then applied by hand via
+    /// [`apply_migrations_through`] so a test can interpose a seed step at an
+    /// intermediate schema version.
+    ///
+    /// `max_connections(1)` keeps every statement (and therefore the
+    /// per-connection `foreign_keys = ON` pragma) on a single connection, so
+    /// the FK-cascade behaviour during the DROP/RENAME exactly matches a
+    /// real single-connection migration run.
+    async fn unmigrated_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(base_connect_options(&db_path))
+            .await
+            .unwrap();
+        (pool, dir)
+    }
+
+    /// Apply every UP migration whose `version` is in `(after, through]`, in
+    /// ascending version order, by executing each migration's raw SQL string
+    /// against `pool`. Down-migrations are skipped.
+    ///
+    /// Mechanism notes:
+    /// * The migrator is the same `sqlx::migrate!("./migrations")` expansion
+    ///   production uses; `.iter()` yields `Migration { version, sql,
+    ///   migration_type, .. }` in source order, which we sort by version to
+    ///   be robust to ordering.
+    /// * sqlx's SQLite driver executes a multi-statement raw SQL string
+    ///   (which every rebuild migration is) when handed to
+    ///   `sqlx::query(sql).execute(&mut tx)` — verified by these tests
+    ///   reaching head successfully through the 0073/0080 rebuilds.
+    /// * CRUCIALLY, each migration is run inside its OWN transaction, exactly
+    ///   as sqlx's `Migrate::apply` does (`self.begin()` … `tx.commit()`, see
+    ///   sqlx-sqlite `migrate.rs`). This is load-bearing for the blocks
+    ///   rebuild: `DROP TABLE blocks` under `foreign_keys = ON` would
+    ///   immediately cascade-delete `attachments` children in *autocommit*
+    ///   mode, but inside a transaction SQLite defers the foreign-key
+    ///   re-validation to `COMMIT`, by which point `_new_blocks` has been
+    ///   renamed to `blocks` with the same row set so every child FK
+    ///   re-resolves and no cascade fires. Running migrations in autocommit
+    ///   here would therefore produce a FALSE positive for the #374 data
+    ///   loss. The transaction wrapper makes the harness faithful to prod.
+    /// * We do NOT touch sqlx's `_sqlx_migrations` bookkeeping table; this
+    ///   harness is test-only and never hands the DB back to
+    ///   `sqlx::migrate!`, so version tracking is irrelevant here.
+    async fn apply_migrations_through(pool: &SqlitePool, after: i64, through: i64) {
+        // Collect owned (version, SQL) pairs up front so nothing borrows the
+        // local `Migrator` across the awaits below. The SQL strings come from
+        // our own checked-in migration files, so `AssertSqlSafe` (which
+        // accepts a non-'static `String`) is appropriate — there is no
+        // untrusted input here.
+        let migrator = sqlx::migrate!("./migrations");
+        let mut migs: Vec<(i64, String)> = migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration())
+            .map(|m| (m.version, m.sql.as_str().to_owned()))
+            .collect();
+        migs.sort_by_key(|(version, _)| *version);
+        for (version, sql) in migs {
+            if version > after && version <= through {
+                let mut tx = pool
+                    .begin()
+                    .await
+                    .unwrap_or_else(|e| panic!("begin tx for migration {version}: {e}"));
+                sqlx::query(sqlx::AssertSqlSafe(sql))
+                    .execute(&mut *tx)
+                    .await
+                    .unwrap_or_else(|e| panic!("migration {version} failed to apply: {e}"));
+                tx.commit()
+                    .await
+                    .unwrap_or_else(|e| panic!("commit migration {version}: {e}"));
+            }
+        }
+    }
+
+    /// Apply every UP migration with `version > after`, to head.
+    async fn apply_migrations_to_head(pool: &SqlitePool, after: i64) {
+        apply_migrations_through(pool, after, i64::MAX).await;
+    }
+
+    // ----------------------------------------------------------------------
+    // Deliverable 1: the julianday CAST formula, in isolation.
+    //
+    // This pins the exact backfill expression used by every ms migration
+    // (0074-0082) against the chrono ground truth: correctness, rounding,
+    // and NULL/malformed handling. It runs on a bare connection (no schema),
+    // so it is immune to migration drift.
+    // ----------------------------------------------------------------------
+
+    /// Evaluate the production backfill expression for one bound input.
+    async fn julianday_ms(pool: &SqlitePool, input: Option<&str>) -> Option<i64> {
+        sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT CAST(ROUND((julianday(?) - 2440587.5) * 86400000.0) AS INTEGER)",
+        )
+        .bind(input)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn julianday_cast_matches_chrono_376() {
+        use chrono::DateTime;
+
+        let (pool, _dir) = unmigrated_pool().await;
+
+        // NULL in -> NULL out.
+        assert_eq!(
+            julianday_ms(&pool, None).await,
+            None,
+            "NULL timestamp must convert to NULL ms"
+        );
+
+        // Representative valid RFC-3339 forms. Each `expected` is computed
+        // independently by chrono so the assertion is a true cross-check of
+        // the SQL formula, not a self-test.
+        let cases = [
+            "2025-08-15T12:00:00Z",
+            "2025-08-15T12:00:00+00:00",
+            "2025-08-15T12:00:00.123Z",
+            // chrono parses the space-separated form via parse_from_rfc3339
+            // only with a 'T'; SQLite's julianday accepts the space form, so
+            // we compare against the equivalent 'T' instant below.
+        ];
+        for input in cases {
+            let expected = DateTime::parse_from_rfc3339(input)
+                .unwrap_or_else(|e| panic!("chrono should parse {input}: {e}"))
+                .timestamp_millis();
+            let got = julianday_ms(&pool, Some(input)).await;
+            assert_eq!(
+                got,
+                Some(expected),
+                "SQL julianday formula for {input} must equal chrono's {expected} ms"
+            );
+        }
+
+        // Space-separated form: SQLite's julianday accepts "YYYY-MM-DD HH:MM:SS"
+        // and treats it as UTC, identical to the 'T'/'Z' instant.
+        let space_input = "2025-08-15 12:00:00";
+        let space_expected = DateTime::parse_from_rfc3339("2025-08-15T12:00:00Z")
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(
+            julianday_ms(&pool, Some(space_input)).await,
+            Some(space_expected),
+            "space-separated timestamp must convert to the same UTC ms as the 'T'/'Z' form"
+        );
+
+        // Sub-second precision survives the ROUND (123 ms above proves it;
+        // assert it explicitly is non-zero in the fractional part).
+        let sub = DateTime::parse_from_rfc3339("2025-08-15T12:00:00.123Z")
+            .unwrap()
+            .timestamp_millis();
+        assert_eq!(
+            sub % 1000,
+            123,
+            "sub-second component must be 123 ms (sanity on the chrono ground truth)"
+        );
+
+        // Malformed input: SQLite's julianday() returns NULL for an
+        // unparseable string, so the whole expression yields NULL. This pins
+        // the "NULL on malformed" behaviour the migrations rely on (a
+        // malformed legacy value becomes NULL rather than aborting the
+        // backfill or producing garbage).
+        assert_eq!(
+            julianday_ms(&pool, Some("not-a-date")).await,
+            None,
+            "malformed timestamp must convert to NULL (SQLite julianday returns NULL)"
+        );
+    }
+
+    // ----------------------------------------------------------------------
+    // Deliverable 2: the `blocks` rebuilds and the #374 cascade, observed
+    // through the REAL migration SQL via the seed-then-migrate harness.
+    //
+    // After migration 0061, `attachments.block_id` carries
+    // `REFERENCES blocks(id) ON DELETE CASCADE`. The 0073 and 0080 blocks
+    // rebuilds run `DROP TABLE blocks` under `foreign_keys = ON`.
+    //
+    // IMPORTANT — what these tests pin (and why the naive "child survives"
+    // assertion is WRONG): empirically, and by the project's own design,
+    // `DROP TABLE blocks` under `foreign_keys = ON` IMMEDIATELY fires the
+    // `ON DELETE CASCADE` and deletes every `attachments` row — even inside
+    // the per-migration transaction sqlx uses (the cascade is part of the
+    // DROP, not a deferred FK *validation*). This is the exact #374 data
+    // loss. Production does NOT prevent it at the migration layer; it
+    // RECOVERS the rows at startup from the op-log `add_attachment` payloads
+    // (see `recover_derived_state_from_op_log`, and the
+    // `init_pool_recovery_restores_attachments_374` regression test). These
+    // harness tests therefore pin the real, faithful contract:
+    //   * the migration path cascade-deletes the attachment row (a tripwire:
+    //     if a future change makes the rebuild preserve children, that's a
+    //     behaviour change to flag and re-evaluate against the recovery
+    //     logic), AND
+    //   * the parent `blocks` row and the authoritative `op_log` record both
+    //     SURVIVE the rebuild — i.e. nothing the recovery depends on is lost,
+    //     so the #374 restoration remains possible.
+    // ----------------------------------------------------------------------
+
+    /// Seed one page block, one attachment child, and the op-log
+    /// `add_attachment` record (the authoritative source the #374 recovery
+    /// replays) into the post-0061 intermediate schema. At seed time both
+    /// `attachments.created_at` and `op_log.created_at` are still legacy
+    /// `TEXT` (their ms cutovers are 0081/0079), so the timestamps are
+    /// RFC-3339 strings.
+    ///
+    /// Seeds only `blocks` + `attachments` (the attachment's `created_at`
+    /// stays TEXT until 0081, so this is used at intermediate versions where
+    /// that column is still TEXT). The corresponding op-log `add_attachment`
+    /// record is seeded by each caller via [`seed_add_attachment_op`] with a
+    /// `created_at` of the correct type for that version (TEXT before 0079,
+    /// INTEGER ms after).
+    async fn seed_block_and_attachment(pool: &SqlitePool, block_id: &str, att_id: &str) {
+        // A page block satisfies the page_id_self_for_pages CHECK that 0073
+        // introduces (block_type='page' => page_id=id).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES (?, 'page', 'seeded page', ?)",
+        )
+        .bind(block_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO attachments \
+             (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+             VALUES (?, ?, 'image/png', 'pic.png', 123, ?, '2025-08-15T12:00:00Z')",
+        )
+        .bind(att_id)
+        .bind(block_id)
+        .bind(format!("attachments/{att_id}.png"))
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Seed an op-log `add_attachment` record. `created_at` is bound as a raw
+    /// pre-formatted SQL literal fragment so callers can pass an RFC-3339
+    /// string literal (pre-0079, TEXT column) or an integer ms literal
+    /// (post-0079, INTEGER STRICT column).
+    async fn seed_add_attachment_op(
+        pool: &SqlitePool,
+        block_id: &str,
+        att_id: &str,
+        op_seq: i64,
+        created_at_literal: &str,
+    ) {
+        let payload = format!(
+            "{{\"attachment_id\":\"{att_id}\",\"block_id\":\"{block_id}\",\
+             \"mime_type\":\"image/png\",\"filename\":\"pic.png\",\
+             \"size_bytes\":123,\"fs_path\":\"attachments/{att_id}.png\"}}"
+        );
+        let sql = format!(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev376', {op_seq}, 'h', 'add_attachment', ?, {created_at_literal}, 'user')"
+        );
+        sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(payload)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Seed before the FIRST blocks rebuild (0073) and migrate all the way to
+    /// head through BOTH rebuilds (0073 and 0080). Pins the #374 cascade:
+    /// the attachment is destroyed by the DROP, while the parent block and
+    /// the op-log record (the recovery source) both survive.
+    #[tokio::test]
+    async fn blocks_rebuild_cascade_deletes_attachment_but_keeps_recovery_source_376() {
+        let (pool, _dir) = unmigrated_pool().await;
+        // Bring the schema up to just before the first blocks rebuild.
+        apply_migrations_through(&pool, 0, 72).await;
+        seed_block_and_attachment(&pool, "BLK376A", "ATT376A").await;
+        // At v72 op_log.created_at is still TEXT, so seed a valid RFC-3339
+        // string; 0079's julianday backfill converts it cleanly and the row
+        // survives to head.
+        seed_add_attachment_op(&pool, "BLK376A", "ATT376A", 1, "'2025-08-15T12:00:00Z'").await;
+
+        // Migrate through 0073, 0080, and the ms cutovers to head.
+        apply_migrations_to_head(&pool, 72).await;
+
+        // #374: the ON DELETE CASCADE child is destroyed by the blocks DROP.
+        let att_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = 'ATT376A'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            att_count, 0,
+            "the blocks rebuild's `DROP TABLE blocks` under FK=ON cascade-deletes the \
+             attachment (the #374 data-loss class). If this ever becomes 1, the rebuild's \
+             FK behaviour changed — re-evaluate against recover_derived_state_from_op_log"
+        );
+
+        // The parent block itself is copied through every rebuild — never lost.
+        let blk_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'BLK376A'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            blk_count, 1,
+            "the parent block must survive both blocks rebuilds (bulk-copy, not cascade)"
+        );
+
+        // The authoritative op-log record survives, so the #374 recovery can
+        // restore the attachment at the next startup.
+        let op_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE device_id = 'dev376' AND op_type = 'add_attachment'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            op_count, 1,
+            "the op-log add_attachment record (the recovery source) must survive the rebuilds"
+        );
+    }
+
+    /// Narrower variant: seed right before the SECOND blocks rebuild (0080)
+    /// so the attachment crosses only that DROP/RENAME. Guards the 0080
+    /// cascade independently of 0073, and confirms the recovery source
+    /// (op_log) survives that rebuild too.
+    #[tokio::test]
+    async fn blocks_0080_rebuild_cascade_deletes_attachment_376() {
+        let (pool, _dir) = unmigrated_pool().await;
+        // 0079 is the last migration before the 0080 blocks rebuild.
+        apply_migrations_through(&pool, 0, 79).await;
+        seed_block_and_attachment(&pool, "BLK376B", "ATT376B").await;
+        // At v79 op_log.created_at is already INTEGER STRICT (the 0079 cutover
+        // ran), so seed an integer ms literal.
+        seed_add_attachment_op(&pool, "BLK376B", "ATT376B", 1, "1755259200000").await;
+
+        apply_migrations_to_head(&pool, 79).await;
+
+        let att_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = 'ATT376B'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            att_count, 0,
+            "the 0080 blocks rebuild cascade-deletes the attachment (#374 class)"
+        );
+
+        let op_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log WHERE device_id = 'dev376' AND op_type = 'add_attachment'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            op_count, 1,
+            "the op-log recovery source must survive the 0080 rebuild"
+        );
+    }
+
+    // ----------------------------------------------------------------------
+    // Deliverable 3: ms-conversion preservation on real seeded data.
+    //
+    // Seed legacy TEXT timestamps into `op_log.created_at` just before its
+    // ms-backfill migration (0079), migrate to head, and assert each INTEGER
+    // ms value equals the chrono expectation. op_log.created_at is NOT NULL,
+    // so we exercise the valid `...Z`, `+00:00`, sub-second, and space forms
+    // here; NULL handling is pinned by Deliverable 1's formula test and by
+    // the blocks.deleted_at nullable path below.
+    // ----------------------------------------------------------------------
+
+    /// Insert one op_log row with a legacy RFC-3339 `created_at` string at
+    /// the pre-0079 schema. (device_id, seq) is the PK; op_log at this point
+    /// has columns through 0064's `attachment_id`.
+    async fn seed_op_log_row(pool: &SqlitePool, seq: i64, created_at: &str) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev376', ?, 'h', 'create', '{}', ?, 'user')",
+        )
+        .bind(seq)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn op_log_created_at_ms_backfill_preserves_instants_376() {
+        use chrono::DateTime;
+
+        let (pool, _dir) = unmigrated_pool().await;
+        // 0078 is the last migration before op_log's ms cutover (0079).
+        apply_migrations_through(&pool, 0, 78).await;
+
+        // seq -> legacy RFC-3339 string. All representative forms.
+        let rows = [
+            (1_i64, "2025-08-15T12:00:00Z"),
+            (2, "2025-08-15T12:00:00+00:00"),
+            (3, "2025-08-15T12:00:00.123Z"),
+            (4, "2025-08-15 12:00:00"),
+        ];
+        for (seq, ts) in rows {
+            seed_op_log_row(&pool, seq, ts).await;
+        }
+
+        apply_migrations_to_head(&pool, 78).await;
+
+        // Every seeded row must survive the rebuild (no row loss), and its
+        // created_at must now be the chrono-computed ms instant.
+        let surviving: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = 'dev376'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            surviving, 4,
+            "all seeded op_log rows must survive the 0079 rebuild"
+        );
+
+        for (seq, ts) in rows {
+            // chrono parse_from_rfc3339 needs a 'T'; normalise the space form.
+            let normalized = ts.replacen(' ', "T", 1);
+            let normalized = if normalized.ends_with('Z')
+                || normalized.contains('+')
+                || normalized.matches('-').count() > 2
+            {
+                normalized
+            } else {
+                format!("{normalized}Z")
+            };
+            let expected = DateTime::parse_from_rfc3339(&normalized)
+                .unwrap_or_else(|e| panic!("chrono should parse {normalized}: {e}"))
+                .timestamp_millis();
+            let got: i64 = sqlx::query_scalar(
+                "SELECT created_at FROM op_log WHERE device_id = 'dev376' AND seq = ?",
+            )
+            .bind(seq)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                got, expected,
+                "op_log seq {seq} ({ts}) must backfill to chrono's {expected} ms"
+            );
+        }
+    }
+
+    /// blocks.deleted_at ms cutover (0080) on the NULLABLE column: a live
+    /// block (NULL deleted_at) must stay NULL, and a soft-deleted block's
+    /// RFC-3339 string must convert to the chrono ms instant. Seeded just
+    /// before 0080 (after 0079), migrated to head.
+    #[tokio::test]
+    async fn blocks_deleted_at_ms_backfill_handles_null_and_value_376() {
+        use chrono::DateTime;
+
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_through(&pool, 0, 79).await;
+
+        // Live block: deleted_at NULL.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content) VALUES ('LIVE376', 'content', 'x')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Soft-deleted block: legacy RFC-3339 deleted_at string.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, deleted_at) \
+             VALUES ('DEL376', 'content', 'y', '2025-08-15T12:00:00.123Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_migrations_to_head(&pool, 79).await;
+
+        let live: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'LIVE376'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            live, None,
+            "a live block's NULL deleted_at must stay NULL through 0080"
+        );
+
+        let expected = DateTime::parse_from_rfc3339("2025-08-15T12:00:00.123Z")
+            .unwrap()
+            .timestamp_millis();
+        let del: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'DEL376'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            del,
+            Some(expected),
+            "a soft-deleted block's RFC-3339 deleted_at must backfill to chrono's {expected} ms"
+        );
+    }
 }
