@@ -1061,6 +1061,102 @@ async fn list_trash_pagination_cursor_with_mixed_root_sizes() {
     assert_eq!(r3.items[0].id, "ROOT0001");
 }
 
+/// #386 — trash same-`deleted_at` tie-break across page boundaries.
+///
+/// `list_trash` keysets on `(deleted_at DESC, id ASC)` with the predicate
+/// `deleted_at < ?2 OR (deleted_at = ?2 AND id > ?3)`. When several
+/// independent roots share a *single* `deleted_at`, the entire walk lives
+/// inside one `deleted_at` bucket, so correctness rests entirely on the
+/// `id ASC` tie-break carrying across page boundaries (the `id > ?3` arm).
+/// This exhaustive walk soft-deletes 6 independent roots at one shared
+/// timestamp, paginates at limit=2, and asserts no duplicates, no gaps,
+/// and a globally non-increasing `(deleted_at DESC, id ASC)` order.
+#[tokio::test]
+async fn list_trash_exhaustive_walk_shared_deleted_at_no_dupes_or_gaps_386() {
+    let (pool, _dir) = test_pool().await;
+
+    // 6 independent roots, all soft-deleted at the SAME instant. IDs are
+    // seeded out of sort order so the `id ASC` tie-break — not insertion
+    // order — is the only thing that can produce the expected sequence.
+    let shared_ts = "2025-08-15T12:00:00+00:00";
+    let root_ids = [
+        "TRSHARE_D",
+        "TRSHARE_A",
+        "TRSHARE_F",
+        "TRSHARE_C",
+        "TRSHARE_E",
+        "TRSHARE_B",
+    ];
+    for id in &root_ids {
+        insert_block(&pool, id, "page", &format!("root {id}"), None, None).await;
+        soft_delete_block(&pool, id, shared_ts).await;
+    }
+
+    // Walk every page at limit=2.
+    let shared_ts_ms = chrono::DateTime::parse_from_rfc3339(shared_ts)
+        .unwrap()
+        .timestamp_millis();
+    let mut collected: Vec<(i64, String)> = Vec::new(); // (deleted_at_ms, id)
+    let mut cursor = None;
+    let mut page_count = 0;
+    loop {
+        let page = PageRequest::new(cursor, Some(2)).unwrap();
+        let resp = list_trash(&pool, &page, None).await.unwrap();
+        assert!(
+            resp.items.len() <= 2,
+            "page must not exceed the requested limit"
+        );
+        for item in &resp.items {
+            let del = item.deleted_at.expect("trash rows always carry deleted_at");
+            assert_eq!(
+                del, shared_ts_ms,
+                "every root was deleted at the single shared timestamp"
+            );
+            collected.push((del, item.id.as_str().to_string()));
+        }
+        page_count += 1;
+        if !resp.has_more {
+            assert!(
+                resp.next_cursor.is_none(),
+                "last page must not carry a cursor"
+            );
+            break;
+        }
+        cursor = resp.next_cursor;
+        assert!(page_count < 20, "walk failed to terminate");
+    }
+
+    // No gaps: every seeded root appears exactly once.
+    let mut ids: Vec<&str> = collected.iter().map(|(_, id)| id.as_str()).collect();
+    ids.sort_unstable();
+    let mut expected: Vec<&str> = root_ids.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        ids, expected,
+        "exhaustive walk must return every shared-deleted_at root once"
+    );
+
+    // No duplicates.
+    let unique: std::collections::HashSet<&str> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), ids.len(), "no root may appear twice");
+
+    // Globally non-increasing on (deleted_at DESC, id ASC) — exactly the
+    // SQL ORDER BY. With a shared deleted_at this reduces to a strictly
+    // ascending id sequence carried across every page boundary.
+    for win in collected.windows(2) {
+        let (a, b) = (&win[0], &win[1]);
+        assert!(
+            a.0 > b.0 || (a.0 == b.0 && a.1 < b.1),
+            "ordering must be (deleted_at DESC, id ASC): {a:?} then {b:?}"
+        );
+    }
+
+    assert_eq!(
+        page_count, 3,
+        "6 roots at limit 2 must span exactly 3 pages, got {page_count}"
+    );
+}
+
 // ── UX-243: trash_descendant_counts helper ──────────────────────────
 
 #[tokio::test]

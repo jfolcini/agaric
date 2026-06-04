@@ -1020,8 +1020,9 @@ pub struct PageSubtreeResponse {
 /// The descendant walk intentionally uses the denormalized `page_id`
 /// column (index `idx_blocks_page_id`) rather than a recursive CTE —
 /// the materializer maintains the column on every command path, and the
-/// index makes the query O(log n + k) at any scale. Conflict copies are
-/// excluded via  per invariant #9.
+/// index makes the query O(log n + k) at any scale. Liveness is enforced
+/// solely by `deleted_at IS NULL`; the former `is_conflict` /
+/// conflict-copy exclusion was dropped in migration 0058.
 #[instrument(skip(pool), err)]
 pub async fn get_page_inner(
     pool: &SqlitePool,
@@ -1096,8 +1097,9 @@ pub async fn get_page_inner(
             None => (None, 0, ""),
         };
 
-    // Invariant #9:  excludes conflict-copy blocks that
-    // share a `page_id` but must never appear in the user-facing subtree.
+    // Liveness: `deleted_at IS NULL` is the sole guard for which blocks
+    // appear in the user-facing subtree. (The former `is_conflict` /
+    // conflict-copy exclusion was dropped in migration 0058.)
     let rows = sqlx::query_as!(
         BlockRow,
         r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,

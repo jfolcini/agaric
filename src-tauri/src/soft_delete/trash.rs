@@ -27,6 +27,15 @@ pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Opti
 /// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
 /// descendants via recursive CTE.
 ///
+/// **Currently exercised only by tests.** As of #386 this primitive has
+/// no non-test callers — the production delete path is
+/// `commands::blocks::crud::delete_block_inner` (which uses the
+/// `descendants_cte_active!()` macro directly), and every call site of
+/// `cascade_soft_delete` lives in a `#[cfg(test)]` module. The
+/// `&Materializer` / op-dispatch contract documented below describes the
+/// behaviour those tests assert and the shape a future production caller
+/// would inherit; it is not, today, a load-bearing production path.
+///
 /// Recursive member filters `deleted_at IS NULL` so already-deleted
 /// subtrees keep their original tombstone timestamp. `depth < 100`
 /// bounds the walk against runaway recursion on corrupted parent_id

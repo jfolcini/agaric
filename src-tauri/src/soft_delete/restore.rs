@@ -10,6 +10,15 @@ use crate::op_log::OpRecord;
 /// Restore a soft-deleted block and descendants sharing the same `deleted_at`
 /// timestamp.
 ///
+/// **Currently exercised only by tests.** As of #386 this primitive has
+/// no non-test callers — the production restore paths are
+/// `loro::engine::apply_restore_block` /
+/// `materializer::handlers::project_restore_block_to_sql`, and every call
+/// site of `soft_delete::restore_block` lives in a `#[cfg(test)]` module.
+/// The `&Materializer` / op-dispatch contract documented below describes
+/// the behaviour those tests assert; it is not, today, a load-bearing
+/// production path.
+///
 /// Recursive member bounds the walk with `depth < 100` (invariant
 /// #9).
 ///
