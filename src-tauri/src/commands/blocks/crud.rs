@@ -211,15 +211,12 @@ pub(crate) async fn create_block_in_tx(
     // The materializer reprojects the authoritative dense rank from the engine's
     // fractional order shortly after (eventual consistency).
     let effective_position = match index {
-        // #400/#383: a 0-based slot maps to a 1-based provisional rank. Saturate
-        // and cap strictly below NULL_POSITION_SENTINEL so an absurdly large slot
-        // can neither overflow (debug panic / release negative-wrap) nor land on
-        // the reserved keyset tail marker; the materializer reprojects the dense
-        // rank regardless. (Supersedes #383's outright sentinel rejection: under
-        // #400 the caller supplies a slot, not a verbatim position.)
-        Some(i) => i
-            .saturating_add(1)
-            .min(crate::pagination::NULL_POSITION_SENTINEL - 1),
+        // #400/#383: a 0-based slot maps to a 1-based provisional rank, capped
+        // overflow-safe below the reserved keyset tail marker; the materializer
+        // reprojects the dense rank regardless. (Supersedes #383's outright
+        // sentinel rejection: under #400 the caller supplies a slot, not a
+        // verbatim position.)
+        Some(i) => crate::pagination::index_to_provisional_position(i),
         None => {
             let row = sqlx::query!(
                 "SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM blocks \

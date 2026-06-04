@@ -113,6 +113,19 @@ const CURRENT_CURSOR_VERSION: u8 = 1;
 /// approach 2^63 children, and SQLite natively handles 64-bit signed integers.
 pub(crate) const NULL_POSITION_SENTINEL: i64 = i64::MAX;
 
+/// Convert a 0-based sibling slot (`index`/`new_index`) to the 1-based
+/// provisional `position` the optimistic SQL write / reverse-op payload uses.
+///
+/// Saturates and caps strictly below [`NULL_POSITION_SENTINEL`] so an absurd or
+/// hostile slot (e.g. from a corrupt op-log payload) can neither overflow
+/// (debug panic / release negative-wrap) nor land on the reserved keyset tail
+/// marker. The materializer reprojects the authoritative dense rank regardless,
+/// so the exact capped value only matters for not breaking those invariants
+/// (#400, review). Shared by every index→position conversion.
+pub(crate) fn index_to_provisional_position(index: i64) -> i64 {
+    index.saturating_add(1).min(NULL_POSITION_SENTINEL - 1)
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

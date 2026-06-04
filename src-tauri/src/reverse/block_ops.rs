@@ -175,7 +175,8 @@ impl PriorPlacement {
             Some(idx) => MoveBlockPayload {
                 block_id,
                 new_parent_id: self.parent,
-                new_position: idx + 1, // 1-based breadcrumb mirroring new_index
+                // 1-based breadcrumb mirroring new_index (overflow-safe, shared).
+                new_position: crate::pagination::index_to_provisional_position(idx),
                 new_index: Some(idx),
             },
             None => MoveBlockPayload {
@@ -470,6 +471,78 @@ mod tests_m63 {
                 position: Some(3),
             })
         );
+    }
+
+    /// #400: the NEW index-carrying branch of `find_prior_position` /
+    /// `into_move_payload`. A prior move op that carried `new_index: Some(n)`
+    /// must produce a `PriorPlacement { index: Some(n), .. }`, and its inverse
+    /// `MoveBlockPayload` must carry `new_index: Some(n)` plus the `new_position`
+    /// breadcrumb `n + 1` — so undo of a new-scheme move restores the slot, not
+    /// a stale 1-based position. (The legacy branch is covered above.)
+    #[tokio::test]
+    async fn find_prior_position_new_scheme_index_branch() {
+        let (pool, _dir) = test_pool().await;
+        // Create BLKNEW, then move it with a new-scheme slot (new_index Some).
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::CreateBlock(CreateBlockPayload {
+                block_id: BlockId::test_id("BLKNEW"),
+                block_type: "content".into(),
+                parent_id: None,
+                position: None,
+                index: Some(0),
+                content: "n".into(),
+            }),
+            1_736_950_000_000,
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLKNEW"),
+                new_parent_id: Some(BlockId::test_id("PNEW")),
+                new_position: 3,
+                new_index: Some(2),
+            }),
+            1_736_950_060_000,
+        )
+        .await
+        .unwrap();
+        // A later move whose inverse we are reconstructing.
+        let rec = append_local_op_at(
+            &pool,
+            TEST_DEVICE,
+            OpPayload::MoveBlock(MoveBlockPayload {
+                block_id: BlockId::test_id("BLKNEW"),
+                new_parent_id: Some(BlockId::test_id("POTHER")),
+                new_position: 9,
+                new_index: Some(8),
+            }),
+            1_736_950_120_000,
+        )
+        .await
+        .unwrap();
+
+        let prior = find_prior_position(&pool, "BLKNEW", rec.created_at, rec.seq, &rec.device_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            prior,
+            PriorPlacement {
+                parent: Some(BlockId::test_id("PNEW")),
+                index: Some(2),
+                position: Some(3),
+            }
+        );
+
+        // The inverse move uses the index branch: new_index Some(2) + breadcrumb 3.
+        let inv = prior.into_move_payload(BlockId::test_id("BLKNEW"));
+        assert_eq!(inv.new_index, Some(2));
+        assert_eq!(inv.new_position, 3);
     }
 
     /// Stored block_id is uppercase (BlockId serializes uppercase per

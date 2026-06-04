@@ -763,6 +763,52 @@ mod tests {
         assert!(inner.new_index.is_none());
     }
 
+    /// #400 forward (new-scheme) wire shape: a payload that actually CARRIES a
+    /// `index` / `new_index` slot must serialize the field (as a number) and
+    /// round-trip back to the same `Some` value. The omit-when-`None` tests
+    /// above only cover the legacy shape; this locks in the JSON every future
+    /// #400 op writes to the op log.
+    #[test]
+    fn create_and_move_block_with_index_some_roundtrip() {
+        // create_block carrying a 0-based slot.
+        let create = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
+            block_type: "content".into(),
+            parent_id: None,
+            position: None,
+            index: Some(2),
+            content: "x".into(),
+        });
+        let cjson = serde_json::to_string(&create).unwrap();
+        assert!(
+            cjson.contains("\"index\":2"),
+            "index Some(2) must serialize, got {cjson}"
+        );
+        let OpPayload::CreateBlock(cdeser) = serde_json::from_str(&cjson).unwrap() else {
+            panic!("expected CreateBlock variant");
+        };
+        assert_eq!(cdeser.index, Some(2));
+        assert!(cdeser.position.is_none());
+
+        // move_block carrying a 0-based slot + its 1-based breadcrumb.
+        let mv = OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_string(TEST_BID).unwrap(),
+            new_parent_id: None,
+            new_position: 3,
+            new_index: Some(2),
+        });
+        let mjson = serde_json::to_string(&mv).unwrap();
+        assert!(
+            mjson.contains("\"new_index\":2"),
+            "new_index Some(2) must serialize, got {mjson}"
+        );
+        let OpPayload::MoveBlock(mdeser) = serde_json::from_str(&mjson).unwrap() else {
+            panic!("expected MoveBlock variant");
+        };
+        assert_eq!(mdeser.new_index, Some(2));
+        assert_eq!(mdeser.new_position, 3);
+    }
+
     /// PEND-14 backwards-compat: pre-existing op-log rows for `set_property`
     /// were written without a `value_bool` field. Those entries must continue
     /// to deserialize, with `value_bool` defaulting to `None`. Mirrors the
