@@ -28,9 +28,9 @@ const PAGE = 'Getting Started'
 
 /** Read the ordered list of block ids currently rendered. */
 async function blockIds(page: import('@playwright/test').Page): Promise<string[]> {
-  return page.locator('[data-testid="sortable-block"]').evaluateAll((els) =>
-    els.map((el) => el.getAttribute('data-block-id') ?? ''),
-  )
+  return page
+    .locator('[data-testid="sortable-block"]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute('data-block-id') ?? ''))
 }
 
 /** Most recent recorded move_block payload, or null. */

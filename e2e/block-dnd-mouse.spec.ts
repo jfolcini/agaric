@@ -85,9 +85,7 @@ test.describe('Block drag-and-drop (mouse)', () => {
 
     // Intended: GS_1 lands at/after GS_3 (index 2). Actual: the raw over-index
     // is fed to computePosition, so GS_1 only advances ONE slot → index 1.
-    await expect
-      .poll(async () => (await blockIds(page)).indexOf(gs1 as string))
-      .toBe(1)
+    await expect.poll(async () => (await blockIds(page)).indexOf(gs1 as string)).toBe(1)
 
     // …and the IPC position it sent collides with GS_3's seed position (2).
     const calls = await moveCalls(page)
