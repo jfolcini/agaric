@@ -1146,16 +1146,33 @@ async fn test_global_task_re_enqueued_after_backoff() {
         "the due global rebuild row must be re-enqueued by the sweeper"
     );
 
-    // Row is gone after successful re-enqueue; the consumer would
-    // re-add it with attempts=2 if it fails again.
-    let remaining: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue \
-         WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildAgendaCache'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(remaining, 0, "swept row must be deleted after re-enqueue");
+    // Issue #378: the sweeper now LEASES the row instead of deleting it
+    // on enqueue — the row is cleared only once the re-enqueued task
+    // completes durably and the consumer calls `clear_on_success`. The
+    // live background consumer (spawned by `Materializer::new`) drains
+    // the re-enqueued `RebuildAgendaCache`, which succeeds on the empty
+    // test DB, so the row is cleared asynchronously. Poll for the
+    // confirmed-success clear instead of asserting an immediate delete.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue \
+             WHERE block_id = '__GLOBAL__' AND task_kind = 'RebuildAgendaCache'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if remaining == 0 {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "issue #378: swept row must be cleared after the re-enqueued \
+                 task completes durably; row never cleared"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     mat.shutdown();
 }
@@ -3162,23 +3179,51 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
         n, 1,
         "PEND-24 H1: the planted ApplyOp retry row must be re-enqueued onto the foreground queue"
     );
-    let remaining: i64 =
-        sqlx::query_scalar!("SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue",)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        remaining, 0,
-        "PEND-24 H1: swept ApplyOp row must be deleted after successful re-enqueue"
-    );
+    // Issue #378: the sweeper now LEASES the row on enqueue instead of
+    // deleting it — the row stays put until the re-enqueued task
+    // completes durably, at which point the consumer's
+    // `clear_on_success` deletes it. We do NOT assert the leased row is
+    // present immediately after the sweep: the live foreground consumer
+    // (spawned by `Materializer::new`) can drain and durably-succeed the
+    // re-enqueued op before this thread observes the row, so an
+    // immediate "row still present" check would race. The lease-keeps-
+    // the-row invariant is pinned deterministically in
+    // `retry_queue::tests` (no live consumer). Here we assert the
+    // end-to-end contract: the row is eventually cleared via the
+    // confirmed-success path (and was NOT pre-deleted on enqueue, which
+    // would have lost the retry entry had the apply failed).
 
     // The re-enqueue routed the task to the foreground queue; flushing
-    // confirms the foreground consumer drained it (the apply itself
-    // succeeds because the op is valid). We don't assert on the
-    // resulting `blocks` row to keep this test focused on the
-    // persist + sweep contract — the subsequent
-    // `dispatch_op_create_block_*` tests already cover that path.
+    // drains it (the apply succeeds because the op is valid), and the
+    // foreground consumer's durable-success path calls `clear_on_success`
+    // to delete the leased row. We don't assert on the resulting
+    // `blocks` row to keep this test focused on the persist + sweep
+    // contract — the subsequent `dispatch_op_create_block_*` tests
+    // already cover that path.
     mat.flush_foreground().await.unwrap();
+
+    // Issue #378: after the durable foreground success the leased row is
+    // cleared. `flush_foreground` returns once the consumer has drained
+    // the batch, but the post-success `clear_on_success` DELETE may lag
+    // slightly — poll briefly for the confirmed-success clear.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining: i64 =
+            sqlx::query_scalar!("SELECT COUNT(*) AS \"n!: i64\" FROM materializer_retry_queue",)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        if remaining == 0 {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "issue #378: leased ApplyOp row must be cleared after the \
+                 re-enqueued task completes durably; row never cleared"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     mat.shutdown();
 }

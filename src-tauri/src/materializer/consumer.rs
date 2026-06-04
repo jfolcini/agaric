@@ -430,6 +430,24 @@ pub(super) async fn process_single_foreground_task(
 
     if outcome.panicked {
         metrics.fg_panics.fetch_add(1, Ordering::Relaxed);
+    } else if outcome.succeeded {
+        // Issue #378: confirmed-durable-success clear for the foreground
+        // path. A sweep-driven `ApplyOp` re-run that succeeds here must
+        // remove its leased retry row (the sweeper no longer pre-clears
+        // on enqueue). `handle_foreground_task` returns `Ok(())` only
+        // after `apply_op` commits, so this is durable success.
+        // `clear_on_success` no-ops for non-retryable fg tasks and for
+        // an ApplyOp that never had a row (fresh first-run success).
+        // Cleared only after commit — never before — so a crash mid-run
+        // leaves the row for the next sweep instead of silently dropping
+        // the retry.
+        if let Err(e) = super::retry_queue::clear_on_success(pool, &task).await {
+            tracing::warn!(
+                error = %e,
+                "issue #378: failed to clear retry-queue row after durable fg success; \
+                 row will be re-leased and re-cleared on the next sweep"
+            );
+        }
     } else if !outcome.succeeded {
         metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
         // REVIEW-LATER C-2a: defense-in-depth observability for
@@ -599,6 +617,29 @@ pub(super) async fn run_background(
                     metrics.bg_panics.fetch_add(1, Ordering::Relaxed);
                 } else if !succeeded {
                     metrics.bg_errors.fetch_add(1, Ordering::Relaxed);
+                }
+                // Issue #378: confirmed-durable-success clear. The
+                // sweeper no longer pre-clears a retry row on enqueue
+                // (it leases it) — so a row swept and re-run here must be
+                // removed *after* the work commits, exactly once, on the
+                // sole success path. `handle_background_task` returns
+                // `Ok(())` only after its write tx commits, so reaching
+                // this branch is durable success. `clear_on_success` is a
+                // no-op DELETE-by-PK for retryable tasks that never had a
+                // row (fresh first-run success) — cheap against the
+                // tiny, single-writer retry-queue table. Clearing here
+                // (never before durable success) avoids trading the old
+                // infinite-retry bug for a clear-before-commit data loss
+                // on crash. Non-retryable tasks short-circuit inside
+                // `clear_on_success` via `RetryKind::from_task`.
+                if succeeded {
+                    if let Err(e) = super::retry_queue::clear_on_success(&pool, &task).await {
+                        tracing::warn!(
+                            error = %e,
+                            "issue #378: failed to clear retry-queue row after durable bg success; \
+                             row will be re-leased and re-cleared on the next sweep"
+                        );
+                    }
                 }
                 // BUG-22 / PEND-03: Persist exhausted failures for retryable
                 // tasks to `materializer_retry_queue` so the boot-time /
