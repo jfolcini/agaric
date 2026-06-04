@@ -1316,7 +1316,8 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
 
-      await expect(store.getState().moveUp('B')).resolves.toBeUndefined()
+      // R6 (#405): move actions now resolve `false` on a caught backend error.
+      await expect(store.getState().moveUp('B')).resolves.toBe(false)
       expect(store.getState().blocks).toHaveLength(2)
     })
 
@@ -1430,7 +1431,8 @@ describe('PageBlockStore', () => {
 
       mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
 
-      await expect(store.getState().moveDown('A')).resolves.toBeUndefined()
+      // R6 (#405): move actions now resolve `false` on a caught backend error.
+      await expect(store.getState().moveDown('A')).resolves.toBe(false)
       expect(store.getState().blocks).toHaveLength(2)
     })
 
