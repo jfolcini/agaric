@@ -1537,9 +1537,16 @@ export async function computeEditDiff(params: {
  */
 export async function computeBlockVsCurrentDiff(params: {
   blockId: string
+  historicalCreatedAt: number
   historicalSeq: number
 }): Promise<DiffSpan[]> {
-  return unwrap(await commands.computeBlockVsCurrentDiff(params.blockId, params.historicalSeq))
+  return unwrap(
+    await commands.computeBlockVsCurrentDiff(
+      params.blockId,
+      params.historicalCreatedAt,
+      params.historicalSeq,
+    ),
+  )
 }
 
 // ---------------------------------------------------------------------------

@@ -2228,3 +2228,76 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
         }
     }
 }
+
+/// #382 (sub-fix B): the reverse-op prior-context lookup must tie-break
+/// on the full canonical `(created_at, seq, device_id)` total order. The
+/// op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE counter, so
+/// two devices can legitimately share the same `(created_at, seq)` pair.
+///
+/// Seed (all at the SAME `created_at`): the op being reversed is
+/// `dev9 @ (created_at=T, seq=7)`. Two prior `edit_block` candidates
+/// also live at `created_at=T, seq=7`: `dev1` ("from dev1") and `dev5`
+/// ("from dev5"). Under the OLD bound `(created_at = T AND seq < 7)`,
+/// BOTH are excluded (their seq is not `< 7`) and `find_prior_text`
+/// returns None — losing the prior context entirely. Under the canonical
+/// bound `(created_at = T AND (seq < 7 OR (seq = 7 AND device_id < dev9)))`
+/// with `ORDER BY … device_id DESC`, both are in range and the winner is
+/// the largest device_id still `< dev9` — `dev5`.
+#[tokio::test]
+async fn find_prior_text_tie_breaks_on_device_id_at_equal_created_at_seq() {
+    let (pool, _dir) = test_pool().await;
+    let block_id_upper = BlockId::test_id("BLKTIE").into_string();
+    let t: i64 = 1_736_942_400_000;
+
+    // Helper: raw-insert an edit_block row at an explicit (device, seq).
+    async fn insert_edit(
+        pool: &SqlitePool,
+        device: &str,
+        seq: i64,
+        block_id: &str,
+        created_at: i64,
+        to_text: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, NULL, ?, 'edit_block', ?, ?, ?)",
+        )
+        .bind(device)
+        .bind(seq)
+        .bind(format!("hash-{device}-{seq}"))
+        .bind(format!(
+            r#"{{"block_id":"{block_id}","to_text":"{to_text}"}}"#
+        ))
+        .bind(created_at)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    // Two prior candidates, same created_at & seq, different device_id.
+    insert_edit(&pool, "dev1", 7, &block_id_upper, t, "from dev1").await;
+    insert_edit(&pool, "dev5", 7, &block_id_upper, t, "from dev5").await;
+    // The op being reversed: dev9 @ (t, 7).
+    insert_edit(
+        &pool,
+        "dev9",
+        7,
+        &block_id_upper,
+        t,
+        "from dev9 (being reversed)",
+    )
+    .await;
+
+    let prior = find_prior_text(&pool, &block_id_upper, t, 7, "dev9")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        prior,
+        Some("from dev5".to_string()),
+        "equal (created_at, seq) ties must break on device_id: the prior of dev9 \
+         is the largest device_id still < dev9 (dev5), not None and not dev1"
+    );
+}

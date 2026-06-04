@@ -2521,23 +2521,38 @@ export const HANDLERS: Record<string, Handler> = {
   },
 
   // PEND-17 Part B — diff between a block's historical content (as of
-  // `historicalSeq`) and its current live content. Mirrors the Rust
-  // command's contract: empty/all-Equal spans for unmodified blocks,
-  // throws on a soft-deleted block.
+  // the selected point `(historicalCreatedAt, historicalSeq)`) and its
+  // current live content. Mirrors the Rust command's contract:
+  // empty/all-Equal spans for unmodified blocks, throws on a
+  // soft-deleted block.
+  //
+  // #382: bound/sort on the canonical `(created_at, seq)` keyset rather
+  // than bare per-device `seq`, mirroring the Rust fix. `created_at` in
+  // the mock op-log is an ISO-8601 string (lexicographically ordered),
+  // so string comparison preserves chronological order.
   compute_block_vs_current_diff: (args) => {
     const a = args as Record<string, unknown>
     const blockId = (a['blockId'] as string).toUpperCase()
     const historicalSeq = a['historicalSeq'] as number
+    const historicalCreatedAt = a['historicalCreatedAt']
     const block = blocks.get(blockId)
     if (!block || block['deleted_at']) {
       throw new Error(`block '${blockId}' not found or soft-deleted (cannot diff against current)`)
     }
     const current = (block['content'] as string | null | undefined) ?? ''
     // Walk the op log for the most recent edit_block / create_block at
-    // or before `historicalSeq` for this block.
+    // or before the selected point for this block, bounding on
+    // `(created_at, seq)` so a cross-device op with a smaller seq but a
+    // later created_at cannot leak past the selected point.
+    const createdBound = historicalCreatedAt == null ? null : String(historicalCreatedAt)
     const candidates = opLog.filter((o) => {
       if (o.op_type !== 'edit_block' && o.op_type !== 'create_block') return false
-      if (o.seq > historicalSeq) return false
+      if (createdBound == null) {
+        if (o.seq > historicalSeq) return false
+      } else {
+        const oc = String(o.created_at)
+        if (oc > createdBound || (oc === createdBound && o.seq > historicalSeq)) return false
+      }
       try {
         const p = JSON.parse(o.payload) as Record<string, unknown>
         const pid = (p['block_id'] as string | undefined)?.toUpperCase()
@@ -2551,7 +2566,13 @@ export const HANDLERS: Record<string, Handler> = {
         `no create_block or edit_block op for '${blockId}' at or before seq ${historicalSeq}`,
       )
     }
-    candidates.sort((x, y) => y.seq - x.seq)
+    // Canonical order: created_at DESC, then seq DESC.
+    candidates.sort((x, y) => {
+      const xc = String(x.created_at)
+      const yc = String(y.created_at)
+      if (xc !== yc) return xc < yc ? 1 : -1
+      return y.seq - x.seq
+    })
     const target = candidates[0] as MockOpLogEntry
     const targetPayload = JSON.parse(target.payload) as Record<string, unknown>
     const historical =

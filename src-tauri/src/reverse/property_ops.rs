@@ -28,6 +28,7 @@ pub async fn reverse_set_property(
         &payload.key,
         record.created_at,
         record.seq,
+        &record.device_id,
     )
     .await?;
     match prior {
@@ -58,6 +59,7 @@ pub async fn reverse_delete_property(
         &payload.key,
         record.created_at,
         record.seq,
+        &record.device_id,
     )
     .await?
     .ok_or_else(|| {
@@ -83,6 +85,7 @@ async fn find_prior_property(
     key: &str,
     created_at: i64,
     seq: i64,
+    device_id: &str,
 ) -> Result<Option<PriorPropertyRow>, AppError> {
     // M-64: switch the block_id predicate from `json_extract(payload, '$.block_id')`
     // to the indexed `block_id` column added by migration 0030 (idx_op_log_block_id).
@@ -102,18 +105,26 @@ async fn find_prior_property(
     // and its reverse must be `DeleteProperty(K)` — not a resurrected
     // `SetProperty(K="A")`. So consider BOTH op types and inspect the single
     // most-recent one: if it is a `delete_property`, the prior state is None.
+    // #382: the op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE
+    // counter, so the "strictly before" predicate must tie-break on the
+    // full canonical `(created_at, seq, device_id)` total order (the same
+    // order used by `commands/history.rs` and `pagination/history.rs`).
+    // Omitting `device_id` leaves the bound ambiguous when two devices
+    // share a `(created_at, seq)` pair.
     let row = sqlx::query!(
         "SELECT op_type, payload FROM op_log \
          WHERE block_id = ?1 \
            AND json_extract(payload, '$.key') = ?2 \
            AND op_type IN ('set_property', 'delete_property') \
-           AND (created_at < ?3 OR (created_at = ?3 AND seq < ?4)) \
-         ORDER BY created_at DESC, seq DESC \
+           AND (created_at < ?3 \
+                OR (created_at = ?3 AND (seq < ?4 OR (seq = ?4 AND device_id < ?5)))) \
+         ORDER BY created_at DESC, seq DESC, device_id DESC \
          LIMIT 1",
         bid_upper,
         key,
         created_at,
         seq,
+        device_id,
     )
     .fetch_optional(pool)
     .await?;
@@ -350,6 +361,7 @@ mod tests_m64 {
             "status",
             1_736_942_460_000,
             i64::MAX,
+            TEST_DEVICE,
         )
         .await
         .unwrap()
@@ -363,6 +375,7 @@ mod tests_m64 {
             "status",
             1_736_942_460_000,
             i64::MAX,
+            TEST_DEVICE,
         )
         .await
         .unwrap()
