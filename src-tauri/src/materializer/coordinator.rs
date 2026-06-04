@@ -16,6 +16,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinSet;
 
+/// #385: minimum interval between `SELECT COUNT(*) FROM op_log` refreshes
+/// backing [`StatusInfo::total_ops_in_log`]. The Status view polls
+/// `status_with_scheduler` every ~5s; serving a cached value for 60s
+/// reduces the O(rows) index scan from ~12 per minute to at most 1,
+/// making the steady-state poll path O(1). `total_ops_in_log` is a
+/// best-effort diagnostics figure, so up-to-60s staleness is acceptable.
+pub(super) const OP_LOG_COUNT_CACHE_TTL_MS: u64 = 60_000;
+
 #[derive(Clone)]
 pub struct Materializer {
     /// L-1: the foreground sender is set once during [`Self::build`] and
@@ -490,6 +498,69 @@ impl Materializer {
         });
     }
 
+    /// #385: rate-limited `SELECT COUNT(*) FROM op_log` backing
+    /// [`StatusInfo::total_ops_in_log`].
+    ///
+    /// Returns the cached value when the last successful refresh is younger
+    /// than [`OP_LOG_COUNT_CACHE_TTL_MS`]; otherwise runs the COUNT once
+    /// against the reader pool, updates the cache, and returns the fresh
+    /// value. On COUNT error, returns the last cached value (or `None` if no
+    /// successful count has ever been recorded) without touching the cache —
+    /// observability never fails the status call.
+    ///
+    /// Mirrors `cached_block_count`'s stale-tolerant cache shape rather than
+    /// a live per-append counter: op_log appends happen in the command /
+    /// sync / recovery / snapshot layers, none of which hold a
+    /// `Materializer` reference, so a live counter cannot be maintained at
+    /// the append sites. The TTL bounds the staleness instead.
+    async fn cached_op_log_count(&self) -> Option<i64> {
+        let now = u64::try_from(crate::db::now_ms()).unwrap_or(0);
+        let last_at = self
+            .metrics
+            .cached_op_log_count_at_ms
+            .load(Ordering::Relaxed);
+        let cached = self.metrics.cached_op_log_count.load(Ordering::Relaxed);
+
+        // Serve the cache when it has been computed at least once and is
+        // still within the TTL window. `u64::MAX` is the "never computed"
+        // sentinel and forces a refresh regardless of `last_at`.
+        let cache_valid =
+            cached != u64::MAX && now.saturating_sub(last_at) < OP_LOG_COUNT_CACHE_TTL_MS;
+        if cache_valid {
+            return i64::try_from(cached).ok();
+        }
+
+        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
+            .fetch_one(&self.reader_pool)
+            .await
+        {
+            Ok(count) => {
+                let count_u64 =
+                    u64::try_from(count).expect("invariant: SQL COUNT(*) is non-negative");
+                self.metrics
+                    .cached_op_log_count
+                    .store(count_u64, Ordering::Relaxed);
+                self.metrics
+                    .cached_op_log_count_at_ms
+                    .store(now, Ordering::Relaxed);
+                Some(count)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    query = "total_ops_in_log",
+                    "materializer status query failed"
+                );
+                // Fall back to the last-known cached value, if any.
+                if cached == u64::MAX {
+                    None
+                } else {
+                    i64::try_from(cached).ok()
+                }
+            }
+        }
+    }
+
     /// Await completion of the one-shot background task spawned in
     /// [`Materializer::build`] that populates
     /// [`QueueMetrics::cached_block_count`] from the current DB state.
@@ -821,21 +892,15 @@ impl Materializer {
             (rfc, Some(elapsed))
         };
 
-        // total_ops_in_log: cheap COUNT(*) against reader pool. Any error
-        // becomes `None` — this is observability, not a correctness path,
-        // so the status call never fails because of it.
-        let total_ops_in_log: Option<i64> =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log")
-                .fetch_one(&self.reader_pool)
-                .await
-                .inspect_err(|e| {
-                    tracing::warn!(
-                        error = %e,
-                        query = "total_ops_in_log",
-                        "materializer status query failed"
-                    )
-                })
-                .ok();
+        // #385: total_ops_in_log is served from a rate-limited cache so the
+        // O(rows) `SELECT COUNT(*) FROM op_log` does not run on every ~5s
+        // status poll. We recompute only when the cache is older than
+        // OP_LOG_COUNT_CACHE_TTL_MS (or has never been computed); otherwise
+        // we return the cached value. Any COUNT error leaves the cache
+        // untouched and falls back to the last-known value (or None if we
+        // have never had a successful count) — this is observability, not a
+        // correctness path, so the status call never fails because of it.
+        let total_ops_in_log: Option<i64> = self.cached_op_log_count().await;
 
         let retry_queue_pending: Option<i64> =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM materializer_retry_queue")

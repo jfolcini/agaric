@@ -9,6 +9,28 @@ pub struct QueueMetrics {
     pub fts_edits_since_optimize: AtomicU64,
     pub fts_last_optimize_ms: AtomicU64,
     pub cached_block_count: AtomicU64,
+    /// #385: rate-limited cache of `SELECT COUNT(*) FROM op_log`, surfaced
+    /// as `StatusInfo::total_ops_in_log`.
+    ///
+    /// `status_with_scheduler` is polled every ~5s while the Status view is
+    /// open; the underlying COUNT is an O(rows) index scan that grows with
+    /// the (append-only, compaction-trimmed) op log. Rather than thread a
+    /// live counter through every op_log INSERT/DELETE site across the
+    /// command / sync / recovery / snapshot layers (none of which hold a
+    /// `Materializer` reference), we mirror `cached_block_count`'s
+    /// stale-tolerant cache shape: recompute the COUNT at most once per
+    /// [`super::coordinator::OP_LOG_COUNT_CACHE_TTL_MS`] and serve the
+    /// cached value on every poll in between. `total_ops_in_log` is pure
+    /// observability, so bounded staleness is acceptable. The companion
+    /// timestamp lives in [`Self::cached_op_log_count_at_ms`].
+    ///
+    /// Sentinel: `u64::MAX` means "never computed" (no valid COUNT yet);
+    /// status treats it as a forced recompute. A real COUNT can never be
+    /// `u64::MAX` in practice (op_log row counts fit comfortably in i64).
+    pub cached_op_log_count: AtomicU64,
+    /// #385: epoch-ms timestamp of the last successful refresh of
+    /// [`Self::cached_op_log_count`]. `0` means "never refreshed".
+    pub cached_op_log_count_at_ms: AtomicU64,
     /// High-water mark of the foreground queue depth observed since the
     /// last metrics-snapshot dump. Reset to 0 every 5 minutes (or every
     /// dump tick) by `metrics_snapshot_task`, so this is a *windowed*
@@ -130,6 +152,10 @@ impl Default for QueueMetrics {
             fts_edits_since_optimize: AtomicU64::new(0),
             fts_last_optimize_ms: AtomicU64::new(now_ms),
             cached_block_count: AtomicU64::new(0),
+            // #385: u64::MAX sentinel = "never computed"; 0 timestamp =
+            // "never refreshed". The first status poll forces a recompute.
+            cached_op_log_count: AtomicU64::new(u64::MAX),
+            cached_op_log_count_at_ms: AtomicU64::new(0),
             fg_high_water: AtomicU64::new(0),
             bg_high_water: AtomicU64::new(0),
             fg_errors: AtomicU64::new(0),
