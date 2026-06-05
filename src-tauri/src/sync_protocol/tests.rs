@@ -89,6 +89,85 @@ async fn get_local_heads_multiple_devices() {
     assert_eq!(head_b.seq, 1, "device-B should be at seq 1");
 }
 
+/// #430 — the loose-index-scan rewrite must evaluate per-device heads via PK
+/// index SEEKS, not a full covering-index SCAN of `op_log` for a
+/// MAX-per-group. The old `… IN (SELECT device_id, MAX(seq) … GROUP BY
+/// device_id)` plan was `SCAN op_log USING COVERING INDEX` (+ bloom filter +
+/// temp B-tree); this pins that it is gone.
+#[tokio::test]
+async fn get_local_heads_plan_uses_index_seeks() {
+    let (pool, _dir) = test_pool().await;
+    for i in 1..=4 {
+        append_local_op_at(
+            &pool,
+            "device-A",
+            test_create_payload(&format!("A{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+        append_local_op_at(
+            &pool,
+            "device-B",
+            test_create_payload(&format!("B{i}")),
+            FIXED_TS,
+        )
+        .await
+        .unwrap();
+    }
+
+    // EXPLAIN QUERY PLAN of the exact get_local_heads query.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN \
+         WITH RECURSIVE devices(device_id) AS ( \
+             SELECT (SELECT device_id FROM op_log ORDER BY device_id LIMIT 1) \
+             UNION ALL \
+             SELECT (SELECT ol.device_id FROM op_log ol \
+                       WHERE ol.device_id > devices.device_id \
+                       ORDER BY ol.device_id LIMIT 1) \
+               FROM devices \
+              WHERE devices.device_id IS NOT NULL \
+         ) \
+         SELECT \
+             d.device_id AS device_id, \
+             (SELECT ol.seq  FROM op_log ol \
+                WHERE ol.device_id = d.device_id ORDER BY ol.seq DESC LIMIT 1) AS seq, \
+             (SELECT ol.hash FROM op_log ol \
+                WHERE ol.device_id = d.device_id ORDER BY ol.seq DESC LIMIT 1) AS hash \
+           FROM devices d \
+          WHERE d.device_id IS NOT NULL \
+          ORDER BY d.device_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+
+    let detail = plan
+        .iter()
+        .map(|r| r.3.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    // The result is driven by the tiny `devices` CTE, and each device's head
+    // is a PK seek (`device_id=?`) — not a MAX-per-group full scan.
+    assert!(
+        detail.contains("SCAN devices"),
+        "result must be driven by the devices CTE, not op_log: {detail}"
+    );
+    assert!(
+        detail.contains("(device_id=?)"),
+        "per-device head must be a PK seek (device_id=?): {detail}"
+    );
+    // The old `… IN (SELECT device_id, MAX(seq) … GROUP BY device_id)` plan
+    // built a BLOOM FILTER over a full covering-index scan of op_log; its
+    // absence confirms we are off that path. (The only `SCAN op_log` now is the
+    // O(1) anchor `… ORDER BY device_id LIMIT 1` scalar subquery.)
+    assert!(
+        !detail.contains("BLOOM FILTER"),
+        "plan must not full-scan op_log for a MAX-per-group (#430): {detail}"
+    );
+}
+
 // ── complete_sync ───────────────────────────────────────────────────
 
 #[tokio::test]
