@@ -68,7 +68,22 @@ async fn apply_sort_merge_rebuild(
     // write tx so the cache is never observed mid-rebuild. The
     // `rebuild_path_count_parity` test in `cache/tests.rs` asserts these
     // values equal the per-op recompute.
-    sqlx::query!(
+    //
+    // #432: the count UPDATE participates in `changed`. A rebuild whose
+    // title/orphan diff is empty (`upsert + delete == 0`) can still have
+    // recomputed a non-zero count delta — e.g. a content block was created
+    // under an existing page via the local command path, or a snapshot
+    // RESET re-inserted every page with the DEFAULT-0 columns. Without
+    // counting the count pass, `rebuild_pages_cache_impl` rolls the tx
+    // back when `changed == 0` and discards the recompute, leaving the
+    // counts stale/zero. The guard `WHERE inbound_link_count != (<subq>)
+    // OR child_block_count != (<subq>)` makes the UPDATE touch ONLY rows
+    // whose materialised value actually differs, so `rows_affected()` is
+    // exactly the number of pages whose counts changed — a genuine,
+    // commit-worthy diff. This also keeps `updated_at` stable: the count
+    // UPDATE never writes `updated_at`, so the M-2 recency semantic is
+    // owned solely by the title UPSERT's `WHERE title != excluded.title`.
+    let counts = sqlx::query!(
         "UPDATE pages_cache SET \
              inbound_link_count = ( \
                  SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
@@ -85,12 +100,28 @@ async fn apply_sort_merge_rebuild(
                      WHERE descendant.page_id = pages_cache.page_id \
                        AND descendant.deleted_at IS NULL \
                        AND descendant.id != pages_cache.page_id \
+             ) \
+         WHERE inbound_link_count != ( \
+                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                     JOIN blocks descendant ON bl.target_id = descendant.id \
+                     JOIN blocks src ON src.id = bl.source_id \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND src.deleted_at IS NULL \
+                       AND src.page_id IS NOT NULL \
+                       AND src.page_id != pages_cache.page_id \
+             ) \
+            OR child_block_count != ( \
+                 SELECT COUNT(*) FROM blocks descendant \
+                     WHERE descendant.page_id = pages_cache.page_id \
+                       AND descendant.deleted_at IS NULL \
+                       AND descendant.id != pages_cache.page_id \
              )",
     )
     .execute(&mut *write_conn)
     .await?;
 
-    Ok(upsert.rows_affected() + delete.rows_affected())
+    Ok(upsert.rows_affected() + delete.rows_affected() + counts.rows_affected())
 }
 
 // ---------------------------------------------------------------------------

@@ -609,7 +609,7 @@ pub(super) struct ApplyEffects {
 /// migration 0070 re-backfills existing rows with this corrected shape,
 /// which is what makes `Orphan` / `HasNoInboundLinks` / `MostLinked` /
 /// the `↗N` badge agree with the live backlink panel.
-async fn recompute_pages_cache_counts_for_pages(
+pub(crate) async fn recompute_pages_cache_counts_for_pages(
     conn: &mut sqlx::SqliteConnection,
     page_ids: &[String],
 ) -> Result<(), AppError> {

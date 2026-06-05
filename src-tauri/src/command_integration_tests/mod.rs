@@ -13,6 +13,7 @@ mod block_integration;
 mod common;
 mod lifecycle_integration;
 mod page_integration;
+mod pages_cache_counts;
 mod property_integration;
 mod sync_integration;
 mod tag_integration;
