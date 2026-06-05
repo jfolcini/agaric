@@ -148,6 +148,10 @@ async fn resolve_or_create_journal_page(
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.content = ?
+             -- Repeats idx_blocks_journal_date's partial-index predicate so the
+             -- planner can serve this as an index seek (audit #427). `date` is
+             -- format-validated above, so this never changes the result.
+             AND b.content LIKE '____-__-__'
              AND EXISTS (
                  SELECT 1 FROM block_properties bp
                  WHERE bp.block_id = b.id
@@ -324,8 +328,11 @@ pub async fn quick_capture_block(
 ///
 /// The query is backed by `idx_blocks_journal_date` (migration 0047), a
 /// partial index on `blocks(content)` scoped to `block_type = 'page' AND
-/// content LIKE '____-__-__'`, so the lookup is O(index) regardless of total
-/// block count.
+/// content LIKE '____-__-__'`. SQLite can only use a partial index when the
+/// query repeats the index's WHERE predicate, so the query carries the
+/// redundant `content LIKE '____-__-__'` term (the `date` arg is already
+/// format-validated, so it never changes the result set) — that makes the
+/// lookup an index seek, O(log N) regardless of total block count (audit #427).
 #[instrument(skip(pool), err)]
 pub async fn get_journal_page_by_date_inner(
     pool: &SqlitePool,
@@ -342,6 +349,10 @@ pub async fn get_journal_page_by_date_inner(
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
              AND b.content = ?
+             -- Repeats idx_blocks_journal_date's partial-index predicate so the
+             -- planner can serve this as an index seek (audit #427). `date` is
+             -- format-validated above, so this never changes the result.
+             AND b.content LIKE '____-__-__'
              AND EXISTS (
                  SELECT 1 FROM block_properties bp
                  WHERE bp.block_id = b.id
