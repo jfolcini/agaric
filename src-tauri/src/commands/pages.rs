@@ -2317,6 +2317,23 @@ fn compile_pages_filters(
 /// `?1` is the space_id bind. The compound-filter fragment (its `?` binds
 /// renumbered from `?2`) is appended after this, then the keyset / ORDER BY
 /// / LIMIT.
+///
+/// # #424 — temp-B-tree + per-row subqueries on every sort mode (measured)
+///
+/// The space-filter IN-subquery makes the planner drive off the
+/// space-membership set, so output order never matches the requested
+/// ORDER BY: every sort mode (incl. `Default`/`Alphabetical`) gets
+/// `USE TEMP B-TREE FOR ORDER BY`, the LIMIT cannot short-circuit, and
+/// the per-row `has_*` EXISTS + `MAX(op_log.created_at)` subqueries are
+/// evaluated across the whole filtered set first. The remedy (a
+/// materialised per-page `space` column / folding `has_*` into
+/// `pages_cache`) is a **schema promotion gated by AGENTS.md
+/// "Architectural Stability"** and was deferred pending a measurement.
+/// MEASURED 2026-06-05 at 20k pages: `Default` ~38 ms, `Alphabetical`
+/// ~67 ms first-page — comfortably within budget, so the promotion is
+/// not justified at this scale and stays deferred behind the
+/// `default_and_alphabetical_sort_perf_gate_20k_pages` gate (alongside
+/// the MostLinked / RecentlyModified / filtered gates).
 const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
