@@ -1120,6 +1120,75 @@ async fn test_global_task_dropped_on_queue_full() {
     mat.shutdown();
 }
 
+/// Audit #423: a PER-BLOCK reindex task (`UpdateFtsBlock`) shed when the
+/// background queue is saturated must ALSO be persisted to
+/// `materializer_retry_queue` — keyed by its real `block_id`, not the
+/// `'__GLOBAL__'` sentinel. Before the fix, only global rebuilds were
+/// persisted on the saturation path, so a shed per-block task left that
+/// block's FTS / link / tag-ref index stale until its next edit, with no
+/// self-healing (the consumer failure path never runs for tasks shed at
+/// enqueue). `bg_dropped_global` must NOT tick for a per-block task.
+#[tokio::test]
+async fn test_per_block_task_dropped_on_queue_full() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let global_before = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+
+    // Saturate the bg queue with a per-block reindex task. Push 2x
+    // capacity so the Full arm fires deterministically (consumer never
+    // gets scheduled between sync pushes).
+    let block_id: std::sync::Arc<str> = std::sync::Arc::from("BLK-FTS-SAT");
+    for _ in 0..2048 {
+        let _ = mat.try_enqueue_background(MaterializeTask::UpdateFtsBlock {
+            block_id: block_id.clone(),
+        });
+    }
+
+    let dropped = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
+    assert!(
+        dropped > 0,
+        "bg_dropped must increment when per-block tasks are shed under saturation, got {dropped}"
+    );
+
+    // The persistence happens via spawn_task; poll for the row.
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let row = sqlx::query!(
+            "SELECT block_id, task_kind FROM materializer_retry_queue \
+             WHERE block_id = 'BLK-FTS-SAT' AND task_kind = 'UpdateFtsBlock'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+        if row.is_some() {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "audit #423: dropped per-block UpdateFtsBlock must be persisted to \
+                 materializer_retry_queue keyed by its block_id; row never appeared"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // A per-block drop must not be miscounted as a global-cache drop.
+    let global_after = mat
+        .metrics()
+        .bg_dropped_global
+        .load(AtomicOrdering::Relaxed);
+    assert_eq!(
+        global_before, global_after,
+        "bg_dropped_global must not tick for a per-block task drop"
+    );
+
+    mat.shutdown();
+}
+
 /// PEND-03: a persisted global `RebuildAgendaCache` row whose
 /// `next_attempt_at` is already in the past must be re-enqueued by
 /// `sweep_once` and the row deleted from `materializer_retry_queue`.
