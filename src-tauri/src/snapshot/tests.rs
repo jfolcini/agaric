@@ -2808,6 +2808,29 @@ async fn apply_snapshot_rebuilds_caches() {
         "pages_cache must contain the rebuilt page from the snapshot; got {pages_after:?}"
     );
 
+    // #417: the RESET path enqueues the dedicated `RebuildPagesCacheCounts`
+    // task AFTER `RebuildPagesCache`, so after the full background fan-out
+    // the counts must be correct — NOT left at the DEFAULT 0 the wipe leaves
+    // behind. PAGE-1 owns one child (BLK-CHILD) and has no inbound links.
+    // This pins the ordering concern: counts depend on the page rows that
+    // `RebuildPagesCache` re-inserts first.
+    let page1_id = BlockId::test_id("PAGE-1").into_string();
+    let (page1_inbound, page1_children): (i64, i64) = sqlx::query_as(
+        "SELECT inbound_link_count, child_block_count FROM pages_cache WHERE page_id = ?",
+    )
+    .bind(&page1_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        page1_children, 1,
+        "PAGE-1 child_block_count must be recomputed to 1 after the RESET fan-out (#417)"
+    );
+    assert_eq!(
+        page1_inbound, 0,
+        "PAGE-1 inbound_link_count must be 0 after the RESET fan-out (#417)"
+    );
+
     mat.shutdown();
 }
 
@@ -3022,17 +3045,17 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
     let bg_processed_after = mat.metrics().bg_processed.load(Ordering::Relaxed);
     let bg_dropped_after = mat.metrics().bg_dropped.load(Ordering::Relaxed);
 
-    // The 8 cache-rebuild tasks (`RebuildPageIds` + 7 from
-    // `CACHE_TABLES`) plus the `Barrier` enqueued by
-    // `flush_background()` together account for at least 9 processed
-    // bg tasks. Some rebuild handlers may enqueue additional
+    // The 9 cache-rebuild tasks (`RebuildPageIds` + 7 from `CACHE_TABLES`
+    // + the #417 `RebuildPagesCacheCounts` tail) plus the `Barrier`
+    // enqueued by `flush_background()` together account for at least 9
+    // processed bg tasks. Some rebuild handlers may enqueue additional
     // bookkeeping tasks; the lower bound is what matters for the
     // regression seat.
     let processed_delta = bg_processed_after - bg_processed_before;
     assert!(
         processed_delta >= 9,
         "M-67: expected at least 9 background tasks processed after \
-         apply_snapshot + flush_background (8 cache rebuilds + 1 barrier), \
+         apply_snapshot + flush_background (9 cache rebuilds + 1 barrier), \
          got delta = {processed_delta}"
     );
 

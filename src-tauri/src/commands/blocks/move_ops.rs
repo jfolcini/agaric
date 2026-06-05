@@ -180,6 +180,23 @@ pub async fn move_block_inner(
     let op_record =
         op_log::append_local_op_in_tx(&mut tx, device_id, payload, crate::db::now_ms()).await?;
 
+    // #417: capture the moved block's OLD owning page BEFORE the move
+    // re-derives `page_id`. The affected-page set for a move is
+    //   { old owning page } ∪ { new owning page } ∪
+    //   { outbound target pages of the moved subtree }
+    // — `child_block_count` changes on both the old and new owners, and
+    // `inbound_link_count` changes on the link targets only if the moved
+    // subtree crossed into / out of those targets' own page (a same-page
+    // link does not count; the canonical recompute applies that rule).
+    // Recompute runs AFTER the move + `page_id` reprojection below so the
+    // subqueries see the new ownership.
+    let old_owning_page: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .flatten();
+
     // 5. Update blocks table within same transaction (optimistic; the
     //    materializer reprojects the authoritative dense rank from the engine).
     sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
@@ -250,6 +267,42 @@ pub async fn move_block_inner(
 
     // P-4: Recompute inherited tags for moved subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
+
+    // #417: refresh `pages_cache` counts for the affected pages WITHOUT the
+    // full-table pass. Set = old owning page ∪ new owning page ∪ outbound
+    // target pages of the moved subtree (resolved against the just-updated
+    // `page_id` + `block_links`). Bounded by the same depth-100 subtree CTE
+    // and indexed `block_links` join.
+    {
+        use std::collections::HashSet;
+        let mut affected: HashSet<String> = HashSet::new();
+        if let Some(p) = old_owning_page {
+            affected.insert(p);
+        }
+        // New owning page + outbound target pages of the moved subtree.
+        let rows = sqlx::query_scalar::<_, String>(
+            "WITH RECURSIVE subtree(id, depth) AS ( \
+                 SELECT id, 0 FROM blocks WHERE id = ?1 \
+                 UNION ALL \
+                 SELECT b.id, s.depth + 1 FROM blocks b \
+                 JOIN subtree s ON b.parent_id = s.id \
+                 WHERE b.deleted_at IS NULL AND s.depth < 100 \
+             ) \
+             SELECT DISTINCT page_id FROM blocks \
+                 WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
+             UNION \
+             SELECT DISTINCT b.page_id FROM block_links bl \
+                 JOIN blocks b ON b.id = bl.target_id \
+                 WHERE bl.source_id IN (SELECT id FROM subtree) \
+                   AND b.page_id IS NOT NULL",
+        )
+        .bind(&block_id)
+        .fetch_all(&mut **tx)
+        .await?;
+        affected.extend(rows);
+        let affected: Vec<String> = affected.into_iter().collect();
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected).await?;
+    }
 
     // 6. Commit + dispatch background cache tasks (fire-and-forget).
     tx.enqueue_background(op_record);

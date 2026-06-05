@@ -54,35 +54,51 @@ async fn apply_sort_merge_rebuild(
     .execute(&mut *write_conn)
     .await?;
 
-    // SQL/C2 (#342): the UPSERT above only writes (page_id, title,
-    // updated_at) — the two aggregate columns fall to DEFAULT 0 on every
-    // fresh insert. After a snapshot/sync RESET (which wipes `pages_cache`
-    // then re-inserts), every page would read count = 0 until an
-    // unrelated per-op edit happened to touch it, breaking MostLinked /
-    // MostContent sorts, Orphan / HasNoInboundLinks filters, and the ↗N
-    // badge. Recompute both counts for *all* rows here, reusing the exact
-    // correlated-subquery shape from the per-op
-    // `recompute_pages_cache_counts_for_pages` (the single source of
-    // truth for the two columns) with its `WHERE page_id IN (...)` clause
-    // dropped so the rebuild touches every page. Runs inside the same
-    // write tx so the cache is never observed mid-rebuild. The
-    // `rebuild_path_count_parity` test in `cache/tests.rs` asserts these
-    // values equal the per-op recompute.
-    //
-    // #432: the count UPDATE participates in `changed`. A rebuild whose
-    // title/orphan diff is empty (`upsert + delete == 0`) can still have
-    // recomputed a non-zero count delta — e.g. a content block was created
-    // under an existing page via the local command path, or a snapshot
-    // RESET re-inserted every page with the DEFAULT-0 columns. Without
-    // counting the count pass, `rebuild_pages_cache_impl` rolls the tx
-    // back when `changed == 0` and discards the recompute, leaving the
-    // counts stale/zero. The guard `WHERE inbound_link_count != (<subq>)
-    // OR child_block_count != (<subq>)` makes the UPDATE touch ONLY rows
-    // whose materialised value actually differs, so `rows_affected()` is
-    // exactly the number of pages whose counts changed — a genuine,
-    // commit-worthy diff. This also keeps `updated_at` stable: the count
-    // UPDATE never writes `updated_at`, so the M-2 recency semantic is
-    // owned solely by the title UPSERT's `WHERE title != excluded.title`.
+    // #417: the count recompute was REMOVED from this title/orphan
+    // rebuild. It used to run an UNCONDITIONAL full-table correlated-
+    // subquery UPDATE here on every `RebuildPagesCache` task — which is
+    // enqueued on every per-op page mutation (create / edit-title /
+    // delete / restore / purge / move), i.e. O(pages) correlated
+    // subqueries on every page edit. For ordinary per-op rebuilds the
+    // affected pages' counts are now maintained in-tx (sync `ApplyOp`
+    // via `maintain_pages_cache_counts_after_op`; local command paths
+    // via `recompute_pages_cache_counts_for_pages`), so the full-table
+    // pass was pure redundant work. It is only genuinely required after
+    // a snapshot/sync RESET that wiped `pages_cache` (counts default to
+    // 0), which now enqueues the dedicated `RebuildPagesCacheCounts`
+    // task (-> [`recompute_all_pages_cache_counts`]) separately.
+    Ok(upsert.rows_affected() + delete.rows_affected())
+}
+
+/// #417: full-table recompute of both `pages_cache` count columns.
+///
+/// Extracted verbatim (#432-guarded form) from the former tail of
+/// [`apply_sort_merge_rebuild`]. The correlated-subquery shape is the
+/// exact one used by the per-op
+/// [`recompute_pages_cache_counts_for_pages`](crate::materializer::recompute_pages_cache_counts_for_pages)
+/// (the single source of truth for the two columns) with its
+/// `WHERE page_id IN (...)` clause dropped so every page is touched —
+/// the `rebuild_pages_cache_recomputes_counts_c2` parity test in
+/// `cache/tests.rs` asserts these values equal the per-op recompute.
+///
+/// After a snapshot/sync RESET (which wipes `pages_cache` then
+/// re-inserts), every page would read count = 0 until an unrelated
+/// per-op edit happened to touch it, breaking MostLinked / MostContent
+/// sorts, Orphan / HasNoInboundLinks filters, and the ↗N badge. This
+/// recompute is the RESET-path repair, enqueued as the dedicated
+/// `RebuildPagesCacheCounts` task (and called by the test-only
+/// `rebuild_all_caches`).
+///
+/// #432: the guard `WHERE inbound_link_count != (<subq>) OR
+/// child_block_count != (<subq>)` makes the UPDATE touch ONLY rows whose
+/// materialised value actually differs, so `rows_affected()` is exactly
+/// the number of pages whose counts changed. This also keeps
+/// `updated_at` stable: the count UPDATE never writes `updated_at`, so
+/// the M-2 recency semantic is owned solely by the title UPSERT's
+/// `WHERE title != excluded.title`.
+pub(crate) async fn recompute_all_pages_cache_counts(
+    write_conn: &mut sqlx::SqliteConnection,
+) -> Result<u64, AppError> {
     let counts = sqlx::query!(
         "UPDATE pages_cache SET \
              inbound_link_count = ( \
@@ -121,7 +137,7 @@ async fn apply_sort_merge_rebuild(
     .execute(&mut *write_conn)
     .await?;
 
-    Ok(upsert.rows_affected() + delete.rows_affected() + counts.rows_affected())
+    Ok(counts.rows_affected())
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +174,32 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
         return Ok(0);
     }
 
+    tx.commit().await?;
+    Ok(changed)
+}
+
+// ---------------------------------------------------------------------------
+// rebuild_pages_cache_counts (#417 — RESET-only full count recompute)
+// ---------------------------------------------------------------------------
+
+/// #417: full-table recompute of `pages_cache.{inbound_link_count,
+/// child_block_count}` in its own write transaction. Background entry
+/// point for the dedicated `MaterializeTask::RebuildPagesCacheCounts`,
+/// enqueued ONLY on the snapshot/sync RESET path (after
+/// `RebuildPagesCache` re-inserts the page rows). Mirrors
+/// [`rebuild_pages_cache`]'s `begin_immediate_logged` + `rebuild_with_timing`
+/// shape but runs the count-only [`recompute_all_pages_cache_counts`].
+pub async fn rebuild_pages_cache_counts(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("pages_counts", || rebuild_pages_cache_counts_impl(pool)).await
+}
+
+async fn rebuild_pages_cache_counts_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_pages_counts_rebuild").await?;
+    let changed = recompute_all_pages_cache_counts(&mut tx).await?;
+    if changed == 0 {
+        // No count drift — transaction is rolled back on drop.
+        return Ok(0);
+    }
     tx.commit().await?;
     Ok(changed)
 }

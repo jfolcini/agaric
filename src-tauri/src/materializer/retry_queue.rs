@@ -94,6 +94,8 @@ pub(crate) enum RetryKind {
     RebuildTagsCache,
     /// Mirror of [`MaterializeTask::RebuildPagesCache`].
     RebuildPagesCache,
+    /// Mirror of [`MaterializeTask::RebuildPagesCacheCounts`] (#417).
+    RebuildPagesCacheCounts,
     /// Mirror of [`MaterializeTask::RebuildAgendaCache`].
     RebuildAgendaCache,
     /// Mirror of [`MaterializeTask::RebuildProjectedAgendaCache`].
@@ -134,6 +136,7 @@ impl RetryKind {
             Self::ReindexBlockTagRefs => Cow::Borrowed("ReindexBlockTagRefs"),
             Self::RebuildTagsCache => Cow::Borrowed("RebuildTagsCache"),
             Self::RebuildPagesCache => Cow::Borrowed("RebuildPagesCache"),
+            Self::RebuildPagesCacheCounts => Cow::Borrowed("RebuildPagesCacheCounts"),
             Self::RebuildAgendaCache => Cow::Borrowed("RebuildAgendaCache"),
             Self::RebuildProjectedAgendaCache => Cow::Borrowed("RebuildProjectedAgendaCache"),
             Self::RebuildTagInheritanceCache => Cow::Borrowed("RebuildTagInheritanceCache"),
@@ -152,6 +155,7 @@ impl RetryKind {
             "ReindexBlockTagRefs" => return Some(Self::ReindexBlockTagRefs),
             "RebuildTagsCache" => return Some(Self::RebuildTagsCache),
             "RebuildPagesCache" => return Some(Self::RebuildPagesCache),
+            "RebuildPagesCacheCounts" => return Some(Self::RebuildPagesCacheCounts),
             "RebuildAgendaCache" => return Some(Self::RebuildAgendaCache),
             "RebuildProjectedAgendaCache" => return Some(Self::RebuildProjectedAgendaCache),
             "RebuildTagInheritanceCache" => return Some(Self::RebuildTagInheritanceCache),
@@ -184,6 +188,7 @@ impl RetryKind {
             self,
             Self::RebuildTagsCache
                 | Self::RebuildPagesCache
+                | Self::RebuildPagesCacheCounts
                 | Self::RebuildAgendaCache
                 | Self::RebuildProjectedAgendaCache
                 | Self::RebuildTagInheritanceCache
@@ -218,6 +223,7 @@ impl RetryKind {
             // discarded on reconstruction.
             Self::RebuildTagsCache => Some(MaterializeTask::RebuildTagsCache),
             Self::RebuildPagesCache => Some(MaterializeTask::RebuildPagesCache),
+            Self::RebuildPagesCacheCounts => Some(MaterializeTask::RebuildPagesCacheCounts),
             Self::RebuildAgendaCache => Some(MaterializeTask::RebuildAgendaCache),
             Self::RebuildProjectedAgendaCache => Some(MaterializeTask::RebuildProjectedAgendaCache),
             Self::RebuildTagInheritanceCache => Some(MaterializeTask::RebuildTagInheritanceCache),
@@ -267,6 +273,10 @@ impl RetryKind {
             MaterializeTask::RebuildPagesCache => {
                 Some((Self::RebuildPagesCache, GLOBAL_TASK_SENTINEL.to_string()))
             }
+            MaterializeTask::RebuildPagesCacheCounts => Some((
+                Self::RebuildPagesCacheCounts,
+                GLOBAL_TASK_SENTINEL.to_string(),
+            )),
             MaterializeTask::RebuildAgendaCache => {
                 Some((Self::RebuildAgendaCache, GLOBAL_TASK_SENTINEL.to_string()))
             }

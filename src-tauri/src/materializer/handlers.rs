@@ -2861,6 +2861,13 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
+        MaterializeTask::RebuildPagesCacheCounts => {
+            // #417: count-only full-table recompute. Single-pool only —
+            // SQLite is one file regardless of split, and the recompute
+            // reads `blocks`/`block_links` and writes `pages_cache` on the
+            // same write tx (no separate reader snapshot needed).
+            cache::rebuild_pages_cache_counts(pool).await
+        }
         MaterializeTask::RebuildAgendaCache => {
             dispatch_split_or_single(
                 pool,

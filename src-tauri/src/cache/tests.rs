@@ -4703,7 +4703,12 @@ async fn rebuild_pages_cache_recomputes_counts_c2() {
         .unwrap();
     assert_eq!(pre, 0, "cache must start empty (RESET state)");
 
+    // #417: the title/orphan rebuild now only inserts the page rows with
+    // DEFAULT-0 counts; the count recompute moved to the dedicated
+    // RESET-path entry point. Mirror the production snapshot ordering:
+    // RebuildPagesCache (rows) THEN RebuildPagesCacheCounts (counts).
     rebuild_pages_cache(&pool).await.unwrap();
+    rebuild_pages_cache_counts(&pool).await.unwrap();
 
     // From-first-principles canonical counts (independent of the
     // production recompute SQL). child_block_count walks the parent tree;

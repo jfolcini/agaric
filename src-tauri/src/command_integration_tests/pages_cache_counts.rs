@@ -118,11 +118,14 @@ async fn local_content_create_maintains_pages_cache_counts() {
     );
 }
 
-/// #432 — a full `rebuild_pages_cache` whose title/orphan diff is empty must
-/// still persist the recomputed counts (it previously rolled back when
-/// `changed == 0`, discarding the count UPDATE).
+/// #432/#417 — the dedicated `rebuild_pages_cache_counts` pass (the RESET-path
+/// count recompute, #417) must persist the recomputed counts even when the
+/// `pages_cache` rows already exist and the title/orphan rebuild is a no-op.
+/// It previously rolled back when `changed == 0`, discarding the count UPDATE;
+/// #417 split the count recompute into its own `changed == 0 → rollback` guard
+/// that keys on count drift, not title drift.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rebuild_pages_cache_persists_counts_when_titles_unchanged() {
+async fn rebuild_pages_cache_counts_persists_when_titles_unchanged() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -143,15 +146,154 @@ async fn rebuild_pages_cache_persists_counts_when_titles_unchanged() {
     .unwrap();
     settle(&mat).await;
 
-    // Ensure page_ids are derived, then run pages_cache rebuild twice. The
-    // SECOND run has an empty title/orphan diff (changed==0) but must keep the
-    // counts the first run computed — not roll them back to stale/zero.
+    // Simulate the RESET repair shape: wipe the count columns to DEFAULT 0,
+    // then run RebuildPagesCache (title/orphan only — no-op here) followed by
+    // RebuildPagesCacheCounts. The counts pass must restore child_block_count
+    // to 1 despite the title rebuild having an empty diff.
+    sqlx::query("UPDATE pages_cache SET child_block_count = 0, inbound_link_count = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
     crate::cache::rebuild_page_ids(&pool).await.unwrap();
     crate::cache::rebuild_pages_cache(&pool).await.unwrap();
-    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+    crate::cache::rebuild_pages_cache_counts(&pool)
+        .await
+        .unwrap();
     let (_in, children) = read_counts(&pool, p.id.as_str()).await;
     assert_eq!(
         children, 1,
-        "child_block_count must survive a no-title-change rebuild (#432)"
+        "child_block_count must be restored by the dedicated counts pass (#417/#432)"
+    );
+}
+
+/// #417 (b) — moving a child block from page A to page B must update BOTH
+/// pages' `child_block_count` via the LOCAL move path, with NO full-table
+/// `RebuildPagesCache` count pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_move_updates_both_pages_child_counts() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let (_a_in0, a_children0) = read_counts(&pool, a.id.as_str()).await;
+    let (_b_in0, b_children0) = read_counts(&pool, b.id.as_str()).await;
+    assert_eq!(a_children0, 1, "A owns the child before the move");
+    assert_eq!(b_children0, 0, "B owns nothing before the move");
+
+    // Move the child from A to B (slot 0 under B).
+    move_block_inner(&pool, DEV, &mat, child.id.clone(), Some(b.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let (_a_in1, a_children1) = read_counts(&pool, a.id.as_str()).await;
+    let (_b_in1, b_children1) = read_counts(&pool, b.id.as_str()).await;
+    assert_eq!(
+        a_children1, 0,
+        "A.child_block_count must drop to 0 after moving its only child out"
+    );
+    assert_eq!(
+        b_children1, 1,
+        "B.child_block_count must rise to 1 after receiving the moved child"
+    );
+}
+
+/// #417 (c) — deleting a block that carries an inline `[[ULID]]` link must
+/// decrement the target page's `inbound_link_count` via the LOCAL delete
+/// path, with NO full-table `RebuildPagesCache` count pass.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_delete_of_linking_block_decrements_target_inbound() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let source = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // A content child on Source links into Target. The inbound edge is
+    // registered via the EDIT path (link extraction runs on edit, not on the
+    // initial create — see `local_content_create_maintains_pages_cache_counts`),
+    // so create plain content first, then edit in the `[[ULID]]` link.
+    let linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "see me".into(),
+        Some(source.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        linker.id.clone(),
+        format!("see [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let (t_in0, _t_ch0) = read_counts(&pool, target.id.as_str()).await;
+    assert_eq!(
+        t_in0, 1,
+        "Target inbound_link_count is 1 while the link exists"
+    );
+
+    // Delete the linking block — Target must lose the inbound edge.
+    delete_block_inner(&pool, DEV, &mat, linker.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let (t_in1, _t_ch1) = read_counts(&pool, target.id.as_str()).await;
+    assert_eq!(
+        t_in1, 0,
+        "Target inbound_link_count must drop to 0 after the linking block is deleted (#417)"
     );
 }

@@ -43,6 +43,16 @@ pub enum MaterializeTask {
     BatchApplyOps(Arc<Vec<OpRecord>>),
     RebuildTagsCache,
     RebuildPagesCache,
+    /// #417: full-table recompute of `pages_cache.{inbound_link_count,
+    /// child_block_count}`. Enqueued ONLY on the snapshot/sync RESET path
+    /// (after `RebuildPagesCache` re-inserts the page rows), where the
+    /// wipe leaves both count columns at DEFAULT 0. Ordinary per-op page
+    /// mutations maintain these counts in-tx (sync `ApplyOp` and the local
+    /// command paths) and therefore do NOT enqueue this task — that is the
+    /// whole point of #417 (the count UPDATE used to run unconditionally on
+    /// every `RebuildPagesCache`, i.e. O(pages) correlated subqueries on
+    /// every page edit).
+    RebuildPagesCacheCounts,
     RebuildAgendaCache,
     ReindexBlockLinks {
         block_id: Arc<str>,

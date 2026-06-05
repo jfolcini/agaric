@@ -514,6 +514,7 @@ mod tests {
             MaterializeTask::BatchApplyOps(_) => "BatchApplyOps".into(),
             MaterializeTask::RebuildTagsCache => "RebuildTagsCache".into(),
             MaterializeTask::RebuildPagesCache => "RebuildPagesCache".into(),
+            MaterializeTask::RebuildPagesCacheCounts => "RebuildPagesCacheCounts".into(),
             MaterializeTask::RebuildAgendaCache => "RebuildAgendaCache".into(),
             MaterializeTask::ReindexBlockLinks { block_id } => {
                 format!("ReindexBlockLinks({block_id})")
@@ -713,6 +714,47 @@ mod tests {
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(P1)".into());
         assert_eq!(labels(&tasks), want);
+    }
+
+    /// #417 — the full-table `RebuildPagesCacheCounts` recompute is a
+    /// RESET-only repair (enqueued by `apply_snapshot`). NO per-op
+    /// invalidation fan-out — for ANY op type, with or without a block-type
+    /// hint — may enqueue it; per-op count maintenance happens in-tx on the
+    /// sync `ApplyOp` and local command paths. This pins the gate: a future
+    /// edit that re-adds the full-table pass to a per-op trigger (the exact
+    /// O(pages) regression #417 removed) fails here.
+    #[test]
+    fn no_per_op_invalidation_enqueues_rebuild_pages_cache_counts() {
+        let probe = MaterializeTask::RebuildPagesCacheCounts;
+        let cases: &[(&str, &str, Option<&str>)] = &[
+            (
+                "create_block",
+                r#"{"block_id":"X1","block_type":"page"}"#,
+                None,
+            ),
+            (
+                "create_block",
+                r#"{"block_id":"X2","block_type":"content"}"#,
+                None,
+            ),
+            ("edit_block", r#"{"block_id":"X3"}"#, Some("page")),
+            ("edit_block", r#"{"block_id":"X4"}"#, Some("content")),
+            ("edit_block", r#"{"block_id":"X5"}"#, None),
+            ("delete_block", r#"{"block_id":"X6"}"#, None),
+            ("restore_block", r#"{"block_id":"X7"}"#, None),
+            ("purge_block", r#"{"block_id":"X8"}"#, None),
+            ("move_block", r#"{"block_id":"X9"}"#, None),
+        ];
+        for (op_type, payload, hint) in cases {
+            let r = make_record(op_type, payload, Some("XID"));
+            let tasks = invalidations_for_op(&r, *hint).unwrap();
+            assert!(
+                !contains_kind(&tasks, &probe),
+                "op `{op_type}` (hint {hint:?}) must NOT enqueue RebuildPagesCacheCounts \
+                 — it is a RESET-only task (#417); got {:?}",
+                labels(&tasks),
+            );
+        }
     }
 
     // ── tag mutations ────────────────────────────────────────────────
