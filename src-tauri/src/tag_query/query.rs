@@ -32,56 +32,181 @@ pub async fn eval_tag_query(
     space_id: Option<&str>,
     block_type: Option<&str>,
 ) -> Result<PageResponse<ActiveBlockRow>, AppError> {
-    let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
-    if block_ids.is_empty() {
-        return Ok(PageResponse {
-            items: vec![],
-            next_cursor: None,
-            has_more: false,
-            total_count: None,
-        });
+    // #414 — pushed-down fast path for the two LEAF expression kinds.
+    // For a single `Tag` / `Prefix` the candidate set is exactly the
+    // UNION subquery owned by `resolve_tag_leaves` /
+    // `resolve_tag_prefix_leaves`. Computing it as an `IN (<subquery>)`
+    // inside SQLite — instead of materialising the FULL `FxHashSet` of
+    // every matching id into Rust, serialising it to a multi-hundred-KB
+    // JSON string, and re-parsing it via `json_each(?)` on EVERY page —
+    // means only one page of rows is ever produced. The subquery is a
+    // fixed string literal; `tag_id` / the LIKE pattern are BOUND, so
+    // there is no user interpolation. The `And`/`Or`/`Not` variants stay
+    // on the existing resolve-then-`json_each` path verbatim.
+    let (query_str, candidate_binds): (String, Vec<String>) = match expr {
+        TagExpr::Tag(tag_id) => {
+            let candidate_clause = tag_leaf_candidate_clause(include_inherited);
+            // tag_id is bound once per UNION arm (2 arms non-inherited,
+            // 3 arms inherited).
+            let arms = if include_inherited { 3 } else { 2 };
+            let binds = std::iter::repeat_n(tag_id.clone(), arms).collect();
+            (build_projection_sql(candidate_clause), binds)
+        }
+        TagExpr::Prefix(prefix) => {
+            let escaped = format!("{}%", escape_like(prefix));
+            let candidate_clause = prefix_leaf_candidate_clause(include_inherited);
+            // The LIKE pattern is bound once per UNION arm.
+            let arms = if include_inherited { 3 } else { 2 };
+            let binds = std::iter::repeat_n(escaped, arms).collect();
+            (build_projection_sql(candidate_clause), binds)
+        }
+        TagExpr::And(_) | TagExpr::Or(_) | TagExpr::Not(_) => {
+            let block_ids: FxHashSet<String> = resolve_expr(pool, expr, include_inherited).await?;
+            if block_ids.is_empty() {
+                return Ok(PageResponse {
+                    items: vec![],
+                    next_cursor: None,
+                    has_more: false,
+                    total_count: None,
+                });
+            }
+            // Issue #112 sub-item 1 — push the candidate-ID sort + cursor
+            // walk down into SQL. The resolver hands us an `FxHashSet`, so
+            // we hand SQLite a JSON-array of the IDs via `json_each(?)`,
+            // and let the database do the ordering, cursor filter
+            // (`id > ?`), and limit in one paginated read.
+            let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
+            let json_ids = serde_json::to_string(&id_vec)?;
+            (
+                build_projection_sql("b.id IN (SELECT value FROM json_each(?))"),
+                vec![json_ids],
+            )
+        }
+    };
+
+    let projection = ProjectionParams {
+        space_id,
+        block_type,
+        page,
+    };
+    run_projection(pool, &query_str, projection, &candidate_binds).await
+}
+
+/// Parameters shared by every projection (the filters that are identical
+/// across the json_each path and the #414 pushed-down leaf path).
+struct ProjectionParams<'a> {
+    space_id: Option<&'a str>,
+    block_type: Option<&'a str>,
+    page: &'a PageRequest,
+}
+
+/// Candidate-set subquery for a single `TagExpr::Tag` leaf. Mirrors
+/// `resolve_tag_leaves` (resolve.rs) EXACTLY: `block_tags` ∪
+/// `block_tag_refs` (∪ `block_tag_inherited` when inherited), each arm
+/// joining `blocks` and filtering `b.deleted_at IS NULL`. `tag_id` is
+/// bound once per arm (caller binds 2 non-inherited / 3 inherited).
+fn tag_leaf_candidate_clause(include_inherited: bool) -> &'static str {
+    if include_inherited {
+        "b.id IN ( \
+            SELECT bt.block_id \
+            FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
+            WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
+            UNION \
+            SELECT btr.source_id \
+            FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
+            WHERE btr.tag_id = ? AND b.deleted_at IS NULL \
+            UNION \
+            SELECT bti.block_id \
+            FROM block_tag_inherited bti JOIN blocks b ON b.id = bti.block_id \
+            WHERE bti.tag_id = ? AND b.deleted_at IS NULL)"
+    } else {
+        "b.id IN ( \
+            SELECT bt.block_id \
+            FROM block_tags bt JOIN blocks b ON b.id = bt.block_id \
+            WHERE bt.tag_id = ? AND b.deleted_at IS NULL \
+            UNION \
+            SELECT btr.source_id \
+            FROM block_tag_refs btr JOIN blocks b ON b.id = btr.source_id \
+            WHERE btr.tag_id = ? AND b.deleted_at IS NULL)"
     }
+}
 
-    // Issue #112 sub-item 1 — push the candidate-ID sort + cursor walk
-    // down into SQL. The resolver hands us an `FxHashSet`, so we hand
-    // SQLite a JSON-array of the IDs via `json_each(?)`, and let the
-    // database do the ordering, cursor filter (`id > ?`), and limit in
-    // one paginated read. Replaces the previous "collect → sort → slice
-    // → second query" round-trip.
-    let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
-    let json_ids = serde_json::to_string(&id_vec)?;
-    let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    // page.limit is a validated positive pagination bound; safe to convert
-    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
-    // Fetch `limit + 1` so we can detect `has_more` without a separate
-    // count query — mirrors the pre-pushdown behaviour.
-    let fetch_limit = page.limit.saturating_add(1);
+/// Candidate-set subquery for a single `TagExpr::Prefix` leaf. Mirrors
+/// `resolve_tag_prefix_leaves` (resolve.rs) EXACTLY: same UNION shape as
+/// the tag leaf but joining `tags_cache tc` with
+/// `tc.name LIKE ? ESCAPE '\'` and `SELECT DISTINCT`. The LIKE pattern
+/// is bound once per arm (caller binds 2 non-inherited / 3 inherited).
+fn prefix_leaf_candidate_clause(include_inherited: bool) -> &'static str {
+    if include_inherited {
+        "b.id IN ( \
+            SELECT DISTINCT bt.block_id \
+            FROM tags_cache tc \
+            JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+            JOIN blocks b ON b.id = bt.block_id \
+            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+            UNION \
+            SELECT DISTINCT btr.source_id \
+            FROM tags_cache tc \
+            JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+            JOIN blocks b ON b.id = btr.source_id \
+            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+            UNION \
+            SELECT DISTINCT bti.block_id \
+            FROM tags_cache tc \
+            JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
+            JOIN blocks b ON b.id = bti.block_id \
+            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL)"
+    } else {
+        "b.id IN ( \
+            SELECT DISTINCT bt.block_id \
+            FROM tags_cache tc \
+            JOIN block_tags bt ON bt.tag_id = tc.tag_id \
+            JOIN blocks b ON b.id = bt.block_id \
+            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL \
+            UNION \
+            SELECT DISTINCT btr.source_id \
+            FROM tags_cache tc \
+            JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
+            JOIN blocks b ON b.id = btr.source_id \
+            WHERE tc.name LIKE ? ESCAPE '\\' AND b.deleted_at IS NULL)"
+    }
+}
 
-    // I-Search-14: defense-in-depth — `cache::rebuild_tags_cache` and the
-    // production tag-resolve paths already exclude soft-deleted rows
-    // at the leaves, but making the dependency explicit in the final
-    // projection means a future change to `resolve_expr` (e.g. a new
-    // `TagExpr` variant that re-includes the universe) cannot
-    // accidentally surface a soft-deleted row in the response.
-    // Mirrors the `deleted_at IS NULL` filter used in
-    // `cache::rebuild_tags_cache` and other production read paths.
-    //
-    // FEAT-3p4 — the `(? IS NULL OR b.page_id IN (…))` clause
-    // mirrors `crate::space_filter_clause!`. Resolves the candidate
-    // block to its owning page via `b.page_id` and intersects against
-    // `block_properties(key = 'space').value_ref` when `space_id` is
-    // `Some`. The single `?` placeholder is bound twice (NULL guard +
-    // value comparison) to keep the short-circuit.
-    // PEND-35 Tier 3.4 — `(? IS NULL OR b.block_type = ?)` push-down so
-    // GraphView's `pagesResp.items.filter(p => p.block_type === 'page')`
-    // post-filter is replaced by a SQL clause.
-    // Issue #112 sub-item 1 — `(? IS NULL OR b.id > ?)` is the cursor
-    // walk; combined with `ORDER BY b.id ASC LIMIT ?` it replaces the
-    // Rust-side sort/slice that used to live above.
-    let query_str = format!(
+/// Build the paginated projection SELECT for a given candidate clause.
+///
+/// `candidate_clause` is the predicate that selects the candidate block
+/// set — either `b.id IN (SELECT value FROM json_each(?))` (the
+/// resolve-then-project path for And/Or/Not) or a pushed-down
+/// `b.id IN (<UNION subquery>)` for the #414 leaf fast path. It is a
+/// fixed string literal in every caller (no user interpolation; all
+/// values are BOUND), so the assembled SQL is injection-safe.
+///
+/// Every projection filter is identical regardless of candidate source:
+///
+/// I-Search-14: defense-in-depth — the leaf SQL already excludes
+/// soft-deleted rows, but the explicit `b.deleted_at IS NULL` here means
+/// a future candidate clause that re-includes the universe cannot
+/// surface a soft-deleted row.
+///
+/// FEAT-3p4 — `(? IS NULL OR b.page_id IN (…))` mirrors
+/// `crate::space_filter_clause!`; the single `?` is bound twice (NULL
+/// guard + value comparison) to keep the short-circuit.
+///
+/// PEND-35 Tier 3.4 — `(? IS NULL OR b.block_type = ?)` push-down.
+///
+/// Issue #112 sub-item 1 — `(? IS NULL OR b.id > ?)` is the cursor walk;
+/// combined with `ORDER BY b.id ASC LIMIT ?` it replaces the Rust-side
+/// sort/slice.
+fn build_projection_sql(candidate_clause: &str) -> String {
+    // NB: use the positional `{}` placeholder (not a named `{cols}`) for the
+    // BLOCK_ROW_RUNTIME_SELECT interpolation — the
+    // `block_row_canonical_runtime_sites_match_canonical_columns` drift guard
+    // matches the canonical positional placeholder shape across every runtime
+    // BlockRow projection site, and a named placeholder slips past it.
+    format!(
         "SELECT {} \
          FROM blocks b \
-         WHERE b.id IN (SELECT value FROM json_each(?)) \
+         WHERE {candidate_clause} \
            AND b.deleted_at IS NULL \
            AND (? IS NULL OR b.page_id IN ( \
                 SELECT bp.block_id FROM block_properties bp \
@@ -91,24 +216,49 @@ pub async fn eval_tag_query(
          ORDER BY b.id ASC \
          LIMIT ?",
         crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
-    );
+    )
+}
+
+/// Bind the candidate-specific parameters (`candidate_binds`, in
+/// placeholder order), then the shared projection filters, run the query,
+/// and apply the `fetch_limit = limit + 1` / truncate / has_more /
+/// next_cursor logic.
+///
+/// `candidate_binds` is the ordered list of values for the placeholders
+/// in the candidate clause: the single json string for the And/Or/Not
+/// path, or `tag_id` / the LIKE pattern repeated once per UNION arm for
+/// the #414 leaf paths. The shared filter binds (space, block_type,
+/// cursor, limit) are applied here so they cannot drift between paths.
+async fn run_projection<'a>(
+    pool: &SqlitePool,
+    query_str: &'a str,
+    params: ProjectionParams<'a>,
+    candidate_binds: &[String],
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    let page = params.page;
+    let start_after = page.after.as_ref().map(|c| c.id.as_str());
+    // page.limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
+    // Fetch `limit + 1` so we can detect `has_more` without a separate
+    // count query — mirrors the pre-pushdown behaviour.
+    let fetch_limit = page.limit.saturating_add(1);
+
     // MAINT-113 M2 — query the rows as ActiveBlockRow directly. The SQL
-    // filters `deleted_at IS NULL`, so every row sqlx hydrates is
-    // active. The `id as "id: ActiveBlockId"` cast is implicit —
-    // sqlx::query_as calls FromRow which decodes via `sqlx::Type` for
-    // ActiveBlockId (transparent over String).
-    let mut items: Vec<ActiveBlockRow> =
-        sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str.as_str()))
-            .bind(&json_ids)
-            .bind(space_id)
-            .bind(space_id)
-            .bind(block_type)
-            .bind(block_type)
-            .bind(start_after)
-            .bind(start_after)
-            .bind(fetch_limit)
-            .fetch_all(pool)
-            .await?;
+    // filters `deleted_at IS NULL`, so every row sqlx hydrates is active.
+    let mut q = sqlx::query_as::<_, ActiveBlockRow>(sqlx::AssertSqlSafe(query_str));
+    for v in candidate_binds {
+        q = q.bind(v);
+    }
+    let mut items: Vec<ActiveBlockRow> = q
+        .bind(params.space_id)
+        .bind(params.space_id)
+        .bind(params.block_type)
+        .bind(params.block_type)
+        .bind(start_after)
+        .bind(start_after)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await?;
 
     let has_more = items.len() > limit_usize;
     if has_more {
@@ -697,5 +847,302 @@ mod tests {
              defensive `deleted_at IS NULL` filter on the final \
              projection (I-Search-14)"
         );
+    }
+
+    // ----------------------------------------------------------------
+    // #414 — pushed-down leaf fast-path differential tests.
+    //
+    // These pin that the SQL-side `IN (<UNION subquery>)` fast path for
+    // `TagExpr::Tag` / `TagExpr::Prefix` returns results IDENTICAL to the
+    // OLD `resolve_expr` + `json_each(?)` projection, across the full
+    // {inherited} × {space} × {block_type} × {pagination} matrix.
+    // ----------------------------------------------------------------
+
+    async fn insert_tag_ref(pool: &SqlitePool, source_id: &str, tag_id: &str) {
+        sqlx::query("INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)")
+            .bind(source_id)
+            .bind(tag_id)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    /// Reference projection: replicate the OLD behaviour exactly — take
+    /// the FULL id set from `resolve_expr`, serialise it to JSON, and run
+    /// the same `json_each(?)` projection (same space / block_type /
+    /// cursor / ORDER BY / LIMIT and the same has_more/cursor logic). This
+    /// is the oracle the new fast path must match bit-for-bit.
+    async fn reference_eval(
+        pool: &SqlitePool,
+        expr: &TagExpr,
+        page: &PageRequest,
+        include_inherited: bool,
+        space_id: Option<&str>,
+        block_type: Option<&str>,
+    ) -> PageResponse<ActiveBlockRow> {
+        let block_ids: FxHashSet<String> =
+            resolve_expr(pool, expr, include_inherited).await.unwrap();
+        if block_ids.is_empty() {
+            return PageResponse {
+                items: vec![],
+                next_cursor: None,
+                has_more: false,
+                total_count: None,
+            };
+        }
+        let id_vec: Vec<&str> = block_ids.iter().map(String::as_str).collect();
+        let json_ids = serde_json::to_string(&id_vec).unwrap();
+        let query_str = build_projection_sql("b.id IN (SELECT value FROM json_each(?))");
+        let projection = ProjectionParams {
+            space_id,
+            block_type,
+            page,
+        };
+        run_projection(pool, &query_str, projection, &[json_ids])
+            .await
+            .unwrap()
+    }
+
+    /// Page through `eval_tag_query` (the fast path under test) and the
+    /// reference oracle with the same params, concatenating ids across
+    /// pages, and assert per-page has_more/next_cursor AND the
+    /// concatenated id sequence match exactly.
+    async fn assert_fast_path_matches_reference(
+        pool: &SqlitePool,
+        expr: &TagExpr,
+        include_inherited: bool,
+        space_id: Option<&str>,
+        block_type: Option<&str>,
+        page_size: i64,
+    ) {
+        let label = format!(
+            "expr={expr:?} inherited={include_inherited} space={space_id:?} \
+             block_type={block_type:?} page_size={page_size}"
+        );
+
+        let mut fast_ids: Vec<String> = Vec::new();
+        let mut ref_ids: Vec<String> = Vec::new();
+        let mut fast_cursor: Option<String> = None;
+        let mut ref_cursor: Option<String> = None;
+        // Bound the loop well above any seeded result set to catch a
+        // runaway (non-terminating) cursor walk.
+        for _ in 0..1000 {
+            let fast_page = PageRequest::new(fast_cursor.clone(), Some(page_size)).unwrap();
+            let ref_page = PageRequest::new(ref_cursor.clone(), Some(page_size)).unwrap();
+            let fast = eval_tag_query(
+                pool,
+                expr,
+                &fast_page,
+                include_inherited,
+                space_id,
+                block_type,
+            )
+            .await
+            .unwrap();
+            let reference = reference_eval(
+                pool,
+                expr,
+                &ref_page,
+                include_inherited,
+                space_id,
+                block_type,
+            )
+            .await;
+
+            let fast_page_ids: Vec<String> = fast
+                .items
+                .iter()
+                .map(|r| r.id.as_str().to_string())
+                .collect();
+            let ref_page_ids: Vec<String> = reference
+                .items
+                .iter()
+                .map(|r| r.id.as_str().to_string())
+                .collect();
+            assert_eq!(
+                fast_page_ids, ref_page_ids,
+                "per-page ids diverge ({label})"
+            );
+            assert_eq!(
+                fast.has_more, reference.has_more,
+                "has_more diverges ({label})"
+            );
+            assert_eq!(
+                fast.next_cursor, reference.next_cursor,
+                "next_cursor diverges ({label})"
+            );
+
+            fast_ids.extend(fast_page_ids);
+            ref_ids.extend(ref_page_ids);
+
+            if !fast.has_more {
+                break;
+            }
+            fast_cursor = fast.next_cursor;
+            ref_cursor = reference.next_cursor;
+        }
+
+        assert_eq!(
+            fast_ids, ref_ids,
+            "concatenated ids across all pages diverge ({label})"
+        );
+    }
+
+    /// Seed a dataset exercising block_tags AND block_tag_refs AND
+    /// inheritance, with a couple of blocks parked in a space and a mix
+    /// of block_types, plus a soft-deleted tagged block. Returns the
+    /// space id used.
+    async fn seed_differential_dataset(pool: &SqlitePool) -> String {
+        let space = "01DIFFSPACE0000000000000001";
+        ensure_space_block(pool, space).await;
+
+        // Tag block + tags_cache row so the Prefix path resolves it.
+        insert_block(pool, "TAG_DIFF", "tag", "work/meeting").await;
+        insert_tag_cache(pool, "TAG_DIFF", "work/meeting", 0).await;
+
+        // Direct (block_tags) associations — mix of block_type and space.
+        for suffix in &["A", "B", "C", "D", "E"] {
+            let id = format!("DBLK_{suffix}");
+            insert_block(pool, &id, "content", &format!("direct {suffix}")).await;
+            insert_tag_assoc(pool, &id, "TAG_DIFF").await;
+        }
+        // A 'page'-typed direct block (exercises block_type filter).
+        insert_block(pool, "DPAGE_1", "page", "direct page").await;
+        insert_tag_assoc(pool, "DPAGE_1", "TAG_DIFF").await;
+
+        // Inline-ref-only association (no block_tags row) — the easiest
+        // semantic to get wrong; must appear via the block_tag_refs arm.
+        insert_block(pool, "RBLK_ONLY", "content", "ref only").await;
+        insert_tag_ref(pool, "RBLK_ONLY", "TAG_DIFF").await;
+
+        // Block associated via BOTH block_tags and block_tag_refs — must
+        // not be duplicated.
+        insert_block(pool, "BOTH_BLK", "content", "both").await;
+        insert_tag_assoc(pool, "BOTH_BLK", "TAG_DIFF").await;
+        insert_tag_ref(pool, "BOTH_BLK", "TAG_DIFF").await;
+
+        // Inheritance: a tagged page with children — children are only in
+        // the result set when include_inherited=true.
+        insert_block(pool, "IPAGE", "page", "inherited page").await;
+        insert_tag_assoc(pool, "IPAGE", "TAG_DIFF").await;
+        for suffix in &["I1", "I2", "I3"] {
+            insert_child_block(pool, suffix, "content", &format!("child {suffix}"), "IPAGE").await;
+        }
+        crate::tag_inheritance::rebuild_all(pool).await.unwrap();
+
+        // Space-scoped blocks: assign a couple of result blocks' owning
+        // page into `space` so the space filter is non-trivial. The space
+        // filter matches on `b.page_id`'s `space` property; give DBLK_A
+        // and BOTH_BLK a page_id pointing at a space-scoped page.
+        insert_block(pool, "SPACE_PAGE", "page", "space page").await;
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
+        )
+        .bind("SPACE_PAGE")
+        .bind(&space)
+        .execute(pool)
+        .await
+        .unwrap();
+        for id in &["DBLK_A", "BOTH_BLK"] {
+            sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+                .bind("SPACE_PAGE")
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+        }
+
+        // Soft-deleted tagged block — must be excluded on every path.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, deleted_at) \
+             VALUES ('DEL_BLK', 'content', 'gone', 1736942400000)",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        insert_tag_assoc(pool, "DEL_BLK", "TAG_DIFF").await;
+
+        space.to_string()
+    }
+
+    #[tokio::test]
+    async fn fast_path_matches_reference_full_matrix() {
+        let (pool, _dir) = test_pool().await;
+        let space = seed_differential_dataset(&pool).await;
+
+        let tag = TagExpr::Tag("TAG_DIFF".into());
+        let prefix = TagExpr::Prefix("work/".into());
+
+        // {Tag, Prefix} × {inherited} × {space} × {block_type} × pages.
+        // Page sizes 1, 2, 3 force multi-page walks over the ~13-row set.
+        for expr in [&tag, &prefix] {
+            for inherited in [false, true] {
+                for space_id in [None, Some(space.as_str())] {
+                    for block_type in [None, Some("content")] {
+                        for page_size in [1_i64, 2, 3] {
+                            assert_fast_path_matches_reference(
+                                &pool, expr, inherited, space_id, block_type, page_size,
+                            )
+                            .await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A block associated to the tag ONLY via `block_tag_refs` (inline
+    /// ref, no `block_tags` row) MUST appear in the fast-path result —
+    /// this is the easiest UX-250 union semantic to drop.
+    #[tokio::test]
+    async fn fast_path_includes_block_tag_refs_only_block() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_R", "tag", "refonly").await;
+        insert_tag_cache(&pool, "TAG_R", "refonly", 0).await;
+        // No block_tags row for RONLY — only an inline ref.
+        insert_block(&pool, "RONLY", "content", "ref-only block").await;
+        insert_tag_ref(&pool, "RONLY", "TAG_R").await;
+
+        let page = PageRequest::new(None, Some(10)).unwrap();
+
+        // Tag leaf, both inherited modes (refs arm is present in both).
+        for inherited in [false, true] {
+            let resp = eval_tag_query(
+                &pool,
+                &TagExpr::Tag("TAG_R".into()),
+                &page,
+                inherited,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+            assert_eq!(
+                ids,
+                vec!["RONLY"],
+                "Tag fast path must include a block_tag_refs-only block \
+                 (inherited={inherited})"
+            );
+
+            // Prefix leaf, same assertion.
+            let resp = eval_tag_query(
+                &pool,
+                &TagExpr::Prefix("ref".into()),
+                &page,
+                inherited,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+            let ids: Vec<&str> = resp.items.iter().map(|b| b.id.as_str()).collect();
+            assert_eq!(
+                ids,
+                vec!["RONLY"],
+                "Prefix fast path must include a block_tag_refs-only \
+                 block (inherited={inherited})"
+            );
+        }
     }
 }
