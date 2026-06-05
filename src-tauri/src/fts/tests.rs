@@ -3739,7 +3739,7 @@ async fn update_fts_for_block_with_maps_matches_wrapper_output() {
             .unwrap();
 
     // Path 2: explicit map load + _with_maps. Must produce the same row.
-    let (tag_names, page_titles) = crate::fts::load_ref_maps(&pool).await.unwrap();
+    let (tag_names, page_titles) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
     crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
         .await
         .unwrap();
@@ -3777,12 +3777,108 @@ async fn update_fts_for_block_with_maps_matches_wrapper_output() {
     );
 }
 
+/// Audit #418 — `load_ref_maps_for_block` must return maps scoped to ONLY the
+/// references in the given block's content, not the whole vault's tags/pages
+/// (which `load_ref_maps` does). It must also produce the same FTS output as
+/// the full-scan loader for the block's own refs.
+#[tokio::test]
+async fn load_ref_maps_for_block_is_scoped_to_block_refs() {
+    const TAG_ULID_2: &str = "01HQTAG000000000000000TAG2";
+    const PAGE_ULID_2: &str = "01HQPAGE00000000000000PG02";
+    let (pool, _dir) = test_pool().await;
+
+    // Two tags + two pages exist in the vault; the block references only one of
+    // each.
+    insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+    insert_block(&pool, TAG_ULID_2, "tag", "someday", None, None).await;
+    insert_block(&pool, PAGE_ULID, "page", "My Page", None, None).await;
+    insert_block(&pool, PAGE_ULID_2, "page", "Other Page", None, None).await;
+
+    let content = format!("see [[{PAGE_ULID}]] and tag #[{TAG_ULID}]");
+    insert_block(&pool, BLOCK_A, "content", &content, None, Some(0)).await;
+
+    let (tag_names, page_titles) = crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
+        .await
+        .unwrap();
+
+    // Scoped: exactly the one referenced tag and page, NOT the unreferenced ones.
+    assert_eq!(tag_names.len(), 1, "only the referenced tag must be loaded");
+    assert_eq!(tag_names.get(TAG_ULID).map(String::as_str), Some("urgent"));
+    assert!(
+        !tag_names.contains_key(TAG_ULID_2),
+        "unreferenced tag must NOT be loaded"
+    );
+    assert_eq!(
+        page_titles.len(),
+        1,
+        "only the referenced page must be loaded"
+    );
+    assert_eq!(
+        page_titles.get(PAGE_ULID).map(String::as_str),
+        Some("My Page")
+    );
+    assert!(
+        !page_titles.contains_key(PAGE_ULID_2),
+        "unreferenced page must NOT be loaded"
+    );
+
+    // The scoped maps must produce the same fts output as the full-scan loader.
+    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
+        .await
+        .unwrap();
+    let scoped_stripped: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let (all_tags, all_pages) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
+    crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &all_tags, &all_pages)
+        .await
+        .unwrap();
+    let full_stripped: String =
+        sqlx::query_scalar("SELECT stripped FROM fts_blocks WHERE block_id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        scoped_stripped, full_stripped,
+        "scoped loader must yield identical fts output to the full-scan loader"
+    );
+}
+
+/// Audit #418 — a block with no inline refs loads empty maps (no DB scan).
+#[tokio::test]
+async fn load_ref_maps_for_block_empty_for_no_refs() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+    insert_block(
+        &pool,
+        BLOCK_A,
+        "content",
+        "plain text, no refs",
+        None,
+        Some(0),
+    )
+    .await;
+
+    let (tag_names, page_titles) = crate::fts::load_ref_maps_for_block(&pool, BLOCK_A)
+        .await
+        .unwrap();
+    assert!(
+        tag_names.is_empty() && page_titles.is_empty(),
+        "a ref-free block must load empty maps (no whole-vault scan)"
+    );
+}
+
 #[tokio::test]
 async fn update_fts_for_block_with_maps_removes_deleted_block() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, BLOCK_A, "content", "text body", None, Some(0)).await;
-    let (tag_names, page_titles) = crate::fts::load_ref_maps(&pool).await.unwrap();
+    let (tag_names, page_titles) = crate::fts::strip::load_ref_maps(&pool).await.unwrap();
     crate::fts::update_fts_for_block_with_maps(&pool, BLOCK_A, &tag_names, &page_titles)
         .await
         .unwrap();

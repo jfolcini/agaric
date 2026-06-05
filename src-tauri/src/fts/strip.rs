@@ -277,3 +277,79 @@ pub(crate) async fn load_ref_maps(
 
     Ok((tag_names, page_titles))
 }
+
+/// Load tag-name and page-title maps scoped to ONLY the references that
+/// appear in `block_id`'s own content.
+///
+/// Audit #418 — the per-block `UpdateFtsBlock` path previously called
+/// [`load_ref_maps`], which scans every `page` and `tag` block in the vault
+/// into a `HashMap` on *every single edited block* (O(pages + tags) per
+/// edit). A block only references the handful of tags/pages in its own
+/// content, so this extracts those ids (via [`TAG_REF_RE`] / [`PAGE_LINK_RE`],
+/// the same patterns `strip_for_fts_with_maps` resolves) and fetches only
+/// those rows with the same `deleted_at IS NULL` filter `load_ref_maps`
+/// applies — turning two full-table scans into two bounded `id IN (…)` seeks.
+///
+/// The returned maps plug into [`strip_for_fts_with_maps`] unchanged, so NFC
+/// normalisation and conflict-row filtering are preserved. Extracting the ids
+/// from the raw content (before markup stripping) yields a superset of the
+/// refs the strip pass resolves — markup stripping never removes a `#[ULID]`
+/// / `[[ULID]]` token — and a superset is harmless (unused map entries are
+/// never looked up).
+pub(crate) async fn load_ref_maps_for_block(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(HashMap<String, String>, HashMap<String, String>), AppError> {
+    let content: Option<String> =
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = ?", block_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let Some(content) = content else {
+        return Ok((HashMap::new(), HashMap::new()));
+    };
+
+    let tag_ids: Vec<String> = TAG_REF_RE
+        .captures_iter(&content)
+        .map(|cap| cap[1].to_string())
+        .collect();
+    let tag_names: HashMap<String, String> = if tag_ids.is_empty() {
+        HashMap::new()
+    } else {
+        let ids_json = serde_json::to_string(&tag_ids)?;
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, content FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             AND block_type = 'tag' AND deleted_at IS NULL",
+        )
+        .bind(&ids_json)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .filter_map(|(id, content)| content.map(|c| (id, c)))
+        .collect()
+    };
+
+    let page_ids: Vec<String> = PAGE_LINK_RE
+        .captures_iter(&content)
+        .map(|cap| cap[1].to_string())
+        .collect();
+    let page_titles: HashMap<String, String> = if page_ids.is_empty() {
+        HashMap::new()
+    } else {
+        let ids_json = serde_json::to_string(&page_ids)?;
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT id, content FROM blocks \
+             WHERE id IN (SELECT value FROM json_each(?1)) \
+             AND block_type = 'page' AND deleted_at IS NULL",
+        )
+        .bind(&ids_json)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .filter_map(|(id, content)| content.map(|c| (id, c)))
+        .collect()
+    };
+
+    Ok((tag_names, page_titles))
+}
