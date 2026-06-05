@@ -36,6 +36,17 @@
 //! is deliberately out of scope — `stripped` is an NFC-normalised, markup- and
 //! reference-resolved *projection* of `blocks.content`, not the verbatim
 //! column, so it has no external-content source to point at.
+//!
+//! ## Per-block index-size cap (#435)
+//!
+//! `fts_blocks` is a standalone trigram FTS5 table, so it stores `stripped` in
+//! a shadow content table AND a trigram index (~3x) — each block's indexed
+//! text is duplicated and expanded. To keep one pathological pasted block from
+//! dominating the index on memory-constrained mobile, `strip_for_fts_with_maps`
+//! caps the per-block indexed text at `FTS_MAX_INDEXED_BYTES`. Migration
+//! `0006`'s "negligible (<100k blocks)" size framing predates this cap and is
+//! superseded by it — but cannot be corrected in place (migrations are
+//! append-only / checksummed), so this note is the authoritative one.
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 

@@ -260,6 +260,35 @@ fn strip_with_maps_unknown_refs_empty() {
     );
 }
 
+/// #435 — a pathological multi-MB block must have its FTS-indexed text capped
+/// (UTF-8-safe), so one giant paste cannot dominate the trigram index. A normal
+/// block is returned unchanged.
+#[test]
+fn strip_caps_pathological_block_indexed_length() {
+    let tag_names = HashMap::new();
+    let page_titles = HashMap::new();
+
+    // A small block is untouched.
+    let small = strip_for_fts_with_maps("just a normal note", &tag_names, &page_titles);
+    assert_eq!(small, "just a normal note");
+
+    // A 1 MB multibyte block (`é` = 2 bytes) is capped at a char boundary.
+    let big = "é".repeat(512 * 1024); // 1 MiB of valid UTF-8
+    let capped = strip_for_fts_with_maps(&big, &tag_names, &page_titles);
+    assert!(
+        capped.len() <= 128 * 1024,
+        "indexed text must be capped at 128 KiB; got {}",
+        capped.len()
+    );
+    assert!(
+        capped.len() > 128 * 1024 - 8,
+        "cap should keep close to the full budget; got {}",
+        capped.len()
+    );
+    // Truncation must land on a UTF-8 boundary (no panic / no replacement char).
+    assert!(capped.chars().all(|c| c == 'é'));
+}
+
 // ======================================================================
 // update_fts_for_block tests
 // ======================================================================

@@ -228,7 +228,37 @@ pub(crate) fn strip_for_fts_with_maps(
     // query (the default for typed input on most platforms) would
     // otherwise miss NFD-indexed content. The pair to this is the
     // query-time NFC normalisation in `sanitize_fts_query`.
-    nfc_normalise(&result)
+    //
+    // #435 — cap the per-block indexed text. `fts_blocks` is a STANDALONE
+    // trigram FTS5 table (migration `0006`): it stores `stripped` in a shadow
+    // content table AND a trigram index (~3x), so each block's indexed text is
+    // duplicated and expanded. Normal blocks are a few KB; a pathological
+    // pasted multi-MB block would otherwise be fully trigram-indexed and bloat
+    // the index out of proportion on memory-constrained mobile. The cap bounds
+    // any single block's contribution — search over its first
+    // `FTS_MAX_INDEXED_BYTES` still works, only the tail is unindexed.
+    cap_indexed_text(nfc_normalise(&result))
+}
+
+/// #435 — hard cap on per-block FTS-indexed text (bytes). Headroom against a
+/// pathological pasted block dominating the standalone trigram index; well
+/// above any normal block (a few KB), so only multi-MB outliers are truncated.
+/// Any reasonable value works — it bounds the worst case, it is not a measured
+/// optimum. (Migration `0006`'s "negligible (<100k blocks)" framing predates
+/// this and cannot be edited — migrations are append-only / checksummed.)
+const FTS_MAX_INDEXED_BYTES: usize = 128 * 1024;
+
+/// Truncate `s` to at most [`FTS_MAX_INDEXED_BYTES`] on a UTF-8 char boundary.
+fn cap_indexed_text(mut s: String) -> String {
+    if s.len() <= FTS_MAX_INDEXED_BYTES {
+        return s;
+    }
+    let mut end = FTS_MAX_INDEXED_BYTES;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.truncate(end);
+    s
 }
 
 /// PEND-73 B3 — NFC normalisation helper. Allocates a fresh `String`
