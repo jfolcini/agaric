@@ -291,6 +291,27 @@ pub(crate) async fn create_block_in_tx(
     crate::tag_inheritance::inherit_parent_tags(tx, block_id.as_str(), parent_id.as_deref())
         .await?;
 
+    // #417/#432: keep the owning page's `pages_cache.child_block_count`
+    // correct on the LOCAL command path. Unlike the sync `ApplyOp` path —
+    // which runs `maintain_pages_cache_counts_after_op` inside `apply_op_tx`
+    // — a content/tag create here only enqueues a per-block background
+    // fan-out (FTS, tag refs, page_ids) and NEVER a full `RebuildPagesCache`,
+    // so without this in-tx recompute the owning page's child count would
+    // stay stale until an unrelated edit (or a manual rebuild, which #432
+    // separately fixed). We reuse the materializer's single-source-of-truth
+    // `recompute_pages_cache_counts_for_pages` keyed on the block's already-
+    // computed `page_id` rather than duplicating the count SQL. A `page`
+    // create's own `pages_cache` row is created by the background
+    // `RebuildPagesCache` task, so this recompute is a no-op for it (the
+    // row doesn't exist yet in-tx) — exactly as on the ApplyOp path, where
+    // page creates rely on the rebuild for their row.
+    if block_type != "page" {
+        if let Some(owning_page) = page_id.clone() {
+            crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &[owning_page])
+                .await?;
+        }
+    }
+
     // Return block + op record; caller is responsible for commit + dispatch.
     Ok((
         BlockRow {
