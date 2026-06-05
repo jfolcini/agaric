@@ -596,19 +596,36 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
 /// #429: read an `op_log` row's `created_at` as an rfc3339 string, for use as
 /// `blocks.deleted_at` when recovery replays a `delete_block`.
 ///
-/// `created_at` is an INTEGER-ms column post-migration 0079/0080 but was
-/// original-format TEXT on older databases that can still reach this recovery
-/// path, so both shapes are handled. `fallback` (boot-time `now`) is used only
-/// if neither read succeeds — it never should for a well-formed op row.
+/// `created_at` is INTEGER-ms post-migration 0079/0080 but original-format
+/// **TEXT rfc3339** on the older databases that actually reach this recovery
+/// path — a partial-migration-73 DB has NOT run 0079 yet, so its `created_at`
+/// is still TEXT. **TEXT is therefore tried FIRST**: reading a TEXT rfc3339
+/// value as `i64` would otherwise yield the wrong timestamp (a coercion
+/// artefact / the value's leading integer), silently defeating the
+/// cohort-timestamp preservation on the exact population this fixes.
+///
+/// Robust to both column eras: if `created_at` is TEXT we get the rfc3339
+/// string directly (and, defensively, convert it if it is actually an
+/// all-digit ms value); if it is INTEGER we fall through to the `i64` read and
+/// render rfc3339. `fallback` (boot-time `now`) is used only if neither read
+/// succeeds — it never should for a well-formed op row.
 fn op_created_at_rfc3339(row: &sqlx::sqlite::SqliteRow, fallback: &str) -> String {
+    if let Ok(s) = row.try_get::<String, _>("created_at") {
+        // Defensive: a TEXT column holding an all-digit ms value (or an
+        // integer coerced to text) — render rfc3339 rather than emit a bare
+        // integer string as `deleted_at`.
+        if let Ok(ms) = s.parse::<i64>() {
+            if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
+                return dt.to_rfc3339();
+            }
+        }
+        if !s.is_empty() {
+            return s;
+        }
+    }
     if let Ok(ms) = row.try_get::<i64, _>("created_at") {
         if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
             return dt.to_rfc3339();
-        }
-    }
-    if let Ok(s) = row.try_get::<String, _>("created_at") {
-        if !s.is_empty() {
-            return s;
         }
     }
     fallback.to_string()
@@ -2472,6 +2489,54 @@ mod tests {
             "deleted_at must come from the op's 2020 created_at, not boot-time now: {}",
             stamps[0]
         );
+    }
+
+    /// #429 (review fix): `op_created_at_rfc3339` must read a **TEXT** rfc3339
+    /// `created_at` verbatim — the partial-migration-73 recovery target has
+    /// not run migration 0079, so `created_at` is still TEXT, and reading it
+    /// as `i64` first would corrupt the cohort timestamp. Also covers the
+    /// INTEGER-ms (post-0079) era and the defensive all-digit-TEXT case.
+    #[tokio::test]
+    async fn op_created_at_rfc3339_reads_text_and_integer_created_at() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("t.db")).await.unwrap();
+
+        // TEXT rfc3339 (the recovery target population: 0079 not yet run).
+        let row = sqlx::query("SELECT '2020-09-13T12:26:40+00:00' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_created_at_rfc3339(&row, "FALLBACK"),
+            "2020-09-13T12:26:40+00:00",
+            "TEXT rfc3339 created_at must be preserved, not coerced via i64"
+        );
+
+        // INTEGER-ms created_at (post-0079).
+        let row = sqlx::query("SELECT 1600000000000 AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let got = op_created_at_rfc3339(&row, "FALLBACK");
+        assert!(got.starts_with("2020-09-13"), "INTEGER ms → rfc3339: {got}");
+
+        // Defensive: TEXT column holding an all-digit ms value.
+        let row = sqlx::query("SELECT '1600000000000' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let got = op_created_at_rfc3339(&row, "FALLBACK");
+        assert!(
+            got.starts_with("2020-09-13"),
+            "all-digit TEXT → rfc3339: {got}"
+        );
+
+        // Empty / unreadable → fallback.
+        let row = sqlx::query("SELECT '' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(op_created_at_rfc3339(&row, "FALLBACK"), "FALLBACK");
     }
 
     /// BUG-73 regression: derived-state recovery must not crash when op_log
