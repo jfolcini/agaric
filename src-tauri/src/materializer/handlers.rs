@@ -70,6 +70,22 @@ pub(super) async fn handle_foreground_task(
                 "BatchApplyOps assumes a single-device batch (op_log seq is per-device); \
                  mixing devices requires per-device cursor partitioning — see #382"
             );
+            // #412: release-build counterpart to the debug_assert above. A
+            // mixed-device batch cannot be represented by the single global
+            // apply cursor (it would advance past another device's
+            // unmaterialised ops), so reject it loudly in ALL builds rather
+            // than silently corrupting the cursor. Removed once the per-device
+            // watermark cursor lands (deferred with multi-device sync).
+            if let Some(first) = records.first() {
+                if records.iter().any(|r| r.device_id != first.device_id) {
+                    return Err(AppError::InvalidOperation(
+                        "BatchApplyOps received a mixed-device batch; the single global \
+                         apply cursor cannot represent per-device watermarks — per-device \
+                         cursor partitioning is required (backend audit #412)"
+                            .into(),
+                    ));
+                }
+            }
             // FEAT-5h — collect per-op pre-mutation snapshots so we
             // can emit DirtyEvents for every op in the batch after
             // the outer transaction commits.  Emitting during the tx
