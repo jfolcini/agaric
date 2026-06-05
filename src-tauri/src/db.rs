@@ -459,6 +459,30 @@ pub struct WritePool(pub SqlitePool);
 /// Commands that perform SELECT-only queries should extract `State<'_, ReadPool>`.
 pub struct ReadPool(pub SqlitePool);
 
+/// Per-connection page-cache pragma value (negative = KB).
+///
+/// #420 — SQLite's page cache is **per-connection** heap, not shared. With up
+/// to 6 pooled connections (2 write + 4 read) the desktop 64 MB cache can peak
+/// near 384 MB, which risks an Android OOM-kill (the app does not request
+/// `largeHeap`). Mobile therefore uses a much smaller per-connection cache and
+/// leans on the file-backed mmap region instead; desktop keeps the larger cache
+/// that 100k+ block databases benefit from.
+#[cfg(target_os = "android")]
+const CACHE_SIZE_PRAGMA: &str = "-8192"; // 8 MB / connection
+#[cfg(not(target_os = "android"))]
+const CACHE_SIZE_PRAGMA: &str = "-65536"; // 64 MB / connection
+
+/// Memory-mapped read-region pragma value (bytes).
+///
+/// #420 — the mmap region is clean, file-backed, shared address space (much
+/// cheaper than the page cache), but on a memory-constrained Android device a
+/// 256 MB mapping is still worth trimming. Desktop keeps 256 MB; mobile uses
+/// 64 MB.
+#[cfg(target_os = "android")]
+const MMAP_SIZE_PRAGMA: &str = "67108864"; // 64 MB
+#[cfg(not(target_os = "android"))]
+const MMAP_SIZE_PRAGMA: &str = "268435456"; // 256 MB
+
 /// Common connection options shared between read and write pools.
 fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
@@ -474,12 +498,14 @@ fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         // journal_size_limit caps the on-disk WAL at 50 MB to prevent unbounded growth.
         .pragma("wal_autocheckpoint", "5000")
         .pragma("journal_size_limit", "52428800") // 50 MB WAL size cap
-        // Page cache: 64 MB (negative value = KB per SQLite docs).
-        // Default 2000 pages (~8 MB) thrashes on 100k+ block databases.
-        .pragma("cache_size", "-65536")
-        // Memory-mapped read region: 256 MB. Default is 0 (disabled).
-        // Cuts hot-query latency 2-10x on multi-hundred-MB DBs.
-        .pragma("mmap_size", "268435456")
+        // Page cache (negative value = KB per SQLite docs). Default 2000 pages
+        // (~8 MB) thrashes on 100k+ block databases. Per-connection heap, so
+        // platform-gated to avoid Android OOM-kill — see CACHE_SIZE_PRAGMA (#420).
+        .pragma("cache_size", CACHE_SIZE_PRAGMA)
+        // Memory-mapped read region. Default is 0 (disabled). Cuts hot-query
+        // latency 2-10x on multi-hundred-MB DBs. Platform-gated — see
+        // MMAP_SIZE_PRAGMA (#420).
+        .pragma("mmap_size", MMAP_SIZE_PRAGMA)
         // Keep temp B-trees in RAM during large sorts/distinct/groupby
         // instead of spilling to disk. Default is FILE.
         .pragma("temp_store", "MEMORY")
@@ -1021,6 +1047,11 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     let write_opts = base_connect_options(db_path);
     let write_pool = SqlitePoolOptions::new()
         .max_connections(2)
+        // #434 — fail fast on pool exhaustion. sqlx defaults acquire_timeout to
+        // 30s, but busy_timeout is 5s, so a saturated pool would freeze the UI
+        // for 30s instead of surfacing an error within the freeze budget. Align
+        // acquire_timeout with the busy_timeout-scale UX budget.
+        .acquire_timeout(std::time::Duration::from_secs(10))
         .connect_with(write_opts)
         .await?;
 
@@ -1047,6 +1078,9 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     let read_opts = base_connect_options(db_path).pragma("query_only", "ON");
     let read_pool = SqlitePoolOptions::new()
         .max_connections(4)
+        // #434 — see write pool: align acquire_timeout with the UX freeze budget
+        // instead of sqlx's 30s default.
+        .acquire_timeout(std::time::Duration::from_secs(10))
         .connect_with(read_opts)
         .await?;
 
@@ -1620,21 +1654,28 @@ mod tests {
     async fn init_pool_sets_performance_pragmas() {
         let (pool, _dir) = test_pool().await;
 
-        // cache_size: stored as a negative value meaning KB. -65536 = 64 MB.
+        // cache_size: stored as a negative value meaning KB. Platform-gated
+        // (#420): 64 MB desktop / 8 MB Android. Assert against the source const.
         let cache_size = sqlx::query_scalar::<_, i64>("PRAGMA cache_size")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(cache_size, -65536, "cache_size should be -65536 (64 MB)");
+        let expected_cache: i64 = super::CACHE_SIZE_PRAGMA.parse().unwrap();
+        assert_eq!(
+            cache_size, expected_cache,
+            "cache_size should match CACHE_SIZE_PRAGMA"
+        );
 
-        // mmap_size: 256 MB memory-mapped read region.
+        // mmap_size: memory-mapped read region. Platform-gated (#420):
+        // 256 MB desktop / 64 MB Android.
         let mmap_size = sqlx::query_scalar::<_, i64>("PRAGMA mmap_size")
             .fetch_one(&pool)
             .await
             .unwrap();
+        let expected_mmap: i64 = super::MMAP_SIZE_PRAGMA.parse().unwrap();
         assert_eq!(
-            mmap_size, 268_435_456,
-            "mmap_size should be 268435456 (256 MB)"
+            mmap_size, expected_mmap,
+            "mmap_size should match MMAP_SIZE_PRAGMA"
         );
 
         // temp_store: 2 == MEMORY (0 == DEFAULT, 1 == FILE, 2 == MEMORY).
