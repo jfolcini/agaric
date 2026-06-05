@@ -91,28 +91,61 @@ pub async fn project_create_block_to_sql(
 ///
 /// ## Cost
 ///
-/// O(N) `UPDATE`s, N = the full sibling group (incl. soft-deleted tombstones),
-/// every rank rewritten unconditionally regardless of whether it changed. This
-/// replaces the pre-#400 single-row `UPDATE` and is bounded by realistic
-/// sibling-group size (tens). If a group ever grows large, batch the rows into
-/// one statement and/or skip rows whose rank already matches. During op-log
-/// replay/recovery this fires once per replayed op (O(M·N̄)); a bulk-replay
-/// fast-path that defers reprojection to the end is a future option (#400, review).
+/// #419: a **single** batched `UPDATE` for the whole sibling group (one
+/// writer-lock round-trip), driven by a `json_each` value list of
+/// `(id, rank)` pairs, with a `position IS NOT rank` guard so only rows whose
+/// dense rank actually changed are written. The previous implementation issued
+/// one indexed single-row `UPDATE` per sibling in a Rust loop — N writer-locked
+/// round-trips inside the op tx, every rank rewritten unconditionally even when
+/// unchanged. N is the full sibling group **including soft-deleted tombstones**
+/// (they keep their slot in the engine tree), so a long-lived parent that has
+/// churned blocks over its lifetime accumulates dead siblings; collapsing the N
+/// statements into one bounds the cost of a hot insert/move at one round-trip
+/// regardless of that tombstone tail. The skip-unchanged guard also makes the
+/// common case (rank already correct) a no-op write.
+///
+/// During op-log replay/recovery this fires once per replayed op (O(M) single
+/// statements now); a bulk-replay fast-path that defers reprojection to the end
+/// is a future option (#400, review).
 pub async fn reproject_dense_positions(
     conn: &mut SqliteConnection,
     ordered_block_ids: &[String],
 ) -> Result<(), AppError> {
-    for (idx, block_id) in ordered_block_ids.iter().enumerate() {
-        // 1-based, matching the pre-#400 convention.
-        let rank = i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1);
-        sqlx::query!(
-            "UPDATE blocks SET position = ? WHERE id = ?",
-            rank,
-            block_id,
-        )
-        .execute(&mut *conn)
-        .await?;
+    if ordered_block_ids.is_empty() {
+        return Ok(());
     }
+    // Build the `[{"id","rank"}, …]` value list once. rank is 1-based,
+    // matching the pre-#400 convention; `saturating_add` mirrors the old
+    // per-row overflow guard.
+    let pairs: Vec<serde_json::Value> = ordered_block_ids
+        .iter()
+        .enumerate()
+        .map(|(idx, block_id)| {
+            let rank = i64::try_from(idx).unwrap_or(i64::MAX).saturating_add(1);
+            serde_json::json!({ "id": block_id, "rank": rank })
+        })
+        .collect();
+    let payload = serde_json::Value::Array(pairs).to_string();
+
+    // One statement for the whole group. `UPDATE … FROM (json_each …)` joins
+    // each block to its target rank; `position IS NOT v.rank` skips rows that
+    // already match (and, via `IS NOT`, still updates a row whose `position`
+    // is NULL). Each matched row is an indexed PK update, but they now share a
+    // single prepared statement / round-trip under the writer lock.
+    sqlx::query(
+        "UPDATE blocks \
+            SET position = v.rank \
+         FROM ( \
+             SELECT json_extract(value, '$.id')   AS id, \
+                    json_extract(value, '$.rank') AS rank \
+             FROM json_each(?1) \
+         ) AS v \
+         WHERE blocks.id = v.id \
+           AND blocks.position IS NOT v.rank",
+    )
+    .bind(&payload)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 
@@ -2478,5 +2511,91 @@ mod tests {
             vec![BLOCK_B.to_string()],
             "dangling tag id dropped; the valid edge is still projected"
         );
+    }
+
+    /// #419 — `reproject_dense_positions` assigns dense 1-based ranks for the
+    /// whole ordered sibling group in a single batched UPDATE, including a
+    /// soft-deleted tombstone that keeps its slot, correctly ranks a row whose
+    /// `position` was NULL (the `IS NOT` path), and is idempotent.
+    #[tokio::test]
+    async fn reproject_dense_positions_batches_group_incl_tombstone_and_null() {
+        let (pool, _dir) = fresh_pool().await;
+        let mut conn = pool.acquire().await.expect("acquire");
+
+        const PARENT: &str = "01HZ00000000000000000000P1";
+        const C1: &str = "01HZ00000000000000000000D1";
+        const C2: &str = "01HZ00000000000000000000D2";
+        const C3: &str = "01HZ00000000000000000000D3";
+        const DEAD: &str = "01HZ00000000000000000000E9";
+
+        project_create_block_to_sql(&mut conn, &snapshot(PARENT, "page", "P", None, 1))
+            .await
+            .expect("parent");
+        // Children seeded with arbitrary, out-of-order positions.
+        project_create_block_to_sql(&mut conn, &snapshot(C1, "content", "c1", Some(PARENT), 50))
+            .await
+            .expect("c1");
+        project_create_block_to_sql(&mut conn, &snapshot(C2, "content", "c2", Some(PARENT), 10))
+            .await
+            .expect("c2");
+        project_create_block_to_sql(
+            &mut conn,
+            &snapshot(DEAD, "content", "dead", Some(PARENT), 7),
+        )
+        .await
+        .expect("dead");
+        project_create_block_to_sql(&mut conn, &snapshot(C3, "content", "c3", Some(PARENT), 99))
+            .await
+            .expect("c3");
+
+        // Soft-delete DEAD: it keeps its slot in the engine tree, so it stays
+        // in the reprojected order (engine.rs). NULL out C1's position to
+        // exercise the `position IS NOT v.rank` NULL branch.
+        sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = ?")
+            .bind(DEAD)
+            .execute(&mut *conn)
+            .await
+            .expect("soft-delete dead");
+        sqlx::query("UPDATE blocks SET position = NULL WHERE id = ?")
+            .bind(C1)
+            .execute(&mut *conn)
+            .await
+            .expect("null c1 position");
+
+        // Engine order: tombstone keeps its slot at index 1.
+        let order = vec![
+            C2.to_string(),
+            DEAD.to_string(),
+            C1.to_string(),
+            C3.to_string(),
+        ];
+        reproject_dense_positions(&mut conn, &order)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        async fn pos(pool: &SqlitePool, id: &str) -> Option<i64> {
+            sqlx::query_scalar::<_, Option<i64>>("SELECT position FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .expect("fetch position")
+        }
+        assert_eq!(pos(&pool, C2).await, Some(1), "C2 ranks first");
+        assert_eq!(pos(&pool, DEAD).await, Some(2), "tombstone keeps its slot");
+        assert_eq!(pos(&pool, C1).await, Some(3), "NULL position now ranked");
+        assert_eq!(pos(&pool, C3).await, Some(4), "C3 ranks last");
+
+        // Idempotent: a second reprojection of the same order is a no-op
+        // (every row's rank already matches → the guard skips all writes).
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_dense_positions(&mut conn, &order)
+            .await
+            .expect("reproject again");
+        drop(conn);
+        assert_eq!(pos(&pool, C2).await, Some(1));
+        assert_eq!(pos(&pool, DEAD).await, Some(2));
+        assert_eq!(pos(&pool, C1).await, Some(3));
+        assert_eq!(pos(&pool, C3).await, Some(4));
     }
 }
