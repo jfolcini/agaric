@@ -593,6 +593,27 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
     Ok(())
 }
 
+/// #429: read an `op_log` row's `created_at` as an rfc3339 string, for use as
+/// `blocks.deleted_at` when recovery replays a `delete_block`.
+///
+/// `created_at` is an INTEGER-ms column post-migration 0079/0080 but was
+/// original-format TEXT on older databases that can still reach this recovery
+/// path, so both shapes are handled. `fallback` (boot-time `now`) is used only
+/// if neither read succeeds — it never should for a well-formed op row.
+fn op_created_at_rfc3339(row: &sqlx::sqlite::SqliteRow, fallback: &str) -> String {
+    if let Ok(ms) = row.try_get::<i64, _>("created_at") {
+        if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
+            return dt.to_rfc3339();
+        }
+    }
+    if let Ok(s) = row.try_get::<String, _>("created_at") {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    fallback.to_string()
+}
+
 /// Replay block-level ops from `op_log` into an existing (temporary)
 /// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
 /// transaction so the rebuild is atomic.
@@ -622,10 +643,11 @@ async fn recover_blocks_from_op_log(
     // log. `created_at` is an indexed INTEGER-ms column post-migration
     // 0079/0080; `(device_id, seq)` is the deterministic tiebreaker for
     // ops sharing a millisecond.
-    let ops =
-        sqlx::query("SELECT op_type, payload FROM op_log ORDER BY created_at, device_id, seq")
-            .fetch_all(&mut *executor)
-            .await?;
+    let ops = sqlx::query(
+        "SELECT op_type, payload, created_at FROM op_log ORDER BY created_at, device_id, seq",
+    )
+    .fetch_all(&mut *executor)
+    .await?;
 
     if ops.is_empty() {
         return Ok(());
@@ -633,6 +655,11 @@ async fn recover_blocks_from_op_log(
 
     tracing::info!("Replaying {} ops into temporary blocks table", ops.len());
 
+    // #429: fallback only — used when an op's own `created_at` cannot be
+    // read/converted (it never should). The delete arm stamps the op's OWN
+    // timestamp so each delete cohort keeps a distinct `(seed, deleted_at)`
+    // identity that `list_trash` / `restore_block` group on; a shared
+    // boot-time `now` would collapse every recovered deletion into one cohort.
     let now_rfc3339 = chrono::Utc::now().to_rfc3339();
 
     for row in ops {
@@ -695,11 +722,36 @@ async fn recover_blocks_from_op_log(
             }
             "delete_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
-                sqlx::query("UPDATE blocks SET deleted_at = ? WHERE id = ?")
-                    .bind(&now_rfc3339)
-                    .bind(block_id)
-                    .execute(&mut *executor)
-                    .await?;
+                // #429: a `delete_block` op encodes ONLY the root, but the
+                // production path (`delete_block_inner`) soft-deletes the whole
+                // active subtree and stamps every member with the op's single
+                // timestamp. Recovery must do the same or descendants reappear
+                // live under a tombstoned ancestor, and the deletion cohort is
+                // lost. Stamp the op's OWN `created_at` (not boot-time `now`)
+                // so distinct delete ops keep distinct cohorts, and cascade
+                // through the temp `blocks` tree (depth-bounded, same shape as
+                // production / the purge cascade). The `deleted_at IS NULL`
+                // guard preserves an already-deleted descendant's original
+                // cohort timestamp (mirrors `descendants_cte_active!()`).
+                let deleted_at = op_created_at_rfc3339(&row, &now_rfc3339);
+                sqlx::query(
+                    "UPDATE blocks SET deleted_at = ?1 \
+                     WHERE deleted_at IS NULL \
+                       AND id IN ( \
+                           WITH RECURSIVE descendants(id, depth) AS ( \
+                               SELECT id, 0 FROM blocks WHERE id = ?2 \
+                               UNION ALL \
+                               SELECT b.id, d.depth + 1 FROM blocks b \
+                               JOIN descendants d ON b.parent_id = d.id \
+                               WHERE d.depth < 100 \
+                           ) \
+                           SELECT id FROM descendants \
+                       )",
+                )
+                .bind(&deleted_at)
+                .bind(block_id)
+                .execute(&mut *executor)
+                .await?;
             }
             "restore_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -2316,6 +2368,109 @@ mod tests {
             due,
             Some("2026-06-15".to_string()),
             "due_date should be backfilled from properties"
+        );
+    }
+
+    /// #429 regression: recovery replay of a `delete_block` op must (1) cascade
+    /// the soft-delete through the whole subtree — a `delete_block` op encodes
+    /// only the root, so without a descendant walk children reappear live under
+    /// a tombstoned ancestor — and (2) stamp the op's OWN `created_at`, not a
+    /// shared boot-time `now`, so distinct delete cohorts stay distinct for
+    /// `list_trash` / `restore_block` grouping.
+    #[tokio::test]
+    async fn init_pool_recovery_cascades_delete_and_keeps_op_timestamp_429() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // Deliberately-old delete timestamp so we can prove the recovered
+        // `deleted_at` came from the op, not from boot-time `now`.
+        const DELETE_TS_MS: i64 = 1_600_000_000_000; // 2020-09-13
+        let create_ts: i64 = 1_500_000_000_000; // 2017, before the delete
+
+        // Seed op_log: PAGE → CHILD → GRAND, then delete PAGE (root only).
+        let creates = [
+            (
+                "s1",
+                "P429",
+                r#"{"block_id":"P429","block_type":"page","content":"P","parent_id":null,"position":1}"#,
+            ),
+            (
+                "s2",
+                "C429",
+                r#"{"block_id":"C429","block_type":"content","content":"C","parent_id":"P429","position":1}"#,
+            ),
+            (
+                "s3",
+                "G429",
+                r#"{"block_id":"G429","block_type":"content","content":"G","parent_id":"C429","position":1}"#,
+            ),
+        ];
+        let mut seq = 1i64;
+        for (h, _id, payload) in creates {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, 'create_block', ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(h)
+            .bind(payload)
+            .bind(create_ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+            seq += 1;
+        }
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev1', ?, 'sdel', 'delete_block', '{\"block_id\":\"P429\"}', ?, 'user')",
+        )
+        .bind(seq)
+        .bind(DELETE_TS_MS)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Corrupt: drop blocks, reopen → recovery replays the op_log.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // (1) Cascade: every subtree member is soft-deleted, none left live.
+        let live: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM blocks WHERE id IN ('P429','C429','G429') AND deleted_at IS NULL",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            live.is_empty(),
+            "delete recovery must cascade to descendants; still-live: {live:?}"
+        );
+
+        // (2) Cohort + op timestamp: all three share one `deleted_at`, and it
+        // reflects the 2020 op time — not boot-time `now`. In the recovery
+        // scenario `deleted_at` is rfc3339 TEXT (the recovery temp-table
+        // schema; post-DROP no later migration re-runs to convert it), so the
+        // op's `created_at` ms was rendered to rfc3339 by the recovery.
+        let stamps: Vec<String> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id IN ('P429','C429','G429')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stamps.len(), 3, "all three rows recovered");
+        assert!(
+            stamps.iter().all(|s| *s == stamps[0]),
+            "the whole cohort must share one deleted_at: {stamps:?}"
+        );
+        let this_year = chrono::Utc::now().format("%Y").to_string();
+        assert!(
+            stamps[0].starts_with("2020") && !stamps[0].starts_with(&this_year),
+            "deleted_at must come from the op's 2020 created_at, not boot-time now: {}",
+            stamps[0]
         );
     }
 
