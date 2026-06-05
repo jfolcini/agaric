@@ -13,13 +13,24 @@
 //!   that cross a space boundary.
 //! * **A4** — Inline `[[ULID]]` / `((ULID))` / `#[ULID]` tokens in
 //!   `blocks.content` whose target resolves to a different space.
+//! * **A5** (#436) — ref-type `block_properties` rows (`value_ref`, e.g.
+//!   `linked_page`) whose target block resolves to a different space than
+//!   the source block. Unlike A1/A3 (link/tag-ref caches), ref properties
+//!   land in the source-of-truth `block_properties` table with NO write-time
+//!   Phase-3 cross-space filter on the sync-ingress / bulk-import apply path,
+//!   so a synced cross-space ref property persists undetected. A5 surfaces
+//!   it. Uses the orphan-tolerant rule of
+//!   [`validate_ref_property_cross_space`](agaric_lib::spaces::cross_space_validation)
+//!   — only a target in a DIFFERENT *assigned* space counts (an unassigned
+//!   orphan source/target is not "cross-space"), and the `space` key itself
+//!   is exempt (that is how pages move between spaces).
 //!
 //! The binary opens the database read-only (`SqliteConnectOptions::read_only(true)`)
 //! and never emits ops or mutates rows — safe to run on a live DB.
 //!
 //! Exit codes:
 //!
-//! * `0` — zero violations across all four categories.
+//! * `0` — zero violations across all five categories.
 //! * `1` — at least one violation (Path A migration would have non-trivial work).
 //! * `2` — a real error (DB not found, schema mismatch, IO failure …).
 
@@ -172,11 +183,13 @@ pub(crate) struct AuditReport {
     pub a2: CategoryReport,
     pub a3: CategoryReport,
     pub a4: CategoryReport,
+    /// #436 — cross-space ref-type `block_properties` (`value_ref`).
+    pub a5: CategoryReport,
 }
 
 impl AuditReport {
     pub fn total(&self) -> usize {
-        self.a1.count + self.a2.count + self.a3.count + self.a4.count
+        self.a1.count + self.a2.count + self.a3.count + self.a4.count + self.a5.count
     }
 }
 
@@ -434,7 +447,66 @@ async fn audit_a4(
     Ok(CategoryReport { count, examples })
 }
 
-/// Run all four audit categories and assemble the report.
+/// A5 (#436) — cross-space ref-type `block_properties` rows. A `value_ref`
+/// property (e.g. `linked_page`) whose target block resolves to a different
+/// *assigned* space than the source block. The `space` key is exempt (it is
+/// how pages move between spaces — matches
+/// `validate_ref_property_cross_space`), and the orphan-tolerant rule
+/// (both spaces must be assigned and differ) mirrors that validator, so A5
+/// counts exactly what the apply-path gate would have rejected.
+///
+/// Runtime `sqlx::query` (not the `query!` macro) so adding this category
+/// needs no `.sqlx` regen.
+async fn audit_a5(
+    pool: &SqlitePool,
+    limit: usize,
+    names: &FxHashMap<String, String>,
+) -> Result<CategoryReport, sqlx::Error> {
+    use sqlx::Row as _;
+    // Per ref-property row, resolve source/target space once via the holding
+    // block's owning page `space` property (same shape as audit_a1/a3). Only
+    // rows where BOTH spaces are assigned and DIFFER are violations.
+    let rows = sqlx::query(
+        r#"WITH cs AS (
+              SELECT bp.block_id AS source_id, bp.key AS key, bp.value_ref AS target_id,
+                (SELECT s.value_ref FROM block_properties s
+                 WHERE s.block_id = COALESCE(bs.page_id, bs.id) AND s.key = 'space') AS source_space,
+                (SELECT s.value_ref FROM block_properties s
+                 WHERE s.block_id = COALESCE(bt.page_id, bt.id) AND s.key = 'space') AS target_space
+              FROM block_properties bp
+              JOIN blocks bs ON bs.id = bp.block_id AND bs.deleted_at IS NULL
+              JOIN blocks bt ON bt.id = bp.value_ref AND bt.deleted_at IS NULL
+              WHERE bp.value_ref IS NOT NULL AND bp.key <> 'space'
+           )
+           SELECT source_id, key, target_id, source_space, target_space
+             FROM cs
+            WHERE source_space IS NOT NULL
+              AND target_space IS NOT NULL
+              AND source_space <> target_space"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut report = CategoryReport {
+        count: rows.len(),
+        examples: Vec::new(),
+    };
+    for row in rows.into_iter().take(limit) {
+        let source_id: String = row.try_get("source_id")?;
+        let key: String = row.try_get("key")?;
+        let target_id: String = row.try_get("target_id")?;
+        let source_space: Option<String> = row.try_get("source_space")?;
+        let target_space: Option<String> = row.try_get("target_space")?;
+        report.examples.push(format!(
+            "  source_id={source_id} key={key} → target_id={target_id}  source_space={}  target_space={}",
+            render_space(names, source_space.as_deref()),
+            render_space(names, target_space.as_deref()),
+        ));
+    }
+    Ok(report)
+}
+
+/// Run all five audit categories and assemble the report.
 pub(crate) async fn run_audit(pool: &SqlitePool, limit: usize) -> Result<AuditReport, sqlx::Error> {
     let names = load_space_names(pool).await?;
     Ok(AuditReport {
@@ -442,6 +514,7 @@ pub(crate) async fn run_audit(pool: &SqlitePool, limit: usize) -> Result<AuditRe
         a2: audit_a2(pool, limit, &names).await?,
         a3: audit_a3(pool, limit, &names).await?,
         a4: audit_a4(pool, limit, &names).await?,
+        a5: audit_a5(pool, limit, &names).await?,
     })
 }
 
@@ -451,11 +524,12 @@ fn format_report(report: &AuditReport, db_path: &std::path::Path) -> String {
     out.push_str("PEND-15 Phase 0 audit — cross-space reference report\n");
     out.push_str(&format!("DB path: {}\n\n", db_path.display()));
 
-    let sections: [(&str, &str, &CategoryReport); 4] = [
+    let sections: [(&str, &str, &CategoryReport); 5] = [
         ("A1", "cross-space block_links", &report.a1),
         ("A2", "cross-space block_tags", &report.a2),
         ("A3", "cross-space block_tag_refs", &report.a3),
         ("A4", "cross-space inline tokens", &report.a4),
+        ("A5", "cross-space ref properties", &report.a5),
     ];
 
     for (tag, label, cat) in sections {
@@ -468,7 +542,7 @@ fn format_report(report: &AuditReport, db_path: &std::path::Path) -> String {
     }
 
     out.push_str(&format!(
-        "Total: {} violations across 4 categories\n",
+        "Total: {} violations across 5 categories\n",
         report.total()
     ));
     out
@@ -824,6 +898,62 @@ mod tests {
         assert_eq!(report.a2.count, 1, "block_tags should flag 1 row");
         assert_eq!(report.a3.count, 1, "block_tag_refs should flag 1 row");
         assert_eq!(report.a4.count, 0);
+        assert_eq!(report.a5.count, 0);
+    }
+
+    /// #436 — A5 flags a cross-space ref-type property, tolerates an
+    /// orphan-target ref, and exempts the `space` key (matching
+    /// `validate_ref_property_cross_space`).
+    #[tokio::test]
+    async fn audit_detects_cross_space_ref_property() {
+        let (pool, _dir) = make_pool().await;
+        seed_spaces(&pool).await;
+        insert_page(&pool, PAGE_PERSONAL, PERSONAL, "P").await;
+        insert_page(&pool, PAGE_WORK, WORK, "W").await;
+        insert_content_block(&pool, BLOCK_PERSONAL, PAGE_PERSONAL, "src").await;
+        insert_content_block(&pool, BLOCK_WORK, PAGE_WORK, "dst").await;
+
+        let set_ref = |key: &'static str, src: &'static str, target: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)",
+                )
+                .bind(src)
+                .bind(key)
+                .bind(target)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+
+        // Cross-space user ref property (Personal block → Work target).
+        set_ref("linked_page", BLOCK_PERSONAL, BLOCK_WORK).await;
+        // Orphan target (no space) — tolerated, must NOT be flagged.
+        const ORPHAN: &str = "01ORPHANTARGET0000000000Z1";
+        insert_content_block(&pool, ORPHAN, ORPHAN, "orphan").await;
+        set_ref("project", BLOCK_WORK, ORPHAN).await;
+        // The `space` key is exempt even though it crosses (Work block whose
+        // space property points at the Personal space block).
+        set_ref("space", BLOCK_WORK, PERSONAL).await;
+
+        let report = run_audit(&pool, 10).await.unwrap();
+        assert_eq!(
+            report.a5.count, 1,
+            "exactly the cross-space user ref property is flagged"
+        );
+        assert_eq!(report.a1.count, 0);
+        assert_eq!(report.a2.count, 0);
+        assert_eq!(report.a3.count, 0);
+        assert_eq!(report.a4.count, 0);
+        let ex = &report.a5.examples[0];
+        assert!(
+            ex.contains(BLOCK_PERSONAL) && ex.contains(BLOCK_WORK),
+            "{ex}"
+        );
+        assert!(ex.contains("linked_page"), "{ex}");
+        assert!(ex.contains("Personal") && ex.contains("Work"), "{ex}");
     }
 
     #[tokio::test]
@@ -911,6 +1041,7 @@ mod tests {
         assert!(out.contains("A2 (cross-space block_tags): 0 violations"));
         assert!(out.contains("A3 (cross-space block_tag_refs): 0 violations"));
         assert!(out.contains("A4 (cross-space inline tokens): 0 violations"));
-        assert!(out.contains("Total: 0 violations across 4 categories"));
+        assert!(out.contains("A5 (cross-space ref properties): 0 violations"));
+        assert!(out.contains("Total: 0 violations across 5 categories"));
     }
 }

@@ -5,8 +5,18 @@
 //! PEND-76 F5 wired them into the single-block command paths:
 //! `set_property` (ref-type values, `set_property_in_tx`), block create
 //! (`create_block_in_tx`), and block edit (`edit_block_inner`).
-//! `add_tag` enforces cross-space via its own inline guard. (Bulk-import
-//! and sync-ingress are not yet gated — a follow-up.)
+//! `add_tag` enforces cross-space via its own inline guard.
+//!
+//! Bulk-import and sync-ingress are NOT write-time gated here: those ops
+//! arrive already committed in the CRDT, so rejecting/skipping them would
+//! diverge SQL from the authoritative engine state (links/tag-refs instead
+//! carry a PEND-15 Phase-3 write-time cache filter on that path). The one
+//! unfiltered synced surface — cross-space ref-type `block_properties`
+//! (`value_ref`) landing in the source-of-truth table — is covered by
+//! **detection**: the `audit_cross_space_refs` diagnostic's A5 category
+//! (#436) reports exactly what [`validate_ref_property_cross_space`] would
+//! reject. Write-time gating of the apply path remains a deferred design
+//! decision (it needs a divergence-tolerant strategy, not a hard reject).
 //!
 //! - [`validate_content_cross_space_refs`] — scans block content for
 //!   `[[ULID]]` / `((ULID))` / `#[ULID]` tokens; resolves each
