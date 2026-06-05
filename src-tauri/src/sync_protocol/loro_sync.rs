@@ -56,8 +56,20 @@ use loro::VersionVector;
 pub enum ApplyOutcome {
     /// The message was imported into the engine (and, for Update /
     /// Snapshot variants, projected into SQL).  Carries the targeted
-    /// [`SpaceId`] so the caller can invalidate per-space caches.
-    Imported(SpaceId),
+    /// [`SpaceId`] so the caller can invalidate per-space caches, plus the
+    /// set of block ids the import actually changed.
+    ///
+    /// #421: `changed_blocks` is exactly the id set `apply_remote` already
+    /// computed (via `import_with_changed_blocks`) and used to drive the
+    /// per-block SQL projection. Surfacing it lets the orchestrator reindex
+    /// FTS for just those blocks (`UpdateFtsBlock`) instead of a full
+    /// O(vault) `RebuildFtsIndex` on every inbound sync message.
+    Imported {
+        /// Per-space scope of the imported message.
+        space_id: SpaceId,
+        /// Block ids the import changed (may be empty for a no-op import).
+        changed_blocks: Vec<crate::ulid::BlockId>,
+    },
     /// The message was a [`LoroSyncMessage::Update`] whose `from_vv`
     /// is not reachable from our current `oplog_vv()` — applying the
     /// delta would yield an incoherent CRDT state.  The engine import
@@ -338,7 +350,13 @@ pub async fn apply_remote(
         crate::tag_inheritance::rebuild_all(pool).await?;
     }
 
-    Ok(ApplyOutcome::Imported(space_id))
+    // #421: hand the changed-block set to the caller so it can drive a
+    // targeted FTS reindex (per-block `UpdateFtsBlock`) instead of a full
+    // O(vault) rebuild. The set is moved out here (last use).
+    Ok(ApplyOutcome::Imported {
+        space_id,
+        changed_blocks,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +516,9 @@ mod tests {
             .await
             .expect("apply_remote");
         match outcome {
-            ApplyOutcome::Imported(returned) => assert_eq!(returned, space),
+            ApplyOutcome::Imported {
+                space_id: returned, ..
+            } => assert_eq!(returned, space),
             ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
                 panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
             }
@@ -539,7 +559,7 @@ mod tests {
             .await
             .expect("apply_remote");
         assert!(
-            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
             "snapshot apply must report Imported, got {outcome:?}"
         );
 
@@ -678,7 +698,7 @@ mod tests {
             .await
             .expect("apply_remote");
         assert!(
-            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
             "snapshot apply must report Imported, got {outcome:?}"
         );
 
@@ -1013,7 +1033,7 @@ mod tests {
             .await
             .expect("apply snapshot");
         assert!(
-            matches!(snap_outcome, ApplyOutcome::Imported(_)),
+            matches!(snap_outcome, ApplyOutcome::Imported { .. }),
             "seed snapshot must import cleanly, got {snap_outcome:?}"
         );
 
@@ -1041,7 +1061,7 @@ mod tests {
             .await
             .expect("apply update");
         match outcome {
-            ApplyOutcome::Imported(s) => assert_eq!(s, space),
+            ApplyOutcome::Imported { space_id: s, .. } => assert_eq!(s, space),
             ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
                 panic!("reachable from_vv must Imported, got SnapshotFallbackRequested: {reason}")
             }
@@ -1132,7 +1152,7 @@ mod tests {
                     "reason should mention the vv mismatch context, got: {reason}"
                 );
             }
-            ApplyOutcome::Imported(_) => {
+            ApplyOutcome::Imported { .. } => {
                 panic!("unreachable from_vv MUST NOT report Imported")
             }
         }
@@ -1349,7 +1369,7 @@ mod tests {
             .await
             .expect("apply_remote");
         assert!(
-            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
             "snapshot apply must report Imported, got {outcome:?}"
         );
 
@@ -1498,7 +1518,7 @@ mod tests {
             .await
             .expect("apply_remote");
         assert!(
-            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
             "snapshot apply must report Imported, got {outcome:?}"
         );
 
@@ -1613,7 +1633,7 @@ mod tests {
             .await
             .expect("apply_remote");
         assert!(
-            matches!(outcome, ApplyOutcome::Imported(ref s) if s == &space),
+            matches!(outcome, ApplyOutcome::Imported { space_id: ref s, .. } if s == &space),
             "snapshot apply must report Imported, got {outcome:?}"
         );
 

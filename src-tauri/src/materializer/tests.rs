@@ -2345,7 +2345,14 @@ async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
     insert_block_direct(&pool, "SYNC_PAGE_1", "page", "Synced Page").await;
     insert_block_direct(&pool, "SYNC_NOTE_1", "content", "searchable inbound text").await;
 
-    mat.enqueue_inbound_sync_rebuilds()
+    // #421: FTS is now driven from the changed-block set (per-block
+    // `UpdateFtsBlock` for a small incremental import). Pass the seeded ids.
+    let changed = [
+        crate::ulid::BlockId::test_id("SYNC_TAG_1"),
+        crate::ulid::BlockId::test_id("SYNC_PAGE_1"),
+        crate::ulid::BlockId::test_id("SYNC_NOTE_1"),
+    ];
+    mat.enqueue_inbound_sync_rebuilds(&changed)
         .expect("enqueue inbound sync rebuilds");
     mat.flush_background().await.expect("flush background");
 

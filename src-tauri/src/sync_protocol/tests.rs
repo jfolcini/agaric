@@ -1696,7 +1696,7 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
             .await
             .expect("apply_remote")
         {
-            loro_sync::ApplyOutcome::Imported(s) => s,
+            loro_sync::ApplyOutcome::Imported { space_id: s, .. } => s,
             loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
                 panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
             }
@@ -1886,7 +1886,7 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
                 .await
                 .expect("apply_remote")
             {
-                loro_sync::ApplyOutcome::Imported(s) => s,
+                loro_sync::ApplyOutcome::Imported { space_id: s, .. } => s,
                 loro_sync::ApplyOutcome::SnapshotFallbackRequested { reason, .. } => {
                     panic!("expected Imported, got SnapshotFallbackRequested: {reason}")
                 }
@@ -2039,7 +2039,7 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
             .await
             .expect("apply snapshot");
         assert!(
-            matches!(outcome, loro_sync::ApplyOutcome::Imported(_)),
+            matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
             "snapshot apply must report Imported, got {outcome:?}",
         );
     }
@@ -2107,7 +2107,7 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
         .await
         .expect("apply update");
     assert!(
-        matches!(outcome, loro_sync::ApplyOutcome::Imported(_)),
+        matches!(outcome, loro_sync::ApplyOutcome::Imported { .. }),
         "update apply must report Imported, got {outcome:?}",
     );
 
@@ -2228,14 +2228,14 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
         .await
         .expect("apply A→B");
     assert!(
-        matches!(outcome_ab, loro_sync::ApplyOutcome::Imported(_)),
+        matches!(outcome_ab, loro_sync::ApplyOutcome::Imported { .. }),
         "A→B apply must report Imported, got {outcome_ab:?}",
     );
     let outcome_ba = loro_sync::apply_remote(&pool_a, &registry_a, "device-A", inner_b_to_a)
         .await
         .expect("apply B→A");
     assert!(
-        matches!(outcome_ba, loro_sync::ApplyOutcome::Imported(_)),
+        matches!(outcome_ba, loro_sync::ApplyOutcome::Imported { .. }),
         "B→A apply must report Imported, got {outcome_ba:?}",
     );
 

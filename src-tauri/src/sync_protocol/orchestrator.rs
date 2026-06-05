@@ -402,7 +402,7 @@ impl SyncOrchestrator {
                             )
                             .await?;
                             match outcome {
-                                ApplyOutcome::Imported(_space_id) => {
+                                ApplyOutcome::Imported { changed_blocks, .. } => {
                                     self.session.ops_received =
                                         self.session.ops_received.saturating_add(1);
                                     // PEND-81 §2A #4: `apply_remote` wrote the
@@ -412,13 +412,16 @@ impl SyncOrchestrator {
                                     // `block_tag_inherited`, but NOT the read-path
                                     // derived caches / FTS. Enqueue the global
                                     // rebuild fan-out via the materializer
-                                    // (background, deduped). Non-fatal: a
-                                    // queue-closed error must not unwind the sync
-                                    // session — the projection already committed —
-                                    // so log + continue (mirrors
-                                    // `dispatch_background_or_warn`).
-                                    if let Err(e) =
-                                        self.materializer.enqueue_inbound_sync_rebuilds()
+                                    // (background, deduped). #421: FTS is driven
+                                    // from `changed_blocks` (targeted per-block
+                                    // reindex) instead of a full O(vault) rebuild.
+                                    // Non-fatal: a queue-closed error must not
+                                    // unwind the sync session — the projection
+                                    // already committed — so log + continue
+                                    // (mirrors `dispatch_background_or_warn`).
+                                    if let Err(e) = self
+                                        .materializer
+                                        .enqueue_inbound_sync_rebuilds(&changed_blocks)
                                     {
                                         tracing::warn!(
                                             device_id = %self.device_id,
