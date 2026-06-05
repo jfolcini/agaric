@@ -5,9 +5,10 @@ use crate::error::AppError;
 
 /// List blocks that carry a specific tag, paginated.
 ///
-/// Ordered by `id ASC` (ULID ≈ chronological).  Excludes soft-deleted and
-/// conflict blocks, consistent with `eval_tag_query`.
-/// Uses index `idx_block_tags_tag(tag_id)`.
+/// Ordered by `bt.block_id ASC` (≡ `b.id`, ULID ≈ chronological).  Excludes
+/// soft-deleted and conflict blocks, consistent with `eval_tag_query`.
+/// Uses covering index `idx_block_tags_tag_block(tag_id, block_id)`, so the
+/// order is index-supplied and no temp B-tree is built (audit #425).
 ///
 /// `space_id` (FEAT-3p4) — when `Some`, restricts the result set to blocks
 /// whose owning page (`b.page_id`) carries `space = ?space_id`.
@@ -38,11 +39,11 @@ pub async fn list_by_tag(
          FROM block_tags bt
          JOIN blocks b ON b.id = bt.block_id
          WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR b.id > ?3)
+           AND (?2 IS NULL OR bt.block_id > ?3)
            AND (?5 IS NULL OR b.page_id IN (
                 SELECT bp.block_id FROM block_properties bp
                 WHERE bp.key = 'space' AND bp.value_ref = ?5))
-         ORDER BY b.id ASC
+         ORDER BY bt.block_id ASC
          LIMIT ?4"#,
         tag_id,      // ?1
         cursor_flag, // ?2

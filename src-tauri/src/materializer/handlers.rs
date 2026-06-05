@@ -1137,7 +1137,7 @@ async fn pre_diff_target_pages(
 /// Bounded by the block's outbound edge cardinality (a few targets
 /// per block in practice). Each iteration runs a single UPDATE with
 /// two SELECT subqueries; the SELECTs are index-served by
-/// `idx_block_links_target` + `idx_blocks_page_id`.
+/// `idx_block_links_target_source` + `idx_blocks_page_id`.
 async fn refresh_inbound_counts_after_reindex(
     pool: &sqlx::SqlitePool,
     block_id: &str,
