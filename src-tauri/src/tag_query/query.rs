@@ -198,8 +198,13 @@ fn prefix_leaf_candidate_clause(include_inherited: bool) -> &'static str {
 /// combined with `ORDER BY b.id ASC LIMIT ?` it replaces the Rust-side
 /// sort/slice.
 fn build_projection_sql(candidate_clause: &str) -> String {
+    // NB: use the positional `{}` placeholder (not a named `{cols}`) for the
+    // BLOCK_ROW_RUNTIME_SELECT interpolation — the
+    // `block_row_canonical_runtime_sites_match_canonical_columns` drift guard
+    // matches the canonical positional placeholder shape across every runtime
+    // BlockRow projection site, and a named placeholder slips past it.
     format!(
-        "SELECT {cols} \
+        "SELECT {} \
          FROM blocks b \
          WHERE {candidate_clause} \
            AND b.deleted_at IS NULL \
@@ -210,7 +215,7 @@ fn build_projection_sql(candidate_clause: &str) -> String {
            AND (? IS NULL OR b.id > ?) \
          ORDER BY b.id ASC \
          LIMIT ?",
-        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+        crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     )
 }
 
