@@ -703,29 +703,32 @@ impl Materializer {
                 // this increment, sustained backpressure silently degrades
                 // cache freshness with no observable signal.
                 //
-                // PEND-03: when the dropped task is a global cache rebuild,
-                // the silent-drop path historically left the cache stale
-                // until the next mutation re-dispatched the rebuild. We
-                // now (1) bump the dedicated `bg_dropped_global`
-                // sub-counter for observability, and (2) persist the task
-                // to `materializer_retry_queue` under the `'__GLOBAL__'`
-                // sentinel so the sweeper re-enqueues it within the
-                // backoff cap (1h). Per-block tasks are also persistable,
-                // but they are already routed through the failure path
-                // in `consumer.rs`; only the queue-saturation path
-                // bypasses the consumer and so needs a sentinel-friendly
-                // persistence here. We deliberately keep this in-line
-                // (not async) by spawning the write — `try_enqueue_*`
-                // is sync and on the hot path; the persist is fire-and-
-                // forget with errors warned (matching existing pattern).
+                // PEND-03 + audit #423: a task shed *here* at enqueue time
+                // never reaches the consumer's failure path, so it must be
+                // persisted to `materializer_retry_queue` directly or it is
+                // lost with no self-healing. This applies to BOTH global
+                // cache rebuilds (under the `'__GLOBAL__'` sentinel) AND the
+                // per-block reindex tasks (`UpdateFtsBlock`,
+                // `ReindexBlockLinks`, `ReindexBlockTagRefs`, keyed by
+                // block_id) — `record_failure` derives the correct key from
+                // the task. Previously only globals were persisted on this
+                // path on the (incorrect) assumption that per-block tasks
+                // are covered by `consumer.rs`; the consumer failure path
+                // only runs for tasks that were *dequeued and ran*, never
+                // for tasks shed at enqueue, so a saturated queue left a
+                // block's FTS / link / tag-ref index stale until its next
+                // edit. `bg_dropped_global` stays global-only so operators
+                // can still distinguish a cache-freshness gap from a
+                // per-block reindex backlog. The persist is fire-and-forget
+                // via a spawned write (errors warned) because `try_enqueue_*`
+                // is sync and on the hot path.
                 self.metrics.bg_dropped.fetch_add(1, Ordering::Relaxed);
-                if super::retry_queue::RetryKind::from_task(&task)
-                    .map(|(kind, _)| kind.is_global())
-                    .unwrap_or(false)
-                {
-                    self.metrics
-                        .bg_dropped_global
-                        .fetch_add(1, Ordering::Relaxed);
+                if let Some((kind, _)) = super::retry_queue::RetryKind::from_task(&task) {
+                    if kind.is_global() {
+                        self.metrics
+                            .bg_dropped_global
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                     let pool = self.write_pool.clone();
                     let task_for_spawn = task.clone();
                     Self::spawn_task(&self.tasks, async move {
@@ -738,7 +741,7 @@ impl Materializer {
                         {
                             tracing::warn!(
                                 error = %e,
-                                "failed to persist dropped global task to materializer_retry_queue"
+                                "failed to persist dropped task to materializer_retry_queue"
                             );
                         }
                     });
