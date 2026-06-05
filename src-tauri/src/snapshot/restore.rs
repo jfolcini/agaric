@@ -376,5 +376,35 @@ pub async fn apply_snapshot<R: std::io::Read>(
         }
     }
 
+    // #417: recompute the two `pages_cache` count columns AFTER
+    // `RebuildPagesCache` has re-inserted every page row. The RESET wipe
+    // above leaves both columns at DEFAULT 0, and the per-op count
+    // maintenance that ordinary edits rely on never fires here (a snapshot
+    // apply is not an op fan-out). This is the ONLY production path that
+    // enqueues `RebuildPagesCacheCounts` — gating it out of the per-op
+    // `RebuildPagesCache` (the redundant O(pages) correlated-subquery pass)
+    // is exactly issue #417.
+    //
+    // Ordering: enqueued separately at the TAIL (mirroring how
+    // `RebuildPageIds` is enqueued separately at the HEAD) so the count
+    // recompute observes the freshly-rebuilt `pages_cache` rows. The
+    // background consumer processes tasks in strict enqueue order, so this
+    // runs strictly after `RebuildPagesCache` from the `CACHE_TABLES` loop.
+    // (Dedup keys global tasks by discriminant — `RebuildPagesCache` and
+    // `RebuildPagesCacheCounts` are distinct discriminants, so neither
+    // collapses the other and the relative order is preserved.)
+    if let Err(e) = materializer
+        .enqueue_background(MaterializeTask::RebuildPagesCacheCounts)
+        .await
+    {
+        tracing::error!(
+            task = "RebuildPagesCacheCounts",
+            error = %e,
+            "failed to enqueue cache rebuild task after apply_snapshot \
+             (channel closed; shutdown-in-progress?). snapshot applied but \
+             pages_cache counts could not be enqueued; restart the app to repair caches"
+        );
+    }
+
     Ok(data)
 }
