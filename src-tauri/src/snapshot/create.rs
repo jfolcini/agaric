@@ -9,14 +9,23 @@ use crate::error::AppError;
 // L-105: snapshot-creation memory-pressure thresholds
 // ---------------------------------------------------------------------------
 //
-// `collect_tables` + `encode_snapshot` buffer the entire derived state
-// (blocks, block_tags, block_properties, …) into `SnapshotData.tables`
-// before the CBOR/zstd encode step runs. On a 1M-block vault that
-// structure can exceed the per-process heap budget on constrained
-// platforms — Android release APKs cap at ~24 MB, which is the tightest
-// known target for this app. There is no streaming snapshot format
-// today (deferred per L-105's recommendation), so the actionable guard
-// is a heads-up `warn!` at compaction time, well before the wall.
+// `collect_tables` buffers the entire derived state (blocks,
+// block_tags, block_properties, …) into `SnapshotData.tables` before
+// the CBOR/zstd encode step runs. On a 1M-block vault that structure
+// can exceed the per-process heap budget on constrained platforms —
+// Android release APKs cap at ~24 MB, which is the tightest known
+// target for this app.
+//
+// #416 trimmed the encode-side peak: `encode_snapshot` now streams CBOR
+// straight into the zstd encoder, so the uncompressed CBOR buffer is no
+// longer materialised — at peak only the `SnapshotData` Vecs and the
+// compressed output are live (previously: Vecs + full CBOR buffer +
+// compressed output). The residual ceiling is the `SnapshotData` Vecs
+// themselves; eliminating *those* needs a row-batched streaming
+// snapshot *format* (a wire-format change gated by AGENTS.md
+// "Architectural Stability"), which stays deferred. The actionable
+// guard is therefore still a heads-up `warn!` at compaction time, well
+// before the wall.
 //
 // The op_log row count and total payload byte size are the cheapest
 // proxies we have for the size of the snapshot we are about to build:

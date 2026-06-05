@@ -10,7 +10,13 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use agaric_lib::commands::create_block_inner;
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::snapshot::{apply_snapshot, create_snapshot, get_latest_snapshot};
+use agaric_lib::snapshot::{
+    apply_snapshot, create_snapshot, decode_snapshot, encode_snapshot, get_latest_snapshot,
+    BlockPropertySnapshot, BlockSnapshot, SnapshotData, SnapshotTables,
+};
+use agaric_lib::ulid::BlockId;
+
+use std::collections::BTreeMap;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -157,9 +163,105 @@ fn bench_apply_snapshot(c: &mut Criterion) {
 }
 
 // ===========================================================================
+// Benchmark 3: codec encode/decode at vault scale (#416)
+// ===========================================================================
+
+/// Build a synthetic `SnapshotData` with `n` page-sized blocks plus one
+/// `space` property per block — a cheap, DB-free stand-in for a vault of
+/// `n` blocks so the codec can be exercised at 100k scale without paying
+/// the per-block `create_block_inner` materialiser cost.
+fn synthetic_snapshot(n: usize) -> SnapshotData {
+    let mut blocks = Vec::with_capacity(n);
+    let mut block_properties = Vec::with_capacity(n);
+    for i in 0..n {
+        let id = BlockId::new();
+        block_properties.push(BlockPropertySnapshot {
+            block_id: id.clone(),
+            key: "space".to_string(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some("01HSPACEAAAAAAAAAAAAAAAAAA".to_string()),
+            value_bool: None,
+        });
+        blocks.push(BlockSnapshot {
+            id,
+            block_type: "content".to_string(),
+            content: Some(format!(
+                "Seeded block number {i} with some placeholder content for snapshot benchmarks."
+            )),
+            parent_id: None,
+            position: Some(i as i64 + 1),
+            deleted_at: None,
+            todo_state: None,
+            priority: None,
+            due_date: None,
+            scheduled_date: None,
+        });
+    }
+    SnapshotData {
+        // SCHEMA_VERSION is crate-private; 1 is always a valid version
+        // (decode accepts 1..=SCHEMA_VERSION) and the value does not
+        // affect encode/decode cost.
+        schema_version: 1,
+        snapshot_device_id: "dev-bench".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: String::new(),
+        tables: SnapshotTables {
+            blocks,
+            block_tags: Vec::new(),
+            block_properties,
+            block_links: Vec::new(),
+            attachments: Vec::new(),
+            property_definitions: Vec::new(),
+            page_aliases: Vec::new(),
+        },
+    }
+}
+
+/// Benchmark `encode_snapshot` (the create-side codec, #416) and
+/// `decode_snapshot` (the restore-side streaming codec) at 1k / 10k /
+/// 100k blocks. The setup also prints the compressed payload size at
+/// each size so the create-path memory budget can be reasoned about
+/// from measured numbers rather than an estimate — gating the deferred
+/// row-batched streaming *format* (a wire-format change) on real data.
+fn bench_codec(c: &mut Criterion) {
+    let mut group = c.benchmark_group("snapshot_codec");
+    // 100k is the L-105 SNAPSHOT_WARN_ROW_COUNT threshold — the regime the
+    // warn! was added to flag, and the stated mobile scaling target.
+    for n in [1_000usize, 10_000, 100_000] {
+        let data = synthetic_snapshot(n);
+        let encoded = encode_snapshot(&data).unwrap();
+        eprintln!(
+            "[#416 snapshot_codec] {n} blocks -> compressed payload {} bytes ({:.2} MiB)",
+            encoded.len(),
+            encoded.len() as f64 / (1024.0 * 1024.0),
+        );
+
+        group.throughput(Throughput::Elements(n as u64));
+        group.bench_with_input(
+            BenchmarkId::new("encode", format!("{n}_blocks")),
+            &n,
+            |b, _| b.iter(|| encode_snapshot(&data).unwrap()),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("decode", format!("{n}_blocks")),
+            &n,
+            |b, _| b.iter(|| decode_snapshot(&encoded[..]).unwrap()),
+        );
+    }
+    group.finish();
+}
+
+// ===========================================================================
 // Harness
 // ===========================================================================
 
 criterion_group!(snapshot_create_benches, bench_create_snapshot);
 criterion_group!(snapshot_apply_benches, bench_apply_snapshot);
-criterion_main!(snapshot_create_benches, snapshot_apply_benches);
+criterion_group!(snapshot_codec_benches, bench_codec);
+criterion_main!(
+    snapshot_create_benches,
+    snapshot_apply_benches,
+    snapshot_codec_benches
+);
