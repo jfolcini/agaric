@@ -1,7 +1,102 @@
+use std::cell::Cell;
 use std::io::Read;
+use std::rc::Rc;
 
 use super::types::{SnapshotData, SCHEMA_VERSION};
 use crate::error::AppError;
+
+// ---------------------------------------------------------------------------
+// #428 — decompression-bomb bounds
+// ---------------------------------------------------------------------------
+//
+// `decode_snapshot` used to feed a bare `zstd::Decoder` straight to ciborium
+// with NO bound on the decompressed byte count or the zstd window. The only
+// upstream guard caps the *compressed* blob at `MAX_SNAPSHOT_SIZE` (256 MB),
+// but zstd routinely hits 10-100x on repetitive CBOR, so a compromised/buggy
+// *already-paired* peer (the transport is mTLS + TOFU cert-pinned, so not an
+// arbitrary network attacker) could advertise a sub-256 MB blob that expands
+// into a multi-GB `SnapshotData` — an allocation-driven crash instead of a
+// clean rejection.
+//
+// Fix: cap the decompression *ratio* on the fly. We never know the legitimate
+// decompressed size up front (it scales with vault size, not the 256 MB
+// compressed figure — see the audit), so a fixed absolute ceiling would either
+// reject huge-but-legit vaults or still permit a multi-GB blow-up. Instead we
+// count compressed bytes pulled and decompressed bytes produced and reject once
+// `decompressed > compressed * MAX_DECOMPRESSION_RATIO + DECOMPRESSION_SLACK`.
+// Real snapshots carry high-entropy ULIDs and hashes and compress only a few x,
+// far under the ratio; a bomb (tiny blob → GBs) trips the bound after at most
+// ~`DECOMPRESSION_SLACK` bytes. `window_log_max` additionally caps the zstd
+// window memory.
+
+/// Max tolerated zstd decompression ratio (decompressed / compressed). Our
+/// own level-3 encoder on real snapshot CBOR (distinct ULIDs / content hashes)
+/// compresses only single-digit×; 100× leaves a very wide margin for legit data
+/// while still catching a decompression bomb long before it can exhaust memory.
+const MAX_DECOMPRESSION_RATIO: u64 = 100;
+
+/// Absolute headroom added to the ratio bound so a legitimate stream is never
+/// falsely tripped by zstd's internal read-ahead (it emits decompressed output
+/// slightly before the matching compressed bytes have been pulled through the
+/// counter). Also bounds the degenerate "almost no compressed input" case.
+const DECOMPRESSION_SLACK: u64 = 64 * 1024 * 1024;
+
+/// Cap the zstd decompression window at 2^27 = 128 MB. Our level-3 encoder uses
+/// a far smaller window, so this never rejects a snapshot we produced; it just
+/// refuses a frame whose header demands an outsized window allocation.
+const DECODER_WINDOW_LOG_MAX: u32 = 27;
+
+/// Counts the bytes pulled from the wrapped (compressed) reader into a shared
+/// cell, so the ratio limiter downstream can see how much compressed input has
+/// actually been consumed. See [`RatioLimitedReader`].
+struct CompressedCounter<R> {
+    inner: R,
+    consumed: Rc<Cell<u64>>,
+}
+
+impl<R: Read> Read for CompressedCounter<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.consumed
+            .set(self.consumed.get().saturating_add(n as u64));
+        Ok(n)
+    }
+}
+
+/// Wraps the zstd decoder's *output* and errors once the decompressed byte
+/// count exceeds `compressed_consumed * MAX_DECOMPRESSION_RATIO +
+/// DECOMPRESSION_SLACK`. The error surfaces through `ciborium::from_reader` as
+/// a decode failure, which [`decode_snapshot`] maps to `AppError::Snapshot` —
+/// a clean rejection instead of an OOM abort (#428).
+struct RatioLimitedReader<R> {
+    inner: R,
+    compressed_consumed: Rc<Cell<u64>>,
+    decompressed: u64,
+}
+
+impl<R: Read> Read for RatioLimitedReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.decompressed = self.decompressed.saturating_add(n as u64);
+        let allowed = self
+            .compressed_consumed
+            .get()
+            .saturating_mul(MAX_DECOMPRESSION_RATIO)
+            .saturating_add(DECOMPRESSION_SLACK);
+        if self.decompressed > allowed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "snapshot decompression exceeded the {MAX_DECOMPRESSION_RATIO}x ratio bound \
+                     ({} bytes decompressed from {} compressed) — possible decompression bomb",
+                    self.decompressed,
+                    self.compressed_consumed.get(),
+                ),
+            ));
+        }
+        Ok(n)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Encoding / decoding
@@ -73,9 +168,25 @@ pub fn decode_snapshot<R: Read>(reader: R) -> Result<SnapshotData, AppError> {
     // buffer — `ciborium::from_reader` reads ONE CBOR value off
     // the decoder, so as soon as the snapshot has been parsed the
     // remaining decompressor state is dropped.
-    let zstd_decoder = zstd::stream::Decoder::new(reader)
+    // #428: count compressed bytes pulled, cap the window, and bound the
+    // decompression ratio so a bomb is rejected (clean `AppError::Snapshot`)
+    // rather than allowed to OOM.
+    let compressed_consumed = Rc::new(Cell::new(0u64));
+    let counted = CompressedCounter {
+        inner: reader,
+        consumed: Rc::clone(&compressed_consumed),
+    };
+    let mut zstd_decoder = zstd::stream::Decoder::new(counted)
         .map_err(|e| AppError::Snapshot(format!("zstd decompress: {e}")))?;
-    let snapshot: SnapshotData = ciborium::from_reader(zstd_decoder)
+    zstd_decoder
+        .window_log_max(DECODER_WINDOW_LOG_MAX)
+        .map_err(|e| AppError::Snapshot(format!("zstd window cap: {e}")))?;
+    let bounded = RatioLimitedReader {
+        inner: zstd_decoder,
+        compressed_consumed,
+        decompressed: 0,
+    };
+    let snapshot: SnapshotData = ciborium::from_reader(bounded)
         .map_err(|e| AppError::Snapshot(format!("CBOR decode: {e}")))?;
     if snapshot.schema_version < 1 || snapshot.schema_version > SCHEMA_VERSION {
         return Err(AppError::Snapshot(format!(

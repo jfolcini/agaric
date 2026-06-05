@@ -83,6 +83,43 @@ fn sample_snapshot_data() -> SnapshotData {
     }
 }
 
+/// #428 — a decompression bomb (a tiny compressed blob that expands to a huge
+/// `SnapshotData`) must be rejected with a clean `AppError::Snapshot`, not an
+/// OOM abort. A highly repetitive `content` field compresses ~thousands× so the
+/// decompressed stream blows past the ratio bound mid-decode.
+#[test]
+fn decode_snapshot_rejects_decompression_bomb() {
+    let mut data = sample_snapshot_data();
+    // ~70 MB of one repeated byte → a few KB compressed (ratio ≫ 100×), and
+    // larger than DECOMPRESSION_SLACK so the bound trips even though the
+    // compressed counter starts near zero.
+    data.tables.blocks[0].content = Some("A".repeat(70 * 1024 * 1024));
+    let compressed = encode_snapshot(&data).expect("encode");
+    assert!(
+        compressed.len() < 1024 * 1024,
+        "bomb must compress small to exercise the ratio bound; got {} bytes",
+        compressed.len()
+    );
+
+    let err = decode_snapshot(&compressed[..]).expect_err("bomb must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("decompression") || msg.contains("bomb") || msg.contains("ratio"),
+        "expected a clean decompression-bomb rejection, got: {msg}"
+    );
+}
+
+/// #428 — a normal (high-entropy) snapshot must still decode cleanly: the ratio
+/// bound and window cap must not produce a false positive on legitimate data.
+#[test]
+fn decode_snapshot_accepts_normal_snapshot() {
+    let data = sample_snapshot_data();
+    let compressed = encode_snapshot(&data).expect("encode");
+    let decoded = decode_snapshot(&compressed[..]).expect("normal snapshot must decode");
+    assert_eq!(decoded.up_to_hash, data.up_to_hash);
+    assert_eq!(decoded.tables.blocks.len(), data.tables.blocks.len());
+}
+
 /// Helper: insert a block directly into the DB (bypasses op log).
 async fn insert_block(pool: &SqlitePool, id: &str, content: &str) {
     sqlx::query(
