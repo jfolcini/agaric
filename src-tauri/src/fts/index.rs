@@ -543,14 +543,41 @@ async fn rebuild_fts_index_split_impl(
 }
 
 // ---------------------------------------------------------------------------
-// FTS5 optimize
+// FTS5 segment maintenance
 // ---------------------------------------------------------------------------
 
-/// Run FTS5 optimize to merge segments.
+/// Bounded per-run page budget for the periodic incremental `'merge'` (#422).
+///
+/// FTS5's `'merge'` command processes at most this many pages of segment data
+/// per invocation and then returns, so each maintenance run costs a FIXED
+/// amount of work regardless of total index size. Any positive value is
+/// correct — it only tunes how much merging happens per run (never
+/// correctness); 256 pages is a modest chunk well-suited to the 2-connection
+/// write pool / mobile flash. Steady-state fragmentation is already bounded by
+/// FTS5's `automerge` (default 16), which merges incrementally on every insert;
+/// this periodic merge is supplementary cleanup, not the sole mechanism.
+const FTS_MERGE_PAGES: i64 = 256;
+
+/// Periodic FTS5 segment maintenance: a **bounded incremental merge** (#422).
+///
+/// Enqueued by `Materializer::maybe_enqueue_fts_optimize` (threshold/hourly)
+/// and run on the write pool. It previously issued the FTS5 full-merge
+/// `INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')`, which rewrites the
+/// ENTIRE trigram index into one segment — `O(total index size)` while holding
+/// the writer lock, a real cost on a large, frequently-edited vault. This now
+/// issues the incremental `('merge', N)` form, which does at most
+/// [`FTS_MERGE_PAGES`] pages of work per run, bounding each maintenance write.
+///
+/// A full `'optimize'` remains the right tool for an explicit, user-initiated
+/// maintenance action (one-shot, foreground-acknowledged); it is intentionally
+/// no longer run on the automatic background cadence.
 pub async fn fts_optimize(pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query!("INSERT INTO fts_blocks(fts_blocks) VALUES('optimize')")
-        .execute(pool)
-        .await?;
+    sqlx::query!(
+        "INSERT INTO fts_blocks(fts_blocks, rank) VALUES('merge', ?)",
+        FTS_MERGE_PAGES,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
