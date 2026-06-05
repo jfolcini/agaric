@@ -1359,6 +1359,95 @@ async fn filtered_query_perf_gate_20k_pages() {
     );
 }
 
+/// #424 — perf gate for the two sort modes that had NO gate: `Default`
+/// (`ORDER BY b.id`) and `Alphabetical` (`ORDER BY COALESCE(content,'')
+/// COLLATE NOCASE, b.id`). The audit's finding is that the space-filter
+/// IN-subquery forces the planner to drive off the membership set, so
+/// EVERY sort mode — including these two — gets `USE TEMP B-TREE FOR
+/// ORDER BY` and the LIMIT cannot short-circuit; the 4 `has_*` EXISTS
+/// subqueries plus the `MAX(op_log.created_at)` correlated subquery are
+/// evaluated across the whole filtered set before the first page returns.
+/// The MostLinked/RecentlyModified/filtered gates above never timed these
+/// two modes.
+///
+/// This seeds the same realistic 20k fixture (link skew + op_log depth +
+/// tags on ~1/10 pages) so the per-row EXISTS / MAX subqueries do real
+/// index probes, then times both modes' first page. It is the "measure"
+/// half of the bench-first decision on #424: the heavier remedy
+/// (materialising a per-page `space` column / folding `has_*` into
+/// `pages_cache`) is a schema promotion gated by AGENTS.md "Architectural
+/// Stability" and is only justified if a measured mode exceeds budget.
+///
+/// `#[ignore]`'d so CI doesn't pay for 20k-row seeding on every run —
+/// invoke via
+/// `cargo nextest run --run-ignored=only default_and_alphabetical_sort_perf_gate_20k_pages`.
+#[ignore]
+#[tokio::test]
+async fn default_and_alphabetical_sort_perf_gate_20k_pages() {
+    let (pool, _dir) = test_pool().await;
+    ensure_test_space(&pool).await;
+    let n = 20_000;
+    let tag = "01TAG0000000000000000PERF2";
+    let seed_start = std::time::Instant::now();
+    let mut page_ids: Vec<String> = Vec::with_capacity(n);
+    for i in 0..n {
+        let pid = format!("01PAGE{:020}", i);
+        seed_page(&pool, &pid, &format!("p{i}")).await;
+        page_ids.push(pid);
+    }
+    // Realistic inbound-link skew + op_log depth so the per-row
+    // correlated subqueries (last_modified MAX, has_*) aggregate over a
+    // genuine index range rather than short-circuiting on empty/single-row.
+    bulk_seed_link_skew(&pool, &page_ids).await;
+    bulk_seed_op_log_depth(&pool, &page_ids, 8).await;
+    for (i, pid) in page_ids.iter().enumerate() {
+        if i % 10 == 0 {
+            seed_tag(&pool, pid, tag).await;
+        }
+    }
+    let seed_ms = seed_start.elapsed().as_millis();
+    eprintln!("[#424 PERF] seeded {n} pages (+skewed links, +op_log depth, +tags) in {seed_ms} ms");
+
+    for (label, sort) in [
+        ("Default", PageSort::Default),
+        ("Alphabetical", PageSort::Alphabetical),
+    ] {
+        // Warm up (3×).
+        for _ in 0..3 {
+            let _ = list_pages_with_metadata_inner(&pool, filter(sort), None, Some(50))
+                .await
+                .unwrap();
+        }
+        // Measure (median of 5 samples).
+        let mut samples: Vec<u128> = Vec::with_capacity(5);
+        for _ in 0..5 {
+            let start = std::time::Instant::now();
+            let _ = list_pages_with_metadata_inner(&pool, filter(sort), None, Some(50))
+                .await
+                .unwrap();
+            samples.push(start.elapsed().as_millis());
+        }
+        samples.sort();
+        let median_ms = samples[samples.len() / 2];
+        eprintln!("[#424 PERF] {label} @ 20k pages: samples={samples:?} median={median_ms} ms");
+        // Soft assertion. Both modes pay the temp B-tree + per-row EXISTS /
+        // MAX subqueries (index probes, not table scans). MEASURED (#424,
+        // 2026-06-05): Default median ~38 ms, Alphabetical median ~67 ms @
+        // 20k pages — well within budget, so the gated schema promotion
+        // (materialised per-page `space` column / folded `has_*` into
+        // `pages_cache`) is NOT justified at this scale and stays deferred
+        // behind this gate. Budget matches the un-materialised
+        // correlated-subquery gates (250 ms) to absorb CI noise; if a
+        // future change pushes past it, the schema promotion should be
+        // revisited (it needs explicit approval per AGENTS.md
+        // "Architectural Stability").
+        assert!(
+            median_ms < 250,
+            "{label} @ 20k pages exceeded 250 ms budget: median={median_ms} ms (samples={samples:?})"
+        );
+    }
+}
+
 #[tokio::test]
 async fn most_content_query_plan_uses_pages_cache_not_blocks_subquery() {
     let (pool, _dir) = test_pool().await;
