@@ -2183,6 +2183,49 @@ async fn replay_walks_unmaterialized_ops_c2b() {
     mat.shutdown();
 }
 
+/// #412 — replay must FAIL LOUDLY when `op_log` spans multiple devices: the
+/// single global apply cursor cannot represent per-device watermarks, so the
+/// `WHERE seq > cursor` walk would silently drop the other device's low-seq
+/// ops. The guard surfaces the latent multi-device bug instead.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_rejects_multi_device_op_log_412() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Two devices, each with its own per-device seq sequence (A/1,A/2,B/1,B/2).
+    for (d, dev) in ["dev-A-412", "dev-B-412"].iter().enumerate() {
+        for i in 1..=2 {
+            append_local_op(
+                &pool,
+                dev,
+                OpPayload::CreateBlock(CreateBlockPayload {
+                    block_id: BlockId::test_id(&format!("BLK412D{d}N{i}")),
+                    block_type: "content".into(),
+                    parent_id: None,
+                    position: Some(i),
+                    index: None,
+                    content: format!("op-{d}-{i}"),
+                }),
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    let err = replay_unmaterialized_ops(&pool, &mat)
+        .await
+        .expect_err("multi-device replay must be rejected, not silently drop ops");
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "expected InvalidOperation, got {err:?}"
+    );
+    assert!(
+        err.to_string().contains("#412"),
+        "error should reference #412: {err}"
+    );
+    mat.shutdown();
+}
+
 /// C-2b — running replay twice in succession is idempotent.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn replay_is_idempotent_c2b() {

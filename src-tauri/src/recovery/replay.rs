@@ -242,6 +242,38 @@ pub async fn replay_unmaterialized_ops(
 ) -> Result<ReplayReport, AppError> {
     let cursor = read_apply_cursor(pool).await?;
 
+    // #412: the apply cursor is a SINGLE GLOBAL scalar, but `op_log.seq` is a
+    // PER-DEVICE counter (PK `(device_id, seq)`). The `WHERE seq > cursor` walk
+    // below is only sound when the entire op_log belongs to ONE device — with
+    // two devices, device B's low seqs sit `<= cursor` and are silently never
+    // replayed (ops dropped on the floor at boot). Multi-device sync is not yet
+    // shipped (the remote-apply path is test-only and the SyncDaemon is dormant
+    // until a peer is paired), so a multi-device op_log reaching here means
+    // multi-device sync was enabled BEFORE the per-device watermark cursor
+    // landed. The batch-apply path already has a `debug_assert!` for the write
+    // side; this is the release-build guard for the read/replay side — fail
+    // loudly rather than silently diverge. The full fix (a per-device cursor +
+    // `WHERE device_id = ? AND seq > ?` replay) is deferred to when
+    // multi-device sync ships (schema migration, AGENTS.md arch-stability gate).
+    let distinct_devices: i64 =
+        sqlx::query_scalar!(r#"SELECT COUNT(DISTINCT device_id) AS "n!: i64" FROM op_log"#)
+            .fetch_one(pool)
+            .await?;
+    if distinct_devices > 1 {
+        tracing::error!(
+            distinct_devices,
+            "replay: op_log spans multiple devices but the materializer apply \
+             cursor is a single global scalar — replay would silently drop other \
+             devices' ops. The per-device watermark cursor (#412) must land before \
+             multi-device sync is enabled."
+        );
+        return Err(AppError::InvalidOperation(format!(
+            "op_log spans {distinct_devices} devices but the materializer apply \
+             cursor is a single global scalar; per-device cursor partitioning is \
+             required before multi-device replay (backend audit #412)"
+        )));
+    }
+
     // Count first so we can log the size before kicking off the walk.
     // The reader pool would be marginally cheaper but the writer pool
     // is the one we own at boot — see fn-level docs.
