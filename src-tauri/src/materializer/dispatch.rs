@@ -84,6 +84,42 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
+/// #421: inbound-sync FTS-reindex strategy threshold. When an inbound sync
+/// message changes at most this many blocks, FTS is reindexed per-block via
+/// `UpdateFtsBlock` (targeted, O(changed)); above it, a single chunked full
+/// `RebuildFtsIndex` is enqueued instead (the snapshot/boot re-sync case,
+/// which can change ~every block).
+///
+/// This is a **queue-safety** bound, not a measured perf crossover: each
+/// `UpdateFtsBlock` is one task in the bounded background channel
+/// ([`super::BACKGROUND_CAPACITY`] = 1024), and `enqueue_inbound_sync_rebuilds`
+/// uses the non-blocking `try_enqueue_background` (drops on a full channel).
+/// Capping the per-block fan-out at a quarter of the channel leaves headroom
+/// for the `FULL_CACHE_REBUILD_TASKS` fan-out enqueued alongside and for
+/// concurrent foreground/background work, so a large import falls back to the
+/// single-task rebuild rather than risking saturation drops.
+const SYNC_FTS_PER_BLOCK_MAX: usize = super::BACKGROUND_CAPACITY / 4;
+
+/// #421: choose the FTS-reindex task(s) for an inbound-sync import that
+/// changed `changed_blocks`. Pure (no queue/IO) so the strategy is unit
+/// testable: empty set → no FTS work; small set → one targeted
+/// `UpdateFtsBlock` per block; large set → a single full `RebuildFtsIndex`
+/// (see [`SYNC_FTS_PER_BLOCK_MAX`] for why the large case falls back).
+fn inbound_sync_fts_tasks(changed_blocks: &[crate::ulid::BlockId]) -> Vec<MaterializeTask> {
+    if changed_blocks.is_empty() {
+        Vec::new()
+    } else if changed_blocks.len() > SYNC_FTS_PER_BLOCK_MAX {
+        vec![MaterializeTask::RebuildFtsIndex]
+    } else {
+        changed_blocks
+            .iter()
+            .map(|block_id| MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::from(block_id.as_str()),
+            })
+            .collect()
+    }
+}
+
 impl Materializer {
     pub(super) fn fg_sender(&self) -> Result<mpsc::Sender<MaterializeTask>, AppError> {
         sender_or_closed(
@@ -193,14 +229,33 @@ impl Materializer {
     /// Non-fatal by convention at the call site: a queue-closed / serialization
     /// error must not unwind the sync session (the per-block projection has
     /// already committed), so the orchestrator logs and continues.
-    pub fn enqueue_inbound_sync_rebuilds(&self) -> Result<(), AppError> {
+    pub fn enqueue_inbound_sync_rebuilds(
+        &self,
+        changed_blocks: &[crate::ulid::BlockId],
+    ) -> Result<(), AppError> {
         for task in FULL_CACHE_REBUILD_TASKS {
             self.try_enqueue_background(task.clone())?;
         }
         // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
-        // per-block via `UpdateFtsBlock`). Inbound sync touches arbitrary
-        // block content, so do a full FTS reindex.
-        self.try_enqueue_background(MaterializeTask::RebuildFtsIndex)?;
+        // per-block via `UpdateFtsBlock`). #421: drive FTS from the exact
+        // `changed_blocks` set `apply_remote` already computed, instead of
+        // an unconditional full O(vault) `RebuildFtsIndex` on every inbound
+        // sync message. For an ordinary incremental update (a handful of
+        // changed blocks) this enqueues one `UpdateFtsBlock` per block —
+        // the same targeted, delete-correct, queue-deduped path local edits
+        // use — turning O(vault) into O(changed). A `RebuildFtsIndex` is
+        // reserved for the large-import case (a snapshot/boot re-sync can
+        // change ~every block): enqueueing one `UpdateFtsBlock` each would
+        // risk saturating the bounded background queue (`BACKGROUND_CAPACITY`)
+        // and dropping tasks, so above the threshold a single chunked full
+        // rebuild is both safer and cheaper. The threshold is a queue-safety
+        // bound (a fraction of the channel capacity leaving headroom for the
+        // cache fan-out above and concurrent ops), NOT a measured perf
+        // crossover. The selection itself is the pure, unit-tested
+        // [`inbound_sync_fts_tasks`].
+        for task in inbound_sync_fts_tasks(changed_blocks) {
+            self.try_enqueue_background(task)?;
+        }
         Ok(())
     }
 
@@ -545,6 +600,67 @@ mod tests {
     fn contains_kind(tasks: &[MaterializeTask], probe: &MaterializeTask) -> bool {
         let want = discriminant(probe);
         tasks.iter().any(|t| discriminant(t) == want)
+    }
+
+    // ── #421 inbound-sync FTS strategy ───────────────────────────────
+
+    /// An empty changed set (no-op import) enqueues NO FTS work — the old
+    /// path always ran a full O(vault) `RebuildFtsIndex` here.
+    #[test]
+    fn inbound_sync_fts_tasks_empty_is_noop() {
+        assert!(inbound_sync_fts_tasks(&[]).is_empty());
+    }
+
+    /// A small incremental import reindexes per-block via `UpdateFtsBlock`
+    /// (one per changed block, carrying the right id) — NOT a full rebuild.
+    #[test]
+    fn inbound_sync_fts_tasks_small_set_is_per_block() {
+        let changed = [
+            crate::ulid::BlockId::test_id("B1"),
+            crate::ulid::BlockId::test_id("B2"),
+        ];
+        let tasks = inbound_sync_fts_tasks(&changed);
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "UpdateFtsBlock(B1)".to_string(),
+                "UpdateFtsBlock(B2)".to_string()
+            ],
+            "small set must reindex per-block, not full-rebuild",
+        );
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildFtsIndex),
+            "small set must NOT enqueue a full RebuildFtsIndex",
+        );
+    }
+
+    /// At the threshold the per-block path still applies (boundary is `>`).
+    #[test]
+    fn inbound_sync_fts_tasks_at_threshold_is_per_block() {
+        let changed: Vec<_> = (0..SYNC_FTS_PER_BLOCK_MAX)
+            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_fts_tasks(&changed);
+        assert_eq!(tasks.len(), SYNC_FTS_PER_BLOCK_MAX);
+        assert!(tasks
+            .iter()
+            .all(|t| matches!(t, MaterializeTask::UpdateFtsBlock { .. })));
+    }
+
+    /// Above the threshold (snapshot/boot re-sync) a SINGLE full
+    /// `RebuildFtsIndex` is enqueued instead of N per-block tasks, so the
+    /// bounded background queue cannot be saturated by the FTS fan-out.
+    #[test]
+    fn inbound_sync_fts_tasks_large_set_is_single_full_rebuild() {
+        let changed: Vec<_> = (0..=SYNC_FTS_PER_BLOCK_MAX)
+            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_fts_tasks(&changed);
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildFtsIndex".to_string()],
+            "above threshold must collapse to one full rebuild",
+        );
     }
 
     // ── create_block ─────────────────────────────────────────────────
