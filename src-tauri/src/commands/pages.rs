@@ -2369,6 +2369,28 @@ fn compile_pages_filters(
 /// not justified at this scale and stays deferred behind the
 /// `default_and_alphabetical_sort_perf_gate_20k_pages` gate (alongside
 /// the MostLinked / RecentlyModified / filtered gates).
+///
+/// # #433 — migration-0069 header claim is stale; THIS is the real shape
+///
+/// Migration `0069`'s header still states the `MostLinked` / `MostContent`
+/// first page is a "full scan into a quick-sort top-K heap (no temp B-tree)".
+/// That is **false** and cannot be corrected in place (migrations are
+/// append-only / checksummed), so the correction lives here, where the query
+/// actually is. The sort key is `COALESCE(pc.inbound_link_count, 0)` — an
+/// expression over a LEFT JOIN keyed on `b.id`, NOT indexable — so
+/// `EXPLAIN QUERY PLAN` shows `USE TEMP B-TREE FOR ORDER BY`: SQLite
+/// materialises the whole filtered page set (not a `LIMIT`-50 top-K heap) and
+/// evaluates the surviving per-row subqueries (`MAX(op_log.created_at)`,
+/// `has_tags` / `has_todo` / `has_scheduled` / `has_due`) across every row
+/// before the sort — `O(N)`, not top-K. What migration `0069` genuinely fixed
+/// — and what the `most_linked_query_plan_uses_pages_cache_not_block_links`
+/// test pins — is that the expensive `COUNT(DISTINCT)` over `block_links` is
+/// gone (replaced by the materialised `pages_cache` count columns); the five
+/// residual subqueries are cheap single-index probes. Severity is low at
+/// present scale (the 20k gate passes < 100 ms). Killing the temp B-tree
+/// outright (a `(inbound_link_count DESC)`-style materialised sort column) is
+/// the same gated schema promotion deferred above — revisit only if a future
+/// workload regresses past budget at 100k+ pages.
 const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
                b.id, b.block_type, b.content, b.parent_id, b.position,
                b.deleted_at, b.todo_state, b.priority, b.due_date,
