@@ -8,12 +8,37 @@ use crate::error::AppError;
 // ---------------------------------------------------------------------------
 
 /// Encode SnapshotData to zstd-compressed CBOR bytes.
+///
+/// **#416 — streaming encoder.** The CBOR is serialised *directly into*
+/// the zstd encoder rather than into an intermediate `Vec<u8>` that is
+/// then handed to `zstd::encode_all`. The old shape held two full
+/// transient buffers simultaneously — the uncompressed CBOR (`cbor_buf`)
+/// *and* the compressed output — on top of the `SnapshotData` Vecs, i.e.
+/// three materialisations of the derived state at peak. Streaming drops
+/// the uncompressed CBOR buffer (the largest of the three): at peak only
+/// the `SnapshotData` (the caller's working set) and the compressed
+/// output Vec are live.
+///
+/// This is **not** a wire-format change: the output is still a single
+/// zstd frame wrapping the same one CBOR value, and [`decode_snapshot`]
+/// already decodes it via a streaming reader. The encoding stays
+/// deterministic (same input → identical bytes), so the
+/// `snapshot_encode_deterministic` / `snapshot_cbor_roundtrip` property
+/// tests continue to hold.
+///
+/// A fully streaming snapshot *format* (row-batched CBOR frames so the
+/// `SnapshotData` Vecs themselves never fully materialise on create) is
+/// a wire-format change gated by AGENTS.md "Architectural Stability" and
+/// remains deferred (#416); the `encode_snapshot` 100k-scale bench is in
+/// place to gate that decision on a measured budget.
 #[must_use = "encoded bytes must be stored or transmitted"]
 pub fn encode_snapshot(data: &SnapshotData) -> Result<Vec<u8>, AppError> {
-    let mut cbor_buf = Vec::new();
-    ciborium::into_writer(data, &mut cbor_buf)
+    let mut encoder = zstd::stream::Encoder::new(Vec::new(), 3)
+        .map_err(|e| AppError::Snapshot(format!("zstd encoder init: {e}")))?;
+    ciborium::into_writer(data, &mut encoder)
         .map_err(|e| AppError::Snapshot(format!("CBOR encode: {e}")))?;
-    let compressed = zstd::encode_all(cbor_buf.as_slice(), 3)
+    let compressed = encoder
+        .finish()
         .map_err(|e| AppError::Snapshot(format!("zstd compress: {e}")))?;
     Ok(compressed)
 }
