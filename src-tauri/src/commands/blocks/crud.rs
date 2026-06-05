@@ -1475,22 +1475,36 @@ pub async fn purge_block_inner(
         .execute(&mut **tx)
         .await?;
 
-    // #417: capture the OTHER pages that lose an inbound link when this
-    // subtree is hard-deleted, BEFORE the `block_links` DELETE below
-    // erases the edges. These are the pages targeted by outbound edges
-    // from the subtree; the subtree's OWN pages have their `pages_cache`
-    // rows purged outright (see the `pages_cache` purge below), so they
-    // are excluded here (`b.page_id NOT IN (subtree)`). The recompute runs
-    // AFTER the block DELETE so the inbound subqueries no longer see the
-    // purged sources. Bounded by the same depth-100 purge CTE + indexed
-    // `block_links` join.
+    // #417/#446: capture, BEFORE the `block_links` + `blocks` DELETEs below
+    // erase the rows, every SURVIVING page whose `pages_cache` count changes
+    // when this subtree is hard-deleted. Two branches, both excluding pages
+    // that are THEMSELVES in the purged subtree (`page_id NOT IN descendants`)
+    // — those pages' `pages_cache` rows are purged outright (see the
+    // `pages_cache` purge below), so recomputing them is pointless:
+    //   (a) inbound: pages targeted by an outbound edge from the subtree
+    //       (they lose an inbound link), and
+    //   (b) #446 ownership: pages that OWN a block in the subtree
+    //       (`SELECT DISTINCT page_id FROM blocks WHERE id IN descendants`)
+    //       — e.g. purging a content child under page P leaves P (an
+    //       ancestor, not a descendant) with a stale `child_block_count`.
+    //       Before #417 the unconditional full-table recompute repaired P;
+    //       now that it is gated out, P must be recomputed explicitly here
+    //       (mirrors `affected_pages_for_subtree`'s ownership branch on the
+    //       delete/restore path). The recompute runs AFTER the DELETEs so the
+    //       count subqueries no longer see the purged rows. Bounded by the
+    //       same depth-100 purge CTE + indexed joins.
     let purge_affected_pages: Vec<String> = sqlx::query_scalar::<_, String>(concat!(
         crate::descendants_cte_purge!(),
         "SELECT DISTINCT b.page_id FROM block_links bl \
              JOIN blocks b ON b.id = bl.target_id \
          WHERE bl.source_id IN (SELECT id FROM descendants) \
            AND b.page_id IS NOT NULL \
-           AND b.page_id NOT IN (SELECT id FROM descendants)",
+           AND b.page_id NOT IN (SELECT id FROM descendants) \
+         UNION \
+         SELECT DISTINCT page_id FROM blocks \
+         WHERE id IN (SELECT id FROM descendants) \
+           AND page_id IS NOT NULL \
+           AND page_id NOT IN (SELECT id FROM descendants)",
     ))
     .bind(&block_id)
     .fetch_all(&mut **tx)

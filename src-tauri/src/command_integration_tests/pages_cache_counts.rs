@@ -297,3 +297,83 @@ async fn local_delete_of_linking_block_decrements_target_inbound() {
         "Target inbound_link_count must drop to 0 after the linking block is deleted (#417)"
     );
 }
+
+/// #446 (review of #417) — purging a soft-deleted subtree that still owns an
+/// ACTIVE descendant must recompute the SURVIVING owning page's
+/// `child_block_count`. The purge affected-page set previously captured only
+/// outbound link targets, omitting the ownership branch that delete/restore/
+/// move include; once the full-table recompute was gated out (#417), the owner
+/// page's count was left permanently stale. This reproduces the reachable
+/// inconsistent state (active grandchild under a soft-deleted child) that the
+/// purge cascade removes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_purge_recomputes_surviving_owner_child_count() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let c = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "c".into(),
+        Some(p.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let gc = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "gc".into(),
+        Some(c.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Both descendants are active and owned by P.
+    let (_in0, ch0) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(ch0, 2, "P owns the active child + grandchild");
+
+    // Construct the reachable inconsistent state: soft-delete ONLY C (no
+    // cascade to GC), as a sync merge / partial restore can leave it — GC
+    // stays active under a tombstoned C. Stamp the cache to the correct
+    // post-state (P now has 1 active descendant: GC) so the baseline is clean
+    // and the purge is the only thing under test.
+    sqlx::query("UPDATE blocks SET deleted_at = 1767225600000 WHERE id = ?")
+        .bind(c.id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE pages_cache SET child_block_count = 1 WHERE page_id = ?")
+        .bind(p.id.as_str())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_in1, ch1) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(ch1, 1, "baseline: P owns only the active grandchild GC");
+
+    // Purge the soft-deleted C — the cascade also removes the still-active GC,
+    // so P must drop to 0. Without the #446 ownership branch P stays stale at 1.
+    let _ = gc;
+    purge_block_inner(&pool, DEV, &mat, c.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let (_in2, ch2) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(
+        ch2, 0,
+        "P.child_block_count must be recomputed to 0 after purging its last \
+         (active) descendant (#446)"
+    );
+}
