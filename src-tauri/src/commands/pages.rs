@@ -835,6 +835,15 @@ pub async fn import_markdown_with_progress(
     })
 }
 
+/// #426: telemetry tripwire for the unbounded graph edge set. NOT a functional
+/// limit — `list_page_links_inner_split` never truncates (the graph renderer
+/// wants the whole set); this only governs when a `warn!` fires so a vault
+/// whose edge set has grown into the mobile-OOM-risk regime is observable in
+/// logs. Deliberately generous (well beyond any normal vault) and to be
+/// calibrated against real device-memory measurements when the mobile
+/// graph-degradation (ego-graph / edge cap) is designed.
+const GRAPH_EDGE_WARN_THRESHOLD: usize = 50_000;
+
 /// List all links between pages (for graph view).
 ///
 /// Returns edges where both source and target are non-deleted page blocks.
@@ -1017,6 +1026,32 @@ pub async fn list_page_links_inner_split(
     )
     .fetch_all(pool)
     .await?;
+
+    // #426: the graph view loads the ENTIRE edge set in one shot (no LIMIT —
+    // intentional, the renderer wants the whole graph). That is fine at normal
+    // scale, but on a 10k+ page vault with high link density the edge set can
+    // grow large enough to strain the mobile webview once it crosses the IPC
+    // boundary (every edge is decoded into `Vec<PageLink>`, serialized, and
+    // held in JS). We do NOT truncate here — silently dropping graph edges is a
+    // UX decision (the audit's "degrade to an ego-graph / count-then-warn cap"
+    // remedy) that needs product sign-off and a real mobile-memory measurement
+    // first. Instead emit a telemetry tripwire so the scaling regime is
+    // observable in logs BEFORE it OOMs a device — the "measure/surface before
+    // shipping mobile" minimum the audit asks for. `GRAPH_EDGE_WARN_THRESHOLD`
+    // is a logging tripwire, NOT a functional limit: nothing is dropped, so its
+    // exact value only governs when the warn fires; calibrate it against real
+    // device measurements when the mobile graph degradation is designed.
+    if links.len() > GRAPH_EDGE_WARN_THRESHOLD {
+        tracing::warn!(
+            target: "agaric::list_page_links",
+            edges = links.len(),
+            threshold = GRAPH_EDGE_WARN_THRESHOLD,
+            "graph edge set exceeds the telemetry tripwire; the full set is \
+             still returned (no truncation), but at this scale the IPC payload \
+             may strain the mobile webview — see #426 (ego-graph / edge-cap \
+             degradation is a deferred UX + measurement decision)"
+        );
+    }
 
     Ok(links)
 }
