@@ -397,7 +397,9 @@ export async function blurEditors(page: Page) {
       return (
         !el ||
         el === document.body ||
-        (!el.isContentEditable && el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')
+        (!(el as HTMLElement).isContentEditable &&
+          el.tagName !== 'INPUT' &&
+          el.tagName !== 'TEXTAREA')
       )
     },
     { timeout: 2000 },
