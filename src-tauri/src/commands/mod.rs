@@ -63,7 +63,7 @@ pub use attachments::{
     add_attachment, add_attachment_inner, add_attachment_with_bytes,
     add_attachment_with_bytes_inner, delete_attachment, delete_attachment_inner, list_attachments,
     list_attachments_batch, list_attachments_batch_inner, list_attachments_inner, read_attachment,
-    read_attachment_inner,
+    read_attachment_inner, rename_attachment, rename_attachment_inner,
 };
 pub use blocks::{
     CreateBlockSpec, batch_resolve, batch_resolve_inner, count_trash, count_trash_inner,

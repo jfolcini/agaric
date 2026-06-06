@@ -37,6 +37,7 @@ pub async fn compute_reverse(
         OpType::AddAttachment => attachment_ops::reverse_add_attachment(&record),
         OpType::RestoreBlock => block_ops::reverse_restore_block(&record),
         OpType::DeleteAttachment => attachment_ops::reverse_delete_attachment(pool, &record).await,
+        OpType::RenameAttachment => attachment_ops::reverse_rename_attachment(&record),
         OpType::PurgeBlock => Err(AppError::NonReversible {
             op_type: record.op_type.clone(),
         }),

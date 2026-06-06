@@ -213,7 +213,8 @@ fn block_id_of(record: &OpRecord) -> Result<Option<String>, AppError> {
                 .and_then(serde_json::Value::as_str)
                 .map(std::borrow::ToOwned::to_owned))
         }
-        Some(OpType::AddAttachment | OpType::DeleteAttachment) | None => Ok(None),
+        Some(OpType::AddAttachment | OpType::DeleteAttachment | OpType::RenameAttachment)
+        | None => Ok(None),
     }
 }
 
@@ -259,7 +260,8 @@ pub fn compute_dirty_event(
         | OpType::AddTag
         | OpType::RemoveTag
         | OpType::AddAttachment
-        | OpType::DeleteAttachment => None,
+        | OpType::DeleteAttachment
+        | OpType::RenameAttachment => None,
     }
 }
 

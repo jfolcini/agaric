@@ -191,6 +191,7 @@ pub async fn compute_reverse_batch(
                 att_cursor += 1;
                 build_reverse_delete_attachment(record, prior)?
             }
+            OpType::RenameAttachment => attachment_ops::reverse_rename_attachment(record)?,
             OpType::PurgeBlock => {
                 return Err(AppError::NonReversible {
                     op_type: record.op_type.clone(),

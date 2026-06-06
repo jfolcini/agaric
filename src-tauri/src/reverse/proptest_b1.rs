@@ -245,7 +245,10 @@ async fn assert_inverse_law(
             );
         }
         // The generator never emits these; if it ever does, fail loudly.
-        OpPayload::PurgeBlock(_) | OpPayload::AddAttachment(_) | OpPayload::DeleteAttachment(_) => {
+        OpPayload::PurgeBlock(_)
+        | OpPayload::AddAttachment(_)
+        | OpPayload::DeleteAttachment(_)
+        | OpPayload::RenameAttachment(_) => {
             return Err(TestCaseError::fail(format!(
                 "harness emitted an op it should not: {payload:?}"
             )));
@@ -342,6 +345,8 @@ fn is_reversible(op_type: &OpType) -> bool {
         // a fallible lookup rather than an unconditional NonReversible, so
         // it belongs on the "has a reverse arm" side.
         OpType::DeleteAttachment => true,
+        // RenameAttachment is always reversible — swap old/new filename.
+        OpType::RenameAttachment => true,
         // The ONLY unconditionally non-reversible op.
         OpType::PurgeBlock => false,
     }
@@ -379,6 +384,7 @@ fn every_op_type_is_classified() {
         OpType::DeleteProperty,
         OpType::AddAttachment,
         OpType::DeleteAttachment,
+        OpType::RenameAttachment,
     ];
 
     // Exactly one non-reversible variant today: PurgeBlock.

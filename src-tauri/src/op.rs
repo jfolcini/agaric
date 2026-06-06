@@ -48,6 +48,7 @@ pub enum OpType {
     DeleteProperty,
     AddAttachment,
     DeleteAttachment,
+    RenameAttachment,
 }
 
 impl OpType {
@@ -70,6 +71,7 @@ impl OpType {
             OpType::DeleteProperty => "delete_property",
             OpType::AddAttachment => "add_attachment",
             OpType::DeleteAttachment => "delete_attachment",
+            OpType::RenameAttachment => "rename_attachment",
         }
     }
 }
@@ -102,6 +104,7 @@ impl FromStr for OpType {
             "delete_property" => Ok(OpType::DeleteProperty),
             "add_attachment" => Ok(OpType::AddAttachment),
             "delete_attachment" => Ok(OpType::DeleteAttachment),
+            "rename_attachment" => Ok(OpType::RenameAttachment),
             other => Err(format!("unknown op type: {other}")),
         }
     }
@@ -269,6 +272,13 @@ pub struct DeleteAttachmentPayload {
     pub fs_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenameAttachmentPayload {
+    pub attachment_id: AttachmentId,
+    pub old_filename: String,
+    pub new_filename: String,
+}
+
 // ---------------------------------------------------------------------------
 // Undo/Redo types
 // ---------------------------------------------------------------------------
@@ -318,6 +328,7 @@ pub enum OpPayload {
     DeleteProperty(DeletePropertyPayload),
     AddAttachment(AddAttachmentPayload),
     DeleteAttachment(DeleteAttachmentPayload),
+    RenameAttachment(RenameAttachmentPayload),
 }
 
 impl OpPayload {
@@ -336,6 +347,7 @@ impl OpPayload {
             OpPayload::DeleteProperty(_) => OpType::DeleteProperty,
             OpPayload::AddAttachment(_) => OpType::AddAttachment,
             OpPayload::DeleteAttachment(_) => OpType::DeleteAttachment,
+            OpPayload::RenameAttachment(_) => OpType::RenameAttachment,
         }
     }
 
@@ -366,6 +378,7 @@ impl OpPayload {
             OpPayload::DeleteProperty(p) => Some(p.block_id.as_str()),
             OpPayload::AddAttachment(p) => Some(p.block_id.as_str()),
             OpPayload::DeleteAttachment(_) => None,
+            OpPayload::RenameAttachment(_) => None,
         }
     }
 
@@ -385,6 +398,7 @@ impl OpPayload {
         match self {
             OpPayload::AddAttachment(p) => Some(p.attachment_id.as_str()),
             OpPayload::DeleteAttachment(p) => Some(p.attachment_id.as_str()),
+            OpPayload::RenameAttachment(p) => Some(p.attachment_id.as_str()),
             OpPayload::CreateBlock(_)
             | OpPayload::EditBlock(_)
             | OpPayload::DeleteBlock(_)
@@ -569,6 +583,7 @@ mod tests {
             OpType::DeleteProperty,
             OpType::AddAttachment,
             OpType::DeleteAttachment,
+            OpType::RenameAttachment,
         ]
     }
 
@@ -638,6 +653,11 @@ mod tests {
                 attachment_id: BlockId::test_id("A1"),
                 fs_path: "/tmp/photo.png".into(),
             }),
+            OpPayload::RenameAttachment(RenameAttachmentPayload {
+                attachment_id: BlockId::test_id("A1"),
+                old_filename: "old.png".into(),
+                new_filename: "new.png".into(),
+            }),
         ]
     }
 
@@ -648,8 +668,8 @@ mod tests {
     #[test]
     fn all_payload_serde_roundtrip() {
         let payloads = all_test_payloads();
-        // Sanity: we must cover all 12 variants
-        assert_eq!(payloads.len(), 12);
+        // Sanity: we must cover all 13 variants
+        assert_eq!(payloads.len(), 13);
 
         for payload in payloads {
             let tag = payload.op_type_str();
@@ -977,11 +997,11 @@ mod tests {
     fn block_id_returns_value_for_block_bearing_variants() {
         for payload in all_test_payloads() {
             match payload {
-                OpPayload::DeleteAttachment(_) => {
+                OpPayload::DeleteAttachment(_) | OpPayload::RenameAttachment(_) => {
                     assert_eq!(
                         payload.block_id(),
                         None,
-                        "DeleteAttachment should return None"
+                        "DeleteAttachment/RenameAttachment should return None"
                     );
                 }
                 _ => {
@@ -1275,7 +1295,7 @@ mod tests {
     #[test]
     fn normalize_block_ids_is_no_op_for_all_payload_variants() {
         let payloads = all_test_payloads();
-        assert_eq!(payloads.len(), 12, "must cover all 12 variants");
+        assert_eq!(payloads.len(), 13, "must cover all 13 variants");
 
         for mut payload in payloads {
             let tag = payload.op_type_str();

@@ -395,6 +395,62 @@ pub async fn delete_attachment_inner(
     Ok(())
 }
 
+/// Rename an attachment by its ID.
+///
+/// Validates the attachment exists, records the old filename, appends a
+/// `RenameAttachment` op, updates the `attachments` table, and commits.
+///
+/// # Errors
+///
+/// - [`AppError::NotFound`] — attachment does not exist
+/// - [`AppError::Validation`] — new filename is empty
+pub async fn rename_attachment_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    attachment_id: AttachmentId,
+    new_filename: String,
+) -> Result<(), AppError> {
+    let mut tx = CommandTx::begin_immediate(pool, "rename_attachment").await?;
+
+    let attachment_id_str = attachment_id.as_str();
+    let row = sqlx::query!(
+        r#"SELECT id, filename FROM attachments WHERE id = ?"#,
+        attachment_id_str
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    let Some(row) = row else {
+        return Err(AppError::NotFound(format!("attachment '{attachment_id}'")));
+    };
+    let old_filename = row.filename;
+
+    if new_filename.is_empty() {
+        return Err(AppError::Validation("filename cannot be empty".into()));
+    }
+
+    let payload = OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {
+        attachment_id: attachment_id.clone(),
+        old_filename,
+        new_filename: new_filename.clone(),
+    });
+
+    let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now_ms()).await?;
+
+    sqlx::query!(
+        "UPDATE attachments SET filename = ? WHERE id = ?",
+        new_filename,
+        attachment_id_str
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    tx.enqueue_background(op_record);
+    tx.commit_and_dispatch(materializer).await?;
+
+    Ok(())
+}
+
 /// List all attachments for a block.
 ///
 /// Pure read — no op log entry, no materializer dispatch.
@@ -610,6 +666,28 @@ pub async fn delete_attachment(
         &materializer,
         &app_data_dir,
         attachment_id,
+    )
+    .await
+    .map_err(sanitize_internal_error)
+}
+
+/// Tauri command: rename an attachment. Delegates to [`rename_attachment_inner`].
+#[cfg(not(tarpaulin_include))]
+#[tauri::command]
+#[specta::specta]
+pub async fn rename_attachment(
+    pool: State<'_, WritePool>,
+    device_id: State<'_, DeviceId>,
+    materializer: State<'_, Materializer>,
+    attachment_id: AttachmentId,
+    new_filename: String,
+) -> Result<(), AppError> {
+    rename_attachment_inner(
+        &pool.0,
+        device_id.as_str(),
+        &materializer,
+        attachment_id,
+        new_filename,
     )
     .await
     .map_err(sanitize_internal_error)

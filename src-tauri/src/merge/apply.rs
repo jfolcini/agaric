@@ -98,6 +98,12 @@ pub(crate) async fn dispatch_for_record(pool: &SqlitePool, record: &OpRecord) {
                 Err(e) => return dispatch_log_parse_err(record, &e),
             }
         }
+        "rename_attachment" => {
+            match serde_json::from_str::<crate::op::RenameAttachmentPayload>(&record.payload) {
+                Ok(p) => OpPayload::RenameAttachment(p),
+                Err(e) => return dispatch_log_parse_err(record, &e),
+            }
+        }
         other => {
             // Unknown op_type — matches the pre-fix "unsupported" path
             // (log + return, never break the engine-dispatch path).

@@ -89,6 +89,7 @@ pub async fn apply_op_tag_inheritance(
         | OpPayload::DeleteProperty(_)
         | OpPayload::AddAttachment(_)
         | OpPayload::DeleteAttachment(_)
+        | OpPayload::RenameAttachment(_)
         | OpPayload::PurgeBlock(_) => Ok(()),
     }
 }

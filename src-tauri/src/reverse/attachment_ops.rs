@@ -1,4 +1,4 @@
-//! Reverse functions for attachment ops (add, delete).
+//! Reverse functions for attachment ops (add, delete, rename).
 
 use crate::error::AppError;
 use crate::op::OpPayload;
@@ -74,4 +74,16 @@ pub async fn reverse_delete_attachment(
             op_type: "delete_attachment".into(),
         }),
     }
+}
+
+/// Reverse a `rename_attachment` op by swapping old and new filenames.
+pub fn reverse_rename_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
+    let payload: crate::op::RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
+    Ok(OpPayload::RenameAttachment(
+        crate::op::RenameAttachmentPayload {
+            attachment_id: payload.attachment_id,
+            old_filename: payload.new_filename,
+            new_filename: payload.old_filename,
+        },
+    ))
 }

@@ -6,7 +6,7 @@
  * Compact layout with touch-friendly sizing.
  */
 
-import { Paperclip, Trash2 } from 'lucide-react'
+import { Paperclip, Pencil, Trash2 } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -40,8 +40,11 @@ interface AttachmentListProps {
 
 export function AttachmentList({ blockId }: AttachmentListProps): React.ReactElement {
   const { t } = useTranslation()
-  const { attachments, loading, handleDeleteAttachment } = useBlockAttachments(blockId)
+  const { attachments, loading, handleDeleteAttachment, handleRenameAttachment } =
+    useBlockAttachments(blockId)
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
   // Tracks the pendingDeleteId reset setTimeout so we can cancel it on unmount
   // and avoid calling setState on an unmounted component (#MAINT-48).
   const pendingDeleteClearRef = useRef<number | null>(null)
@@ -118,15 +121,62 @@ export function AttachmentList({ blockId }: AttachmentListProps): React.ReactEle
                   className="group flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/50 active:bg-accent/70"
                 >
                   <MimeIcon mimeType={attachment.mime_type} />
-                  <span className="truncate flex-1 text-sm font-medium" title={attachment.filename}>
-                    {attachment.filename}
-                  </span>
+                  {editingId === attachment.id ? (
+                    <input
+                      // Focus + select on mount via callback ref instead of the
+                      // `autoFocus` attribute (oxlint jsx-a11y/no-autofocus): the
+                      // input only mounts when the user opts into rename, so
+                      // focusing it is expected, and selecting lets them overtype.
+                      // Guard on activeElement so re-renders while the user is
+                      // typing don't re-select and clobber their input.
+                      ref={(el) => {
+                        if (el && document.activeElement !== el) {
+                          el.focus()
+                          el.select()
+                        }
+                      }}
+                      aria-label={t('attachments.rename', { name: attachment.filename })}
+                      className="flex-1 text-sm font-medium border rounded px-1 py-0.5 focus:outline-none focus:ring-1"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const trimmed = editValue.trim()
+                          if (trimmed && trimmed !== attachment.filename) {
+                            handleRenameAttachment(attachment.id, trimmed)
+                          }
+                          setEditingId(null)
+                        } else if (e.key === 'Escape') {
+                          setEditingId(null)
+                        }
+                      }}
+                      onBlur={() => setEditingId(null)}
+                    />
+                  ) : (
+                    <span
+                      className="truncate flex-1 text-sm font-medium"
+                      title={attachment.filename}
+                    >
+                      {attachment.filename}
+                    </span>
+                  )}
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {formatSize(attachment.size_bytes)}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {formatRelativeTime(attachment.created_at, t)}
                   </span>
+                  <button
+                    type="button"
+                    aria-label={t('attachments.rename', { name: attachment.filename })}
+                    className="shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground transition-opacity opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-ring-visible active:scale-95 [@media(pointer:coarse)]:opacity-100"
+                    onClick={() => {
+                      setEditingId(attachment.id)
+                      setEditValue(attachment.filename)
+                    }}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     type="button"
                     aria-label={t('attachments.delete', { name: attachment.filename })}

@@ -336,6 +336,17 @@ pub async fn apply_reverse_in_tx(
                 .execute(&mut **tx)
                 .await?;
         }
+        OpPayload::RenameAttachment(p) => {
+            // Undo rename: restore the old filename.
+            let attachment_id_str = p.attachment_id.as_str();
+            sqlx::query!(
+                "UPDATE attachments SET filename = ? WHERE id = ?",
+                p.old_filename,
+                attachment_id_str
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
         OpPayload::AddAttachment(p) => {
             // Undo of AddAttachment: the forward delete was a hard-DELETE, so
             // the row is gone and `original_created_at` is None in the normal
@@ -587,7 +598,7 @@ pub async fn restore_page_to_op_inner(
              SELECT o.device_id, o.seq, o.op_type FROM op_log o \
              WHERE ( \
                o.block_id IN (SELECT id FROM page_blocks) \
-               OR (o.op_type = 'delete_attachment' AND EXISTS ( \
+               OR (o.op_type IN ('delete_attachment', 'rename_attachment') AND EXISTS ( \
                    SELECT 1 FROM attachments a \
                    WHERE a.id = json_extract(o.payload, '$.attachment_id') \
                    AND a.block_id IN (SELECT id FROM page_blocks) \
@@ -706,7 +717,7 @@ pub async fn undo_page_op_inner(
          WHERE ( \
              ol.block_id IN (SELECT id FROM page_blocks) \
              OR ( \
-                 ol.op_type = 'delete_attachment' \
+                 ol.op_type IN ('delete_attachment', 'rename_attachment') \
                  AND EXISTS ( \
                      SELECT 1 FROM attachments a \
                      WHERE a.id = json_extract(ol.payload, '$.attachment_id') \
@@ -915,7 +926,7 @@ pub async fn find_undo_group_inner(
              WHERE ( \
                  ol.block_id IN (SELECT id FROM page_blocks) \
                  OR ( \
-                     ol.op_type = 'delete_attachment' \
+                     ol.op_type IN ('delete_attachment', 'rename_attachment') \
                      AND EXISTS ( \
                          SELECT 1 FROM attachments a \
                          WHERE a.id = json_extract(ol.payload, '$.attachment_id') \

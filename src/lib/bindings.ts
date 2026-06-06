@@ -477,6 +477,8 @@ export const commands = {
 	readAttachment: (attachmentId: BlockId) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
 	/**  Tauri command: delete an attachment. Delegates to [`delete_attachment_inner`]. */
 	deleteAttachment: (attachmentId: BlockId) => typedError<null, AppError>(__TAURI_INVOKE("delete_attachment", { attachmentId })),
+	/**  Tauri command: rename an attachment. Delegates to [`rename_attachment_inner`]. */
+	renameAttachment: (attachmentId: BlockId, newFilename: string) => typedError<null, AppError>(__TAURI_INVOKE("rename_attachment", { attachmentId, newFilename })),
 	/**  Tauri command: list attachments for a block. Delegates to [`list_attachments_inner`]. */
 	listAttachments: (blockId: BlockId) => typedError<AttachmentRow[], AppError>(__TAURI_INVOKE("list_attachments", { blockId })),
 	/**  Tauri command: batch-fetch full attachment lists. Delegates to [`list_attachments_batch_inner`]. */

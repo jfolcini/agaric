@@ -5,7 +5,7 @@ import { notify } from '@/lib/notify'
 
 import { i18n } from '../lib/i18n'
 import type { AttachmentRow } from '../lib/tauri'
-import { addAttachment, deleteAttachment, listAttachments } from '../lib/tauri'
+import { addAttachment, deleteAttachment, listAttachments, renameAttachment } from '../lib/tauri'
 import { usePageBlockStoreApi } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 import { useBatchAttachments } from './useBatchAttachments'
@@ -20,6 +20,7 @@ export interface UseBlockAttachmentsReturn {
     fsPath: string,
   ) => Promise<void>
   handleDeleteAttachment: (attachmentId: string) => Promise<void>
+  handleRenameAttachment: (attachmentId: string, newFilename: string) => Promise<void>
 }
 
 export function useBlockAttachments(blockId: string | null): UseBlockAttachmentsReturn {
@@ -116,5 +117,34 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     [blockId, pageStore, batchProvider],
   )
 
-  return { attachments, loading, handleAddAttachment, handleDeleteAttachment }
+  const handleRenameAttachment = useCallback(
+    async (attachmentId: string, newFilename: string) => {
+      if (!blockId) return
+      try {
+        await renameAttachment({ attachmentId, newFilename })
+        setAttachments((prev) =>
+          prev.map((a) => (a.id === attachmentId ? { ...a, filename: newFilename } : a)),
+        )
+        // MAINT-131: invalidate the page-level batch cache.
+        batchProvider?.invalidate(blockId)
+      } catch (err) {
+        logger.error(
+          'useBlockAttachments',
+          'Failed to rename attachment',
+          { blockId, attachmentId },
+          err,
+        )
+        notify.error(i18n.t('attachments.renameFailed'))
+      }
+    },
+    [blockId, batchProvider],
+  )
+
+  return {
+    attachments,
+    loading,
+    handleAddAttachment,
+    handleDeleteAttachment,
+    handleRenameAttachment,
+  }
 }
