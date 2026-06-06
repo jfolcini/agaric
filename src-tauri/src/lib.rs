@@ -1671,7 +1671,7 @@ mod specta_tests {
     /// Verify the generated TypeScript bindings match the committed file.
     ///
     /// Writes to a temp file and compares against `src/lib/bindings.ts`.
-    /// To regenerate: `cargo test -p agaric-lib -- specta_tests --ignored`
+    /// To regenerate: `cargo test -- specta_tests --ignored`
     #[test]
     fn ts_bindings_up_to_date() {
         let builder = specta_builder();
@@ -1708,13 +1708,13 @@ mod specta_tests {
             norm(&generated),
             norm(&committed),
             "TypeScript bindings are stale — regenerate with: \
-             cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored"
+             cd src-tauri && cargo test -- specta_tests --ignored"
         );
     }
 
     /// Regenerate `src/lib/bindings.ts` from the current Rust types.
     ///
-    /// Run manually: `cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored`
+    /// Run manually: `cd src-tauri && cargo test -- specta_tests --ignored`
     #[test]
     #[ignore]
     fn regenerate_ts_bindings() {
