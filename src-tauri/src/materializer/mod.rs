@@ -77,6 +77,12 @@ pub enum MaterializeTask {
     RebuildTagInheritanceCache,
     RebuildProjectedAgendaCache,
     RebuildPageIds,
+    /// Incremental `page_id` maintenance for a single newly created block.
+    /// The new block has no descendants; its `page_id` is simply its parent's
+    /// `page_id`. Avoids the full O(N) recursive-CTE rebuild on `create_block`.
+    SetBlockPageId {
+        block_id: Arc<str>,
+    },
     /// UX-250: full-vault recompute of `block_tag_refs`. Fires on
     /// delete / restore / purge and from `apply_snapshot` / boot-time
     /// "table is empty" fallback.

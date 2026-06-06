@@ -152,6 +152,25 @@ async fn rebuild_page_ids_split_impl(
     Ok(updated)
 }
 
+/// Set `page_id` for a single newly created block by inheriting from its parent.
+///
+/// Used instead of the full `RebuildPageIds` rebuild on `create_block` — a
+/// fresh block has no descendants, so only one row ever changes.
+pub async fn set_block_page_id_from_parent(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "UPDATE blocks \
+         SET page_id = (SELECT b2.page_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
+         WHERE id = ?",
+        block_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     //! Issue #111 — regression tests for migration 0073's
@@ -258,6 +277,57 @@ mod tests {
         .execute(&pool)
         .await
         .expect("tag row with NULL page_id must succeed (exempt from page_id_self_for_pages)");
+    }
+
+    /// `set_block_page_id_from_parent` inherits `page_id` from the
+    /// parent row — the O(1) incremental path used on `create_block` (#460).
+    #[tokio::test]
+    async fn set_block_page_id_from_parent_inherits_page_id_460() {
+        let (pool, _dir) = test_pool().await;
+
+        // Seed a page (page_id = id by constraint).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PAGE01', 'page', 'p', NULL, 1, 'PAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("page seed");
+
+        // Seed a content block as the parent (page_id already set to PAGE01).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PARENT01', 'content', 'parent', 'PAGE01', 1, 'PAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("parent content seed");
+
+        // Insert the new child block with page_id = NULL (simulates the moment
+        // right after create_block before the materializer runs).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('CHILD01', 'content', 'child', 'PARENT01', 1, NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("child block seed with NULL page_id");
+
+        super::set_block_page_id_from_parent(&pool, "CHILD01")
+            .await
+            .expect("set_block_page_id_from_parent must succeed");
+
+        let page_id: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'CHILD01'")
+                .fetch_one(&pool)
+                .await
+                .expect("page_id lookup");
+
+        assert_eq!(
+            page_id.as_deref(),
+            Some("PAGE01"),
+            "child block must inherit page_id from its ancestor page via parent chain"
+        );
     }
 
     /// A well-formed page row (id == page_id) inserts cleanly.

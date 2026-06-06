@@ -54,7 +54,7 @@ use super::models::{
     self, GcalAgendaEventMap, GcalSettingKey, delete_event_map_by_date, get_event_map_for_date,
     upsert_event_map,
 };
-use super::oauth::Token;
+use super::oauth::{OAuthClient, Token};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -989,6 +989,7 @@ pub fn spawn_connector(
     token_store: Arc<dyn TokenStore>,
     emitter: Arc<dyn GcalEventEmitter>,
     device_id: String,
+    oauth_client: Arc<OAuthClient>,
 ) -> ConnectorTask {
     let (dirty_tx, dirty_rx) = mpsc::unbounded_channel::<DirtyEvent>();
     let force_sweep = Arc::new(Notify::new());
@@ -1018,6 +1019,7 @@ pub fn spawn_connector(
             dirty_rx,
             loop_force,
             loop_shutdown,
+            oauth_client,
         )
         .await;
     });
@@ -1043,6 +1045,7 @@ async fn run_task_loop(
     mut dirty_rx: mpsc::UnboundedReceiver<DirtyEvent>,
     force_sweep: Arc<Notify>,
     shutdown: Arc<Notify>,
+    oauth_client: Arc<OAuthClient>,
 ) {
     let mut dirty: DirtySet = DirtySet::new();
     // `None` means no flush is currently armed.  Reconcile / force-sweep
@@ -1117,7 +1120,48 @@ async fn run_task_loop(
                         // tick / dirty arrival retries once the token
                         // store recovers.
                     }
-                    Ok(Some(token)) => {
+                    Ok(Some(mut token)) => {
+                        // Proactively refresh the access token if it's close to expiring
+                        // (within 2 minutes). Google tokens expire in ~1h; without this,
+                        // the connector hits 401 on the first cycle after expiry and maps
+                        // it to a terminal HardFailure requiring manual re-auth (#462).
+                        if token.is_expiring_within(chrono::Duration::seconds(120)) {
+                            match oauth_client.refresh_token(&token).await {
+                                Ok(refreshed) => {
+                                    if let Err(e) = token_store.store(&refreshed).await {
+                                        tracing::warn!(
+                                            target: "gcal",
+                                            error = %e,
+                                            "gcal: failed to store refreshed token — proceeding with original",
+                                        );
+                                    } else {
+                                        tracing::info!(target: "gcal", "gcal: proactively refreshed access token");
+                                    }
+                                    token = refreshed;
+                                }
+                                Err(ref e) if matches!(e, AppError::Gcal(GcalErrorKind::Unauthorized)) => {
+                                    tracing::warn!(
+                                        target: "gcal",
+                                        error = %e,
+                                        "gcal: refresh token revoked during proactive refresh — requiring reauth",
+                                    );
+                                    if let Err(db_err) = handle_terminal_unauthorized(&pool, &emitter).await {
+                                        tracing::error!(target: "gcal", error = ?db_err, "gcal: failed to set reauth_required flag");
+                                    }
+                                    dirty.clear();
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        target: "gcal",
+                                        error = %e,
+                                        "gcal: proactive refresh failed — proceeding with current token",
+                                    );
+                                    // Use the original token; `run_cycle` may still succeed
+                                    // for a while, or will surface a HardFailure if truly expired.
+                                }
+                            }
+                        }
                         match run_cycle(
                             &pool,
                             &api,
@@ -2698,12 +2742,15 @@ mod tests {
         let recorder = Arc::new(RecordingEventEmitter::new());
         let dyn_emitter: Arc<dyn GcalEventEmitter> = recorder;
 
+        let oauth_client =
+            Arc::new(OAuthClient::google(0).expect("google OAuth endpoints must parse"));
         let task = spawn_connector(
             pool.clone(),
             api,
             dyn_token_store,
             dyn_emitter,
             DEV_A.to_owned(),
+            oauth_client,
         );
 
         // Trigger a cycle — debounce is 500 ms so the cycle should
@@ -2935,6 +2982,36 @@ mod tests_m89 {
             email.as_deref(),
             Some("user@example.com"),
             "oauth_account_email must be untouched by recover_calendar_gone (that is M-95)"
+        );
+    }
+
+    // ── Proactive token refresh window (#462) ──────────────────────
+
+    /// Helper: build a Token whose `expires_at` is `Utc::now() + skew`.
+    fn test_token_expiring_in(skew: chrono::Duration) -> Token {
+        use secrecy::SecretString;
+        Token {
+            access: SecretString::from("test-access".to_owned()),
+            refresh: SecretString::from("test-refresh".to_owned()),
+            expires_at: Utc::now() + skew,
+        }
+    }
+
+    /// Verifies the 120-second refresh window used in `run_task_loop`:
+    /// a token expiring in 60 s is inside the window; one expiring in
+    /// 300 s is outside it.  This exercises the `is_expiring_within`
+    /// predicate that gates the proactive-refresh branch (#462).
+    #[tokio::test]
+    async fn expiring_token_triggers_proactive_refresh_462() {
+        let almost_expired = test_token_expiring_in(chrono::Duration::seconds(60));
+        assert!(
+            almost_expired.is_expiring_within(chrono::Duration::seconds(120)),
+            "a token expiring in 60s is within the 120s refresh window"
+        );
+        let not_expired = test_token_expiring_in(chrono::Duration::seconds(300));
+        assert!(
+            !not_expired.is_expiring_within(chrono::Duration::seconds(120)),
+            "a token expiring in 300s is NOT within the 120s refresh window"
         );
     }
 }
