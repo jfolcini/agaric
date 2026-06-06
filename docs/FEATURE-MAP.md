@@ -20,6 +20,9 @@ Companion docs: [`docs/UI-MAP.md`](UI-MAP.md) (surface vocabulary + glossary) ·
 | **Agent access** | Read-only and read-write MCP tools for AI agents (Claude, Cursor, Continue, etc.); an in-app activity feed; `agaric://` deep links. | [features/agent-access.md](features/agent-access.md) |
 | **Views** | Search, Pages browser, Tags browser, Trash, History, Templates, Graph, Status, Settings. | [features/views.md](features/views.md) |
 | **Import & export** | Markdown / Logseq import; per-page export with YAML front-matter; export-all-as-ZIP. | [features/import-export.md](features/import-export.md) |
+| **Media & attachments** | Inline image rendering with resize handles and lightbox (zoom/pan); file attachments with drag-drop upload, MIME type icons, upload progress toasts for large files, size/type rejection toasts. Components: `AttachmentRenderer.tsx`, `ImageLightbox.tsx`, `ImageResizeToolbar.tsx`, `MimeIcon.tsx`, `StaticBlock.tsx`. Tauri commands: `readAttachment`, `deleteAttachment`. Block properties used: `image_width`, `image_alignment`, `image_caption`. | — |
+| **Emoji picker** | Full emoji dataset browsable via `/emoji` slash command or toolbar button. Opens `EmojiPickerDialog.tsx` with search; inserts the native emoji character at the editor caret. Components: `EmojiPicker/EmojiPicker.tsx`, `EmojiPicker/EmojiPickerDialog.tsx`. Wired in `BlockTree.tsx::openEmojiPicker` + `insertEmojiIntoActiveEditor`. | — |
+| **Draft autosave** | Saves in-progress editor content on blur and restores it at boot if the app crashed mid-edit. Hook: `useDraftAutosave.ts`. Tauri commands: `save_draft`, `flush_draft`, `flush_all_drafts` (`src-tauri/src/commands/drafts.rs`). DB table: `drafts`. Integrated into `EditableBlock.tsx` — the `liveContent` state feeds the hook. | — |
 
 ## Cross-cutting facts
 
