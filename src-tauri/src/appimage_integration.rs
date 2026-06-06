@@ -85,14 +85,31 @@ fn integrate(appimage: &str, appdir: &Path, data_home: &Path) -> std::io::Result
     Ok(changed)
 }
 
+/// Escape an AppImage path for use in a freedesktop `Exec=` line.
+///
+/// Per the Desktop Entry Specification, the program path must be
+/// double-quoted when it contains spaces or reserved characters.
+/// Inside the quotes: `\`, `"`, `$`, and backtick are backslash-escaped;
+/// a literal `%` becomes `%%` (field-code prefix in Exec values).
+fn escape_exec_path(path: &str) -> String {
+    let inner = path
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`")
+        .replace('%', "%%");
+    format!("\"{inner}\"")
+}
+
 /// The freedesktop `.desktop` entry. Lowercase `agaric` `Icon`/`StartupWMClass`
 /// so both Wayland (filename ↔ `app_id`) and X11 (`WM_CLASS`) resolve the icon.
 fn desktop_entry_contents(appimage: &str) -> String {
+    let exec = escape_exec_path(appimage);
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=Agaric\n\
-         Exec={appimage} %u\n\
+         Exec={exec} %u\n\
          Icon=agaric\n\
          StartupWMClass=agaric\n\
          Terminal=false\n\
@@ -170,10 +187,25 @@ mod tests {
     #[test]
     fn desktop_entry_has_expected_keys() {
         let c = desktop_entry_contents("/home/u/Downloads/Agaric.AppImage");
-        assert!(c.contains("Exec=/home/u/Downloads/Agaric.AppImage %u"));
+        assert!(c.contains("Exec=\"/home/u/Downloads/Agaric.AppImage\" %u"));
         assert!(c.contains("Icon=agaric"));
         assert!(c.contains("StartupWMClass=agaric"));
         assert!(c.contains("MimeType=x-scheme-handler/agaric;"));
+    }
+
+    #[test]
+    fn escape_exec_path_handles_spaces_and_percent() {
+        // Path with space: must be double-quoted so the launcher sees one arg.
+        let escaped = escape_exec_path("/home/u/My Apps/Agaric.AppImage");
+        assert_eq!(escaped, r#""/home/u/My Apps/Agaric.AppImage""#);
+
+        // Path with %: must be doubled so the Exec parser treats it as literal.
+        let escaped = escape_exec_path("/opt/100%/Agaric.AppImage");
+        assert_eq!(escaped, r#""/opt/100%%/Agaric.AppImage""#);
+
+        // Path with double-quote: must be backslash-escaped inside the quotes.
+        let escaped = escape_exec_path("/opt/\"quoted\"/Agaric.AppImage");
+        assert_eq!(escaped, r#""/opt/\"quoted\"/Agaric.AppImage""#);
     }
 
     #[test]
@@ -186,7 +218,7 @@ mod tests {
         assert!(changed);
 
         let desktop = fs::read_to_string(data.path().join("applications/agaric.desktop")).unwrap();
-        assert!(desktop.contains("Exec=/opt/Agaric.AppImage %u"));
+        assert!(desktop.contains("Exec=\"/opt/Agaric.AppImage\" %u"));
         assert!(data
             .path()
             .join("icons/hicolor/256x256/apps/agaric.png")
@@ -218,7 +250,7 @@ mod tests {
         assert!(changed);
 
         let desktop = fs::read_to_string(data.path().join("applications/agaric.desktop")).unwrap();
-        assert!(desktop.contains("Exec=/new/Agaric-0.2.AppImage %u"));
+        assert!(desktop.contains("Exec=\"/new/Agaric-0.2.AppImage\" %u"));
         assert!(!desktop.contains("/old/Agaric-0.1.AppImage"));
     }
 

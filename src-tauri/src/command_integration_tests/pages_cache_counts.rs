@@ -298,6 +298,200 @@ async fn local_delete_of_linking_block_decrements_target_inbound() {
     );
 }
 
+/// #461 — `delete_blocks_by_ids_inner` (batch soft-delete) must call the
+/// in-tx `recompute_pages_cache_counts_for_pages` that the single-row path
+/// (`delete_block_inner`) already calls, so `pages_cache.child_block_count`
+/// is correct immediately after the batch commit without waiting for a
+/// background flush.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_delete_maintains_pages_cache_counts() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let c1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child one".into(),
+        Some(p.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let c2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child two".into(),
+        Some(p.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let (_in0, ch0) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(ch0, 2, "baseline: P owns 2 children");
+
+    delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
+        .await
+        .unwrap();
+    // No settle — the recompute must happen synchronously in-tx (#461).
+
+    let (_in1, ch1) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(
+        ch1, 0,
+        "child_block_count must drop to 0 immediately after batch delete (#461)"
+    );
+}
+
+/// #461 — `restore_blocks_by_ids_inner` (batch restore) must call the in-tx
+/// `recompute_pages_cache_counts_for_pages` so `pages_cache.child_block_count`
+/// is correct immediately after the batch commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_restore_maintains_pages_cache_counts() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let c1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child one".into(),
+        Some(p.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let c2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child two".into(),
+        Some(p.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Batch-delete both children so we have a clean baseline of 0.
+    delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
+        .await
+        .unwrap();
+    let (_in0, ch0) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(ch0, 0, "baseline after batch delete: P owns 0 children");
+
+    // Batch-restore both children.
+    restore_blocks_by_ids_inner(&pool, DEV, &mat, vec![c1.id.clone(), c2.id.clone()])
+        .await
+        .unwrap();
+    // No settle — the recompute must happen synchronously in-tx (#461).
+
+    let (_in1, ch1) = read_counts(&pool, p.id.as_str()).await;
+    assert_eq!(
+        ch1, 2,
+        "child_block_count must rise back to 2 immediately after batch restore (#461)"
+    );
+}
+
+/// #461 — `purge_blocks_by_ids_inner` (batch purge) must call the in-tx
+/// `recompute_pages_cache_counts_for_pages` so non-purged pages that had
+/// inbound links from the purged subtrees get their `inbound_link_count`
+/// decremented immediately after the batch commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn batch_purge_updates_inbound_link_count() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Page B is the link target; its `inbound_link_count` is under test.
+    let target = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Target".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let source = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Source".into(),
+        None,
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Create a content block on Source, then edit in the `[[ULID]]` link so
+    // the link-extraction path fires and registers the inbound edge on Target.
+    let linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "see me".into(),
+        Some(source.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        linker.id.clone(),
+        format!("see [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let (t_in0, _t_ch0) = read_counts(&pool, target.id.as_str()).await;
+    assert_eq!(
+        t_in0, 1,
+        "Target inbound_link_count is 1 while the link exists"
+    );
+
+    // Soft-delete then batch-purge the linker block.
+    delete_block_inner(&pool, DEV, &mat, linker.id.clone())
+        .await
+        .unwrap();
+    settle(&mat).await;
+    purge_blocks_by_ids_inner(&pool, DEV, &mat, vec![linker.id.clone()])
+        .await
+        .unwrap();
+    // No settle — the recompute must happen synchronously in-tx (#461).
+
+    let (t_in1, _t_ch1) = read_counts(&pool, target.id.as_str()).await;
+    assert_eq!(
+        t_in1, 0,
+        "Target inbound_link_count must drop to 0 immediately after batch purge (#461)"
+    );
+}
+
 /// #446 (review of #417) — purging a soft-deleted subtree that still owns an
 /// ACTIVE descendant must recompute the SURVIVING owning page's
 /// `child_block_count`. The purge affected-page set previously captured only

@@ -4,7 +4,7 @@
 
 ## Production framing = `rmcp` adapter
 
-The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpReadOnlyAdapter`** in `rmcp_spike.rs`. The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in MAINT-111. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
+The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpReadOnlyAdapter`** in `rmcp_adapter.rs`. The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in MAINT-111. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
 
 `run_connection` in `server.rs` is the per-connection lifecycle wrapper: it owns the FEAT-4e disconnect grace period + `McpLifecycle::active_connections` counter, then delegates the wire loop to `adapter.serve(stream)`. **Touch the lifecycle wrapper for connection-level concerns (grace, listener teardown); touch the adapter for tool dispatch.**
 
@@ -57,7 +57,7 @@ The rmcp framer handles standard JSON-RPC errors (`-32601 Method not found`, `-3
 - `-32601` = "the JSON-RPC method endpoint doesn't exist" (`tools/nonexistent`).
 - `-32001` = "the resource named in the call arguments doesn't exist" (an unknown tool name, an unknown block id inside a tool's args).
 
-This is mapped from `AppError::NotFound` by `app_error_to_rmcp` in `rmcp_spike.rs`. Agents can discriminate the two: "I called a method that doesn't exist" vs "I asked for a thing that doesn't exist".
+This is mapped from `AppError::NotFound` by `app_error_to_rmcp` in `rmcp_adapter.rs`. Agents can discriminate the two: "I called a method that doesn't exist" vs "I asked for a thing that doesn't exist".
 
 ## `ERROR_CLIP_CAP`
 
@@ -81,7 +81,7 @@ Two pipes / two sockets is a deliberate split: an agent can connect to the RO su
 ## Testing
 
 - **`tools_ro::tests` + `tools_rw::tests`** cover input validation + happy path + at least one error path per tool. Use `test_pool()` + materializer fixture.
-- **`rmcp_spike::tests`** covers the adapter end-to-end (parity tests against canonical wire JSON, search round-trip, unknown-tool error mapping).
+- **`rmcp_adapter::tests`** covers the adapter end-to-end (parity tests against canonical wire JSON, search round-trip, unknown-tool error mapping).
 - **`server::tests` + `server::tests_rmcp`** cover the lifecycle wrapper (`run_connection`, H-2 shutdown gate, L-113 grace period).
 
 New tools require a matching test in `tools_ro::tests` or `tools_rw::tests`. New protocol-error paths require a test in `server/tests_rmcp.rs`.
@@ -91,5 +91,5 @@ New tools require a matching test in `tools_ro::tests` or `tools_rw::tests`. New
 - Root [`AGENTS.md`](../../../AGENTS.md) §Backend Architecture.
 - [`src-tauri/src/commands/AGENTS.md`](../commands/AGENTS.md) — `LAST_APPEND` task-local + `_inner` pattern that tools call into.
 - [`docs/architecture/search.md`](../../../docs/architecture/search.md) — high-level search architecture (the MCP `search` tool's twin).
-- `src-tauri/src/mcp/rmcp_spike.rs` — the production adapter.
+- `src-tauri/src/mcp/rmcp_adapter.rs` — the production adapter.
 - `src-tauri/src/mcp/activity.rs` — activity-feed emission.

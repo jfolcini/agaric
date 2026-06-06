@@ -1,7 +1,7 @@
 //! MCP server lifecycle and accept-loop driver.
 //!
 //! As of MAINT-111 M3 the per-connection JSON-RPC framing and
-//! `tools/call` dispatch live in [`super::rmcp_spike::RmcpReadOnlyAdapter`]
+//! `tools/call` dispatch live in [`super::rmcp_adapter::RmcpReadOnlyAdapter`]
 //! (the rmcp adapter). This module owns the bits that the rmcp adapter
 //! does not touch:
 //!
@@ -31,7 +31,7 @@ pub use super::registry::{PlaceholderRegistry, ToolDescription, ToolRegistry};
 // Protocol constants
 // ---------------------------------------------------------------------------
 
-/// Application-level "not found" code, used by [`super::rmcp_spike::app_error_to_rmcp`].
+/// Application-level "not found" code, used by [`super::rmcp_adapter::app_error_to_rmcp`].
 /// Distinct from JSON-RPC's `-32601 Method not found` — this code signals
 /// "the *resource* named by the call arguments was not found" (unknown
 /// tool name under `tools/call`, unknown block id inside a tool handler,
@@ -84,7 +84,7 @@ where
 {
     use rmcp::service::ServiceExt;
 
-    let adapter = super::rmcp_spike::RmcpReadOnlyAdapter::new(registry, activity_ctx);
+    let adapter = super::rmcp_adapter::RmcpReadOnlyAdapter::new(registry, activity_ctx);
     let server = adapter
         .serve(stream)
         .await

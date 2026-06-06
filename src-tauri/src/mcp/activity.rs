@@ -410,13 +410,13 @@ pub struct ToolCompletionEvent<'a> {
     pub session_id: &'a str,
     /// `(device_id, seq)` of the *first* op produced by this call.
     /// `None` for RO tools and for tools that produced no op.
-    /// Captured from the `LAST_APPEND` task-local inside
-    /// `handle_tools_call`.
+    /// Captured from the `LAST_APPEND` task-local inside the
+    /// tool dispatch scope.
     pub op_ref: Option<crate::op::OpRef>,
     /// L-114 forward-compat: any further `OpRef`s produced by the
     /// same call, in append order. Empty for single-op tools (every
     /// RW tool today). Captured by draining the `LAST_APPEND`
-    /// task-local in `handle_tools_call` and assigning index 0 to
+    /// task-local in the dispatch scope and assigning index 0 to
     /// `op_ref` and the tail here.
     pub additional_op_refs: Vec<crate::op::OpRef>,
 }

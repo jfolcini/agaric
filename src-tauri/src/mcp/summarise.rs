@@ -5,10 +5,10 @@
 //! return `result` and produces a short string that the activity-feed
 //! ring buffer / `mcp:activity` event surface render in the
 //! Settings → Agent Access activity list. The dispatcher in
-//! [`super::server::handle_tools_call`] selects the right summariser by
-//! tool name on success; tools without a registered summariser fall
-//! through to the bare tool name (defensive default for any tool added
-//! later without a summariser).
+//! [`super::rmcp_adapter::RmcpReadOnlyAdapter::call_tool`] selects the
+//! right summariser by tool name on success; tools without a registered
+//! summariser fall through to the bare tool name (defensive default for
+//! any tool added later without a summariser).
 //!
 //! # Privacy invariants
 //!
@@ -76,8 +76,8 @@ fn has_more(v: &Value) -> bool {
 /// Top-level dispatch: select the right per-tool summariser for `name`.
 /// Falls back to the bare tool name when no summariser is registered.
 ///
-/// Always called from [`super::server::handle_tools_call`] on the **Ok**
-/// branch; the Err branch keeps using the clipped error message and
+/// Always called from [`super::rmcp_adapter::RmcpReadOnlyAdapter::call_tool`]
+/// on the **Ok** branch; the Err branch keeps using the clipped error message and
 /// does not invoke this module.
 pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
     match name {

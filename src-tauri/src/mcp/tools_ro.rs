@@ -724,7 +724,7 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 
 /// Reject `limit` values outside the documented `[1, cap]` range with
 /// an [`AppError::Validation`] (L-119). The dispatcher then surfaces
-/// it as JSON-RPC `-32602 invalid params` via `app_error_to_jsonrpc`,
+/// it as JSON-RPC `-32602 invalid params` via `app_error_to_rmcp`,
 /// matching the strict `serde(deny_unknown_fields)` posture used
 /// elsewhere on the MCP boundary. Silent clamping previously hid
 /// out-of-range typos and let agents request pages that quietly

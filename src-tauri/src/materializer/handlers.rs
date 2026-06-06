@@ -113,10 +113,22 @@ pub(super) async fn handle_foreground_task(
             // default for non-RestoreBlock ops so the post-commit walk
             // just no-ops on those slots.
             let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
+            // #482: hoist the gcal-active check once before the loop so
+            // `snapshot_for_op` (a SELECT inside the writer lock) is
+            // skipped entirely when Google Calendar is not connected —
+            // the snapshot result is only consumed when `gcal_on` is true.
+            // The snapshot MUST be taken BEFORE `apply_op_tx` to capture
+            // the pre-mutation state (old dates), which is why the
+            // conditional read stays at the top of the per-record body.
+            let gcal_on = gcal_handle.get().is_some();
             // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
-                let snapshot = snapshot_for_op(&mut tx, record).await?;
+                let snapshot = if gcal_on {
+                    snapshot_for_op(&mut tx, record).await?
+                } else {
+                    BlockDateSnapshot::default()
+                };
                 let effects = match apply_op_tx(&mut tx, record).await {
                     Ok(eff) => eff,
                     Err(e) => {
@@ -133,7 +145,7 @@ pub(super) async fn handle_foreground_task(
                 };
                 per_record_effects.push(effects);
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
-                if gcal_handle.get().is_some() {
+                if gcal_on {
                     // PEND-25 L2: wrap in `Arc` so `DeferredNotification`
                     // holds the record by refcount. Batch input is
                     // `Arc<Vec<OpRecord>>` (shared) and individual records
@@ -225,7 +237,15 @@ pub(super) async fn apply_op(
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
-    let snapshot = snapshot_for_op(&mut tx, record).await?;
+    // #482: only pay for the snapshot SELECT when Google Calendar is
+    // active; the result is unused (and discarded) when gcal is off,
+    // which is the case for the vast majority of users.
+    let gcal_on = gcal_handle.get().is_some();
+    let snapshot = if gcal_on {
+        snapshot_for_op(&mut tx, record).await?
+    } else {
+        BlockDateSnapshot::default()
+    };
     let effects = apply_op_tx(&mut tx, record).await?;
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
     // atomic. A crash between the apply and the commit rolls both back
@@ -258,13 +278,15 @@ pub(super) async fn apply_op(
     )
     .await;
 
-    notify_gcal_for_events(
-        gcal_handle,
-        vec![DeferredNotification {
-            record: Arc::clone(record),
-            snapshot,
-        }],
-    );
+    if gcal_on {
+        notify_gcal_for_events(
+            gcal_handle,
+            vec![DeferredNotification {
+                record: Arc::clone(record),
+                snapshot,
+            }],
+        );
+    }
     Ok(())
 }
 
@@ -722,6 +744,36 @@ async fn outbound_target_pages_for_block(
     Ok(rows.into_iter().map(|r| r.page_id).collect())
 }
 
+/// Batch variant of [`outbound_target_pages_for_block`]: resolve the set of
+/// pages reachable via outbound edges from any block in `block_ids` in a
+/// single SQL round-trip, using `json_each(?)` to avoid an N+1 pattern.
+///
+/// Returns the distinct `page_id` values (NULLs excluded) across all
+/// `bl.target_id` rows where `bl.source_id IN block_ids`.  Empty input
+/// short-circuits without touching the DB.
+///
+/// Uses the runtime (non-macro) query form so the `.sqlx` offline-query
+/// cache does not need a regeneration when the function is first added.
+async fn outbound_target_pages_for_blocks(
+    conn: &mut sqlx::SqliteConnection,
+    block_ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    if block_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let json = serde_json::to_string(block_ids)?;
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT b.page_id FROM block_links bl \
+         JOIN blocks b ON b.id = bl.target_id \
+         WHERE bl.source_id IN (SELECT value FROM json_each(?)) \
+           AND b.page_id IS NOT NULL",
+    )
+    .bind(&json)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows)
+}
+
 /// Resolve the set of pages each candidate target block would contribute
 /// to as an `inbound_link_count` source if it were linked from a content
 /// block. For each `target_id` we read `blocks.page_id`; if the target is
@@ -887,10 +939,9 @@ async fn maintain_pages_cache_counts_after_op(
             // for RestoreBlock the edges remain throughout, so the union
             // of `outbound_target_pages_for_block` over the cohort is
             // identical pre- and post-projection.
-            for block_id in &pre_state.cohort {
-                for p in outbound_target_pages_for_block(conn, block_id).await? {
-                    affected.insert(p);
-                }
+            // #463: single batch query instead of one round-trip per cohort block.
+            for p in outbound_target_pages_for_blocks(conn, &pre_state.cohort).await? {
+                affected.insert(p);
             }
             // Inbound: blocks whose links pointed INTO the cohort. Their
             // page_id's `inbound_link_count` doesn't change because the
@@ -1435,10 +1486,9 @@ async fn collect_purge_affected_pages(
     for p in distinct_pages_for_blocks(conn, &cohort_ids).await? {
         affected.insert(p);
     }
-    for id in &cohort_ids {
-        for p in outbound_target_pages_for_block(conn, id).await? {
-            affected.insert(p);
-        }
+    // #463: single batch query instead of one round-trip per cohort block.
+    for p in outbound_target_pages_for_blocks(conn, &cohort_ids).await? {
+        affected.insert(p);
     }
     Ok(affected.into_iter().collect())
 }
