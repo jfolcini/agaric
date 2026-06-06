@@ -276,13 +276,30 @@ pub async fn apply_remote(
         guard.engine_mut().import_with_changed_blocks(&bytes)?
     };
 
-    // Phase 2 — project each changed block to SQL in a single tx, in
-    // two passes.  Per the plan: read each block's state from the engine
-    // OUTSIDE the tx (releasing the mutex between reads and the SQL write
-    // so we don't hold both at once), then run the projections inside the
-    // tx.  This is a per-block read -> per-block write pattern; if a
-    // benchmark shows contention it can swap to "snapshot all blocks,
-    // drop guard, then write everything" — same correctness shape.
+    // Phase 2 — project each changed block to SQL in a single tx.
+    //
+    // #540: snapshot EVERY changed block's engine state under ONE guard
+    // acquisition, drop the guard, then do all SQL writes. The previous
+    // shape re-acquired the `Mutex<LoroEngine>` once per block across three
+    // passes (3N acquisitions for N blocks); this reads all four projections
+    // per block under a single lock (1 acquisition total) into a local Vec,
+    // so the SQL writes never contend with — or hold — the engine mutex.
+    // Reads stay consistent (one atomic view of the engine); the three SQL
+    // passes below still run A→B→C for the FK ordering documented on each.
+    let block_states: Vec<_> = {
+        let mut guard = registry.for_space(&space_id, device_id)?;
+        let engine = guard.engine_mut();
+        let mut states = Vec::with_capacity(changed_blocks.len());
+        for block_id in &changed_blocks {
+            let snapshot = engine.read_block(block_id.as_str())?;
+            let props = engine.read_all_properties_typed(block_id.as_str())?;
+            let tag_ids = engine.read_tags(block_id.as_str())?;
+            let deleted_at = engine.read_deleted_at(block_id.as_str())?;
+            states.push((snapshot, props, tag_ids, deleted_at));
+        }
+        states
+    };
+
     let mut tx = crate::db::begin_immediate_logged(pool, "sync_apply_remote").await?;
 
     // Pass A — core columns + properties.  This upserts EVERY changed
@@ -299,22 +316,11 @@ pub async fn apply_remote(
             .into_iter()
             .map(|r| (r.key, r.value_type))
             .collect();
-    for block_id in &changed_blocks {
-        // Read both the core snapshot and the full property set under the
-        // guard, then drop it before the SQL writes — same
-        // read-under-guard-then-write-in-tx shape as `read_block`, so we
-        // never hold the engine mutex across the tx write.
-        let (snapshot_opt, props) = {
-            let mut guard = registry.for_space(&space_id, device_id)?;
-            let engine = guard.engine_mut();
-            let snap = engine.read_block(block_id.as_str())?;
-            let props = engine.read_all_properties_typed(block_id.as_str())?;
-            (snap, props)
-        };
+    for (block_id, (snapshot_opt, props, _, _)) in changed_blocks.iter().zip(&block_states) {
         project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot_opt.as_ref()).await?;
         // Re-project the block's properties (PEND-76 F1): mirrors remote
         // SetProperty / DeleteProperty changes into `block_properties`.
-        reproject_block_properties_from_engine(&mut tx, block_id, &props, &value_types).await?;
+        reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
     }
 
     // Pass B — tags (PEND-81 §2A).  Mirrors remote AddTag / RemoveTag
@@ -322,12 +328,8 @@ pub async fn apply_remote(
     // tag block already has its `blocks` row (FK ordering, see above).
     // Read the tag list under the guard, then write in the tx — same
     // read-under-guard-then-write-in-tx discipline as the property pass.
-    for block_id in &changed_blocks {
-        let tag_ids: Vec<String> = {
-            let mut guard = registry.for_space(&space_id, device_id)?;
-            guard.engine_mut().read_tags(block_id.as_str())?
-        };
-        reproject_block_tags_from_engine(&mut tx, block_id, &tag_ids).await?;
+    for (block_id, (_, _, tag_ids, _)) in changed_blocks.iter().zip(&block_states) {
+        reproject_block_tags_from_engine(&mut tx, block_id, tag_ids).await?;
     }
 
     // Pass C — soft-delete state (PEND-80 Phase 2).  Mirrors remote
@@ -338,11 +340,7 @@ pub async fn apply_remote(
     // helper re-derives the SQL cascade from the seed timestamp (and an
     // ancestor check prevents a snapshot re-import from resurrecting a
     // soft-deleted subtree).
-    for block_id in &changed_blocks {
-        let engine_deleted_at: Option<String> = {
-            let mut guard = registry.for_space(&space_id, device_id)?;
-            guard.engine_mut().read_deleted_at(block_id.as_str())?
-        };
+    for (block_id, (_, _, _, engine_deleted_at)) in changed_blocks.iter().zip(&block_states) {
         reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
             .await?;
     }
