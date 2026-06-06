@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM op_log\n           WHERE op_type = 'set_property'\n             AND json_extract(payload, '$.key') = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d526baab5fec86367dc16d9e1507162d88a3b30518267fd11fa7ae63c2c03ce6"
+}
