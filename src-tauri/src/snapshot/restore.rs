@@ -73,6 +73,19 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// `apply_snapshot` returns by calling `peer_refs::upsert_peer_ref` followed
 /// by `peer_refs::update_on_sync(pool, peer_id, &up_to_hash, "")`. Future
 /// callers MUST follow the same pattern.
+///
+/// # Caller responsibility: reset the materializer cursor and Loro engines (#486)
+///
+/// `apply_snapshot` wipes and replaces `op_log` (and all core tables) but does
+/// NOT reset `materializer_apply_cursor.materialized_through_seq` or the
+/// in-memory Loro engines. Within the same running session this leaves the
+/// cursor pointing at a pre-wipe seq and the engines holding pre-reset state;
+/// the system self-heals at the next boot via `read_apply_cursor`'s H-4
+/// over-shoot clamp. A caller that needs same-session convergence (e.g. an
+/// in-process "reset to peer snapshot") must either restart the process or
+/// reset the cursor to 0 and trigger an engine reload after this function
+/// returns. The production caller (`try_receive_snapshot_catchup`) always
+/// follows a snapshot with a process restart, so this gap is currently dormant.
 pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
     materializer: &Materializer,

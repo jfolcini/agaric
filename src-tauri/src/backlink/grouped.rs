@@ -20,13 +20,15 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 ///
 /// ## Algorithm
 ///
-/// 1. Get base backlink set.
-/// 2. Apply filters.
-/// 3. Resolve root pages for all filtered IDs.
-/// 4. Group blocks by root page.
-/// 5. Sort groups alphabetically by page title.
+/// 1. Compute `total_count` via a SQL `COUNT(*)` (self/orphan/same-page blocks
+///    excluded in the predicate — never materialises the full base set).
+/// 2. Resolve each active filter to an intersected `FxHashSet` of matching IDs.
+/// 3. Materialise the post-filter + base-predicate block-id set in a single SQL
+///    pass (same `b.page_id IS NOT NULL`, `b.page_id != tgt.page_id` exclusions).
+/// 4. Resolve root pages for all filtered IDs.
+/// 5. Bucket into groups keyed by root page; sort alphabetically by page title.
 /// 6. Apply cursor pagination on groups.
-/// 7. Sort blocks within each group, fetch full BlockRow data.
+/// 7. Sort blocks within each group, fetch full `BlockRow` data, cap per group.
 /// 8. Return `GroupedBacklinkResponse`.
 ///
 /// ## Sort asymmetry (deliberate)

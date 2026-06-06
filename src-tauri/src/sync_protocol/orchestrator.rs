@@ -422,6 +422,7 @@ impl SyncOrchestrator {
                                     if let Err(e) = self
                                         .materializer
                                         .enqueue_inbound_sync_rebuilds(&changed_blocks)
+                                        .await
                                     {
                                         tracing::warn!(
                                             device_id = %self.device_id,

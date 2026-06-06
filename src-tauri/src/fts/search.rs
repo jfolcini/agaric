@@ -201,6 +201,12 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
             QueryToken::QuotedPhrase(phrase) => {
                 // User-quoted phrases bypass the trigram length filter —
                 // the explicit quoting signals intent.
+                // Skip empty or whitespace-only phrases: `""` would pass
+                // the post-loop `sanitized.is_empty()` guard unchanged but
+                // is a syntax error in FTS5 MATCH.
+                if phrase.trim().is_empty() {
+                    continue;
+                }
                 let escaped = phrase.replace('"', "\"\"");
                 output_parts.push(format!("\"{escaped}\""));
             }

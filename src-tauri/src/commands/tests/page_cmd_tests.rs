@@ -1124,6 +1124,47 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
     );
 }
 
+/// #472 — `value_bool` properties must appear in the YAML frontmatter export.
+/// Pre-fix, `FrontmatterRow` omitted `value_bool` entirely, so boolean
+/// properties silently vanished from the output.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_frontmatter_renders_bool_properties() {
+    let (pool, _dir) = test_pool().await;
+
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    insert_block(&pool, PAGE, "page", "Bool Page", None, Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Insert a true boolean property (value_bool = 1).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'published', 1)",
+    )
+    .bind(PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Insert a false boolean property (value_bool = 0).
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_bool) VALUES (?, 'archived', 0)",
+    )
+    .bind(PAGE)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert!(
+        md.contains("published: true"),
+        "value_bool = 1 must render as 'true', got:\n{md}"
+    );
+    assert!(
+        md.contains("archived: false"),
+        "value_bool = 0 must render as 'false', got:\n{md}"
+    );
+}
+
 // ======================================================================
 // export_page_markdown — error paths (REVIEW-LATER TEST-11)
 // ======================================================================

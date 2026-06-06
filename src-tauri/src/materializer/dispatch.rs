@@ -229,7 +229,20 @@ impl Materializer {
     /// Non-fatal by convention at the call site: a queue-closed / serialization
     /// error must not unwind the sync session (the per-block projection has
     /// already committed), so the orchestrator logs and continues.
-    pub fn enqueue_inbound_sync_rebuilds(
+    ///
+    /// ## Queue-saturation safety (#483 M1)
+    ///
+    /// `RebuildFtsIndex` is the single task that can be produced by
+    /// [`inbound_sync_fts_tasks`] for a large import (above
+    /// [`SYNC_FTS_PER_BLOCK_MAX`]). It is NOT persistable via
+    /// `RetryKind::from_task` (returns `None`), so the normal
+    /// `try_enqueue_background` shed path would silently lose it on a full
+    /// queue, leaving FTS permanently stale. For this task only we use the
+    /// blocking `enqueue_background(..).await` which back-pressures the
+    /// caller rather than dropping the task. Per-block `UpdateFtsBlock` tasks
+    /// remain non-blocking (`try_enqueue_background`) — they can be shed
+    /// because the consumer retry path handles them.
+    pub async fn enqueue_inbound_sync_rebuilds(
         &self,
         changed_blocks: &[crate::ulid::BlockId],
     ) -> Result<(), AppError> {
@@ -254,7 +267,16 @@ impl Materializer {
         // crossover. The selection itself is the pure, unit-tested
         // [`inbound_sync_fts_tasks`].
         for task in inbound_sync_fts_tasks(changed_blocks) {
-            self.try_enqueue_background(task)?;
+            match task {
+                MaterializeTask::RebuildFtsIndex => {
+                    // #483 M1: cannot be shed — use blocking enqueue so it
+                    // cannot be lost on a full queue.
+                    self.enqueue_background(task).await?;
+                }
+                _ => {
+                    self.try_enqueue_background(task)?;
+                }
+            }
         }
         Ok(())
     }

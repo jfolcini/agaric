@@ -731,18 +731,34 @@ impl Materializer {
                     }
                     let pool = self.write_pool.clone();
                     let task_for_spawn = task.clone();
+                    let metrics_for_spawn = self.metrics.clone();
                     Self::spawn_task(&self.tasks, async move {
-                        if let Err(e) = super::retry_queue::record_failure(
-                            &pool,
-                            &task_for_spawn,
-                            "background queue full",
-                        )
-                        .await
+                        use super::retry_queue::record_failure;
+                        match record_failure(&pool, &task_for_spawn, "background queue full").await
                         {
-                            tracing::warn!(
-                                error = %e,
-                                "failed to persist dropped task to materializer_retry_queue"
-                            );
+                            Ok(()) => {}
+                            Err(e1) => {
+                                metrics_for_spawn
+                                    .retry_queue_persist_errors
+                                    .fetch_add(1, Ordering::Relaxed);
+                                tracing::warn!(
+                                    error = %e1,
+                                    "record_failure first attempt failed; retrying after 100ms"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                if let Err(e2) =
+                                    record_failure(&pool, &task_for_spawn, "background queue full")
+                                        .await
+                                {
+                                    metrics_for_spawn
+                                        .retry_queue_persist_errors
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    tracing::error!(
+                                        error = %e2,
+                                        "record_failure failed on retry — task dropped without persistence"
+                                    );
+                                }
+                            }
                         }
                     });
                 }

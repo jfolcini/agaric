@@ -1,4 +1,4 @@
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::{Executor, SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;
 
 use super::codec::encode_snapshot;
@@ -458,16 +458,7 @@ pub async fn compact_op_log(
     // Cleanup old snapshots — kept in the same tx as the op_log purge so
     // the two derived-state deletes commit together. If this tx fails the
     // snapshot itself remains intact in `log_snapshots` from TX 1.
-    let keep: i64 = 3;
-    sqlx::query!(
-        "DELETE FROM log_snapshots WHERE status = 'pending' \
-         OR id NOT IN \
-         (SELECT id FROM log_snapshots WHERE status = 'complete' \
-          ORDER BY id DESC LIMIT ?1)",
-        keep,
-    )
-    .execute(&mut *tx)
-    .await?;
+    cleanup_snapshots_impl(&mut *tx, 3).await?;
 
     tx.commit().await?;
 
@@ -494,6 +485,30 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
     Ok(row.map(|r| (r.id, r.data)))
 }
 
+/// Shared core of snapshot retention cleanup — accepts any sqlx executor so it
+/// works both inside a transaction (`compact_op_log` phase 3) and with a bare
+/// pool connection (`cleanup_old_snapshots`).
+///
+/// M-68: `keep == 0` is a no-op guard (see `cleanup_old_snapshots` doc).
+async fn cleanup_snapshots_impl<'e, E>(exec: E, keep: i64) -> Result<u64, AppError>
+where
+    E: Executor<'e, Database = sqlx::Sqlite>,
+{
+    if keep == 0 {
+        return Ok(0);
+    }
+    let result = sqlx::query(
+        "DELETE FROM log_snapshots WHERE status = 'pending' \
+         OR id NOT IN \
+         (SELECT id FROM log_snapshots WHERE status = 'complete' \
+          ORDER BY id DESC LIMIT ?1)",
+    )
+    .bind(keep)
+    .execute(exec)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Delete old complete snapshots, keeping only the `keep` most recent.
 /// Also deletes any lingering 'pending' snapshots (crash leftovers).
 /// Returns the number of deleted rows.
@@ -505,21 +520,9 @@ pub async fn get_latest_snapshot(pool: &SqlitePool) -> Result<Option<(String, Ve
 /// caller wants. Callers that genuinely need to clear all snapshots
 /// must do so explicitly.
 pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64, AppError> {
-    if keep == 0 {
-        return Ok(0);
-    }
     let keep_i64: i64 = i64::try_from(keep)
         .expect("invariant: keep is a small configuration value (typically < 100) and fits in i64");
-    let result = sqlx::query!(
-        "DELETE FROM log_snapshots WHERE status = 'pending' \
-         OR id NOT IN \
-         (SELECT id FROM log_snapshots WHERE status = 'complete' \
-          ORDER BY id DESC LIMIT ?1)",
-        keep_i64,
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+    cleanup_snapshots_impl(pool, keep_i64).await
 }
 
 // ---------------------------------------------------------------------------

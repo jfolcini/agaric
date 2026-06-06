@@ -3349,6 +3349,47 @@ async fn resolve_root_pages_oracle_cte_vs_page_id() {
     );
 }
 
+/// #467 — large-set branch: when `block_ids.len() > SMALL_IN_LIMIT` (500),
+/// `resolve_root_pages` must switch to `json_each` and not panic or fail.
+/// Only two real blocks exist in the DB; the remaining phantom IDs simply
+/// produce no rows, which is the correct behaviour. The test confirms the
+/// function succeeds and returns the two real entries.
+#[tokio::test]
+async fn resolve_root_pages_large_set_json_each_branch() {
+    use super::SMALL_IN_LIMIT;
+
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "LG_PAGE", "page", "Large Page", None, None).await;
+    insert_block_with_parent(
+        &pool,
+        "LG_BLK",
+        "content",
+        "child block",
+        Some("LG_PAGE"),
+        Some(1),
+    )
+    .await;
+
+    // Build a set larger than SMALL_IN_LIMIT with mostly phantom IDs.
+    let mut ids: FxHashSet<String> = FxHashSet::default();
+    ids.insert("LG_BLK".into());
+    // Fill to SMALL_IN_LIMIT + 1 with synthetic IDs that don't exist in the DB.
+    for i in 0..(SMALL_IN_LIMIT as u64) {
+        ids.insert(format!("PHANTOM_{i:04}"));
+    }
+    assert!(
+        ids.len() > SMALL_IN_LIMIT,
+        "test requires ids.len() > SMALL_IN_LIMIT"
+    );
+
+    let result = resolve_root_pages(&pool, &ids).await.unwrap();
+    // Phantom IDs produce no DB rows — only LG_BLK resolves.
+    assert_eq!(result.len(), 1, "only the real block should be resolved");
+    let (root_id, root_title) = result.get("LG_BLK").unwrap();
+    assert_eq!(root_id, "LG_PAGE");
+    assert_eq!(root_title.as_deref(), Some("Large Page"));
+}
+
 // ======================================================================
 // #538 — eval_backlink_query_grouped tests
 // ======================================================================

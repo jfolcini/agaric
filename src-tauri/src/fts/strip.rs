@@ -1,9 +1,8 @@
 //! Regex patterns and stripping functions for FTS indexing.
 //!
 //! Contains the regex patterns for markdown formatting and reference resolution,
-//! plus the `strip_for_fts` (async, DB-backed) and `strip_for_fts_with_maps`
-//! (sync, pre-loaded maps) functions used to convert raw block content to plain
-//! text for FTS indexing.
+//! plus the `strip_for_fts_with_maps` (sync, pre-loaded maps) function used to
+//! convert raw block content to plain text for FTS indexing.
 
 use regex::Regex;
 use sqlx::SqlitePool;
@@ -100,91 +99,6 @@ pub(crate) use crate::cache::PAGE_LINK_RE;
 // ---------------------------------------------------------------------------
 // Strip functions
 // ---------------------------------------------------------------------------
-
-/// Strip markdown and resolve references using DB lookups.
-///
-/// 1. Remove bold `**text**` → `text`
-/// 2. Remove italic `*text*` → `text` (after bold)
-/// 3. Remove inline code `` `text` `` → `text`
-/// 4. Replace `#[ULID]` → tag name (or empty string)
-/// 5. Replace `[[ULID]]` → page title (or empty string)
-/// 6. Unescape backslash sequences: `\*` → `*`, `` \` `` → `` ` ``
-pub async fn strip_for_fts(content: &str, pool: &SqlitePool) -> Result<String, AppError> {
-    // PEND-25 L6: single combined alternation regex iterated to a fixed
-    // point, replaces five sequential `replace_all().to_string()` calls.
-    let mut result = strip_inline_markup(content);
-
-    // Step 4: Batch-fetch tag names and replace
-    let tag_ids: Vec<String> = TAG_REF_RE
-        .captures_iter(&result)
-        .map(|cap| cap[1].to_string())
-        .collect();
-
-    if !tag_ids.is_empty() {
-        let ids_json = serde_json::to_string(&tag_ids)?;
-        // Filter  so single-block reindex matches the full
-        // rebuild path (`load_ref_maps`). Without this, a `RemoveConflict`
-        // resolution would leave conflict-tag content in `fts_blocks` until
-        // the next full rebuild. (M-61)
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, content FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'tag' AND deleted_at IS NULL",
-        )
-        .bind(&ids_json)
-        .fetch_all(pool)
-        .await?;
-        let tag_names: HashMap<String, String> = rows
-            .into_iter()
-            .filter_map(|(id, content)| content.map(|c| (id, c)))
-            .collect();
-        result = TAG_REF_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let ulid = &caps[1];
-                tag_names.get(ulid).cloned().unwrap_or_default()
-            })
-            .to_string();
-    }
-
-    // Step 5: Batch-fetch page titles and replace
-    let page_ids: Vec<String> = PAGE_LINK_RE
-        .captures_iter(&result)
-        .map(|cap| cap[1].to_string())
-        .collect();
-
-    if !page_ids.is_empty() {
-        let ids_json = serde_json::to_string(&page_ids)?;
-        // Filter  to match the full rebuild path
-        // (`load_ref_maps`). See the tag-lookup comment above. (M-61)
-        let rows = sqlx::query_as::<_, (String, Option<String>)>(
-            "SELECT id, content FROM blocks \
-             WHERE id IN (SELECT value FROM json_each(?1)) \
-             AND block_type = 'page' AND deleted_at IS NULL",
-        )
-        .bind(&ids_json)
-        .fetch_all(pool)
-        .await?;
-        let page_titles: HashMap<String, String> = rows
-            .into_iter()
-            .filter_map(|(id, content)| content.map(|c| (id, c)))
-            .collect();
-        result = PAGE_LINK_RE
-            .replace_all(&result, |caps: &regex::Captures| {
-                let ulid = &caps[1];
-                page_titles.get(ulid).cloned().unwrap_or_default()
-            })
-            .to_string();
-    }
-
-    // Step 6: Unescape backslash sequences (\* -> *, \` -> `, \~ -> ~, \= -> =)
-    result = result
-        .replace("\\*", "*")
-        .replace("\\`", "`")
-        .replace("\\~", "~")
-        .replace("\\=", "=");
-
-    Ok(result)
-}
 
 /// Strip markdown and resolve references using pre-loaded maps (sync, for batch rebuild).
 ///

@@ -415,15 +415,17 @@ impl SyncDaemon {
     }
 }
 
-/// PERF-25: peek at the peer table from the dormant waiter.
+/// PERF-25 / #466: peek at the peer table from the dormant waiter.
 ///
-/// Returns `true` if at least one paired peer row exists. Any DB error
-/// is logged at `warn!` and treated as "no peers" so the waiter loops
-/// again instead of crashing — this matches the fail-open stance in
-/// `SyncDaemon::start_if_peers_exist`.
+/// Returns `true` if at least one paired peer row exists, OR if a
+/// pending-pairing marker is set (QR-only pairing path: no peer row exists
+/// yet, but `confirm_pairing` set the marker so the daemon must wake to
+/// accept the TOFU inbound connection). Mirrors the same OR-condition used
+/// in `SyncDaemon::should_start_active`. Any DB error is logged at `warn!`
+/// and treated as "no peers" so the waiter loops again instead of crashing.
 async fn peers_appeared(pool: &SqlitePool) -> bool {
-    match peer_refs::list_peer_refs(pool).await {
-        Ok(peers) => !peers.is_empty(),
+    match SyncDaemon::should_start_active(pool).await {
+        Ok(active) => active,
         Err(e) => {
             tracing::warn!(
                 error = %e,

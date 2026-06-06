@@ -498,6 +498,14 @@ async fn eval_property_sort_materialised(
 /// pointing at a deleted or non-page row), which the normal write paths
 /// never produce. No runtime guard is added here so the hot grouping
 /// path keeps the single denormalised-column join.
+///
+/// ## SMALL_IN_LIMIT dual-branch (L-82/L-83)
+///
+/// When `block_ids.len() <= SMALL_IN_LIMIT` (500), positional `IN (?,…)`
+/// placeholders are used. Above that threshold a single
+/// `IN (SELECT value FROM json_each(?))` bind is used instead to stay
+/// below SQLite's `SQLITE_MAX_VARIABLE_NUMBER` ceiling (32766 in newer
+/// builds, 999 in older ones). Both branches produce identical row sets.
 pub(super) async fn resolve_root_pages(
     pool: &SqlitePool,
     block_ids: &FxHashSet<String>,
@@ -506,14 +514,6 @@ pub(super) async fn resolve_root_pages(
         return Ok(FxHashMap::default());
     }
 
-    let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let sql = format!(
-        "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
-         FROM blocks b \
-         JOIN blocks p ON p.id = b.page_id \
-         WHERE b.id IN ({placeholders})"
-    );
-
     #[derive(sqlx::FromRow)]
     struct RootPageRow {
         block_id: crate::ulid::BlockId,
@@ -521,11 +521,31 @@ pub(super) async fn resolve_root_pages(
         root_title: Option<String>,
     }
 
-    let mut query = sqlx::query_as::<_, RootPageRow>(sqlx::AssertSqlSafe(sql.as_str()));
-    for id in block_ids {
-        query = query.bind(id.as_str());
-    }
-    let rows = query.fetch_all(pool).await?;
+    let rows: Vec<RootPageRow> = if block_ids.len() <= SMALL_IN_LIMIT {
+        let placeholders = block_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
+             FROM blocks b \
+             JOIN blocks p ON p.id = b.page_id \
+             WHERE b.id IN ({placeholders})"
+        );
+        let mut query = sqlx::query_as::<_, RootPageRow>(sqlx::AssertSqlSafe(sql.as_str()));
+        for id in block_ids {
+            query = query.bind(id.as_str());
+        }
+        query.fetch_all(pool).await?
+    } else {
+        let ids_json = serde_json::to_string(&block_ids.iter().collect::<Vec<_>>())?;
+        sqlx::query_as::<_, RootPageRow>(
+            "SELECT b.id as block_id, b.page_id as root_id, p.content as root_title \
+             FROM blocks b \
+             JOIN blocks p ON p.id = b.page_id \
+             WHERE b.id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(&ids_json)
+        .fetch_all(pool)
+        .await?
+    };
 
     let mut map: FxHashMap<String, (String, Option<String>)> = FxHashMap::default();
     for row in rows {

@@ -2834,8 +2834,8 @@ fn process_discovery_paired_returns_some() {
 // ── PERF-25: conditional daemon startup ──────────────────────────────
 //
 // `SyncDaemon::start_if_peers_exist` avoids starting mDNS + TLS listener
-// when no paired peers exist. These tests exercise the peer-count helper
-// and the dormant/active transition behaviour.
+// when no paired peers exist. These tests exercise the peer-count helper,
+// the pending-pairing wake path (#466), and the dormant/active transition.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn should_start_active_returns_false_with_zero_peers() {
@@ -2902,6 +2902,24 @@ async fn should_start_active_clears_pending_marker_once_a_real_peer_exists() {
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "the pending-pairing marker must be cleared once a real peer exists"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn peers_appeared_returns_true_on_pending_pairing_with_no_peer_rows() {
+    // #466: the dormant waiter must wake when confirm_pairing sets the
+    // pending-pairing marker even if no real peer row exists yet.
+    // Before the fix, peers_appeared only checked list_peer_refs and
+    // returned false here, leaving the daemon dormant forever.
+    let (pool, _dir) = test_pool().await;
+    peer_refs::set_pending_pairing(&pool).await.unwrap();
+
+    // peers_appeared is private; exercise it via should_start_active
+    // which is the same gate it now delegates to.
+    let active = SyncDaemon::should_start_active(&pool).await.unwrap();
+    assert!(
+        active,
+        "dormant waiter must transition to active when pending-pairing marker is set"
     );
 }
 

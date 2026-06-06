@@ -483,9 +483,11 @@ pub async fn export_page_markdown_inner(
         value_date: Option<String>,
         value_num: Option<f64>,
         value_ref: Option<String>,
+        value_bool: Option<i64>,
     }
     let property_rows = sqlx::query!(
-        r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref
+        r#"SELECT key AS "key!", value_text, value_date, value_num, value_ref,
+                  value_bool AS "value_bool: i64"
            FROM block_properties
            WHERE block_id = ?1
              AND key NOT IN (
@@ -536,6 +538,7 @@ pub async fn export_page_markdown_inner(
             value_date: r.value_date,
             value_num: r.value_num,
             value_ref: r.value_ref,
+            value_bool: r.value_bool,
         })
         .collect();
 
@@ -551,9 +554,9 @@ pub async fn export_page_markdown_inner(
         output.push_str("---\n");
         for prop in &properties {
             // Precedence: date, then text, then ref (resolved to page title
-            // or raw ULID), then numeric. A `block_properties` row stores
-            // its value in exactly one column, so at most one of these is
-            // populated; the order is a defensive fallback.
+            // or raw ULID), then numeric, then bool. A `block_properties` row
+            // stores its value in exactly one column, so at most one of these
+            // is populated; the order is a defensive fallback.
             let num_str;
             let value: &str = if let Some(d) = prop.value_date.as_deref() {
                 d
@@ -568,6 +571,12 @@ pub async fn export_page_markdown_inner(
                 // is needed.
                 num_str = format!("{n}");
                 &num_str
+            } else if let Some(b) = prop.value_bool {
+                if b != 0 {
+                    "true"
+                } else {
+                    "false"
+                }
             } else {
                 ""
             };
@@ -1849,7 +1858,7 @@ pub struct PageWithMetadataRow {
     pub content: Option<String>,
     pub parent_id: Option<BlockId>,
     pub position: Option<i64>,
-    pub deleted_at: Option<String>,
+    pub deleted_at: Option<i64>,
     pub todo_state: Option<String>,
     pub priority: Option<String>,
     pub due_date: Option<String>,

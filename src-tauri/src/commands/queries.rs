@@ -787,8 +787,8 @@ pub async fn list_unlinked_references_inner(
 ///
 /// `scope` (PEND-35 Tier 1.6) — [`SpaceScope::Active`] restricts the
 /// counted source blocks to those whose owning page carries
-/// `space = ?space_id`. Mirrors the `(?N IS NULL OR COALESCE(b.page_id,
-/// b.id) IN (...))` clause used by every sibling backlink query (see
+/// `space = ?space_id`. Mirrors the `(?N IS NULL OR b.page_id IN (...))`
+/// clause used by every sibling backlink query (see
 /// `crate::backlink::query::eval_backlink_query`). Without this clause
 /// a page in space A could surface a non-zero badge count whose source
 /// blocks live in space B — backlinks the user can't actually see.
