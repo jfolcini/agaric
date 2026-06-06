@@ -120,8 +120,11 @@ fn bench_list_property_defs(c: &mut Criterion) {
                         let page = list_property_defs_inner(&pool, None, Some(200))
                             .await
                             .unwrap();
-                        // count seeded + any built-in defs from migrations
-                        assert!(page.items.len() >= count);
+                        assert_eq!(
+                            page.items.len(),
+                            count,
+                            "expected exactly {count} property definitions"
+                        );
                     }
                 })
             },

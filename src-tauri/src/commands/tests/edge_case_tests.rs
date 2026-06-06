@@ -118,10 +118,16 @@ async fn f13_empty_block_type_returns_validation_error() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn f13_sql_injection_block_type_returns_validation_error() {
+async fn f13_disallowed_block_type_string_rejected() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
+    // A string that is not in the block_type allowlist (e.g. "content",
+    // "heading", etc.) must be rejected by the allowlist validation layer
+    // before it ever reaches the database.  The specific string used here
+    // is not a meaningful SQL injection attempt — the engine uses
+    // parameterised queries throughout — but it is a representative
+    // non-allowlisted value that exercises the validation rejection path.
     let result = create_block_inner(
         &pool,
         DEV,
@@ -135,14 +141,15 @@ async fn f13_sql_injection_block_type_returns_validation_error() {
 
     assert!(
         matches!(result, Err(AppError::Validation(_))),
-        "SQL injection in block_type should return Validation error, got: {result:?}"
+        "disallowed block_type should return Validation error, got: {result:?}"
     );
 
-    // Verify blocks table still exists (SELECT COUNT(*) succeeds = table exists)
+    // Verify the blocks table is intact: the allowlist rejection must fire
+    // before any DB write, so the table must still be queryable.
     let _count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
-        .expect("blocks table should still exist after SQL injection attempt");
+        .expect("blocks table should still exist after disallowed block_type rejection");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

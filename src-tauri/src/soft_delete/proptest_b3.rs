@@ -276,13 +276,22 @@ proptest! {
             let (pool, mat, _dir) = test_pool_and_mat().await;
             let tree = seed_tree(&pool, &sketches).await;
 
-            // Cascade from the first node (a deterministic, always-present
-            // seed; its active subtree is exercised by the oracle below).
-            let root = tree.ids[0].clone();
+            // Pick a non-pre-deleted root so the first cascade actually marks
+            // at least one row (a pre-deleted root would be skipped by the
+            // CTE's `deleted_at IS NULL` filter, giving vacuous idempotence).
+            // Mirrors the root-selection logic used by Property 3.
+            let root = match tree.ids.iter().find(|id| !tree.pre_deleted.contains(*id)) {
+                Some(r) => r.clone(),
+                None => return Ok(()), // every block pre-deleted: nothing live to cascade.
+            };
 
-            let (_ts1, _count1) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
+            let (_ts1, count1) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)
                 .await
                 .unwrap();
+            prop_assert!(
+                count1 > 0,
+                "first cascade must mark at least one row (root is not pre-deleted)"
+            );
             let after_first = snapshot_deleted_at(&pool, &tree.ids).await;
 
             let (_ts2, count2) = cascade_soft_delete(&pool, &mat, TEST_DEVICE, &root)

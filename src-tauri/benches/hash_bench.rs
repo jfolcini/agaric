@@ -67,7 +67,15 @@ fn bench_hash_varying_payload(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{size}B")),
             &payload,
             |b, p| {
-                b.iter(|| compute_op_hash("device-abc", 99, Some(r#"[["d",1]]"#), "edit_block", p))
+                b.iter(|| {
+                    black_box(compute_op_hash(
+                        "device-abc",
+                        99,
+                        Some(r#"[["d",1]]"#),
+                        "edit_block",
+                        p,
+                    ))
+                })
             },
         );
     }

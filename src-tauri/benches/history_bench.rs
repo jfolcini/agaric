@@ -256,6 +256,10 @@ fn bench_revert_ops_50op(c: &mut Criterion) {
         let (_page_id, _block_id, last_seq) =
             rt.block_on(seed_single_page_history(&pool, total_ops));
 
+        if total_ops == 1_000 {
+            group.sample_size(10);
+        }
+
         // Most-recent-50 ops = [last_seq - 49 .. last_seq], all edit_block
         // ops against the same child block (see `seed_single_page_history`
         // doc comment). All ops share `BENCH_DEVICE`.

@@ -4239,8 +4239,12 @@ async fn snippet_preserves_literal_lt_and_amp_in_source_content() {
     let snippet = results.items[0].snippet.as_deref().unwrap_or("");
     // FTS5 does not HTML-escape; the raw characters survive verbatim.
     assert!(
-        snippet.contains('<') && snippet.contains('&'),
-        "expected literal '<' and '&' to survive verbatim, got: {snippet:?}"
+        snippet.contains("a < b"),
+        "expected literal 'a < b' to survive verbatim, got: {snippet:?}"
+    );
+    assert!(
+        snippet.contains('&'),
+        "expected literal '&' to survive verbatim, got: {snippet:?}"
     );
 }
 

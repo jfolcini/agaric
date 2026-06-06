@@ -138,9 +138,11 @@ async fn all_toggles_off_returns_snippet_and_no_offsets() {
     )
     .await
     .unwrap();
-    assert!(
-        !resp.items.is_empty(),
-        "FTS path must surface 'cohort' matches"
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "FTS path must surface exactly 2 'cohort' blocks; got {}",
+        resp.items.len()
     );
     for row in &resp.items {
         assert!(
@@ -190,13 +192,19 @@ async fn case_sensitive_narrows_candidates() {
             .all(|c| !c.contains("alpha cohort followup")),
         "case-sensitive `Alpha` must NOT match the lowercase row; got {contents:?}"
     );
-    // Match offsets attached
-    for row in &resp.items {
-        assert!(
-            !row.match_offsets.is_empty(),
-            "case_sensitive toggle must attach offsets to surviving rows"
-        );
-    }
+    // Match offsets: find the content block "TODO: review Alpha cohort metrics"
+    // and verify its offset. "TODO: review " = 13 UTF-16 code units, "Alpha" = 5
+    // → start=13, end=18.
+    let todo_row = resp
+        .items
+        .iter()
+        .find(|r| r.content.as_deref() == Some("TODO: review Alpha cohort metrics"))
+        .expect("the 'TODO: review Alpha cohort metrics' block must survive case-sensitive filter");
+    assert_eq!(
+        todo_row.match_offsets,
+        vec![MatchOffset { start: 13, end: 18 }],
+        "case_sensitive 'Alpha' offset must point to the match in 'TODO: review Alpha cohort metrics'"
+    );
 }
 
 #[tokio::test]

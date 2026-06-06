@@ -976,7 +976,7 @@ async fn get_block_edit_heads_nonexistent_block() {
 /// return `AppError::InvalidOperation` with a clear message mentioning
 /// compaction (snapshots exist, so the guard detects the broken chain).
 #[tokio::test]
-async fn find_lca_after_compaction_produces_not_found() {
+async fn find_lca_after_compaction_returns_invalid_operation() {
     use crate::snapshot::compact_op_log;
 
     let (pool, _dir) = test_pool().await;
@@ -1056,6 +1056,10 @@ async fn find_lca_after_compaction_produces_not_found() {
     );
 
     let err = result.unwrap_err();
+    assert!(
+        matches!(err, AppError::InvalidOperation(_)),
+        "expected AppError::InvalidOperation, got: {err:?}"
+    );
     let msg = err.to_string();
     assert!(
         msg.to_lowercase().contains("compaction"),
