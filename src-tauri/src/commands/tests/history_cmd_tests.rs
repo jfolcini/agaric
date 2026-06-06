@@ -93,17 +93,27 @@ async fn test_compute_edit_diff_inner_happy_path() {
     let spans = diff.expect("diff should be Some for an edit_block op");
     assert!(!spans.is_empty(), "diff should contain at least one span");
 
-    // The diff should contain a Delete for "world" and an Insert for "universe"
+    // The diff should contain a Delete span with "world" and an Insert span with "universe"
     use crate::word_diff::DiffTag;
-    let has_delete = spans.iter().any(|s| s.tag == DiffTag::Delete);
-    let has_insert = spans.iter().any(|s| s.tag == DiffTag::Insert);
+    let delete_span = spans.iter().find(|s| s.tag == DiffTag::Delete);
+    let insert_span = spans.iter().find(|s| s.tag == DiffTag::Insert);
     assert!(
-        has_delete,
-        "diff should have a Delete span for the old word"
+        delete_span.is_some(),
+        "diff should have a Delete span for the old word, got: {spans:?}"
     );
     assert!(
-        has_insert,
-        "diff should have an Insert span for the new word"
+        insert_span.is_some(),
+        "diff should have an Insert span for the new word, got: {spans:?}"
+    );
+    assert_eq!(
+        delete_span.unwrap().value.trim(),
+        "world",
+        "Delete span must contain the removed word"
+    );
+    assert_eq!(
+        insert_span.unwrap().value.trim(),
+        "universe",
+        "Insert span must contain the inserted word"
     );
 }
 

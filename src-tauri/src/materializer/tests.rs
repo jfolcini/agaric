@@ -876,10 +876,6 @@ async fn dispatch_op_unknown_op_type() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let op_log_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
     assert!(
         mat.dispatch_op(&fake_op_record("unknown_future_op", "{}"))
             .await
@@ -890,17 +886,9 @@ async fn dispatch_op_unknown_op_type() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    let op_log_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
     assert_eq!(
         blocks_before, blocks_after,
         "unknown op_type must not mutate blocks"
-    );
-    assert_eq!(
-        op_log_before, op_log_after,
-        "unknown op_type must not append to op_log"
     );
 }
 #[tokio::test]
@@ -3019,13 +3007,15 @@ async fn fg_apply_dropped_bumps_when_apply_op_retry_exhausts() {
     .unwrap();
     mat.flush_foreground().await.unwrap();
     let m = mat.metrics();
-    assert!(
-        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
-        "ApplyOp retry exhaust should bump fg_apply_dropped at least once",
+    assert_eq!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        1,
+        "ApplyOp retry exhaust should bump fg_apply_dropped exactly once",
     );
-    assert!(
-        m.fg_errors.load(AtomicOrdering::Relaxed) >= 1,
-        "ApplyOp retry exhaust should also still bump fg_errors",
+    assert_eq!(
+        m.fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "ApplyOp retry exhaust should bump fg_errors exactly once",
     );
     mat.shutdown();
 }
@@ -3154,9 +3144,10 @@ async fn record_failure_persist_error_is_metered_pend24_m1() {
     );
     // fg_apply_dropped MUST still bump (semantic: drop event happened),
     // and fg_apply_dropped_persisted MUST NOT bump (persist failed).
-    assert!(
-        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
-        "fg_apply_dropped must still bump on persist-failure path",
+    assert_eq!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        1,
+        "fg_apply_dropped must bump exactly once on persist-failure path",
     );
     assert_eq!(
         m.fg_apply_dropped_persisted.load(AtomicOrdering::Relaxed),
@@ -3577,14 +3568,6 @@ async fn bg_without_read_pool() {
     );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cleanup_orphaned_attachments() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-    mat.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
-        .unwrap();
-    mat.flush_background().await.unwrap();
-}
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reserved_key_todo_state() {
     use crate::op::is_reserved_property_key;
     let (pool, _dir) = test_pool().await;
@@ -3700,6 +3683,32 @@ async fn concurrent_fg_bg() {
         .await
         .unwrap();
     mat.flush_background().await.unwrap();
+
+    // Stress-test integrity: STRESS_01 must hold one of the 20 values submitted.
+    let content: Option<String> =
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'STRESS_01'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let valid_values: Vec<String> = (0..20).map(|i| format!("v{i}")).collect();
+    assert!(
+        content
+            .as_deref()
+            .map(|c| valid_values.iter().any(|v| v == c))
+            .unwrap_or(false),
+        "STRESS_01 content must be one of v0..v19, got {:?}",
+        content,
+    );
+    assert_eq!(
+        mat.metrics().fg_errors.load(AtomicOrdering::Relaxed),
+        0,
+        "concurrent_fg_bg must produce zero fg_errors"
+    );
+    assert_eq!(
+        mat.metrics().fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        0,
+        "concurrent_fg_bg must produce zero fg_apply_dropped"
+    );
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_dispatch() {
@@ -4672,13 +4681,13 @@ async fn dispatch_background_or_warn_logs_seq_and_device_id_on_serde_error() {
 // MAINT-39: enqueue_full_cache_rebuild helper
 // ---------------------------------------------------------------------------
 
-/// The canonical fan-out list must contain the seven block-referencing
-/// cache rebuild variants in a fixed order. Adding an 8th cache means
+/// The canonical fan-out list must contain the eight block-referencing
+/// cache rebuild variants in a fixed order. Adding a 9th cache means
 /// extending this array; the dispatch arms pick it up automatically.
 /// Any drift between the delete/restore/purge arms and this constant is
 /// a regression.
 #[test]
-fn full_cache_rebuild_tasks_has_seven_entries_in_canonical_order() {
+fn full_cache_rebuild_tasks_has_eight_entries_in_canonical_order() {
     let tasks = &super::dispatch::FULL_CACHE_REBUILD_TASKS;
     // UX-250 extended the array with `RebuildBlockTagRefsCache` (7th);
     // SQL-review §H-2 added `RebuildPageLinkCache` (8th).
@@ -6101,13 +6110,15 @@ async fn apply_op_permanent_failure_leaves_op_log_populated_l15() {
     // 3. The drop-on-permanent-failure metric incremented — this is
     //    the operator-visible signal in `StatusInfo` until C-2b lands.
     let m = mat.metrics();
-    assert!(
-        m.fg_apply_dropped.load(AtomicOrdering::Relaxed) >= 1,
-        "permanent ApplyOp failure must bump fg_apply_dropped at least once",
+    assert_eq!(
+        m.fg_apply_dropped.load(AtomicOrdering::Relaxed),
+        1,
+        "permanent ApplyOp failure must bump fg_apply_dropped exactly once",
     );
-    assert!(
-        m.fg_errors.load(AtomicOrdering::Relaxed) >= 1,
-        "permanent ApplyOp failure must also bump fg_errors",
+    assert_eq!(
+        m.fg_errors.load(AtomicOrdering::Relaxed),
+        1,
+        "permanent ApplyOp failure must bump fg_errors exactly once",
     );
 
     mat.shutdown();

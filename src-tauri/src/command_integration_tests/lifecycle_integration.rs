@@ -240,8 +240,12 @@ async fn restore_block_synchronously_refreshes_page_id() {
     );
 }
 
+/// Verifies that per-device op_log sequences are isolated from one another.
+/// Blocks are created sequentially (nested for-loops with `.await`), not
+/// concurrently. The test checks that each device's op_log has exactly 5
+/// monotonically-increasing seq entries and that all generated IDs are unique.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn concurrent_creates_from_multiple_devices_no_conflicts() {
+async fn creates_from_multiple_devices_verifies_op_log_isolation() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 

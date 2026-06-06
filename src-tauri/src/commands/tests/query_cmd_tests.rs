@@ -899,10 +899,21 @@ async fn query_by_property_with_gt_operator() {
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "OP_GT1", "content", "early", None, Some(1)).await;
-    insert_block(&pool, "OP_GT2", "content", "middle", None, Some(2)).await;
-    insert_block(&pool, "OP_GT3", "content", "late", None, Some(3)).await;
+    // OP_GT_BOUNDARY has deadline == threshold; gt must EXCLUDE it (distinguishes > from >=)
+    insert_block(
+        &pool,
+        "OP_GT_BOUNDARY",
+        "content",
+        "boundary",
+        None,
+        Some(2),
+    )
+    .await;
+    insert_block(&pool, "OP_GT2", "content", "middle", None, Some(3)).await;
+    insert_block(&pool, "OP_GT3", "content", "late", None, Some(4)).await;
 
     insert_property_date(&pool, "OP_GT1", "deadline", "2025-01-01").await;
+    insert_property_date(&pool, "OP_GT_BOUNDARY", "deadline", "2025-06-01").await;
     insert_property_date(&pool, "OP_GT2", "deadline", "2025-06-15").await;
     insert_property_date(&pool, "OP_GT3", "deadline", "2025-12-31").await;
 
@@ -925,13 +936,19 @@ async fn query_by_property_with_gt_operator() {
     .await
     .unwrap();
 
+    // OP_GT_BOUNDARY (deadline == threshold) must be excluded — this pin
+    // distinguishes `>` from `>=`.
     assert_eq!(
         result.items.len(),
         2,
-        "gt operator should return blocks with deadline after 2025-06-01"
+        "gt operator should return blocks with deadline strictly after 2025-06-01 (boundary excluded)"
     );
     assert_eq!(result.items[0].id, "OP_GT2", "first match is OP_GT2");
     assert_eq!(result.items[1].id, "OP_GT3", "second match is OP_GT3");
+    assert!(
+        result.items.iter().all(|b| b.id != "OP_GT_BOUNDARY"),
+        "OP_GT_BOUNDARY (deadline == threshold) must NOT appear in gt results"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
