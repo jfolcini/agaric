@@ -86,10 +86,11 @@ prompts minimal — reference paths, never paste file contents or long docs.
 **While subagents build, the orchestrator does not idle:** apply trivial 1-line fixes
 directly, update docs, or pre-read sources for the next batch.
 
-**Never idle-wait on a slow subagent — run a SECOND issue concurrently.** When the active
-issue's subagents are busy (a Tauri/Rust compile runs minutes), start a second, independent
-issue rather than scheduling a long wakeup. Cap at **two issues in flight** — enough to
-fill the idle window while keeping real oversight.
+**Never idle-wait on a slow subagent — run another issue concurrently.** When the active
+issue's subagents are busy (a Tauri/Rust compile runs minutes), start another independent
+issue rather than scheduling a long wakeup. **Up to 5 PRs may be open at once** (maintainer
+preference, 2026-06-06) — keep enough in flight to fill idle windows while keeping real
+oversight; don't exceed 5.
 
 - Choose a second issue whose files don't overlap, ideally a different toolchain (frontend
   while Rust compiles) so builds don't contend on the cargo target lock.
@@ -217,8 +218,10 @@ async over many minutes. Instead:
    - Any failed → diagnose (`gh run view --log-failed`), fix on that branch (new commit,
      push), leave for the *next* reconciliation pass. Don't merge red.
    - Still running → leave it; reconcile next pass. Never spin idle.
-4. **Keep the pending-PR list bounded** (~1, occasionally 2-3 if CI is slow). `gh pr list
-   --author @me --state open` shows what's outstanding if you lose track.
+4. **Keep the pending-PR list bounded** (up to **5** open PRs — maintainer preference,
+   2026-06-06). `gh pr list --author @me --state open` shows what's outstanding if you lose
+   track. Note: merges may require maintainer approval (`REVIEW_REQUIRED`) — if so, ship green
+   PRs and let the maintainer merge rather than forcing `--admin`.
 
 This pipelines batches against CI wall-clock: while batch N's CI runs, you build N+1; by
 the time N+1 is pushed, N's CI has finished and you merge it.
