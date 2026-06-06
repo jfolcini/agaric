@@ -53,7 +53,9 @@ pub use discovery::{
 // Without this `#[allow]` rustc fires `unused_imports` on non-test
 // builds because no production code path imports through this module.
 #[allow(unused_imports)]
-pub(crate) use orchestrator::{run_sync_session, try_sync_with_peer, SyncSessionContext};
+pub(crate) use orchestrator::{
+    run_sequential_sync_round, run_sync_session, try_sync_with_peer, SyncSessionContext,
+};
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
 pub(crate) use server::{handle_incoming_sync, verify_peer_cert, CertVerifyResult};

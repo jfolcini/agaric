@@ -427,7 +427,7 @@ pub async fn list_attachments_inner(
         AttachmentRow,
         "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at \
          FROM attachments WHERE block_id = ? \
-         ORDER BY created_at",
+         ORDER BY created_at, id",
         block_id_str
     )
     .fetch_all(pool)

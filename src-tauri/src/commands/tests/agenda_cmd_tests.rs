@@ -1,7 +1,6 @@
 use super::super::*;
 use super::common::*;
 use crate::space::{SpaceId, SpaceScope};
-use chrono::Datelike;
 
 // ======================================================================
 // list_blocks with agenda_source filter
@@ -1365,18 +1364,14 @@ async fn projected_agenda_dot_plus_mode_projects_from_today() {
         .unwrap()
         .items;
 
-    // .+ mode shifts from today, so first projection should be ~today+7d
+    // .+ mode shifts from today, so first projection must be exactly today+7d
     assert!(!entries.is_empty(), ".+ mode should produce projections");
     let first_date =
         chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
-    // First projection should be within 8 days of today (7 days for weekly + 1 day buffer)
-    assert!(
-        first_date <= today + chrono::Duration::days(8),
-        ".+ weekly first projection {first_date} should be near today+7d ({today})"
-    );
-    assert!(
-        first_date > today,
-        ".+ first projection should be in the future"
+    assert_eq!(
+        first_date,
+        today + chrono::Duration::days(7),
+        ".+ weekly first projection must be exactly today+7, got {first_date}"
     );
 
     mat.shutdown();
@@ -1452,20 +1447,19 @@ async fn projected_agenda_plus_plus_mode_catches_up_to_today() {
         .unwrap()
         .items;
 
-    // ++ mode should produce dates on the original Monday cadence
-    // First projection should be the next Monday after today (from 2025-01-06 cadence)
+    // ++ mode should produce dates on the original Monday cadence.
+    // Derive the first date on the 2025-01-06 weekly lattice that is strictly
+    // after today: base + 7k days for the smallest k such that base + 7k > today.
     assert!(!entries.is_empty(), "++ mode should produce projections");
     let first_date =
         chrono::NaiveDate::parse_from_str(&entries[0].projected_date, "%Y-%m-%d").unwrap();
-    assert!(
-        first_date > today,
-        "++ first projection should be in the future"
-    );
-    // Should be on a Monday (weekday 0 = Monday in chrono)
+    let base = chrono::NaiveDate::from_ymd_opt(2025, 1, 6).unwrap();
+    let days_since_base = (today - base).num_days();
+    let k = (days_since_base / 7) + 1; // first k with base + 7k > today
+    let expected_first = base + chrono::Duration::days(7 * k);
     assert_eq!(
-        first_date.weekday(),
-        chrono::Weekday::Mon,
-        "++ weekly from Monday cadence should land on Monday, got {first_date}"
+        first_date, expected_first,
+        "++ weekly from 2025-01-06 first in-range date must be {expected_first}, got {first_date}"
     );
 
     mat.shutdown();
@@ -1551,16 +1545,40 @@ async fn projected_agenda_both_date_columns_produce_separate_entries() {
     .unwrap()
     .items;
 
-    // Should have entries from both due_date and scheduled_date
+    // Should have entries from both due_date and scheduled_date.
+    // Base date 2026-04-06, weekly: hits are 2026-04-13, 2026-04-20, 2026-04-27...
+    // Range [2026-04-07, 2026-04-20] (both endpoints inclusive) → 2 hits per source.
     let due_entries: Vec<_> = entries.iter().filter(|e| e.source == "due_date").collect();
     let sched_entries: Vec<_> = entries
         .iter()
         .filter(|e| e.source == "scheduled_date")
         .collect();
-    assert!(!due_entries.is_empty(), "should have due_date projections");
-    assert!(
-        !sched_entries.is_empty(),
-        "should have scheduled_date projections"
+    assert_eq!(
+        due_entries.len(),
+        2,
+        "expected exactly 2 due_date weekly hits (2026-04-13, 2026-04-20) in the range"
+    );
+    assert_eq!(
+        sched_entries.len(),
+        2,
+        "expected exactly 2 scheduled_date weekly hits (2026-04-13, 2026-04-20) in the range"
+    );
+    // Pin the exact projected dates.
+    assert_eq!(
+        due_entries[0].projected_date, "2026-04-13",
+        "first due_date hit should be 2026-04-13"
+    );
+    assert_eq!(
+        due_entries[1].projected_date, "2026-04-20",
+        "second due_date hit should be 2026-04-20"
+    );
+    assert_eq!(
+        sched_entries[0].projected_date, "2026-04-13",
+        "first scheduled_date hit should be 2026-04-13"
+    );
+    assert_eq!(
+        sched_entries[1].projected_date, "2026-04-20",
+        "second scheduled_date hit should be 2026-04-20"
     );
 
     mat.shutdown();

@@ -425,9 +425,10 @@ async fn create_block_huge_index_clamps_below_sentinel() {
     let pos = resp
         .position
         .expect("created block has a provisional position");
-    assert!(
-        pos < crate::pagination::NULL_POSITION_SENTINEL,
-        "provisional position must stay below the reserved sentinel, got {pos}"
+    assert_eq!(
+        pos,
+        crate::pagination::NULL_POSITION_SENTINEL - 1,
+        "provisional position must be clamped to exactly NULL_POSITION_SENTINEL - 1, got {pos}"
     );
 }
 
@@ -462,9 +463,10 @@ async fn move_block_huge_index_clamps_below_sentinel() {
     .await
     .expect("a huge slot index clamps to the end, it is not rejected (#400)");
 
-    assert!(
-        resp.new_position < crate::pagination::NULL_POSITION_SENTINEL,
-        "provisional new_position must stay below the reserved sentinel, got {}",
+    assert_eq!(
+        resp.new_position,
+        crate::pagination::NULL_POSITION_SENTINEL - 1,
+        "provisional new_position must be clamped to exactly NULL_POSITION_SENTINEL - 1, got {}",
         resp.new_position
     );
 }
@@ -518,7 +520,7 @@ async fn create_block_rejects_page_without_space_id() {
         .unwrap();
     assert_eq!(
         after_ops, before_ops,
-        "atomicity: validation failure must NOT append any ops to op_log"
+        "validation guard returns before any DB write: op_log must be empty"
     );
 
     // No `page` row must have been materialized either.
@@ -1886,14 +1888,16 @@ async fn purge_blocks_by_ids_empty_input_returns_validation_error() {
     );
 }
 
+// TODO(#501): add genuine mid-tx rollback test — engineer a failure that enters
+// the CommandTx transaction (e.g. a FK violation after the first DELETE) and
+// assert that blocks/op_log rows written before the failure are rolled back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn purge_blocks_by_ids_atomic_rollback_on_validation_error() {
+async fn purge_blocks_by_ids_rejects_oversized_batch() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
     // Capacity check kicks in BEFORE any tx work — the cap rejection
-    // path is itself a fast `Validation` return. We use it as the
-    // "trigger an error" surface to assert no row is touched on error.
+    // path is itself a fast `Validation` return that never opens a transaction.
     insert_block(&pool, "PBBIROLL", "content", "doomed", None, Some(1)).await;
     soft_delete::cascade_soft_delete(&pool, &mat, DEV, "PBBIROLL")
         .await
@@ -4978,8 +4982,7 @@ async fn delete_blocks_by_ids_coalesces_ancestor_plus_descendant() {
     .unwrap();
     assert_eq!(
         affected, 2,
-        "the descendant is reachable from the ancestor's subtree, so \
-         the cascade marks each row exactly once"
+        "both selected rows are soft-deleted: ancestor and its descendant"
     );
 
     // Two delete_block ops: one per RESOLVED root in the input list.

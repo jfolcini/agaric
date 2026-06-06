@@ -330,6 +330,36 @@ fn shift_date_monthly_from_string() {
     );
 }
 
+#[test]
+fn shift_date_once_monthly_december_year_rollover() {
+    // Dec 31 + 1 month → Jan 31 of the next year.
+    // Exercises the `month == 12` branch in `shift_by_months` that sets
+    // month = 1 and increments the year.
+    let base = chrono::NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+    let result = shift_date_once(base, "monthly").unwrap();
+    assert_eq!(
+        result,
+        chrono::NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(),
+        "monthly from Dec 31 must roll to Jan 31 of the next year"
+    );
+}
+
+#[test]
+fn shift_date_monthly_december_rolls_year() {
+    // End-to-end string path for the December → January year rollover.
+    assert_eq!(
+        shift_date("2025-12-15", "monthly").unwrap(),
+        Some("2026-01-15".into()),
+        "monthly shift from 2025-12-15 must produce 2026-01-15"
+    );
+    // Also pin the mid-month case from shift_date_once above via the string API.
+    assert_eq!(
+        shift_date("2025-12-31", "monthly").unwrap(),
+        Some("2026-01-31".into()),
+        "monthly shift from 2025-12-31 must produce 2026-01-31"
+    );
+}
+
 // ==================================================================
 // M-36: overflow / range checks for month arithmetic
 // ==================================================================

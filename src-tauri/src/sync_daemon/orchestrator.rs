@@ -349,21 +349,36 @@ pub(crate) async fn daemon_loop(
                     cancel: &cancel,
                     cert: &cert,
                 };
-                for pid in due {
-                    let last_addr = refs_by_id.get(pid.as_str()).and_then(|r| r.last_address.as_deref());
-                    if let Some(peer) = resolve_peer_address(&pid, last_addr, &discovered) {
-                        let cancelled = try_sync_with_peer(&ctx, &peer, &refs).await;
-                        // M-46: see Branch B comment — break the round, not
-                        // just the current peer, when the user cancels.
-                        if cancelled {
-                            tracing::info!(
-                                peer_id = %pid,
-                                "cancel observed mid-round; aborting remaining periodic-resync peers"
-                            );
-                            break;
+                // M-46: run_sequential_sync_round iterates peers in order
+                // and breaks as soon as any peer reports cancellation, so a
+                // "stop this round" cancel is honoured for every subsequent
+                // peer, not just the one currently syncing.
+                run_sequential_sync_round(&due, |pid| {
+                    // Rebind environment borrows as shared references so
+                    // the async block can capture them without moving the
+                    // underlying data (references are Copy).
+                    let refs_by_id = &refs_by_id;
+                    let discovered = &discovered;
+                    let ctx = &ctx;
+                    let refs = &refs;
+                    async move {
+                        let last_addr = refs_by_id
+                            .get(pid.as_str())
+                            .and_then(|r| r.last_address.as_deref());
+                        if let Some(peer) = resolve_peer_address(&pid, last_addr, discovered) {
+                            let cancelled = try_sync_with_peer(ctx, &peer, refs).await;
+                            if cancelled {
+                                tracing::info!(
+                                    peer_id = %pid,
+                                    "cancel observed mid-round; aborting remaining periodic-resync peers"
+                                );
+                                return true;
+                            }
                         }
+                        false
                     }
-                }
+                })
+                .await;
             }
 
             // Branch D: foreground transition (PERF-24)
@@ -510,6 +525,11 @@ async fn try_connect_each_address(
 ///
 /// Per-peer / per-cycle inputs (`peer`, `peer_refs`) stay positional on
 /// the function — they are not session-wide.
+///
+/// All fields are plain references, so the struct is `Copy`: Branch C of
+/// `daemon_loop` can copy it into an owned `async move` closure without
+/// cloning the underlying state.
+#[derive(Clone, Copy)]
 pub(crate) struct SyncSessionContext<'a> {
     pub pool: &'a SqlitePool,
     pub device_id: &'a str,
@@ -725,6 +745,35 @@ pub(crate) async fn try_sync_with_peer(
     });
 
     was_cancelled
+}
+
+// ---------------------------------------------------------------------------
+// run_sequential_sync_round — M-46 break-on-cancel iteration helper
+// ---------------------------------------------------------------------------
+
+/// Iterate over `peer_ids` calling `sync_fn` for each one in order,
+/// stopping early if any call returns `true` (cancel was observed).
+///
+/// Extracted from Branch C of [`daemon_loop`] so that tests can drive
+/// the break-on-cancel logic through this function rather than replicating
+/// the loop inline. Returns `true` if the round was cancelled early, `false`
+/// if all peers were visited without cancellation.
+///
+/// The callback receives each peer ID as an owned `String` so that the
+/// returned future may freely borrow from or move into the closure's
+/// captured environment without triggering higher-ranked trait bound
+/// (HRTB) lifetime conflicts.
+pub(crate) async fn run_sequential_sync_round<F, Fut>(peer_ids: &[String], mut sync_fn: F) -> bool
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for pid in peer_ids {
+        if sync_fn(pid.clone()).await {
+            return true;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------
