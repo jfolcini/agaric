@@ -1734,6 +1734,115 @@ async fn undo_page_op_finds_delete_attachment_op() {
     );
 }
 
+// Regression for the #571 review fix: undo of a rename must restore the
+// ORIGINAL filename. `reverse_rename_attachment` swaps old/new, so the
+// reverse-apply path must read `new_filename` (the restore target); reading
+// `old_filename` made undo a silent no-op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_page_op_restores_renamed_attachment_filename() {
+    use sqlx::Row;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Seed an attachment row, then append its add op (far-future ts so the
+    // rename op below is the most-recent op on the page for undo's lookup).
+    let att_id = "ATT_RENAME_UNDO_1";
+    let add_ts: i64 = 4_072_161_600_000;
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(att_id)
+    .bind(&child.id)
+    .bind("image/png")
+    .bind("original.png")
+    .bind(8_i64)
+    .bind("attachments/original")
+    .bind(add_ts)
+    .execute(&pool)
+    .await
+    .unwrap();
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+            attachment_id: BlockId::from_trusted(att_id),
+            block_id: child.id.clone(),
+            mime_type: "image/png".into(),
+            filename: "original.png".into(),
+            size_bytes: 8,
+            fs_path: "attachments/original".into(),
+        }),
+        add_ts,
+    )
+    .await
+    .unwrap();
+
+    // Forward rename → "renamed.png" (op + row update mirror the command path).
+    let rename_ts: i64 = 4_072_161_601_000;
+    op_log::append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {
+            attachment_id: BlockId::from_trusted(att_id),
+            old_filename: "original.png".into(),
+            new_filename: "renamed.png".into(),
+        }),
+        rename_ts,
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE attachments SET filename = ? WHERE id = ?")
+        .bind("renamed.png")
+        .bind(att_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Undo the most-recent op (the rename).
+    let result = undo_page_op_inner(&pool, DEV, &mat, page.id.clone().into_string(), 0)
+        .await
+        .expect("undo should find the rename_attachment op");
+    assert_eq!(result.new_op_type, "rename_attachment");
+
+    let row = sqlx::query("SELECT filename FROM attachments WHERE id = ?")
+        .bind(att_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let filename: String = row.get("filename");
+    assert_eq!(
+        filename, "original.png",
+        "undo of rename must restore the original filename, not no-op"
+    );
+}
+
 // -- redo_page_op tests --
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
