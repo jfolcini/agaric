@@ -211,8 +211,13 @@ pub async fn recover_at_boot(
             }
         }
 
-        // Delete the draft row regardless of outcome. If this fails, we log
-        // but still continue — the draft will be retried on next boot.
+        // Delete the draft row in a separate statement (not in the same tx as
+        // the synthetic op). This is safe: `recover_single_draft` timestamps
+        // the synthetic op with `now_ms()`, which is strictly greater than
+        // `draft.updated_at`, so next boot's content-provenance check sees
+        // `matching_ops > 0` and skips re-processing — the delete is idempotent
+        // even if it races or is retried. (The production `flush_draft` path
+        // deletes in-tx; the divergence here is intentional and documented.)
         if let Err(e) = delete_draft(pool, draft.block_id.as_str()).await {
             log_draft_error(&mut draft_errors, draft.block_id.as_str(), &e, "deleting");
         }

@@ -806,6 +806,17 @@ async fn try_reenqueue_apply_op(
 /// I-Materializer-1: takes both pools so `sweep_once` can route SELECTs
 /// to the reader pool and DELETEs to the writer pool, mirroring the
 /// `cache::*_split` helpers used elsewhere in the materializer.
+///
+/// # Shutdown-flag coordination (#483 L1)
+///
+/// `shutdown_flag` (`RetryQueueSweeperShutdown` in `lib.rs`) is managed here
+/// but currently never set to `true` anywhere in the tree — the sweeper relies
+/// on process exit to stop. This is safe in practice because after
+/// `Materializer::shutdown()` the sweeper's `try_enqueue_background` calls
+/// short-circuit on the materializer's own shutdown flag and log a `warn!` for
+/// any row they attempt to re-enqueue. Convergence requires a restart; the
+/// dormant `shutdown_flag` field is retained for a future graceful-shutdown
+/// path that coordinates the two flags.
 #[cfg(not(tarpaulin_include))]
 pub fn spawn_sweeper(
     read_pool: SqlitePool,

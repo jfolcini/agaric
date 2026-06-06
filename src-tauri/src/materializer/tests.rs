@@ -2341,6 +2341,7 @@ async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
         crate::ulid::BlockId::test_id("SYNC_NOTE_1"),
     ];
     mat.enqueue_inbound_sync_rebuilds(&changed)
+        .await
         .expect("enqueue inbound sync rebuilds");
     mat.flush_background().await.expect("flush background");
 

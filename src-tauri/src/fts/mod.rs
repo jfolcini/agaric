@@ -6,7 +6,6 @@
 //!
 //! ## Design
 //!
-//! - `strip_for_fts` — async, resolves `#[ULID]` and `[[ULID]]` via DB lookups
 //! - `strip_for_fts_with_maps` — sync, uses pre-loaded HashMaps (batch rebuild)
 //! - `update_fts_for_block` — index one block
 //! - `remove_fts_for_block` — remove one block from index
@@ -32,7 +31,6 @@ pub use index::{
     update_fts_for_block_split_with_maps, update_fts_for_block_with_maps,
 };
 pub use search::search_fts;
-pub use strip::strip_for_fts;
 pub use toggle_filter::{search_with_toggles, SearchToggles};
 
 // PEND-61 Phase 1 — partitioned FTS scan for the multi-mode palette.

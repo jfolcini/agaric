@@ -77,134 +77,127 @@ const BLOCK_D: &str = "01HQBLKD00000000000000BKD1";
 const UNKNOWN_ULID: &str = "01HQUNKN00000000000000UK01";
 
 // ======================================================================
-// strip_for_fts tests
+// strip_for_fts_with_maps tests (markup stripping — no refs needed)
 // ======================================================================
 
-#[tokio::test]
-async fn strip_plain_text_unchanged() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("hello world", &pool).await.unwrap();
+#[test]
+fn strip_plain_text_unchanged() {
+    let result = strip_for_fts_with_maps("hello world", &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "hello world",
         "plain text should pass through unchanged"
     );
 }
 
-#[tokio::test]
-async fn strip_bold() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("**hello**", &pool).await.unwrap();
+#[test]
+fn strip_bold() {
+    let result = strip_for_fts_with_maps("**hello**", &HashMap::new(), &HashMap::new());
     assert_eq!(result, "hello", "bold markers should be stripped");
 }
 
-#[tokio::test]
-async fn strip_italic() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("*hello*", &pool).await.unwrap();
+#[test]
+fn strip_italic() {
+    let result = strip_for_fts_with_maps("*hello*", &HashMap::new(), &HashMap::new());
     assert_eq!(result, "hello", "italic markers should be stripped");
 }
 
-#[tokio::test]
-async fn strip_code() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("`hello`", &pool).await.unwrap();
+#[test]
+fn strip_code() {
+    let result = strip_for_fts_with_maps("`hello`", &HashMap::new(), &HashMap::new());
     assert_eq!(result, "hello", "inline code backticks should be stripped");
 }
 
-#[tokio::test]
-async fn strip_strikethrough() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("~~deleted~~", &pool).await.unwrap();
+#[test]
+fn strip_strikethrough() {
+    let result = strip_for_fts_with_maps("~~deleted~~", &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "deleted",
         "strikethrough markers should be stripped"
     );
 }
 
-#[tokio::test]
-async fn strip_highlight() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("==important==", &pool).await.unwrap();
+#[test]
+fn strip_highlight() {
+    let result = strip_for_fts_with_maps("==important==", &HashMap::new(), &HashMap::new());
     assert_eq!(result, "important", "highlight markers should be stripped");
 }
 
-#[tokio::test]
-async fn strip_mixed_formatting() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("**bold** and *italic* and `code`", &pool)
-        .await
-        .unwrap();
+#[test]
+fn strip_mixed_formatting() {
+    let result = strip_for_fts_with_maps(
+        "**bold** and *italic* and `code`",
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     assert_eq!(
         result, "bold and italic and code",
         "mixed bold/italic/code formatting should be stripped"
     );
 }
 
-#[tokio::test]
-async fn strip_mixed_with_strike_and_highlight() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("**bold** and ~~deleted~~ and ==highlighted==", &pool)
-        .await
-        .unwrap();
+#[test]
+fn strip_mixed_with_strike_and_highlight() {
+    let result = strip_for_fts_with_maps(
+        "**bold** and ~~deleted~~ and ==highlighted==",
+        &HashMap::new(),
+        &HashMap::new(),
+    );
     assert_eq!(
         result, "bold and deleted and highlighted",
         "mixed bold/strikethrough/highlight formatting should be stripped"
     );
 }
 
-#[tokio::test]
-async fn strip_tag_ref_resolved() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+#[test]
+fn strip_tag_ref_resolved() {
+    let mut tag_names = HashMap::new();
+    tag_names.insert(TAG_ULID.to_string(), "urgent".to_string());
 
     let input = format!("task #[{TAG_ULID}]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &tag_names, &HashMap::new());
     assert_eq!(
         result, "task urgent",
         "tag reference should resolve to tag name"
     );
 }
 
-#[tokio::test]
-async fn strip_page_link_resolved() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, PAGE_ULID, "page", "My Page", None, None).await;
+#[test]
+fn strip_page_link_resolved() {
+    let mut page_titles = HashMap::new();
+    page_titles.insert(PAGE_ULID.to_string(), "My Page".to_string());
 
     let input = format!("see [[{PAGE_ULID}]]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &HashMap::new(), &page_titles);
     assert_eq!(
         result, "see My Page",
         "page link should resolve to page title"
     );
 }
 
-#[tokio::test]
-async fn strip_unknown_tag_ref_becomes_empty() {
-    let (pool, _dir) = test_pool().await;
+#[test]
+fn strip_unknown_tag_ref_becomes_empty() {
     let input = format!("task #[{UNKNOWN_ULID}]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "task ",
         "unknown tag reference should resolve to empty string"
     );
 }
 
-#[tokio::test]
-async fn strip_unknown_page_link_becomes_empty() {
-    let (pool, _dir) = test_pool().await;
+#[test]
+fn strip_unknown_page_link_becomes_empty() {
     let input = format!("see [[{UNKNOWN_ULID}]]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "see ",
         "unknown page link should resolve to empty string"
     );
 }
 
-#[tokio::test]
-async fn strip_nested_bold_italic() {
-    let (pool, _dir) = test_pool().await;
+#[test]
+fn strip_nested_bold_italic() {
     // **bold *italic*** — bold outer stripped first, then italic
-    let result = strip_for_fts("**bold *italic***", &pool).await.unwrap();
+    let result = strip_for_fts_with_maps("**bold *italic***", &HashMap::new(), &HashMap::new());
     // After bold strip: "bold *italic*", after italic strip: "bold italic"
     assert_eq!(
         result, "bold italic",
@@ -212,16 +205,17 @@ async fn strip_nested_bold_italic() {
     );
 }
 
-#[tokio::test]
-async fn strip_multiple_refs_batched() {
-    let (pool, _dir) = test_pool().await;
+#[test]
+fn strip_multiple_refs_batched() {
     let tag_id = "01AAAAAAAAAAAAAAAAAAAAATAG";
     let page_id = "01AAAAAAAAAAAAAAAAAAAAPGE1";
-    insert_block(&pool, tag_id, "tag", "urgent", None, None).await;
-    insert_block(&pool, page_id, "page", "My Page", None, None).await;
+    let mut tag_names = HashMap::new();
+    tag_names.insert(tag_id.to_string(), "urgent".to_string());
+    let mut page_titles = HashMap::new();
+    page_titles.insert(page_id.to_string(), "My Page".to_string());
 
     let input = format!("task #[{tag_id}] and #[{tag_id}] see [[{page_id}]] and [[{page_id}]]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &tag_names, &page_titles);
     assert_eq!(
         result, "task urgent and urgent see My Page and My Page",
         "multiple duplicate refs should all be resolved"
@@ -1532,45 +1526,41 @@ async fn search_unmatched_quotes_no_crash() {
 // Strip: escape sequences and edge cases
 // ======================================================================
 
-#[tokio::test]
-async fn strip_escaped_asterisk() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts(r"use \*args", &pool).await.unwrap();
+#[test]
+fn strip_escaped_asterisk() {
+    let result = strip_for_fts_with_maps(r"use \*args", &HashMap::new(), &HashMap::new());
     assert_eq!(result, "use *args", "escaped asterisk should be unescaped");
 }
 
-#[tokio::test]
-async fn strip_escaped_backtick() {
-    let (pool, _dir) = test_pool().await;
+#[test]
+fn strip_escaped_backtick() {
     // A single (unpaired) escaped backtick is not matched by CODE_RE,
     // so it passes through to the unescape step.
     // Paired `\`...\`` would be consumed by CODE_RE first (known limitation).
-    let result = strip_for_fts("it costs 5\\` USD", &pool).await.unwrap();
+    let result = strip_for_fts_with_maps("it costs 5\\` USD", &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "it costs 5` USD",
         "escaped backtick should be unescaped"
     );
 }
 
-#[tokio::test]
-async fn strip_complex_nested_markup() {
-    let (pool, _dir) = test_pool().await;
-    let result = strip_for_fts("**bold *nested*** rest", &pool)
-        .await
-        .unwrap();
+#[test]
+fn strip_complex_nested_markup() {
+    let result =
+        strip_for_fts_with_maps("**bold *nested*** rest", &HashMap::new(), &HashMap::new());
     assert_eq!(
         result, "bold nested rest",
         "complex nested bold/italic should be fully stripped"
     );
 }
 
-#[tokio::test]
-async fn strip_mixed_formatting_and_refs() {
-    let (pool, _dir) = test_pool().await;
-    insert_block(&pool, TAG_ULID, "tag", "urgent", None, None).await;
+#[test]
+fn strip_mixed_formatting_and_refs() {
+    let mut tag_names = HashMap::new();
+    tag_names.insert(TAG_ULID.to_string(), "urgent".to_string());
 
     let input = format!("**bold** and `code` with #[{TAG_ULID}]");
-    let result = strip_for_fts(&input, &pool).await.unwrap();
+    let result = strip_for_fts_with_maps(&input, &tag_names, &HashMap::new());
     assert_eq!(
         result, "bold and code with urgent",
         "mixed formatting and tag ref should be stripped/resolved"
@@ -1991,6 +1981,28 @@ fn sanitize_drops_dangling_operator_after_subtrigram_drop() {
         sanitize_fts_query("ab NOT cd"),
         "",
         "both operands sub-trigram → empty MATCH (no dangling operator)"
+    );
+}
+
+// ======================================================================
+// #477 — empty / whitespace-only QuotedPhrase must not produce FTS5 syntax error
+// ======================================================================
+
+#[test]
+fn sanitize_empty_quoted_phrase_yields_empty() {
+    assert_eq!(
+        sanitize_fts_query("\"\""),
+        "",
+        "empty quoted phrase is a FTS5 syntax error and must be dropped"
+    );
+}
+
+#[test]
+fn sanitize_whitespace_only_quoted_phrase_yields_empty() {
+    assert_eq!(
+        sanitize_fts_query("\"  \""),
+        "",
+        "whitespace-only quoted phrase is a FTS5 syntax error and must be dropped"
     );
 }
 
