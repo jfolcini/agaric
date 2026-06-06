@@ -1827,9 +1827,15 @@ pub async fn restore_all_deleted_inner(
     // queue and the `op_records` retention vec share the record by
     // refcount instead of deep-cloning.
     for root in &roots {
-        let deleted_at_ref = root
-            .deleted_at
-            .expect("query guarantees deleted_at IS NOT NULL");
+        // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
+        // is a structural invariant. Return a graceful AppError instead of
+        // panicking if a schema/migration bug ever violates it (#542).
+        let deleted_at_ref = root.deleted_at.ok_or_else(|| {
+            AppError::InvalidOperation(format!(
+                "restore: block {} selected as deleted but has NULL deleted_at",
+                root.id
+            ))
+        })?;
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
@@ -2238,9 +2244,15 @@ pub async fn restore_blocks_by_ids_inner(
     // `restore_all_deleted_inner`).
     let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     for root in &roots {
-        let deleted_at_ref = root
-            .deleted_at
-            .expect("query guarantees deleted_at IS NOT NULL");
+        // The selecting query filters `WHERE deleted_at IS NOT NULL`, so this
+        // is a structural invariant. Return a graceful AppError instead of
+        // panicking if a schema/migration bug ever violates it (#542).
+        let deleted_at_ref = root.deleted_at.ok_or_else(|| {
+            AppError::InvalidOperation(format!(
+                "restore: block {} selected as deleted but has NULL deleted_at",
+                root.id
+            ))
+        })?;
         let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
             block_id: BlockId::from_trusted(&root.id),
             deleted_at_ref,
