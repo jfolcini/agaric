@@ -100,7 +100,7 @@ pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), App
 /// Production code calls the wrapper above (which reads `chrono::Local::now()`).
 /// Tests call this variant with a pinned `today` so the cache rebuild and
 /// the on-the-fly fallback can be compared without per-run drift driven
-/// by the wall clock. Mirrors `list_projected_agenda_inner_with_today`
+/// by the wall clock. Mirrors [`crate::commands::agenda::list_projected_agenda_inner`]
 /// (MAINT-164) — same rationale: production picks up the device clock,
 /// tests inject a deterministic reference date.
 pub(crate) async fn rebuild_projected_agenda_cache_with_today(

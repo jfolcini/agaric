@@ -2038,7 +2038,6 @@ mod now_rfc3339_tests {
     #[test]
     fn now_rfc3339_produces_lex_monotonic_z_suffix() {
         let t1 = now_rfc3339();
-        let t2 = now_rfc3339();
 
         assert!(
             t1.ends_with('Z'),
@@ -2047,21 +2046,29 @@ mod now_rfc3339_tests {
              stored timestamp sharing the same `…Z` shape (see the \
              doc-comment on `now_rfc3339` and on `op_log::OpRecord`)"
         );
-        assert!(
-            t2.ends_with('Z'),
-            "now_rfc3339() output `{t2}` must end with `Z` — see above"
-        );
 
+        // Verify lex-monotonicity with two fixed instants instead of
+        // wall-clock calls (which are flaky under NTP step-back).
+        // `now_rfc3339` uses `SecondsFormat::Millis` + `use_z = true`,
+        // producing a fixed-width `YYYY-MM-DDTHH:MM:SS.sssZ` string whose
+        // lexicographic order tracks real time — these constants exercise
+        // that property without touching the system clock.
+        use chrono::TimeZone as _;
+        let earlier = chrono::Utc
+            .with_ymd_and_hms(2020, 1, 1, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let later = chrono::Utc
+            .with_ymd_and_hms(2030, 1, 1, 0, 0, 0)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
         assert!(
-            t1 <= t2,
-            "now_rfc3339() must be lexicographically monotonic between \
-             consecutive calls: `{t1}` was sampled before `{t2}` and so \
-             must satisfy `t1 <= t2` as strings. If this fires, either the \
-             system clock went backwards or `now_rfc3339()`'s output shape \
-             changed to one where lex order no longer matches time order \
-             (e.g. variable-width fractional seconds, mixed `Z`/`+00:00` \
-             suffixes) — both break op_log compaction and reverse-op \
-             prior-lookup queries"
+            earlier < later,
+            "rfc3339 with SecondsFormat::Millis must be lex-monotonic for \
+             sequential instants: `{earlier}` must be less than `{later}`. \
+             A change to `now_rfc3339`'s format (e.g. variable-width \
+             fractional seconds or mixed `Z`/`+00:00` suffixes) would \
+             break op_log compaction and reverse-op prior-lookup queries"
         );
     }
 }

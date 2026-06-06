@@ -99,40 +99,41 @@ async fn apply_sort_merge_rebuild(
 pub(crate) async fn recompute_all_pages_cache_counts(
     write_conn: &mut sqlx::SqliteConnection,
 ) -> Result<u64, AppError> {
+    // #469 L3: use a CTE so each correlated subquery is evaluated once
+    // per pages_cache row rather than twice (once in SET, once in the
+    // change-guard WHERE). SQLite does not CSE correlated subqueries
+    // across SET and WHERE, so the pre-CTE form ran 4 subquery
+    // evaluations per row instead of 2.
     let counts = sqlx::query!(
-        "UPDATE pages_cache SET \
-             inbound_link_count = ( \
-                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                     JOIN blocks descendant ON bl.target_id = descendant.id \
-                     JOIN blocks src ON src.id = bl.source_id \
-                     WHERE descendant.page_id = pages_cache.page_id \
-                       AND descendant.deleted_at IS NULL \
-                       AND src.deleted_at IS NULL \
-                       AND src.page_id IS NOT NULL \
-                       AND src.page_id != pages_cache.page_id \
-             ), \
-             child_block_count = ( \
-                 SELECT COUNT(*) FROM blocks descendant \
-                     WHERE descendant.page_id = pages_cache.page_id \
-                       AND descendant.deleted_at IS NULL \
-                       AND descendant.id != pages_cache.page_id \
-             ) \
-         WHERE inbound_link_count != ( \
-                 SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
-                     JOIN blocks descendant ON bl.target_id = descendant.id \
-                     JOIN blocks src ON src.id = bl.source_id \
-                     WHERE descendant.page_id = pages_cache.page_id \
-                       AND descendant.deleted_at IS NULL \
-                       AND src.deleted_at IS NULL \
-                       AND src.page_id IS NOT NULL \
-                       AND src.page_id != pages_cache.page_id \
-             ) \
-            OR child_block_count != ( \
-                 SELECT COUNT(*) FROM blocks descendant \
-                     WHERE descendant.page_id = pages_cache.page_id \
-                       AND descendant.deleted_at IS NULL \
-                       AND descendant.id != pages_cache.page_id \
-             )",
+        "WITH computed(page_id, new_inbound, new_child) AS ( \
+             SELECT p.page_id, \
+                 ( \
+                     SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl \
+                         JOIN blocks descendant ON bl.target_id = descendant.id \
+                         JOIN blocks src ON src.id = bl.source_id \
+                         WHERE descendant.page_id = p.page_id \
+                           AND descendant.deleted_at IS NULL \
+                           AND src.deleted_at IS NULL \
+                           AND src.page_id IS NOT NULL \
+                           AND src.page_id != p.page_id \
+                 ), \
+                 ( \
+                     SELECT COUNT(*) FROM blocks descendant \
+                         WHERE descendant.page_id = p.page_id \
+                           AND descendant.deleted_at IS NULL \
+                           AND descendant.id != p.page_id \
+                 ) \
+             FROM pages_cache p \
+         ) \
+         UPDATE pages_cache SET \
+             inbound_link_count = c.new_inbound, \
+             child_block_count  = c.new_child \
+         FROM computed c \
+         WHERE pages_cache.page_id = c.page_id \
+           AND ( \
+               pages_cache.inbound_link_count != c.new_inbound \
+            OR pages_cache.child_block_count  != c.new_child \
+           )",
     )
     .execute(&mut *write_conn)
     .await?;

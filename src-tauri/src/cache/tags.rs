@@ -94,7 +94,12 @@ async fn apply_tags_diff(
     for chunk in insert_rows.chunks(INSERT_CHUNK) {
         let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?)").collect();
         let sql = format!(
-            "INSERT OR IGNORE INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES {}",
+            // INSERT OR REPLACE (not INSERT OR IGNORE): if a tag is renamed to
+            // a name still held by an UNCHANGED tag (not in the delete set), the
+            // UNIQUE(name) constraint would cause INSERT OR IGNORE to silently
+            // drop the renamed tag's new row.  INSERT OR REPLACE instead evicts
+            // the stale row and preserves the incoming (correct) row.
+            "INSERT OR REPLACE INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES {}",
             placeholders.join(", ")
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
@@ -447,6 +452,45 @@ mod tests {
 
         let actual = snapshot(&pool).await;
         assert_eq!(actual, expected, "cache must reflect mutated source");
+    }
+
+    /// Rename-collision: tag A renamed to the name still held by unchanged tag B.
+    ///
+    /// With `INSERT OR IGNORE` the new row for A was silently dropped because B
+    /// still occupied the UNIQUE(name) slot (B was not in the delete set). With
+    /// `INSERT OR REPLACE` A's row wins and the cache stays correct.
+    #[tokio::test]
+    async fn tags_cache_rename_collision_does_not_silently_drop_tag() {
+        let (pool, _dir) = test_pool().await;
+
+        // Tag A: id=TAG_AA, initial name "alpha"
+        // Tag B: id=TAG_BB, name "beta" — will NOT be renamed
+        insert_tag(&pool, "TAG_AAAAAAAAAAAAAAAAAAAAAAA", "alpha").await;
+        insert_tag(&pool, "TAG_BBBBBBBBBBBBBBBBBBBBBBB", "beta").await;
+
+        // Baseline rebuild — both tags in cache
+        let first = rebuild_tags_cache_impl(&pool).await.unwrap();
+        assert_eq!(first, 2, "baseline must insert 2 rows");
+
+        // Rename tag A to "beta" — now A and B both want the name "beta"
+        rename_tag(&pool, "TAG_AAAAAAAAAAAAAAAAAAAAAAA", "beta").await;
+
+        // Incremental rebuild must not silently drop tag A
+        let _changed = rebuild_tags_cache_impl(&pool).await.unwrap();
+
+        let cache = snapshot(&pool).await;
+        let tag_a_row = cache
+            .iter()
+            .find(|(id, _, _)| id == "TAG_AAAAAAAAAAAAAAAAAAAAAAA");
+        assert!(
+            tag_a_row.is_some(),
+            "tag A must still appear in the cache after rename collision; cache = {cache:?}"
+        );
+        assert_eq!(
+            tag_a_row.unwrap().1,
+            "beta",
+            "tag A must carry its new name 'beta'"
+        );
     }
 
     /// Rebuild on unchanged source produces zero diff ops.

@@ -363,7 +363,7 @@ pub async fn list_projected_agenda_inner(
 ///
 /// `today` anchors `dot_plus` (`.+`) and `plus_plus` (`++`) repeat-mode
 /// projections; it is threaded in from
-/// [`list_projected_agenda_inner_with_today`] (MAINT-164) instead of being
+/// [`list_projected_agenda_inner`] (MAINT-164) instead of being
 /// read from `chrono::Local::now()` so tests can pin a fixed today.
 ///
 /// `after` is the optional decoded cursor (M-25). When supplied, entries
@@ -375,7 +375,7 @@ pub async fn list_projected_agenda_inner(
 /// `pub(crate)` so the MAINT-164 regression test in
 /// `commands::tests::agenda_cmd_tests` can call this path directly,
 /// bypassing the cache-or-fallback branch in
-/// [`list_projected_agenda_inner_with_today`]. The cache rebuild itself
+/// [`list_projected_agenda_inner`]. The cache rebuild itself
 /// (`cache::projected_agenda::rebuild_projected_agenda_cache_impl`) also
 /// reads `chrono::Local::now()`, so any `set_property` op in a test
 /// indirectly populates the cache with today-anchored rows that vary as

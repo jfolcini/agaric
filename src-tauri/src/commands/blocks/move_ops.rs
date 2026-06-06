@@ -141,6 +141,14 @@ pub async fn move_block_inner(
         //
         // Recursive members bound the walk with `depth < 100`
         // (invariant #9).
+        //
+        // NOTE (#470 L2): the `path` CTE below is semantically identical to
+        // `ancestors_cte_standard!()`.  It cannot be replaced by the macro
+        // here because this query also needs a second CTE (`descendants`) that
+        // walks in the opposite direction — a combined single-statement round
+        // trip.  Splitting into two queries (one per CTE) would require two
+        // separate SQL round trips and is not worth the overhead.  The inline
+        // form is intentional: this is acceptable per the LOW finding.
         let depths = sqlx::query!(
             r#"WITH RECURSIVE
                path(id, depth) AS (

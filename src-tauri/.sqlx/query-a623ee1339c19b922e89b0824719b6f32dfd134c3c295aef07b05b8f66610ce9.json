@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT todo_state FROM blocks WHERE id = ? AND deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "todo_state",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "todo_state"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a623ee1339c19b922e89b0824719b6f32dfd134c3c295aef07b05b8f66610ce9"
+}

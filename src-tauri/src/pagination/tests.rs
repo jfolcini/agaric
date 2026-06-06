@@ -1,7 +1,8 @@
 //! Tests for cursor-based keyset pagination — cursor codec, page request
-//! validation, and all eight paginated query functions (list_children,
-//! list_by_type, list_trash, list_by_tag, list_agenda, list_backlinks,
-//! list_block_history).  Covers first-page,
+//! validation, and all eleven paginated query functions (list_children,
+//! list_by_type, list_trash, list_by_tag, list_agenda, list_agenda_range,
+//! list_backlinks, list_block_history, list_page_history,
+//! list_unfinished_tasks, list_undated_tasks).  Covers first-page,
 //! cursor-continuation, last-page, empty results, ordering, tiebreakers,
 //! soft-delete exclusion, cursor stability after inserts, exhaustive walks,
 //! seq-field backward compatibility, and all op types in history.
@@ -3994,6 +3995,114 @@ async fn test_list_page_history_includes_nested_children() {
         resp.items.len(),
         3,
         "page history must include ops for nested descendants"
+    );
+}
+
+// ====================================================================
+// #476 L2 — list_page_history device_id tiebreaker
+// ====================================================================
+
+/// Verifies the 3-way `(created_at DESC, seq DESC, device_id DESC)` keyset
+/// cursor when two devices share BOTH `created_at` and `seq`.
+///
+/// Without the `device_id` arm the cursor would be ambiguous and one of the
+/// tied rows would either be duplicated on the next page or silently dropped.
+#[tokio::test]
+async fn test_list_page_history_multi_device_cursor() {
+    let (pool, _dir) = test_pool().await;
+
+    // One page block — all ops reference this page.
+    insert_block(&pool, "PHD_PAGE", "page", "test page", None, Some(1)).await;
+
+    // Two devices that produce ops with the SAME created_at AND seq value
+    // for the same block. PK is (device_id, seq), so both rows are unique.
+    let payload = r#"{"block_id":"PHD_PAGE","block_type":"page","content":"test page"}"#;
+
+    // device-A and device-B both emit seq=1 at the SAME millisecond timestamp.
+    // We pick a fixed ISO-8601 string that maps to a unique ms value and insert
+    // both rows — the DB primary key (device_id, seq) allows this.
+    insert_op_log_entry(
+        &pool,
+        "device-A",
+        1,
+        "create_block",
+        payload,
+        "2025-03-01T00:00:00Z",
+    )
+    .await;
+    insert_op_log_entry(
+        &pool,
+        "device-B",
+        1,
+        "edit_block",
+        r#"{"block_id":"PHD_PAGE","to_text":"edited"}"#,
+        "2025-03-01T00:00:00Z", // same created_at AND same seq → device_id is the tiebreaker
+    )
+    .await;
+
+    // Also add a third op with a different created_at so we can verify the
+    // cursor crosses the (created_at, seq, device_id) boundary correctly.
+    insert_op_log_entry(
+        &pool,
+        "device-A",
+        2,
+        "edit_block",
+        r#"{"block_id":"PHD_PAGE","to_text":"v2"}"#,
+        "2025-03-02T00:00:00Z",
+    )
+    .await;
+
+    // Paginate with limit=1 so every op lands on its own page.
+    // Expected order (created_at DESC, seq DESC, device_id DESC):
+    //   1. (2025-03-02, seq=2, device-A) — highest created_at
+    //   2. (2025-03-01, seq=1, device-B) — tied created_at+seq, device-B wins DESC
+    //   3. (2025-03-01, seq=1, device-A) — device_id tiebreaker
+    let mut all_entries: Vec<(i64, String)> = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = PageRequest::new(cursor, Some(1)).unwrap();
+        let resp = list_page_history(&pool, "PHD_PAGE", None, None, &page)
+            .await
+            .unwrap();
+        for entry in &resp.items {
+            all_entries.push((entry.seq, entry.device_id.clone()));
+        }
+        if !resp.has_more {
+            break;
+        }
+        cursor = resp.next_cursor;
+    }
+
+    assert_eq!(
+        all_entries.len(),
+        3,
+        "all 3 ops must be returned across pages"
+    );
+
+    // Verify no duplicates
+    let mut seen = std::collections::HashSet::new();
+    for entry in &all_entries {
+        assert!(
+            seen.insert(entry.clone()),
+            "duplicate entry found: {entry:?}"
+        );
+    }
+
+    // Verify ordering: device-B before device-A for the tied (created_at, seq) pair
+    assert_eq!(
+        all_entries[0],
+        (2, "device-A".into()),
+        "first: seq=2, device-A"
+    );
+    assert_eq!(
+        all_entries[1],
+        (1, "device-B".into()),
+        "second: seq=1, device-B (device_id tiebreaker)"
+    );
+    assert_eq!(
+        all_entries[2],
+        (1, "device-A".into()),
+        "third: seq=1, device-A"
     );
 }
 
