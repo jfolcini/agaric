@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "setup": "bash scripts/setup.sh",
     "build": "tsc -b && vite build",
+    "analyze": "ANALYZE=1 vite build",
     "preview": "vite preview",
     "gen:emoji": "node scripts/generate-emoji-data.mjs",
     "lint": "oxlint",
@@ -14,6 +16,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "backend-test": "cd src-tauri && cargo nextest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",

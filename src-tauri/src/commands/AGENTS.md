@@ -159,6 +159,52 @@ Every `_inner` function gets a unit test in `src-tauri/src/commands/tests/`:
 
 See [`src-tauri/tests/AGENTS.md`](../../tests/AGENTS.md) for the test fixture patterns (`test_pool()`, `TempDir`, materializer setup).
 
+## How to add a new Tauri command (end-to-end)
+
+The sequence below is the full path from "I wrote some Rust" to "the frontend can call it". Steps 4–6 are the ones that bite — the Rust compiles green while the bindings / `.sqlx` cache silently drift, and CI fails instead.
+
+1. **Write `*_inner(...)` in the handler module.** This is the testable core (see [§The `_inner` / Tauri-wrapper split](#the-_inner--tauri-wrapper-split)). It takes `&SqlitePool` (not `State`), returns `Result<T, AppError>`, carries no `#[tauri::command]` decorator, and is what the unit tests in `src-tauri/src/commands/tests/` exercise. Pick the module by domain — e.g. block CRUD lives in `src-tauri/src/commands/blocks/crud.rs`, properties in `src-tauri/src/commands/properties.rs`.
+
+2. **Write the thin Tauri wrapper** in the same module. Decorate with `#[tauri::command]` + `#[specta::specta]`, resolve the `State` args, and delegate to `*_inner`. For write commands the wrapper takes `pool: State<'_, WritePool>` and passes `&pool.0`; it ends with `.map_err(sanitize_internal_error)`. Any multi-row write inside `*_inner` opens `CommandTx::begin_immediate(pool, "label")` (see [§`CommandTx` for atomic multi-row writes](#commandtx-for-atomic-multi-row-writes)) — verify the helper name against an existing command rather than guessing.
+
+   ```rust
+   #[cfg(not(tarpaulin_include))]
+   #[tauri::command]
+   #[specta::specta]
+   pub async fn my_command(
+       pool: State<'_, WritePool>,
+       device_id: State<'_, DeviceId>,
+       materializer: State<'_, Materializer>,
+       block_ids: Vec<BlockId>,
+   ) -> Result<i64, AppError> {
+       my_command_inner(&pool.0, device_id.as_str(), &materializer, block_ids)
+           .await
+           .map_err(sanitize_internal_error)
+   }
+   ```
+
+3. **Register the command** in the `agaric_commands!` macro in `src-tauri/src/lib.rs` (the single source of truth for the command list — both `run()` and the specta export expand it). Add a `$crate::commands::<module>::<path>::my_command,` line. **Editing the macro is the only place a command is registered**; forgetting it means the IPC handler never sees the command at runtime.
+
+4. **Regenerate the specta TypeScript bindings** → `src/lib/bindings.ts`. **This is the step most often missed.** The bindings are checked in, and the `ts_bindings_up_to_date` test (in `src-tauri/src/lib.rs`, mod `specta_tests`) compares the committed file against a fresh export — CI fails the moment they drift. Regenerate with:
+
+   ```bash
+   cd src-tauri && cargo test -- specta_tests --ignored
+   ```
+
+   This runs the `#[ignore]`'d `regenerate_ts_bindings` test, which writes `src/lib/bindings.ts` (with the `// @ts-nocheck` header). Re-run it after any change to a command signature, an arg/return struct, or the command list — not just new commands.
+
+   > **Note:** the test's own assert message suggests `cargo test -p agaric-lib …`, but `agaric-lib` is not a valid package name (the package is `agaric`; `agaric_lib` is only the lib *target*), so `-p agaric-lib` fails. Drop the `-p` flag as shown. Tracked in #569.
+
+5. **Add the typed wrapper** in `src/lib/tauri.ts`. The generated `commands.myCommand(...)` is raw (positional args, `{ status: 'ok' | 'error' }` result). Wrap it with a named export that takes a readable param object and calls `unwrap(await commands.myCommand(...))` so it throws on error like the rest of the frontend expects. Marshal any `spaceId: string | null` through `toSpaceScope(...)`; race against an `AbortSignal` via `withAbort(...)` if the call is cancellable.
+
+6. **If the command adds or changes a `query!` / `query_as!` / `query_scalar!` macro**, regenerate the offline `.sqlx` cache (compile-time-checked queries need it; runtime `sqlx::query(...)` strings do not):
+
+   ```bash
+   cd src-tauri && cargo sqlx prepare -- --tests
+   ```
+
+   CI runs `cargo sqlx prepare --check -- --tests` and fails on drift. `cargo sqlx prepare` needs `DATABASE_URL` pointing at a migrated SQLite DB (no `.env` is checked in — see `src-tauri/.env.example` and [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md)). Commit `src/lib/bindings.ts` and any new files under `src-tauri/.sqlx/` in the **same PR** as the Rust change.
+
 ## Cross-references
 
 - Root [`AGENTS.md`](../../../AGENTS.md) §Backend Architecture — top-level command surface map.
