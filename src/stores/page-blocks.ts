@@ -64,8 +64,11 @@ export interface PageBlockState {
 
   /** Create a new block below the given block. Returns the new block ID. */
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
-  /** Edit a block's content. */
-  edit: (blockId: string, content: string) => Promise<void>
+  /** Edit a block's content. Resolves `true` on success, `false` if the
+   * write failed (the optimistic update is rolled back and a generic
+   * save-failed toast is shown). Callers that need a context-specific error
+   * (e.g. the query builder) can branch on the returned boolean. */
+  edit: (blockId: string, content: string) => Promise<boolean>
   /** Delete a block (and its descendants from the flat tree). */
   remove: (blockId: string) => Promise<void>
 
@@ -362,6 +365,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       try {
         await editBlock(blockId, content)
         notifyUndoNewAction(rootParentId)
+        return true
       } catch (err) {
         // Rollback optimistic update — also a single-block touch.
         if (previousContent !== undefined) {
@@ -379,6 +383,7 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         }
         logger.error('page-blocks', 'Failed to edit block', { blockId }, err)
         notify.error(i18n.t('error.saveFailed'))
+        return false
       }
     },
 
