@@ -722,8 +722,14 @@ async fn restore_page_to_op_reverts_ops_after_target() {
     );
 }
 
+/// Verify that ops belonging to a purged block are not discovered by the
+/// recursive CTE used inside `restore_page_to_op_inner`.  The CTE walks
+/// the live `blocks` table; once a block is purged it is no longer in
+/// that table, so its ops are never reached and `non_reversible_skipped`
+/// stays 0 — the purge's non-reversibility is invisible to the walker,
+/// not "skipped" in the sense of encountering and deciding to pass over.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restore_page_to_op_skips_non_reversible() {
+async fn restore_page_to_op_purged_block_ops_not_in_cte_scope() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 

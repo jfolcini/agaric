@@ -100,9 +100,9 @@ async fn snapshot_status_info_response() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    // Allow 10ms for consumer tokio tasks to be spawned and start their event
-    // loops before taking a snapshot of the status fields.
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // Wait deterministically for the materializer background tasks to reach a
+    // stable state before sampling the status fields.
+    mat.flush_background().await.unwrap();
 
     let status = get_status_inner(&mat, None).await;
 

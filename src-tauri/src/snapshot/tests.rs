@@ -793,15 +793,14 @@ async fn compact_preserves_recent_ops() {
         .unwrap();
     assert_eq!(op_count, 1, "recent op should be preserved");
 
-    // Verify it's the recent one
+    // Verify it's the recent one by comparing to the captured timestamp.
     let created_at: i64 = sqlx::query_scalar!("SELECT created_at FROM op_log")
         .fetch_one(&pool)
         .await
         .unwrap();
-    // The recent op's timestamp should NOT be the old one (2024-01-01 = 1_704_067_200_000)
-    assert!(
-        created_at != 1_704_067_200_000,
-        "remaining op should not have the old timestamp"
+    assert_eq!(
+        created_at, now,
+        "remaining op should have the recent timestamp that was inserted"
     );
 }
 
@@ -3406,24 +3405,40 @@ mod proptest_tests {
     /// Strategy for generating an arbitrary `BlockSnapshot`.
     fn arb_block_snapshot() -> impl Strategy<Value = BlockSnapshot> {
         (
-            "BLK_[0-9]{1,4}",                           // id
-            "content|page",                             // block_type
-            proptest::option::of("[a-zA-Z0-9 ]{0,50}"), // content
-            proptest::option::of("BLK_[0-9]{1,4}"),     // parent_id
-            proptest::option::of(0i64..1000),           // position
+            "BLK_[0-9]{1,4}",                                     // id
+            "content|page",                                       // block_type
+            proptest::option::of("[a-zA-Z0-9 ]{0,50}"),           // content
+            proptest::option::of("BLK_[0-9]{1,4}"),               // parent_id
+            proptest::option::of(0i64..1000),                     // position
+            proptest::option::of(Just("todo".to_string())),       // todo_state
+            proptest::option::of(Just("2025-12-31".to_string())), // due_date
+            proptest::option::of(Just("2025-12-31".to_string())), // scheduled_date
+            proptest::option::of(Just("1".to_string())),          // priority (Option<String>)
+            proptest::option::of(proptest::num::i64::ANY),        // deleted_at (Option<i64>)
         )
             .prop_map(
-                |(id, block_type, content, parent_id, position)| BlockSnapshot {
+                |(
+                    id,
+                    block_type,
+                    content,
+                    parent_id,
+                    position,
+                    todo_state,
+                    due_date,
+                    scheduled_date,
+                    priority,
+                    deleted_at,
+                )| BlockSnapshot {
                     id: id.into(),
                     block_type,
                     content,
                     parent_id: parent_id.map(Into::into),
                     position,
-                    deleted_at: None,
-                    todo_state: None,
-                    priority: None,
-                    due_date: None,
-                    scheduled_date: None,
+                    deleted_at,
+                    todo_state,
+                    priority,
+                    due_date,
+                    scheduled_date,
                 },
             )
     }
@@ -3442,16 +3457,26 @@ mod proptest_tests {
             "BLK_[0-9]{1,4}",
             "[a-z_]{2,8}",
             proptest::option::of("[a-zA-Z0-9]{0,20}"),
+            proptest::option::of(
+                proptest::num::f64::ANY.prop_filter("not NaN/Inf", |f| f.is_finite()),
+            ),
+            proptest::option::of(Just("2025-01-01".to_string())),
+            proptest::option::of(Just("ref-id".to_string())),
+            proptest::option::of(proptest::bool::ANY.prop_map(|b| if b { 1i64 } else { 0i64 })),
         )
-            .prop_map(|(block_id, key, value_text)| BlockPropertySnapshot {
-                block_id: block_id.into(),
-                key,
-                value_text,
-                value_num: None,
-                value_date: None,
-                value_ref: None,
-                value_bool: None,
-            })
+            .prop_map(
+                |(block_id, key, value_text, value_num, value_date, value_ref, value_bool)| {
+                    BlockPropertySnapshot {
+                        block_id: block_id.into(),
+                        key,
+                        value_text,
+                        value_num,
+                        value_date,
+                        value_ref,
+                        value_bool,
+                    }
+                },
+            )
     }
 
     /// Strategy for generating an arbitrary `BlockLinkSnapshot`.

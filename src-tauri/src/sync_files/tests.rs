@@ -614,14 +614,7 @@ async fn protocol_initiator_requests_and_receives_files() {
         sender_stats.bytes_sent,
         u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
     );
-    assert_eq!(
-        receiver_stats.skipped_hash_mismatch, 0,
-        "happy path should have no hash-mismatch skips"
-    );
-    assert_eq!(
-        receiver_stats.skipped_not_found, 0,
-        "happy path should have no not-found skips"
-    );
+    // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
 
     server.shutdown().await;
 }
@@ -855,7 +848,7 @@ async fn protocol_empty_transfer_when_no_missing_files() {
     assert_eq!(receiver_stats.bytes_received, 0);
     assert_eq!(sender_stats.files_sent, 0);
     assert_eq!(sender_stats.bytes_sent, 0);
-    assert_eq!(receiver_stats.skipped_hash_mismatch, 0);
+    // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
 
     server.shutdown().await;
 }
@@ -961,7 +954,7 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
 
 /// M-52: a `FileOffer` whose `size_bytes` disagrees with the local
 /// `attachments.size_bytes` row must be rejected without an ACK.
-/// The function returns `Err` and never reads the binary stream.
+/// The function returns `Err` and no file is written to disk.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protocol_size_mismatch_no_ack_returns_err() {
     let initiator_dir = TempDir::new().unwrap();
@@ -2131,9 +2124,9 @@ async fn add_attachment_rejects_traversal_at_command_layer() {
 
 /// M-51 — sender streams a 50 MB attachment frame-by-frame to the
 /// wire and the receiver lands the bytes via a temp-file writer.
-/// The end-to-end round-trip must preserve content and hash, and
-/// the metadata helper must compute the same blake3 the receiver's
-/// commit does.
+/// Asserts streaming byte-equality (received bytes match sent bytes),
+/// correct transfer stats (files/bytes counts), and that the
+/// metadata helper computes the same blake3 the receiver's commit does.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn attachment_send_streams_without_full_vec_materialization_m51() {
     let dir = TempDir::new().unwrap();
@@ -2365,13 +2358,13 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     assert_eq!(received.len(), 0);
 }
 
-/// M-51 — feed identical bytes through the streaming sender and
-/// receiver and assert the receiver's `TempAttachmentWriter` hash
-/// (computed mid-write) matches the sender's pre-flight hash from
-/// `read_attachment_file_metadata`. Confirms blake3 round-trips
-/// correctly under the streaming shape.
+/// M-51 — verifies `TempAttachmentWriter`'s running hasher matches
+/// `read_attachment_file_metadata` parity — no wire transfer.
+/// Feeds bytes directly into the writer and asserts that the hash
+/// recorded by the writer on `commit` equals the hash computed by
+/// `read_attachment_file_metadata` for the same payload.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn attachment_streaming_round_trips_blake3_correctly_m51() {
+async fn attachment_streaming_writer_hasher_matches_file_metadata_m51() {
     let dir = TempDir::new().unwrap();
     // Mid-sized payload (a few chunks worth) with a non-trivial byte
     // distribution.

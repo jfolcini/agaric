@@ -208,12 +208,14 @@ fn cancel_is_idempotent() {
 // next_message drains the rest) is covered for `LoroSync` by the
 // `loro_sync_e2e_*` tests in `sync_protocol::tests`.
 
-// ── S-1: unpaired device rejection test ─────────────────────────────
+// ── S-1: peer_refs helper lookup test ───────────────────────────────
 
-/// Verify that get_peer_ref returns None for unknown devices (triggers
-/// rejection) and Some for paired devices.
+/// Verify the peer_refs helper: get_peer_ref returns None for unknown
+/// devices and Some for paired devices. The full rejection path (where
+/// None triggers a connection refusal) is covered by
+/// `inmem_handle_incoming_sync_rejects_unpaired`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unpaired_device_rejected_via_peer_ref_lookup() {
+async fn peer_ref_lookup_returns_none_for_unknown_device() {
     use crate::db::init_pool;
     use tempfile::TempDir;
 
@@ -3487,15 +3489,16 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     .await
     .expect("catch-up must succeed end-to-end");
 
-    match outcome {
+    let applied_up_to_hash = match outcome {
         crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { up_to_hash, .. } => {
             assert!(
                 !up_to_hash.is_empty(),
                 "snapshot up_to_hash must be populated"
             );
+            up_to_hash
         }
         other => panic!("expected Applied, got {:?}", other),
-    }
+    };
 
     // Let the server task finish cleanly.
     let _ = tokio::time::timeout(std::time::Duration::from_secs(5), server_task).await;
@@ -3532,6 +3535,11 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     assert!(
         peer.synced_at.is_some(),
         "synced_at must be populated after catch-up"
+    );
+    assert_eq!(
+        peer.last_hash,
+        Some(applied_up_to_hash),
+        "last_hash must be advanced to the snapshot's up_to_hash after catch-up"
     );
 
     resp_mat.shutdown();

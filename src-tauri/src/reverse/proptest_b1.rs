@@ -96,11 +96,24 @@ async fn assert_inverse_law(
             return Ok(());
         }
         Err(AppError::NotFound(_)) => {
-            // e.g. reverse_edit_block when there is no prior text. The
-            // generator only emits Edit on a created block, so a prior
-            // (the create) always exists; treat any NotFound as a skip
-            // rather than a failure (it is a refusal, not a wrong answer).
-            return Ok(());
+            // For Edit/Move/SetProperty the generator guarantees a prior
+            // always exists (Edit is only emitted after a Create, Move
+            // only after a block has a known position, SetProperty only
+            // after the block exists).  A NotFound here means the prior
+            // lookup is broken — that is a real bug, not a legitimate
+            // refusal.  Fail so the shrinker can minimise the case.
+            // For other variants (Create/Delete/Restore/Tag etc.) a
+            // NotFound can be a legitimate refusal from an unexpected
+            // chain shape; skip those.
+            match payload {
+                OpPayload::EditBlock(_) | OpPayload::MoveBlock(_) | OpPayload::SetProperty(_) => {
+                    return Err(TestCaseError::fail(format!(
+                        "unexpected NotFound for {:?} — prior should always exist",
+                        std::mem::discriminant(payload)
+                    )));
+                }
+                _ => return Ok(()),
+            }
         }
         Err(e) => {
             return Err(TestCaseError::fail(format!(
@@ -340,10 +353,19 @@ fn is_reversible(op_type: &OpType) -> bool {
 /// the `is_reversible` match (no catch-all) fails to compile.
 #[test]
 fn every_op_type_is_classified() {
-    // The closed enumeration of all variants. Adding a variant to OpType
-    // without adding it here means it is never asserted on — but
-    // `is_reversible`'s non-exhaustive match already forces the author to
-    // touch this file, at which point this list is the obvious next edit.
+    // The closed enumeration of all variants. Adding a new OpType variant
+    // WITHOUT adding it to this array won't be caught at runtime — the
+    // test will silently pass because the new variant simply never appears
+    // in `all_op_types` and is therefore never asserted on.
+    //
+    // The compile-level guard lives in `is_reversible` above: its match
+    // has NO catch-all arm, so any unclassified variant is a compile
+    // error.  That forces the author to touch this file; adding the
+    // variant to `all_op_types` is then the obvious next step.
+    //
+    // (Replacing this hand-maintained list with strum::EnumIter would
+    // give a true runtime exhaustiveness guarantee, but that is a larger
+    // dependency change — left for a follow-up.)
     let all_op_types = [
         OpType::CreateBlock,
         OpType::EditBlock,

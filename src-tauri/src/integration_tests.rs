@@ -508,6 +508,18 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .unwrap();
     settle_bg_tasks(&mat).await;
 
+    // Capture the seq of the edit_block op that was just appended — this is
+    // what the recovery synthetic op must reference as prev_edit.
+    let ops_pre_draft = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let edit_seq = ops_pre_draft
+        .iter()
+        .filter(|o| o.op_type == "edit_block")
+        .last()
+        .expect("edit_block op must exist after edit_block_inner")
+        .seq;
+
     // Simulate crash: insert draft with newer content
     sqlx::query("INSERT INTO block_drafts (block_id, content, updated_at) VALUES (?, ?, ?)")
         .bind(&block.id)
@@ -517,10 +529,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .await
         .unwrap();
 
-    let ops_before = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
-        .await
-        .unwrap()
-        .len();
+    let ops_before = ops_pre_draft.len();
 
     // L-103 test isolation: tests share a single process, and the
     // production guard would trip on the second `recover_at_boot` call
@@ -542,9 +551,10 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
     assert_eq!(recovery_op.op_type, "edit_block");
 
     let payload: serde_json::Value = serde_json::from_str(&recovery_op.payload).unwrap();
-    assert!(
-        !payload["prev_edit"].is_null(),
-        "recovery edit should reference the prior edit via prev_edit"
+    assert_eq!(
+        payload["prev_edit"],
+        serde_json::json!([DEV, edit_seq]),
+        "recovery edit should reference the prior edit_block op as prev_edit"
     );
     assert_eq!(
         payload["to_text"].as_str().unwrap(),
