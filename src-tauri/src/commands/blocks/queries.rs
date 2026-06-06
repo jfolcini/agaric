@@ -90,8 +90,15 @@ pub async fn list_blocks_inner(
     // `list_pages_inner`, MCP unscoped paths) can still pass `None`.
     let space_id_opt: Option<&str> = Some(space_id.as_str());
     if has_agenda_range {
-        let start = agenda_date_start.as_ref().unwrap();
-        let end = agenda_date_end.as_ref().unwrap();
+        // `has_agenda_range` is computed from both being `Some`, so this is an
+        // invariant; surface an AppError rather than panicking if the guard and
+        // these reads ever drift apart (#542).
+        let (Some(start), Some(end)) = (agenda_date_start.as_ref(), agenda_date_end.as_ref())
+        else {
+            return Err(AppError::InvalidOperation(
+                "agenda range guard set but agenda_date_start/end missing".to_string(),
+            ));
+        };
         validate_date_format(start)?;
         validate_date_format(end)?;
         if start > end {
