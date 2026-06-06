@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT '01ARZ3NDEKTSV4RRFFQ69G5FAV' AS \"id!: SpaceId\"",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: SpaceId",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "580f7c9a9957d114424ed0859be85c7282c33d56b4599ff75ec644ec850f4dc5"
+}
