@@ -807,6 +807,50 @@ async fn affected_pages_for_subtree(
     Ok(unique.into_iter().collect())
 }
 
+/// Multi-root variant of [`affected_pages_for_subtree`].
+///
+/// Returns the union of all page IDs that own any block in the combined
+/// subtrees rooted at `root_ids`, plus any pages that are targeted by
+/// `block_links` whose source is within those subtrees. Called by the
+/// batch delete/restore/purge paths (#461) to populate the affected-page
+/// set that `recompute_pages_cache_counts_for_pages` must update.
+///
+/// Uses `json_each` to seed the CTE from the entire root list in one
+/// query, matching the pattern already used by the cascade UPDATE in
+/// `delete_blocks_by_ids_inner`. Runtime `sqlx::query_scalar::<_, String>`
+/// (no `!`) avoids `.sqlx` cache regeneration.
+async fn affected_pages_for_subtrees(
+    tx: &mut sqlx::SqliteConnection,
+    root_ids: &[String],
+) -> Result<Vec<String>, AppError> {
+    if root_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    use std::collections::HashSet;
+    let json = serde_json::to_string(root_ids)?;
+    let rows = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id IN (SELECT value FROM json_each(?1)) \
+             UNION ALL \
+             SELECT b.id, s.depth + 1 FROM blocks b \
+             JOIN subtree s ON b.parent_id = s.id \
+             WHERE s.depth < 100 \
+         ) \
+         SELECT DISTINCT page_id FROM blocks \
+             WHERE id IN (SELECT id FROM subtree) AND page_id IS NOT NULL \
+         UNION \
+         SELECT DISTINCT b.page_id FROM block_links bl \
+             JOIN blocks b ON b.id = bl.target_id \
+             WHERE bl.source_id IN (SELECT id FROM subtree) \
+               AND b.page_id IS NOT NULL",
+    )
+    .bind(&json)
+    .fetch_all(&mut *tx)
+    .await?;
+    let unique: HashSet<String> = rows.into_iter().collect();
+    Ok(unique.into_iter().collect())
+}
+
 /// PEND-35 Tier 2.1 — batch variant of [`delete_block_inner`].
 ///
 /// Soft-deletes every block in `block_ids` plus all their descendants
@@ -963,6 +1007,10 @@ pub async fn delete_blocks_by_ids_inner(
     // to filter selected descendants client-side because each root
     // ran in its own tx; a single CTE that already unions every
     // root's subtree subsumes the same set without the JS pre-walk.
+    // #461 — capture affected pages BEFORE the soft-delete so the blocks
+    // still carry their page_id. The recompute runs after the UPDATE.
+    let affected_pages = affected_pages_for_subtrees(&mut tx, &live_roots).await?;
+
     let live_roots_json = serde_json::to_string(&live_roots)?;
     let result = sqlx::query(
         "WITH RECURSIVE descendants(id, depth) AS ( \
@@ -1002,6 +1050,13 @@ pub async fn delete_blocks_by_ids_inner(
     // by the same depth-100 invariant.
     for root in &live_roots {
         crate::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
+    }
+
+    // #461 — recompute pages_cache counts for all pages affected by the
+    // soft-delete (mirrors the single-row `delete_block_inner` path).
+    if !affected_pages.is_empty() {
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
+            .await?;
     }
 
     tx.commit_and_dispatch(materializer).await?;
@@ -2221,6 +2276,15 @@ pub async fn restore_blocks_by_ids_inner(
         crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
 
+    // #461 — recompute pages_cache counts for all pages affected by the
+    // restore (mirrors the single-row `restore_block_inner` path).
+    let root_ids: Vec<String> = roots.iter().map(|r| r.id.clone()).collect();
+    let affected_pages = affected_pages_for_subtrees(&mut tx, &root_ids).await?;
+    if !affected_pages.is_empty() {
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
+            .await?;
+    }
+
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;
 
@@ -2355,6 +2419,15 @@ pub async fn purge_blocks_by_ids_inner(
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         tx.enqueue_background(op_record);
     }
+
+    // #461 — collect affected pages BEFORE the cascade deletes so the
+    // page_id refs are still present in the blocks table. For purged
+    // pages, `pages_cache` rows are deleted by the DELETE below and the
+    // recompute is a no-op for those pages; only non-purged pages that
+    // had inbound links from the purged subtrees need their
+    // `inbound_link_count` decremented.
+    let root_ids_for_recompute: Vec<String> = roots.iter().map(|r| r.id.clone()).collect();
+    let affected_pages = affected_pages_for_subtrees(&mut tx, &root_ids_for_recompute).await?;
 
     // Defer FK checks until commit — the entire subtree(s) will be gone
     // by then so no constraints will be violated.
@@ -2506,6 +2579,15 @@ pub async fn purge_blocks_by_ids_inner(
     .await?;
 
     let count = result.rows_affected();
+
+    // #461 — recompute pages_cache counts for non-purged pages that had
+    // inbound links from the purged subtrees. Pages whose own `pages_cache`
+    // row was deleted by the DELETE above are a no-op here (the WHERE filter
+    // in `recompute_pages_cache_counts_for_pages` matches nothing).
+    if !affected_pages.is_empty() {
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut tx, &affected_pages)
+            .await?;
+    }
 
     // Commit + drain enqueued background dispatches.
     tx.commit_and_dispatch(materializer).await?;

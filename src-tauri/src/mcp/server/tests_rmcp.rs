@@ -4,7 +4,7 @@
 //! `handle_connection` no longer owns directly: the FEAT-4e L-113
 //! disconnect grace period (still implemented in `run_connection`)
 //! and the rmcp framer's handling of protocol-level errors (unknown
-//! method, malformed JSON). Sibling `mcp::rmcp_spike::tests` covers
+//! method, malformed JSON). Sibling `mcp::rmcp_adapter::tests` covers
 //! the happy-path tools/list + tools/call surface; this file
 //! exclusively covers the lifecycle wrapper + framer-rejection paths.
 //!
@@ -231,7 +231,7 @@ async fn disconnect_signal_drops_after_grace_period_when_call_hangs_l113() {
 /// directly to the pipe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_method_returns_method_not_found() {
-    use crate::mcp::rmcp_spike::RmcpReadOnlyAdapter;
+    use crate::mcp::rmcp_adapter::RmcpReadOnlyAdapter;
 
     let registry = Arc::new(SlowRegistry {
         sleep: Duration::from_millis(0),
@@ -323,7 +323,7 @@ async fn unknown_method_returns_method_not_found() {
 /// accept loop continues handling future connections.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn malformed_json_does_not_panic_server() {
-    use crate::mcp::rmcp_spike::RmcpReadOnlyAdapter;
+    use crate::mcp::rmcp_adapter::RmcpReadOnlyAdapter;
 
     let registry = Arc::new(SlowRegistry {
         sleep: Duration::from_millis(0),

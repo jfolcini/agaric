@@ -1,57 +1,11 @@
-//! MAINT-111 spike — official Rust MCP SDK (`rmcp`) adapter.
+//! Production MCP adapter (rmcp). Handles tools/call dispatch via the registered tool registry.
 //!
-//! **Wired on (production dispatcher).** `rmcp` is a hard dependency
-//! (see `Cargo.toml`) and this adapter — not a feature gate — is the
+//! `rmcp` is a hard dependency (see `Cargo.toml`) and this adapter is the
 //! production `tools/list` / `tools/call` dispatcher: `super::server`
 //! constructs [`RmcpReadOnlyAdapter`] and serves every read-only tool
 //! through it. The hand-rolled `mcp/server.rs` framing is retained only
-//! for the connection lifecycle plumbing it wraps (see "What this does
-//! NOT do" below); it no longer dispatches tool calls. (Originally a
-//! MAINT-111 spike gated behind a `mcp_rmcp_spike` feature — that gate
-//! is gone.)
-//!
-//! ## MAINT-111 M1 status — LANDED
-//!
-//! M1 expanded the adapter from a single-tool filter
-//! (`RmcpSearchAdapter`) to a full read-only adapter
-//! (`RmcpReadOnlyAdapter`) that advertises every tool the underlying
-//! [`ToolRegistry`] returns. A parity test
-//! (`rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`)
-//! drives a real `ReadOnlyTools` registry through both paths — the
-//! hand-rolled `super::server::handle_tools_list` and rmcp's
-//! `ListToolsResult` — and asserts that every `tools[]` entry matches
-//! field-by-field (`name`, `description`, `inputSchema`).
-//! (At M1, `call_tool` still rejected every non-search tool name; M2/M3
-//! since landed, so the adapter now dispatches every read-only tool —
-//! see the top-of-module note.)
-//!
-//! The spike answers the four MAINT-111 questions with code:
-//!
-//! 1. *How much of `mcp/server.rs` would collapse?* The adapter below
-//!    delegates JSON-RPC framing, `tools/list` / `tools/call` /
-//!    `notifications/initialized` dispatch, and the spec error-code
-//!    mapping to `rmcp`. ~250 LOC of `parse_request` /
-//!    `make_success` / `make_error` / `handle_initialize` /
-//!    `handle_notification` / `dispatch` / `truncate_params_preview`
-//!    would no longer be needed if every tool used this adapter.
-//!
-//! 2. *Can `rmcp`'s tool model adapt to the existing `ToolRegistry`
-//!    trait without breaking activity-feed / `ActorContext` /
-//!    `LAST_APPEND`?* Yes — the [`RmcpReadOnlyAdapter::call_tool`]
-//!    implementation re-creates the same task-local-scoped wrapper
-//!    that `mcp/server.rs::handle_tools_call` uses (ACTOR scope +
-//!    LAST_APPEND scope + `emit_tool_completion` on completion).
-//!    `clientInfo.name` is read from `rmcp`'s
-//!    `context.peer.peer_info()` — `rmcp` captures it during the
-//!    handshake, exactly like our `ConnectionState.client_info`.
-//!
-//! 3. *Spec-conformance delta.* `rmcp` drives the protocol-version
-//!    negotiation, `notifications/initialized` handling, `ping`,
-//!    `tools/listChanged` notifications, and the `_meta` propagation
-//!    for free. The hand-rolled code stubs all of these.
-//!
-//! 4. *Stability.* `rmcp 1.6` is post-1.0; the breaking-change cadence
-//!    has slowed. Apache-2.0 — already on the `deny.toml` allow-list.
+//! for the connection lifecycle plumbing it wraps (see "What this adapter
+//! does NOT do" below); it no longer dispatches tool calls.
 //!
 //! ## What this adapter does NOT do
 //!
@@ -59,20 +13,16 @@
 //!   `mcp/mod.rs::serve` / `mcp/server.rs::serve_unix` /
 //!   `serve_pipe` / `run_connection`. Those are agaric-specific
 //!   (Unix-domain socket, Windows named pipe, FEAT-4e disconnect
-//!   gate, L-113 grace period) and would stay even after a full
-//!   migration. `rmcp` only takes over the per-connection JSON-RPC
-//!   loop.
+//!   gate, L-113 grace period). `rmcp` only takes over the
+//!   per-connection JSON-RPC loop.
 //! - It does NOT replace the connection-level [`super::server::serve`]
-//!   plumbing — that wraps the rmcp `serve` loop (above). It DOES,
-//!   however, own per-connection JSON-RPC dispatch for every read-only
-//!   tool: `tools/list` reflects the full RO registry and `call_tool`
-//!   dispatches every RO tool through the adapter. The hand-rolled
-//!   `parse_request` / `make_*` / `dispatch` framing is no longer on
-//!   the tool-call path.
+//!   plumbing — that wraps the rmcp `serve` loop. It DOES, however,
+//!   own per-connection JSON-RPC dispatch for every read-only tool:
+//!   `tools/list` reflects the full RO registry and `call_tool`
+//!   dispatches every RO tool through the adapter.
 //! - It does NOT migrate any RW tool. Read-write tools have richer
 //!   side-effects (op-log appends, activity-feed errors, materializer
-//!   trigger) that the spike does not need to demonstrate to answer
-//!   the four MAINT-111 questions.
+//!   trigger) that are handled by a separate registry path.
 //!
 //! ## How to drive it
 //!
@@ -103,26 +53,13 @@ use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 use crate::error::AppError;
 
-/// Wire-format name of the only tool the spike currently dispatches
-/// through `rmcp::call_tool` (M1 still gates `call_tool` to this single
-/// name; M2 expands it to every RO tool). Matches
-/// `super::registry::TOOL_SEARCH` exactly so a real `ReadOnlyTools`
-/// registry can be plugged in without renaming.
-pub const SEARCH_TOOL_NAME: &str = "search";
-
-/// Spike adapter that exposes the read-only registry through `rmcp`'s
+/// Production adapter that exposes the read-only registry through `rmcp`'s
 /// [`ServerHandler`] trait.
 ///
-/// As of MAINT-111 M1, `list_tools` forwards every entry the
-/// [`ToolRegistry`] returns (the previous single-tool filter is gone),
-/// proving byte-for-byte parity with
-/// `super::server::handle_tools_list` for the full RO surface. The
-/// `call_tool` body still rejects every name other than
-/// [`SEARCH_TOOL_NAME`] — M2 lifts that restriction and routes every
-/// `tools/call` through this adapter.
-///
-/// `R` is the existing [`ToolRegistry`] trait — the spike pins down
-/// that the adapter does NOT need a parallel registration model.
+/// `list_tools` forwards every entry the [`ToolRegistry`] returns and
+/// `call_tool` dispatches every RO tool through the registry. `R` is the
+/// existing [`ToolRegistry`] trait — the adapter does NOT need a parallel
+/// registration model.
 pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
     registry: Arc<R>,
     /// FEAT-4d activity-emission seam. `None` in tests / stub binaries
@@ -138,9 +75,7 @@ pub struct RmcpReadOnlyAdapter<R: ToolRegistry> {
 
 impl<R: ToolRegistry> RmcpReadOnlyAdapter<R> {
     /// Build an adapter around an existing registry handle and an
-    /// optional FEAT-4d activity context. Mirrors the
-    /// [`super::server::ConnectionState`] construction, minus the
-    /// hand-rolled JSON-RPC plumbing. Pass `None` for activity_ctx in
+    /// optional FEAT-4d activity context. Pass `None` for activity_ctx in
     /// tests / stub binaries with no Tauri runtime bound.
     pub fn new(registry: Arc<R>, activity_ctx: Option<ActivityContext>) -> Self {
         Self {
@@ -159,15 +94,10 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         // latest spec version it knows. Either is acceptable per MCP
         // — version negotiation is the client's responsibility.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "agaric-rmcp-spike",
-                env!("CARGO_PKG_VERSION"),
-            ))
+            .with_server_info(Implementation::new("agaric", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "MAINT-111 spike — advertises the full read-only tool list \
-                 through rmcp (M1). `tools/call` still routes only `search` \
-                 (M2 will extend). Production build still uses the hand-rolled \
-                 mcp/server.rs framing.",
+                "Agaric MCP read-only server. Exposes the full read-only tool \
+                 registry — use tools/list to discover available tools.",
             )
     }
 
@@ -176,12 +106,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        // MAINT-111 M1: forward every registry description unfiltered.
-        // The previous single-tool filter (`name == SEARCH_TOOL_NAME`)
-        // is gone — parity with `super::server::handle_tools_list` is
-        // asserted byte-for-byte by
-        // `tests::rmcp_spike_tools_list_matches_handle_tools_list_byte_for_byte`.
-        //
+        // Forward every registry description unfiltered.
         // `ToolDescription::input_schema` is a `serde_json::Value`;
         // rmcp's `Tool::new` takes an `Arc<JsonObject>`. Coerce via
         // `Value::as_object().cloned()` and fall back to an empty
@@ -214,8 +139,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         // Pull `clientInfo.name` out of rmcp's per-connection peer
         // state. rmcp captures `InitializeRequestParams` during the
         // handshake automatically — `peer_info()` is the equivalent
-        // of `super::server::ConnectionState::client_info` we read
-        // in `handle_tools_call`.
+        // of `super::server::ConnectionState::client_info`.
         let agent_name = context
             .peer
             .peer_info()
@@ -228,9 +152,8 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
             },
             request_id: Ulid::new().to_string(),
         };
-        // Two clones for the same reason `handle_tools_call` keeps
-        // two: one moves into `ACTOR.scope`, one is borrowed by the
-        // explicit-parameter path of [`ToolRegistry::call_tool`].
+        // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
+        // by the explicit-parameter path of [`ToolRegistry::call_tool`].
         let scoped_ctx = actor_ctx.clone();
         let call_ctx = actor_ctx;
 
@@ -240,7 +163,8 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         let registry = self.registry.clone();
         let name_for_call = name.clone();
 
-        // Re-implement `handle_tools_call`'s nested scope:
+        // Two task-local scopes, following the same pattern as the
+        // hand-rolled server:
         //  - ACTOR scope so `current_actor()` reads the agent name in
         //    every downstream `*_inner` handler.
         //  - LAST_APPEND scope so any RW tool's `record_append`
@@ -260,7 +184,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
             })
             .await;
 
-        // FEAT-4d emission point — same shape as `handle_tools_call`.
+        // FEAT-4d emission point.
         // The success branch routes through the privacy-safe summariser;
         // the error branch clips at ERROR_CLIP_CAP chars before pushing.
         let (summary, result_variant) = match &result {
@@ -293,25 +217,20 @@ impl<R: ToolRegistry> ServerHandler for RmcpReadOnlyAdapter<R> {
         }
 
         match result {
-            // The hand-rolled path wraps the value in
-            // `wrap_tool_result_success` so the wire shape is
+            // `CallToolResult::structured` produces the MCP wire shape
             // `{ content, structuredContent, isError: false }`.
-            // `CallToolResult::structured` produces the exact same
-            // envelope.
             Ok(value) => Ok(CallToolResult::structured(value)),
-            // Mirror `super::server::app_error_to_jsonrpc`'s mapping
-            // so the wire-format error codes match the hand-rolled
-            // path byte-for-byte: NotFound → resource-not-found
-            // (-32002), Validation / InvalidOperation → invalid-params
-            // (-32602), everything else → internal-error (-32603).
+            // Map AppError variants to JSON-RPC error codes:
+            // NotFound → resource-not-found (-32001),
+            // Validation / InvalidOperation → invalid-params (-32602),
+            // everything else → internal-error (-32603).
             Err(err) => Err(app_error_to_rmcp(&err)),
         }
     }
 }
 
-/// `AppError → rmcp::ErrorData` translation that mirrors the
-/// hand-rolled [`super::server::app_error_to_jsonrpc`] mapping so the
-/// wire-format error codes match byte-for-byte. NotFound is mapped
+/// `AppError → rmcp::ErrorData` translation. Maps error variants to
+/// JSON-RPC error codes. NotFound is mapped
 /// via [`ErrorData::new`] rather than [`ErrorData::resource_not_found`]
 /// because the latter emits -32002 (MCP-spec default); the agaric
 /// hand-rolled path deliberately uses -32001 to leave -32002 free
@@ -346,12 +265,14 @@ fn app_error_to_rmcp(err: &AppError) -> ErrorData {
 mod tests {
     //! End-to-end test of the rmcp adapter. Drives a real `rmcp`
     //! client/server pair over an in-memory `tokio::io::duplex`
-    //! transport — no socket / DB / Tauri runtime needed. Every
-    //! assertion exercises the four MAINT-111 integration points:
-    //! tool body invocation, activity-feed emission, actor scoping,
-    //! and `clientInfo` propagation through the handshake.
+    //! transport — no socket / DB / Tauri runtime needed.
 
     use std::sync::{Arc, Mutex};
+
+    /// Wire-format name of the mock tool used in unit tests. Matches
+    /// `super::super::registry::TOOL_SEARCH` so a real `ReadOnlyTools`
+    /// registry can be plugged into the round-trip tests without renaming.
+    const SEARCH_TOOL_NAME: &str = "search";
 
     use rmcp::{
         model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation},
@@ -434,7 +355,7 @@ mod tests {
     /// right `ServerInfo` capabilities — pinned so a future rmcp bump
     /// that subtly changes `ServerCapabilities::builder` is caught.
     #[test]
-    fn rmcp_spike_adapter_advertises_tools_capability() {
+    fn rmcp_adapter_advertises_tools_capability() {
         let registry = Arc::new(SpikeMockRegistry {
             observed_actor: Arc::new(Mutex::new(None)),
             call_count: Arc::new(Mutex::new(0)),
@@ -449,7 +370,7 @@ mod tests {
             info.capabilities.tools.is_some(),
             "rmcp adapter must advertise the `tools` capability — without it, `tools/list` would be a method-not-found",
         );
-        assert_eq!(info.server_info.name, "agaric-rmcp-spike");
+        assert_eq!(info.server_info.name, "agaric");
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     }
 
@@ -470,9 +391,9 @@ mod tests {
     ///    (d) the `RecordingEmitter` got a Tauri-style `mcp:activity`
     ///        event for the same entry,
     ///    (e) the response carries the `structuredContent` envelope
-    ///        the hand-rolled code builds in `wrap_tool_result_success`.
+    ///        produced by `CallToolResult::structured`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_spike_search_round_trip_emits_activity_and_actor() {
+    async fn rmcp_adapter_search_round_trip_emits_activity_and_actor() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
         let registry = Arc::new(SpikeMockRegistry {
@@ -524,12 +445,12 @@ mod tests {
             .expect("tools/call round-trip");
 
         assert_eq!(result.is_error, Some(false));
-        // Spec wire-shape parity: rmcp's `CallToolResult::structured`
-        // mirrors the hand-rolled `wrap_tool_result_success` envelope.
+        // Spec wire-shape: `CallToolResult::structured` produces the
+        // MCP `{ content, structuredContent, isError: false }` envelope.
         let structured = result
             .structured_content
             .as_ref()
-            .expect("structuredContent is the spike's primary payload");
+            .expect("structuredContent is the primary payload");
         assert_eq!(structured["echoed_query"], "spike");
 
         // Tear down the client first so the server task observes EOF
@@ -588,8 +509,7 @@ mod tests {
     /// Negative path — a `tools/call` for a tool name the registry
     /// does not advertise surfaces as `resource_not_found` (-32002) /
     /// `-32001` over the wire AND emits one activity entry with an
-    /// `Err` variant. Mirrors the hand-rolled `handle_tools_call`
-    /// behaviour: unknown tool names round-trip through the registry,
+    /// `Err` variant. Unknown tool names round-trip through the registry,
     /// returning `AppError::NotFound` which the dispatcher maps to
     /// the spec's resource-not-found code.
     ///
@@ -597,7 +517,7 @@ mod tests {
     /// level — `tools/nonexistent_method` — and is handled outside
     /// `call_tool`.)
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn rmcp_spike_unknown_tool_returns_resource_not_found_with_activity() {
+    async fn rmcp_adapter_unknown_tool_returns_resource_not_found_with_activity() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
         let registry = Arc::new(SpikeMockRegistry {
@@ -646,20 +566,17 @@ mod tests {
         assert!(matches!(emitted[0].result, ActivityResult::Err(_)));
     }
 
-    /// MAINT-111 M1 parity gate. Builds the production
+    /// Parity gate. Builds the production
     /// [`crate::mcp::tools_ro::ReadOnlyTools`] registry against a
-    /// temp-dir SQLite pool, drives `tools/list` through both paths
-    /// — the hand-rolled `super::server::handle_tools_list` and the
-    /// new `RmcpReadOnlyAdapter` over rmcp's wire framing — and
-    /// asserts that every advertised tool matches field-by-field:
-    /// `name`, `description`, and `inputSchema`.
+    /// temp-dir SQLite pool, drives `tools/list` through the
+    /// `RmcpReadOnlyAdapter` over rmcp's wire framing, and asserts that
+    /// every advertised tool matches the registry's own `list_tools()`
+    /// output field-by-field: `name`, `description`, and `inputSchema`.
     ///
-    /// The hand-rolled path returns `{ "tools": [<ToolDescription>...] }`
-    /// where `ToolDescription` already serialises `input_schema` as
-    /// `inputSchema` (camelCase, via `#[serde(rename = "inputSchema")]`
-    /// on the struct field). rmcp's `Tool` model uses `inputSchema`
-    /// in its JSON wire form too. The two therefore agree on the
-    /// MCP-spec field name — no drift to surface here.
+    /// `ToolDescription` serialises `input_schema` as `inputSchema`
+    /// (camelCase, via `#[serde(rename = "inputSchema")]`); rmcp's
+    /// `Tool` model uses `inputSchema` in its JSON wire form too —
+    /// no drift to surface here.
     ///
     /// If a future rmcp bump or registry change introduces a drift,
     /// this test pinpoints exactly which field on which tool diverged.
@@ -768,34 +685,22 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------
-    // MAINT-111 M2b — byte-equivalent wrapper parity tests.
+    // Wire-format parity tests.
     //
-    // The hand-rolled `handle_tools_call` and the rmcp adapter share the
-    // exact same `ToolRegistry::call_tool` body — i.e. the tool's
-    // actual behaviour, error paths, op-log writes, and activity
-    // emission are identical. The only sites where the two paths could
-    // diverge are the success-wrapping and the error-mapping shims:
+    // These tests pin the exact JSON envelope shapes produced by the two
+    // dispatch shims:
+    //   - success: `CallToolResult::structured(value)`
+    //   - failure: `ErrorData = app_error_to_rmcp(&err)`
     //
-    // - success: `wrap_tool_result_success(value)` (hand-rolled) vs
-    //   `CallToolResult::structured(value)` (rmcp)
-    // - failure: `(code, message) = app_error_to_jsonrpc(&err)` (hand-
-    //   rolled, expanded into a JSON-RPC error envelope by the
-    //   dispatcher) vs `ErrorData = app_error_to_rmcp(&err)` (rmcp,
-    //   serialised by `ServerHandler::handle_request`)
-    //
-    // The two tests below pin byte-equivalence at both shims. If the
-    // spec's wire format ever shifts on either side, exactly one
-    // assertion fails and points at the drifting shim.
+    // If the spec's wire format ever shifts, exactly one assertion fails
+    // and points at the drifting shim.
     // ---------------------------------------------------------------------
 
     /// Pins the success envelope rmcp emits onto the canonical MCP
-    /// wire shape (the same shape the hand-rolled `mcp/server.rs`
-    /// previously emitted). Asserts byte-for-byte against hardcoded
-    /// JSON literals across a cross-section of payload shapes
-    /// (object, array, primitive, null, empty object) so any future
-    /// rmcp behaviour change shows up as a focused diff against a
-    /// fixed reference rather than against another implementation
-    /// that could drift in lockstep.
+    /// wire shape. Asserts byte-for-byte against hardcoded JSON literals
+    /// across a cross-section of payload shapes (object, array, primitive,
+    /// null, empty object) so any future rmcp behaviour change shows up as
+    /// a focused diff against a fixed reference.
     #[test]
     fn rmcp_call_tool_result_envelope_matches_canonical_wire_shape() {
         use rmcp::model::CallToolResult;

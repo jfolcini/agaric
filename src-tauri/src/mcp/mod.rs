@@ -30,7 +30,7 @@ pub mod tools_rw;
 // types `ConnectionState`, `serve_unix`, `serve_pipe`, and the
 // lifecycle/grace-period plumbing — those wrap (rather than replace)
 // the rmcp `serve` loop.
-pub mod rmcp_spike;
+pub mod rmcp_adapter;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -901,14 +901,10 @@ mod tests {
         let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
         assert_eq!(response["id"], 1);
         // rmcp's `serverInfo.name` defaults to the implementation name
-        // passed at adapter construction — `agaric-rmcp-spike` for the
-        // production adapter. The hand-rolled path emitted `agaric`;
-        // assert the current production identifier so a future rmcp
-        // bump that changes the field surfaces here as a focused diff.
-        assert_eq!(
-            response["result"]["serverInfo"]["name"],
-            "agaric-rmcp-spike"
-        );
+        // passed at adapter construction — `agaric` for the production
+        // adapter. Assert the current production identifier so a future
+        // rmcp bump that changes the field surfaces here as a focused diff.
+        assert_eq!(response["result"]["serverInfo"]["name"], "agaric");
 
         let _ = child.kill();
         let _ = child.wait();

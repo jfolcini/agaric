@@ -55,7 +55,7 @@ where
 
 /// Standard "unknown tool name" error returned by every registry's
 /// match-arm fallthrough. Routed by the server to JSON-RPC `-32001`
-/// (resource-not-found) via [`super::server::app_error_to_jsonrpc`] so
+/// (resource-not-found) via [`super::rmcp_adapter::app_error_to_rmcp`] so
 /// agents can distinguish "unknown tool" from "unknown JSON-RPC method
 /// endpoint" (which is `-32601`).
 pub(crate) fn unknown_tool_error(name: &str) -> AppError {
