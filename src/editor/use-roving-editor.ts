@@ -250,9 +250,11 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   const {
     resolveTagName = (id: string) => `#${id.slice(0, 8)}...`,
     resolveBlockTitle = (id: string) => `[[${id.slice(0, 8)}...]]`,
-    // UX-309: surface the slash-command palette as the discoverable hint;
-    // callers (e.g. BlockTree) override with the i18n-keyed translation.
-    placeholder = 'Type / for commands…',
+    // UX-309 / #544: callers own the placeholder text and pass the
+    // i18n-keyed translation (e.g. BlockTree → t('block.emptyPlaceholder')).
+    // The default is empty rather than a hardcoded English string so a caller
+    // that forgets to pass it shows no hint instead of bypassing i18n.
+    placeholder = '',
     searchTags = () => [],
     searchPages = () => [],
     onCreatePage,

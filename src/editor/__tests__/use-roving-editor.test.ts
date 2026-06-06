@@ -626,16 +626,49 @@ describe('useRovingEditor integration (renderHook)', () => {
     unmountHook()
   })
 
-  // UX-309 — empty-block placeholder advertises the slash-command palette so
-  // new users can discover it without hitting the `?` keyboard help.
-  it('default placeholder advertises the slash-command palette', async () => {
+  // #544 — the placeholder default is empty; callers own the (i18n-keyed)
+  // text and pass it explicitly. A caller that forgets shows no hint rather
+  // than leaking a hardcoded English string that bypasses i18n.
+  it('default placeholder is empty (callers supply the i18n text)', async () => {
     const { result, unmount: unmountHook } = await setup()
 
     const ext = (result.current.editor as Editor).extensionManager.extensions.find(
       (e) => e.name === 'placeholder',
     )
     expect(ext).toBeDefined()
-    expect(ext?.options.placeholder).toBe('Type / for commands…')
+    expect(ext?.options.placeholder).toBe('')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it('passes an explicit placeholder through to the extension', async () => {
+    const hook = renderHook(() => useRovingEditor({ placeholder: 'custom hint' }))
+    await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
+
+    const ext = (hook.result.current.editor as Editor).extensionManager.extensions.find(
+      (e) => e.name === 'placeholder',
+    )
+    expect(ext?.options.placeholder).toBe('custom hint')
+
+    hook.result.current.editor?.destroy()
+    hook.unmount()
+  })
+
+  // #539 — mount() resets undo history by finding ProseMirror's history plugin
+  // via its private `history$`-prefixed key. That key is @internal, so a PM
+  // upgrade could rename it and silently break history reset. This regression
+  // test fails loudly at the boundary if the key convention ever changes.
+  it('history plugin is discoverable by its `history$` key prefix (#539)', async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    const editor = result.current.editor as Editor
+    const histPlugin = editor.state.plugins.find((p) =>
+      (p as unknown as { key: string }).key.startsWith('history$'),
+    )
+    expect(histPlugin).toBeDefined()
+    // The plugin must expose the state.init the reset path relies on.
+    expect(histPlugin?.spec.state?.init).toBeTypeOf('function')
 
     result.current.editor?.destroy()
     unmountHook()
