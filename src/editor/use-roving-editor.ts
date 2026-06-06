@@ -225,6 +225,12 @@ export interface RovingEditorHandle {
   getMarkdown: () => string | null
   /** The markdown string that was passed to `mount()`. */
   originalMarkdown: string
+  /**
+   * Register a callback to be invoked on every TipTap `update` event while
+   * the editor is mounted. Pass `null` to unregister.
+   * The callback receives the current markdown string.
+   */
+  setOnMarkdownChange: (cb: ((md: string) => void) | null) => void
 }
 
 /**
@@ -262,6 +268,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
   const activeBlockIdRef = useRef<string | null>(null)
   const originalMarkdownRef = useRef<string>('')
+  const onMarkdownChangeRef = useRef<((md: string) => void) | null>(null)
 
   // Refs to hold latest callbacks — extensions capture these at creation
   // time but the refs always point to the current versions, preventing
@@ -392,6 +399,16 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     [],
   )
 
+  // Fires on every TipTap `update` while mounted. Serializes the current
+  // document to markdown and forwards it to the registered listener (if any)
+  // — replaces the old 500ms polling interval in EditableBlock (#536).
+  const handleEditorUpdate = useCallback(() => {
+    const cb = onMarkdownChangeRef.current
+    if (!cb || !editor) return
+    const json = editor.getJSON() as DocNode
+    cb(serialize(json, notifyUnknownNodeTypeToast))
+  }, [editor])
+
   const mount = useCallback(
     (blockId: string, markdown: string) => {
       if (!editor) return
@@ -459,13 +476,17 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         editor.view.dispatch(tr)
       }
       editor.commands.focus()
+      editor.on('update', handleEditorUpdate)
     },
-    [editor],
+    [editor, handleEditorUpdate],
   )
 
   const unmount = useCallback((): string | null => {
     if (!editor) return null
     const unmountBlockId = activeBlockIdRef.current
+
+    // Detach the markdown-change listener before wiping state.
+    editor.off('update', handleEditorUpdate)
 
     // B-77 fix layer 4: Exit all suggestion plugins before wiping the
     // document.  Without this, blur → unmount → replaceDocSilently
@@ -516,7 +537,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       changed: delta?.changed ?? false,
     })
     return delta?.changed ? delta.newMarkdown : null
-  }, [editor])
+  }, [editor, handleEditorUpdate])
 
   const getMarkdown = useCallback((): string | null => {
     if (!editor) return null
@@ -534,6 +555,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // Without this, every parent re-render produced a fresh handle object
   // that propagated to `SortableBlockWrapper` and defeated its `React.memo`
   // (design-system-perf-review-2026-05-09.md item 5.)
+  const setOnMarkdownChange = useCallback((cb: ((md: string) => void) | null) => {
+    onMarkdownChangeRef.current = cb
+  }, [])
+
   return useMemo<RovingEditorHandle>(
     () => ({
       editor,
@@ -546,7 +571,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       get originalMarkdown() {
         return originalMarkdownRef.current
       },
+      setOnMarkdownChange,
     }),
-    [editor, mount, unmount, getMarkdown],
+    [editor, mount, unmount, getMarkdown, setOnMarkdownChange],
   )
 }

@@ -213,6 +213,7 @@ describe('useBlockNavigateToLink', () => {
           activeBlockId: null,
           getMarkdown: () => null,
           originalMarkdown: '',
+          setOnMarkdownChange: vi.fn(),
         },
         handleFlush: () => null,
         load,

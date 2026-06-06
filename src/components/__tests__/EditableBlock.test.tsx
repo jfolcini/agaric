@@ -128,6 +128,7 @@ const _mockPageStore = {
 vi.mock('../../stores/page-blocks', () => ({
   usePageBlockStore: (selector?: (s: typeof _mockPageStore) => unknown) =>
     selector ? selector(_mockPageStore) : _mockPageStore,
+  usePageBlockStoreApi: () => ({ getState: () => _mockPageStore }),
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -141,6 +142,7 @@ function makeRovingEditor(
     unmount: ReturnType<typeof vi.fn>
     getMarkdown: ReturnType<typeof vi.fn>
     originalMarkdown: string
+    setOnMarkdownChange: ReturnType<typeof vi.fn>
   }> = {},
 ) {
   return {
@@ -150,6 +152,7 @@ function makeRovingEditor(
     activeBlockId: overrides.activeBlockId ?? null,
     getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),
     originalMarkdown: overrides.originalMarkdown ?? 'existing content',
+    setOnMarkdownChange: overrides.setOnMarkdownChange ?? vi.fn(),
   }
 }
 
@@ -1271,10 +1274,12 @@ describe('EditableBlock', () => {
       vi.useFakeTimers()
       mockSaveDraft.mockRejectedValueOnce(new Error('IPC failure'))
 
-      const mockGetMarkdown = vi.fn(() => 'typed content')
+      let onChange: ((md: string) => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        getMarkdown: mockGetMarkdown,
+        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
+          onChange = cb
+        }),
       })
 
       render(
@@ -1286,9 +1291,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Advance past the 500ms polling interval so liveContent gets set
+      // Fire an update so liveContent is set
       await act(async () => {
-        vi.advanceTimersByTime(500)
+        onChange?.('typed content')
       })
 
       // Advance past the 2s debounce — saveDraft fires and rejects
@@ -1332,10 +1337,12 @@ describe('EditableBlock', () => {
       vi.useFakeTimers()
       mockFlushDraft.mockRejectedValueOnce(new Error('IPC failure'))
 
-      const mockGetMarkdown = vi.fn(() => 'unsaved')
+      let onChange: ((md: string) => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        getMarkdown: mockGetMarkdown,
+        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
+          onChange = cb
+        }),
       })
 
       const { unmount } = render(
@@ -1347,9 +1354,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Advance past polling interval so content is set
+      // Fire an update so liveContent is set
       await act(async () => {
-        vi.advanceTimersByTime(500)
+        onChange?.('unsaved')
       })
 
       // Unmount triggers cleanup — flushDraft fires and rejects
@@ -1373,10 +1380,14 @@ describe('EditableBlock', () => {
     })
 
     it('calls saveDraft after 2s of editing', async () => {
-      const mockGetMarkdown = vi.fn(() => 'typed content')
+      // Capture the markdown-change callback the component registers (#536:
+      // event-driven via TipTap onUpdate instead of a 500ms poll).
+      let onChange: ((md: string) => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        getMarkdown: mockGetMarkdown,
+        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
+          onChange = cb
+        }),
       })
 
       render(
@@ -1388,9 +1399,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Advance past the 500ms polling interval so liveContent gets set
+      // Simulate a TipTap update firing with new content.
       await act(async () => {
-        vi.advanceTimersByTime(500)
+        onChange?.('typed content')
       })
 
       // Now advance 2s for the debounce in useDraftAutosave to fire
@@ -1398,7 +1409,7 @@ describe('EditableBlock', () => {
         vi.advanceTimersByTime(2000)
       })
 
-      // saveDraft should have been called with the polled content
+      // saveDraft should have been called with the edited content
       expect(mockSaveDraft).toHaveBeenCalledWith('B1', 'typed content')
     })
 
@@ -1428,10 +1439,12 @@ describe('EditableBlock', () => {
     })
 
     it('flushes draft on unmount without blur', async () => {
-      const mockGetMarkdown = vi.fn(() => 'unsaved content')
+      let onChange: ((md: string) => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        getMarkdown: mockGetMarkdown,
+        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
+          onChange = cb
+        }),
       })
 
       const { unmount } = render(
@@ -1443,9 +1456,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Advance past polling interval so content is set
+      // Fire an update so liveContent is set
       await act(async () => {
-        vi.advanceTimersByTime(500)
+        onChange?.('unsaved content')
       })
 
       // Unmount without blur — useDraftAutosave cleanup calls flushDraft
