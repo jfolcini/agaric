@@ -1765,21 +1765,26 @@ async fn get_backlinks_returns_linking_blocks() {
         DEV,
         &mat,
         "content".into(),
-        format!("links to [[{}]]", target.id),
+        "plain content".into(),
         None,
         Some(2),
     )
     .await
     .unwrap();
-    settle(&mat).await;
 
-    // Insert a block_link row (normally done by materializer)
-    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
-        .bind(&source.id)
-        .bind(&target.id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Edit the source block to contain the [[target]] link. The edit_block
+    // dispatch queues ReindexBlockLinks; settle() flushes it so block_links
+    // is populated by the real materializer path — no manual INSERT needed.
+    edit_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        source.id.clone(),
+        format!("links to [[{}]]", target.id),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
 
     let resp = get_backlinks_inner(&pool, target.id.clone(), None, None, &SpaceScope::Global)
         .await
@@ -1846,10 +1851,21 @@ async fn get_block_history_returns_ops_for_block() {
         .await
         .unwrap();
 
-    assert!(
-        resp.items.len() >= 2,
-        "at least create + edit ops expected, got {}",
+    // Exactly one create_block op + one edit_block op — nothing else touches this block.
+    assert_eq!(
+        resp.items.len(),
+        2,
+        "expected exactly 2 ops (create_block + edit_block), got {}",
         resp.items.len()
+    );
+    // History is ordered newest-first (seq DESC), so index 0 is edit_block.
+    assert_eq!(
+        resp.items[0].op_type, "edit_block",
+        "newest op must be edit_block"
+    );
+    assert_eq!(
+        resp.items[1].op_type, "create_block",
+        "oldest op must be create_block"
     );
 }
 

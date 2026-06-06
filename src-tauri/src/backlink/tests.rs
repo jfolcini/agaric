@@ -126,13 +126,15 @@ fn default_page() -> PageRequest {
 
 #[test]
 fn ulid_to_ms_extracts_correct_timestamp() {
-    // ULID "01ARZ3NDEKTSV4RRFFQ69G5FAV" - known ULID
-    // First 10 chars: "01ARZ3NDEK" encode the timestamp
-    let ms = ulid_to_ms("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-    assert!(ms.is_some(), "valid ULID should return Some timestamp");
-    // The exact value depends on the encoding; just verify it's reasonable
-    let ms_val = ms.unwrap();
-    assert!(ms_val > 0, "extracted timestamp should be positive");
+    // "01ARZ3NDEKTSV4RRFFQ69G5FAV" is a well-known canonical ULID whose
+    // 10-character timestamp prefix "01ARZ3NDEK" encodes exactly 1469922850259 ms
+    // (2016-07-30 23:54:10.259 UTC). An incorrect bit-shift or Crockford decode
+    // would produce a different positive value, so an exact assertion is required.
+    assert_eq!(
+        ulid_to_ms("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        Some(1469922850259u64),
+        "01ARZ3NDEK prefix must decode to exactly 1469922850259 ms"
+    );
 }
 
 #[test]

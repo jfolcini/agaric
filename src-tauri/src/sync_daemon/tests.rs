@@ -3549,13 +3549,15 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
 /// sessions that actually executed `run_sync_session` can report a
 /// "session cancelled mid-flight" outcome.
 ///
-/// The matching positive case (`run_sync_session` ran AND cancel was
-/// observed → return `true`) requires real network plumbing and is
-/// covered indirectly by `daemon_loop_breaks_round_when_cancel_observed_during_first_peer_m46`
-/// below, which exercises the daemon loop's `if cancelled { break; }`
-/// branch via a stubbed `try_sync_with_peer`-shaped call.
+/// Note: this test covers the FALSE-return path (connection refused,
+/// no real session ran). The TRUE-return path (`run_sync_session` ran
+/// AND cancel was observed) requires a reachable TLS loopback responder;
+/// see TODO(#497) below.
+///
+/// TODO(#497): add true-path test — needs loopback TLS responder that
+/// lets run_sync_session start before cancel is observed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn try_sync_with_peer_returns_true_when_cancel_observed_during_session_m46() {
+async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_preflagged_m46() {
     install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
@@ -3642,94 +3644,74 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     materializer.shutdown();
 }
 
-/// M-46: integration-flavour test that the daemon-loop's "break on
-/// cancel" pattern works correctly. Rather than wiring up three real
-/// peers (which would require live TLS + responders), this test
-/// exercises the EXACT code shape used in Branch C of `daemon_loop`:
+/// M-46: the daemon-loop's "break on cancel" pattern must stop at the
+/// first peer that reports cancellation.
 ///
-/// ```ignore
-/// for peer_ref in &refs {
-///     let cancelled = try_sync_with_peer(...).await;
-///     if cancelled { break; }
-/// }
-/// ```
+/// Calls the production `run_sequential_sync_round` helper (extracted
+/// from Branch C of `daemon_loop`) with a stub that returns `true` on
+/// the first peer. A mutation to the real break logic inside
+/// `run_sequential_sync_round` would cause this test to fail.
 ///
 /// (Branch B no longer follows this shape post-L-61 — it dispatches
-/// peers concurrently via `JoinSet` and uses `abort_all()` instead of
-/// `break`. The bool→break contract this test pins down is still the
-/// authoritative shape for Branch C.)
-///
-/// The `try_sync_with_peer` call is replaced with a stub closure that
-/// returns `true` on the first invocation (peer 1 cancelled mid-session)
-/// and panics on subsequent calls. The test asserts the loop breaks
-/// after peer 1 — peers 2 and 3 are never visited.
-///
-/// This is the minimum acceptable shape per the M-46 spec when wiring
-/// up three real peers is too expensive: it pins down the BREAK
-/// behaviour, which is the user-visible contract. The bool-return
-/// contract is independently covered by the unit tests above.
+/// peers concurrently via `JoinSet` and uses `abort_all()`. The
+/// bool→break contract this test pins down is the authoritative shape
+/// for Branch C.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_loop_breaks_round_when_cancel_observed_during_first_peer_m46() {
-    let refs = vec![
-        make_peer_ref("PEER_1"),
-        make_peer_ref("PEER_2"),
-        make_peer_ref("PEER_3"),
+    let peer_ids: Vec<String> = vec![
+        "PEER_1".to_string(),
+        "PEER_2".to_string(),
+        "PEER_3".to_string(),
     ];
 
-    // Track which peers were "synced" via the stub.
     let visited = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let visited2 = visited.clone();
 
-    // Stub returning the same bool sequence as a real `try_sync_with_peer`
-    // would on the first peer being cancelled mid-session.
-    let stub = |peer_id: &str| -> bool {
-        // peer_1 reports cancellation observed; peers 2 and 3 should
-        // never be visited because the loop breaks after peer_1.
-        peer_id == "PEER_1"
-    };
+    // PEER_1 signals cancel; PEER_2 and PEER_3 must never be reached.
+    let was_cancelled = run_sequential_sync_round(&peer_ids, |pid| {
+        visited2.lock().unwrap().push(pid.clone());
+        async move { pid == "PEER_1" }
+    })
+    .await;
 
-    // Exact replica of the Branch C pattern in `daemon_loop`
-    // (Branch B uses JoinSet + abort_all post-L-61).
-    for peer_ref in &refs {
-        let cancelled = stub(&peer_ref.peer_id);
-        visited.lock().unwrap().push(peer_ref.peer_id.clone());
-        if cancelled {
-            break;
-        }
-    }
-
-    let visited = visited.lock().unwrap().clone();
+    assert!(
+        was_cancelled,
+        "M-46: run_sequential_sync_round must return true when first peer cancels"
+    );
     assert_eq!(
-        visited,
+        visited.lock().unwrap().clone(),
         vec!["PEER_1".to_string()],
         "M-46: daemon loop must break after the first peer reports cancellation; \
-         got visited peers {visited:?}"
+         got visited peers {:?}",
+        visited.lock().unwrap().clone()
     );
 }
 
-/// M-46: complementary positive test for the loop-break pattern. When
-/// no peer reports cancellation, the loop must visit all peers in the
-/// round (regression guard against an over-eager break).
+/// M-46: when no peer reports cancellation, `run_sequential_sync_round`
+/// must visit all peers in the round (regression guard against an over-eager break).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
-    let refs = vec![
-        make_peer_ref("PEER_A"),
-        make_peer_ref("PEER_B"),
-        make_peer_ref("PEER_C"),
+    let peer_ids: Vec<String> = vec![
+        "PEER_A".to_string(),
+        "PEER_B".to_string(),
+        "PEER_C".to_string(),
     ];
+
     let visited = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let stub = |_peer_id: &str| -> bool { false };
+    let visited2 = visited.clone();
 
-    for peer_ref in &refs {
-        let cancelled = stub(&peer_ref.peer_id);
-        visited.lock().unwrap().push(peer_ref.peer_id.clone());
-        if cancelled {
-            break;
-        }
-    }
+    let was_cancelled = run_sequential_sync_round(&peer_ids, |pid| {
+        visited2.lock().unwrap().push(pid);
+        async move { false }
+    })
+    .await;
 
-    let visited = visited.lock().unwrap().clone();
+    assert!(
+        !was_cancelled,
+        "M-46: run_sequential_sync_round must return false when no peer cancels"
+    );
     assert_eq!(
-        visited,
+        visited.lock().unwrap().clone(),
         vec![
             "PEER_A".to_string(),
             "PEER_B".to_string(),
