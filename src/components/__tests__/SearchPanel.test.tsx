@@ -861,7 +861,7 @@ describe('SearchPanel', () => {
   })
 
   // =========================================================================
-  // REVIEW-LATER #58: Edge-case tests for SearchPanel
+  // #58: Edge-case tests for SearchPanel
   // =========================================================================
 
   it('does not invoke search for explicitly empty query on submit', async () => {

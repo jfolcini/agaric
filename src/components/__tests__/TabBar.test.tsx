@@ -689,7 +689,7 @@ describe('TabBar', () => {
       // does not exercise :hover state — we only assert the class is present.
       expect(className).toContain('opacity-70')
       expect(className).toContain('group-hover:opacity-100')
-      // size-3 is deliberately preserved per the REVIEW-LATER entry.
+      // size-3 is deliberately preserved (see GitHub issues for the design note).
       expect(className).toContain('size-3')
 
       // Sanity: the tablist-container-scoped query returns exactly one chevron

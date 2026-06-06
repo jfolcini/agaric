@@ -38,7 +38,7 @@ async fn recover_at_boot_test(
 //
 // All timestamps use `Z` (not `+00:00`) to match `now_rfc3339()` output.
 // Mixing suffixes would break the lexicographic `>` comparison in
-// `recover_single_draft`'s SQL query (see REVIEW-LATER #48).
+// `recover_single_draft`'s SQL query (see issue #48).
 
 /// Far-past timestamp: any op created by `append_local_op` (which calls
 /// `now_rfc3339()`) will have `created_at > FAR_PAST`, so the draft is

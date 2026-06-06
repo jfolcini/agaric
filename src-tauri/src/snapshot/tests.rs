@@ -1712,7 +1712,7 @@ async fn old_snapshots_accumulate() {
 }
 
 // =======================================================================
-// 22. empty_blocks_map_round_trip (REVIEW-LATER #56)
+// 22. empty_blocks_map_round_trip (#56)
 // =======================================================================
 
 /// Snapshot with a completely empty blocks map and all-empty tables
@@ -1774,7 +1774,7 @@ fn empty_blocks_map_round_trip() {
 }
 
 // =======================================================================
-// 23. large_text_field_round_trip (REVIEW-LATER #56)
+// 23. large_text_field_round_trip (#56)
 // =======================================================================
 
 /// Snapshot with very large text fields (>10KB) round-trips correctly
@@ -1855,7 +1855,7 @@ fn large_text_field_round_trip() {
 }
 
 // =======================================================================
-// 24. all_nullable_fields_null_round_trip (REVIEW-LATER #56)
+// 24. all_nullable_fields_null_round_trip (#56)
 // =======================================================================
 
 /// Snapshot where every nullable field in a block is set to None

@@ -86,7 +86,7 @@ Flathub.
 
 ## Cross-references
 
-- `pending/REVIEW-LATER.md` `OSSF-1` (lookup) → `pending/PEND-49`
+- `OSSF-1` (lookup) → `pending/PEND-49`
   is the broader Silver roadmap; this directory is §5c's
   deliverable.
 - `pending/PEND-36-play-store-publishing.md` is the parallel

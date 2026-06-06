@@ -39,7 +39,7 @@ use crate::pagination::{BlockRow, Cursor, PageRequest};
 /// deliberate design choice — alphabetical group ordering keeps the
 /// source-page list stable and predictable for navigation, so users can
 /// scan for a known page by name regardless of which sort they picked
-/// for blocks. See REVIEW-LATER `I-Search-12`: option (a) (sort groups
+/// for blocks. See I-Search-12: option (a) (sort groups
 /// by the latest member's sort key) was considered and rejected because
 /// it makes the group list reshuffle on every edit and defeats muscle
 /// memory. The frontend mirrors this contract in

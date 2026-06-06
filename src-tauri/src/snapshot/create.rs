@@ -530,7 +530,7 @@ pub async fn cleanup_old_snapshots(pool: &SqlitePool, keep: usize) -> Result<u64
 // ---------------------------------------------------------------------------
 //
 // These tests live inline (rather than in `snapshot/tests.rs`) because the
-// REVIEW-LATER item that motivated them is scoped to `create_snapshot` —
+// M-69 item that motivated them is scoped to `create_snapshot` —
 // keeping them next to the production code makes the invariant ("INSERT +
 // UPDATE are one atomic transaction") easier to spot when this function is
 // edited again in the future.

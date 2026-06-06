@@ -217,7 +217,7 @@ pub async fn set_todo_state_inner(
     // state change, the `created_at`/`completed_at` timestamp writes,
     // and the recurrence-sibling creation. A pre-fix crash mid-sequence
     // could leave a `done` state with no `completed_at` and no
-    // next-occurrence sibling — see REVIEW-LATER H-4 for the rationale.
+    // next-occurrence sibling (H-4).
     let mut tx = CommandTx::begin_immediate(pool, "set_todo_state").await?;
 
     // BUG-20: Validate against todo_state property definition options.

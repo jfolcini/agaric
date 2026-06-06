@@ -42,7 +42,7 @@ Local-first block-based note-taking app inspired by Org-mode and Logseq. React 1
 | [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md) | SQL migration rules (append-only, STRICT tables, index timing) |
 | [`src-tauri/src/commands/AGENTS.md`](src-tauri/src/commands/AGENTS.md) | Tauri command patterns (`_inner` split, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `AppError` prefixes) |
 | [`src-tauri/src/mcp/AGENTS.md`](src-tauri/src/mcp/AGENTS.md) | MCP server rules (rmcp adapter, `ACTOR.scope`, activity-feed emission, `MCP_DISCONNECT_GRACE_PERIOD`, RO/RW split) |
-| `REVIEW-LATER.md` | Deferred items, tech debt backlog, future features |
+| [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Deferred items, tech debt backlog, future features |
 
 ## Build Commands
 
@@ -88,7 +88,7 @@ Do not introduce significant architectural changes (new tables, new op types, ne
 
 **Distinct from Architectural Stability:** This section covers *version pinning* of interdependent packages. The Architectural Stability section above covers *schema, op-types, and store changes*. Both require user approval, but for different reasons.
 
-Some dependencies ship as a **stack** — upstream locks multiple packages to the same major/minor and breaks when one slice moves ahead of the others. **Never bump one slice of a coupled stack on its own.** Move the whole stack in one commit, and only when every required upstream piece has a release this repo can consume. If the coupled bump requires a major we are not ready for, leave the entire stack alone and file (or update) a `MAINT-*` item in `REVIEW-LATER.md`.
+Some dependencies ship as a **stack** — upstream locks multiple packages to the same major/minor and breaks when one slice moves ahead of the others. **Never bump one slice of a coupled stack on its own.** Move the whole stack in one commit, and only when every required upstream piece has a release this repo can consume. If the coupled bump requires a major we are not ready for, leave the entire stack alone and file a GitHub issue (`gh issue create --label dependencies`).
 
 **Known coupled stacks in this repo:**
 
@@ -225,7 +225,7 @@ These show up repeatedly in code review:
 
 If you need a new primitive, shared component, or hook:
 
-1. Check REVIEW-LATER.md — the needed component may already be filed there with a design spec.
+1. Check open GitHub issues — the needed component may already be filed there with a design spec.
 2. Follow the CVA + Radix + `cn()` patterns established by existing `ui/` components.
 3. Place it in the correct layer (see table above).
 4. Add tests: render + interaction + `axe(container)` a11y.
@@ -339,7 +339,7 @@ Baseline performance at 100K blocks (established by benchmarks):
 - **O(1) operations** (PK lookups, property gets) — ~23µs regardless of scale. No action needed.
 - **Paginated lists** — cursor pagination keeps individual page loads fast even at 100K.
 - **Batch operations** — use `json_each()` for batch resolve/count. Single query, not N+1.
-- **Graph/agenda queries** — superlinear at 100K (see REVIEW-LATER for known items). Frontend caching can mitigate.
+- **Graph/agenda queries** — superlinear at 100K (open GitHub issues track known items). Frontend caching can mitigate.
 - **Lazy hash computation rejected** — breaks sync protocol integrity. `verify_op_record()` in `sync_protocol` requires upfront hashes.
 - **CTE oracle pattern:** When optimizing a query (e.g., replacing recursive CTEs with materialized tables), preserve the old implementation as a `#[cfg(test)]` oracle function and add a test verifying both paths produce identical results.
 - **Split read/write pool pattern for background rebuild tasks:** read from reader pool, acquire write connection only for the final INSERT/DELETE transaction. Reduces write-connection hold time.
@@ -386,7 +386,7 @@ Cross-surface filter contract. Detail and rationale live in [`docs/architecture/
 - **Architectures:** 64-bit only — `aarch64` (release, physical devices) and `x86_64` (emulator smoke tests). 32-bit `armv7-linux-androideabi` and `i686-linux-android` Rust targets are **not** supported; do not re-add them to docs/BUILD.md, CI, or `scripts/patch-android-build.sh`.
 - **Emulator AVD:** `spike_test` (x86_64, API 34) — start with `emulator -avd spike_test -gpu host &`
 - **DB path:** `/data/data/com.agaric.app/notes.db` (via `app.path().app_data_dir()`)
-- **Known issues:** See REVIEW-LATER.md for open items (deferred by design).
+- **Known issues:** See open GitHub issues (deferred by design).
 - **Headless testing:** See [docs/BUILD.md](docs/BUILD.md#installing-on-emulator) for ADB recipes and emulator setup.
 
 ## State Files
@@ -394,7 +394,7 @@ Cross-surface filter contract. Detail and rationale live in [`docs/architecture/
 | File | Purpose | When to update |
 |------|---------|---------------|
 | `SESSION-LOG.md` | Subagent activity log | After each subagent completes |
-| `REVIEW-LATER.md` | Deferred items, tech debt, future features | When a fix is deferred |
+| [GitHub Issues](https://github.com/jfolcini/agaric/issues) | Deferred items, tech debt, future features | File with `gh issue create` when a fix is deferred |
 | `docs/FEATURE-MAP.md` | Complete feature inventory for discovery/review | When features are added/changed (keep in sync with SESSION-LOG updates) |
 | `AGENTS.md` | This file | Only with explicit user approval |
 

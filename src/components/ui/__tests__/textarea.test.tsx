@@ -1,7 +1,7 @@
 /**
  * Tests for the Textarea UI primitive.
  *
- * Validates (per TEST-1 in REVIEW-LATER.md):
+ * Validates (per TEST-1):
  *  - Renders with `value` (controlled)
  *  - Calls `onChange` with the typed value
  *  - `aria-invalid` propagates from prop to DOM

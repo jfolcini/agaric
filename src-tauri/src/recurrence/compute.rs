@@ -467,7 +467,7 @@ async fn set_recurrence_property(
 
 #[cfg(test)]
 mod tests_h17_m77 {
-    //! Tests for REVIEW-LATER items H-17 (TOCTOU on counters) and M-77
+    //! Tests for items H-17 (TOCTOU on counters) and M-77
     //! (silent error swallowing) in [`handle_recurrence`].
     //!
     //! - `handle_recurrence_propagates_set_property_error` exercises M-77:
@@ -844,7 +844,7 @@ mod tests_h17_m77 {
 
 #[cfg(test)]
 mod tests_l99_l100 {
-    //! Tests for REVIEW-LATER items L-99 (`repeat-seq` is gated on
+    //! Tests for items L-99 (`repeat-seq` is gated on
     //! `repeat-count`) and L-100 (`repeat-until` lex-compare must
     //! validate ISO date shape) in [`handle_recurrence`].
     //!
@@ -960,7 +960,7 @@ mod tests_l99_l100 {
         // one-shot annotation and freezes the counter. If a future
         // change "fixes" this by always bumping `repeat-seq`, this
         // test will fail and the author will be forced to revisit the
-        // doc comment + REVIEW-LATER L-99.
+        // doc comment + L-99.
         let (pool, _dir) = test_pool().await;
         let mat = Materializer::new(pool.clone());
 

@@ -13,7 +13,7 @@
 | ------- | --------- |
 | **Done** | Fully implemented and shipped |
 | **Partial** | Implemented but incomplete |
-| **Planned (#N)** | Designed in REVIEW-LATER.md, not yet built |
+| **Planned (#N)** | Tracked in GitHub issues, not yet built |
 | **Gap** | Not implemented, not currently planned |
 | **Design choice** | Intentionally different from Logseq |
 | **Better** | Agaric implementation exceeds Logseq |

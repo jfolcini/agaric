@@ -286,7 +286,7 @@ macro_rules! agaric_commands {
 ///
 /// Every timestamp stored in the database should go through this helper so
 /// that lexicographic comparisons (e.g. op-log compaction cutoff) are
-/// consistent.  See REVIEW-LATER item #48 for context.
+/// consistent (see issue #48 for context).
 ///
 /// # Lex-monotonic `Z`-suffix invariant (L-98)
 ///
@@ -582,7 +582,7 @@ pub fn run() {
         // Updates" — move in lockstep with the other tauri-plugin-* crates.
         .plugin(tauri_plugin_notification::init())
         // FEAT-5b — OAuth 2.0 PKCE loopback listener for the Agaric →
-        // Google Calendar connector (see REVIEW-LATER § FEAT-5). The
+        // Google Calendar connector (FEAT-5). The
         // plugin spawns a localhost server on demand (via
         // `tauri-plugin-oauth`'s `start()` helper) so the OS browser can
         // redirect back to Agaric after Google's authorization screen.
@@ -782,7 +782,7 @@ pub fn run() {
                 pools.read.clone(),
                 lifecycle.clone(),
             );
-            // REVIEW-LATER C-3c — register `app_data_dir` so the
+            // C-3c — register `app_data_dir` so the
             // `CleanupOrphanedAttachments` background task can locate
             // the `attachments/` subtree.
             //

@@ -120,7 +120,7 @@ fn parse_title_decodes_html_entities() {
 /// (`html-escape` / `htmlescape` crate or a hand-rolled scanner), at
 /// which point the assertion should be updated to expect the correct
 /// `Tom &lt; Jerry`. See `decode_html_entities`'s docstring and
-/// REVIEW-LATER.md item I-Search-16.
+/// I-Search-16.
 #[test]
 fn parse_title_chained_entity_known_limitation() {
     let html = "<html><head><title>Tom &amp;lt; Jerry</title></head></html>";

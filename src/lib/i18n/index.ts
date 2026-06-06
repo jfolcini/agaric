@@ -14,7 +14,7 @@
  * To add a new key: pick the namespace file that matches the key's
  * first segment and add the entry there. Do NOT add new locale
  * resources — this is a single-locale app (lng/fallbackLng pinned
- * to 'en'). See REVIEW-LATER.md MAINT-126 for the rationale.
+ * to 'en').
  */
 
 import i18n from 'i18next'

@@ -151,8 +151,7 @@ export { expect }
 // and pick `.last()` so the most-recent portal wins when two coexist briefly.
 //
 // Prefer these helpers over root `page.getByRole` / `page.getByText` for any
-// query that targets content inside a Radix overlay. See TEST-1b in
-// REVIEW-LATER.md for the full rationale.
+// query that targets content inside a Radix overlay (TEST-1b).
 // ---------------------------------------------------------------------------
 
 /** Active Radix Dialog content (data-slot="dialog-content"). */

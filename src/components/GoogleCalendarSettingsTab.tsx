@@ -1,7 +1,7 @@
 /**
  * GoogleCalendarSettingsTab — orchestrator for the FEAT-5 Google
- * Calendar daily-agenda digest push surface (opt-in, experimental per
- * REVIEW-LATER FEAT-5f). Phase 3b split: rendering lives in
+ * Calendar daily-agenda digest push surface (opt-in, experimental — FEAT-5f).
+ * Phase 3b split: rendering lives in
  * `./GoogleCalendarSettingsTab/{OAuthStatusSection,SettingsForm,
  * SyncStatusSection}.tsx`; this file keeps every IPC call, the 60 s
  * status poll, the four Tauri event subscriptions, the window-days

@@ -541,7 +541,7 @@ async fn pages_without_space(
 /// somehow never booted into a `0.2.x` build (unlikely) will need a
 /// manual schema reset (re-import from snapshot or wipe `~/.local/share/
 /// com.agaric.app/notes.db`); document that in the `0.3.0` release notes.
-/// The associated REVIEW-LATER entry (under MAINT-152) and 08-MISC-015
+/// The associated entry (MAINT-152) and 08-MISC-015
 /// can be closed at the same time.
 ///
 /// The version target is intentionally conservative — `0.3.0` gives every

@@ -59,7 +59,7 @@ await page.getByRole('button', { name: 'Settings' }).click()
 await expect(activeDialog(page).getByRole('button', { name: 'Apply' })).toBeVisible()
 ```
 
-Verify the exact set + names against `e2e/helpers.ts` before relying on this list — the helpers evolve. See TEST-1b in `REVIEW-LATER.md` for full rationale.
+Verify the exact set + names against `e2e/helpers.ts` before relying on this list — the helpers evolve (TEST-1b).
 
 ## Undo / redo e2e helpers
 

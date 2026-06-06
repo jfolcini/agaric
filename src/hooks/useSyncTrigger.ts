@@ -19,7 +19,7 @@ import { mapBackendState } from './useSyncEvents'
 // the backend is mid-backoff, calling `startSync()` from here is a
 // no-op on the wire — it just resolves quickly. That is fine; do not
 // add cross-scheduler coordination here without first reading
-// `sync_scheduler.rs` end-to-end. See MAINT-168 in REVIEW-LATER for
+// `sync_scheduler.rs` end-to-end. See MAINT-168 for
 // the deferred unification design note.
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000 // 10 minutes

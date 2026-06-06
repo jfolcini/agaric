@@ -4782,7 +4782,7 @@ mod tests_p7 {
     /// The codebase has `proptest` available but a deterministic walk
     /// is sufficient for this regression — the predicate is a closed-form
     /// "for all (page, space)" assertion, not a search over a large
-    /// state-space. Per the user's instruction (REVIEW-LATER FEAT-3p7),
+    /// state-space. Per the user's instruction (FEAT-3p7),
     /// ship the deterministic version for clarity and CI determinism.
     #[tokio::test]
     async fn property_no_cross_space_resolution_or_fetch() {

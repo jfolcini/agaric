@@ -16,7 +16,7 @@
  * No-op in browser mode (when Tauri APIs are unavailable).
  * Call once at app root (App.tsx).
  *
- * Resolves REVIEW-LATER #276, #386, #378.
+ * Resolves issues #276, #386, #378.
  */
 
 import { announce } from '@/lib/announcer'

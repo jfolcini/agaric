@@ -38,8 +38,7 @@ not pre-emptively added (per PEND-49 §5b open question 3).
    - MCP exposure (`src-tauri/src/mcp/`)
 3. **Findings disposition.** Each finding goes to one of:
    - fixed in the same review window (commit ref in the report),
-   - filed as `REVIEW-LATER.md` or a new `PEND-NN-*.md` (link in the
-     report),
+   - filed as a GitHub issue (link in the report),
    - documented as Accepted with rationale (Accepted-row update in
      the threat model, link in the report).
 

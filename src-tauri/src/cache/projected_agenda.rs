@@ -17,7 +17,7 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 /// of entries`) into a single `Vec<(String, String, String)>` before
 /// flushing to the DB. Peak Rust-heap was `O(repeating_blocks × horizon)`
 /// — ~18MB on a 1000-block × 365-day vault, larger on Android where the
-/// memory ceiling is tighter (REVIEW-LATER M-19).
+/// memory ceiling is tighter (M-19).
 ///
 /// The post-M-19 rebuild appends per-block projections into a working
 /// buffer and flushes the buffer to the DB once it crosses
@@ -86,10 +86,9 @@ struct CacheRepeatingRow {
 /// Switching to UTC would eliminate the per-device divergence but at the cost
 /// of producing projections whose date column does not match the user's
 /// calendar day on either side of midnight, which is a more visible
-/// behaviour change.  See `REVIEW-LATER.md` L-26 for the conditional fix:
-/// either document (this comment) or normalise to UTC consistently.  The
-/// documentation path was chosen per the AGENTS.md "Architectural Stability"
-/// guidance.
+/// behaviour change.  The documentation path (L-26) was chosen per the
+/// AGENTS.md "Architectural Stability" guidance: either document this
+/// divergence or normalise to UTC consistently.
 pub async fn rebuild_projected_agenda_cache(pool: &SqlitePool) -> Result<(), AppError> {
     let today = chrono::Local::now().date_naive();
     rebuild_projected_agenda_cache_with_today(pool, today).await

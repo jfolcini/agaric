@@ -2030,7 +2030,7 @@ describe('export_page_markdown', () => {
 })
 
 // ---------------------------------------------------------------------------
-// get_block_history (list_block_history in REVIEW-LATER)
+// get_block_history (previously listed_block_history)
 // ---------------------------------------------------------------------------
 
 describe('get_block_history', () => {

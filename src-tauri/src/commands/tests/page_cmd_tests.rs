@@ -1166,7 +1166,7 @@ async fn export_page_markdown_frontmatter_renders_bool_properties() {
 }
 
 // ======================================================================
-// export_page_markdown — error paths (REVIEW-LATER TEST-11)
+// export_page_markdown — error paths (TEST-11)
 // ======================================================================
 //
 // TEST-11 — Pre-fix `export_page_markdown_inner` had 6 happy-path tests

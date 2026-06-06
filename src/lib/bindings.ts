@@ -2292,7 +2292,7 @@ export type StatusInfo = {
 	bg_panics: number,
 	/**
 	 *  Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
-	 *  100ms in-memory retry exhausted (REVIEW-LATER C-2a). Surfaces
+	 *  100ms in-memory retry exhausted (C-2a). Surfaces
 	 *  silent materializer divergence: a non-zero value means an
 	 *  apply-op landed in the op log but never reached the
 	 *  materialized `blocks` table on this run. Pair with the

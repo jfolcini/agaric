@@ -2,7 +2,7 @@
  * Parse half of the markdown serializer (Markdown → PM doc).
  *
  * Extracted from the original `markdown-serializer.ts` monolith
- * (REVIEW-LATER MAINT-117). The public API is still exposed via the
+ * (MAINT-117). The public API is still exposed via the
  * `markdown-serializer.ts` barrel — every existing
  * `import { parse, parseCodeBlock, scanBold, ... } from './markdown-serializer'`
  * site continues to resolve unchanged.

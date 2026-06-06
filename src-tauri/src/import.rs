@@ -120,7 +120,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // CR-only files (classic Mac), where no `\n` exists at all and the entire
     // frontmatter would otherwise be retained as block content. Doing this
     // first also lets `body.lines()` and the indent calculation see clean
-    // lines without stray `\r` characters. (REVIEW-LATER L-9)
+    // lines without stray `\r` characters. (L-9)
     let normalized_eol = content.replace("\r\n", "\n").replace('\r', "\n");
 
     // Normalize tabs to 2 spaces for consistent indentation parsing
@@ -437,7 +437,7 @@ mod tests {
     }
 }
 
-/// REVIEW-LATER L-9 — Line-ending normalization in front of the YAML
+/// L-9 — Line-ending normalization in front of the YAML
 /// frontmatter strip. The strip uses `find("\n---")`, so CRLF and lone-CR
 /// inputs must be normalized to LF first. Tests live in their own module
 /// (per the L-9 review note) to keep the regression surface explicit.

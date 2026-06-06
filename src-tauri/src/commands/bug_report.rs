@@ -12,7 +12,7 @@
 //! optionally writes a ZIP to disk via `downloadBlob`, and opens a prefilled
 //! GitHub issue URL. Logs NEVER leave the device as part of the URL itself
 //! — the feature's privacy story rests on the explicit user-visible preview
-//! + confirmation checkbox + ZIP-on-disk flow. See REVIEW-LATER FEAT-5.
+//! + confirmation checkbox + ZIP-on-disk flow (FEAT-5).
 
 use std::fs;
 use std::io::Read;
@@ -63,7 +63,7 @@ use crate::log_dir_for_app_data;
 // That means today every line takes the H-9a fallback branch. The
 // deny-list architecture is fully implemented and tested; it activates
 // automatically once the file appender is switched to `.json()` (a
-// follow-up bookkeeping change tracked in REVIEW-LATER under H-9b).
+// follow-up bookkeeping change tracked as H-9b).
 //
 // **Tuning:** to widen what survives the pipeline, add a regex to
 // [`SAFE_TOKEN_PATTERNS`] or a string to [`STABLE_MESSAGES`]. **Never**

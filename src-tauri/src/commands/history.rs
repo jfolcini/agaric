@@ -691,7 +691,7 @@ pub async fn undo_page_op_inner(
     // with the indexed `(created_at DESC, seq DESC)` order, scan cost is
     // fixed. Invariant #3 protects unbounded list-query latency, which does
     // not apply to this "fetch Nth row" semantics.
-    // REVIEW-LATER: I-CommandsCRUD-1 — the AGENTS.md "Backend Patterns"
+    // I-CommandsCRUD-1 — the AGENTS.md "Backend Patterns"
     // carve-out for this pattern is deferred (locked AGENTS.md self-rule).
     let target = sqlx::query_as!(
         HistoryEntry,

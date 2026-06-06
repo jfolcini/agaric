@@ -12,8 +12,7 @@
  * Future work (out of scope here): cross-device sync could be added by
  * mirroring the chosen color to a `tag_color` block property via the existing
  * properties extension point, with a one-time migration of existing
- * localStorage entries on first run. See REVIEW-LATER.md (MAINT-101) for the
- * design discussion. Do not reintroduce a "syncs via setProperty" claim in
+ * localStorage entries on first run. Do not reintroduce a "syncs via setProperty" claim in
  * this comment without also wiring the call — `tag-colors.test.ts` guards
  * against that drift.
  */

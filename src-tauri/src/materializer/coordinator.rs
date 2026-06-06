@@ -67,8 +67,7 @@ pub struct Materializer {
     /// Production code does not observe this counter; it exists so tests
     /// that exercise the FTS-optimize path can deterministically gate on
     /// "all post-optimize refresh tasks have drained" before simulating
-    /// a different `cached_block_count` value. See TEST-5 in
-    /// REVIEW-LATER.md (now resolved) for the rationale.
+    /// a different `cached_block_count` value.
     pub(super) pending_block_count_refreshes: Arc<AtomicU32>,
     pub(super) pending_block_count_refreshes_notify: Arc<Notify>,
     /// FEAT-5h — optional handle for notifying the GCal push
@@ -83,7 +82,7 @@ pub struct Materializer {
     /// handle (which the connector produces) — circular construction
     /// broken by a deferred setter.
     pub(super) gcal_handle: Arc<OnceLock<GcalConnectorHandle>>,
-    /// REVIEW-LATER C-3c — OS-correct app data directory used by the
+    /// C-3c — OS-correct app data directory used by the
     /// `CleanupOrphanedAttachments` background task to walk the
     /// `attachments/` subtree and reconcile orphaned files against
     /// the `attachments` table.
@@ -302,7 +301,7 @@ impl Materializer {
         }
     }
 
-    /// REVIEW-LATER C-3c — register the OS-correct app data directory
+    /// C-3c — register the OS-correct app data directory
     /// so the `CleanupOrphanedAttachments` background task can locate
     /// the `attachments/` subtree at execution time.
     ///
@@ -571,7 +570,7 @@ impl Materializer {
     /// their `.store(simulated_count, …)`. Otherwise the stale initial
     /// writer may race with the simulation and clobber the value after it
     /// has been set, producing a deterministic-in-isolation but
-    /// parallelism-flaky test. See TEST-2 in REVIEW-LATER.md for history.
+    /// parallelism-flaky test (TEST-2).
     ///
     /// The method is cheap in the common "already initialized" case — a
     /// single Acquire atomic load. Production code does not need to call

@@ -3,8 +3,7 @@
  *
  * Single source of truth for breadcrumb UI across the app. Used by
  * `BlockZoomBar` (zoomed block trail) and `PageHeader`'s namespace breadcrumb
- * for `/`-separated page titles. See REVIEW-LATER.md UX-257 / FEAT-13 for the
- * design direction this primitive consolidates.
+ * for `/`-separated page titles (UX-257 / FEAT-13).
  *
  * Structure:
  * - `<nav role="navigation" aria-label>` wrapping `<div role="toolbar">`.
@@ -44,7 +43,7 @@
  * crumbs are wayfinding text-links and the conventional focus indicator for a
  * text-link is an underline, not a 3 px ring. Pairing this with the underline
  * hover treatment makes the trail read as a path of links rather than a button
- * bar — see FEAT-13 in REVIEW-LATER.md. The popover's interior menu items keep
+ * bar (FEAT-13). The popover's interior menu items keep
  * the standard form-control ring (they are inside a menu surface, not on the
  * trail).
  *

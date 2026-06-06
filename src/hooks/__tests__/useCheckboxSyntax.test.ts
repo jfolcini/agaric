@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - When setTodoState rejects, the .catch arm logs via `logger.error` AND
- *    surfaces a toast (no silent catch — see REVIEW-LATER FE-H-8).
+ *    surfaces a toast (no silent catch — FE-H-8).
  *  - When setTodoState rejects, the optimistic `todo_state` mutation is
  *    reverted to the prior value (FE-H-7).
  */

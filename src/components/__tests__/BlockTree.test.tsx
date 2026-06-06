@@ -788,7 +788,7 @@ describe('BlockTree picker wiring', () => {
 })
 
 // =========================================================================
-// REVIEW-LATER #59: Edge-case tests for BlockTree rendering
+// #59: Edge-case tests for BlockTree rendering
 // =========================================================================
 
 describe('BlockTree rendering edge cases', () => {
