@@ -1068,13 +1068,12 @@ async fn batch_resolve_duplicate_ids_deduped_by_db() {
     .await
     .unwrap();
 
-    // json_each produces 3 rows for 3 values, but the IN subquery
-    // matches only the one block row — result depends on DB behavior.
-    // With json_each + IN, duplicates in the value list may produce
-    // duplicate matches. We assert at least 1 result.
-    assert!(
-        !result.is_empty(),
-        "duplicate IDs must still return the block"
+    // json_each + IN deduplicates by the unique block row — three identical
+    // input IDs must collapse to exactly one result.
+    assert_eq!(
+        result.len(),
+        1,
+        "batch_resolve must deduplicate: 3 identical ids must return 1 result"
     );
     assert!(
         result.iter().all(|r| r.id == "BR_DUP"),
@@ -1860,6 +1859,78 @@ async fn set_property_accepts_valid_reserved_key_with_correct_field() {
     mat.shutdown();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_custom_date_typed_stores_value_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Create a date-type property definition
+    create_property_def_inner(&pool, "deadline".into(), "date".into(), None)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "date round-trip test".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    mat.flush_background().await.unwrap();
+
+    // Set the date property
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "deadline".into(),
+        None,
+        None,
+        Some("2026-03-04".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    mat.flush_background().await.unwrap();
+
+    // Read back and verify round-trip
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let deadline = props.iter().find(|p| p.key == "deadline");
+    assert!(
+        deadline.is_some(),
+        "deadline property should exist after set"
+    );
+    let deadline = deadline.unwrap();
+    assert_eq!(
+        deadline.value_date.as_deref(),
+        Some("2026-03-04"),
+        "value_date should round-trip exactly"
+    );
+    assert!(
+        deadline.value_text.is_none(),
+        "value_text should be None for date property"
+    );
+    assert!(
+        deadline.value_num.is_none(),
+        "value_num should be None for date property"
+    );
+    assert!(
+        deadline.value_ref.is_none(),
+        "value_ref should be None for date property"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // ref value_type — property definitions & set_property (#H-6)
 // ======================================================================
@@ -1977,6 +2048,32 @@ async fn set_property_ref_type_enforces_value_ref() {
     assert!(
         result.is_ok(),
         "ref def with value_ref should succeed, got: {result:?}"
+    );
+
+    // Read back and verify the stored ref value and that other fields are null
+    let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
+    let reviewer = props.iter().find(|p| p.key == "reviewer");
+    assert!(
+        reviewer.is_some(),
+        "reviewer property should exist after set"
+    );
+    let reviewer = reviewer.unwrap();
+    assert_eq!(
+        reviewer.value_ref.as_deref(),
+        Some(target.id.as_str()),
+        "value_ref should point to target block"
+    );
+    assert!(
+        reviewer.value_text.is_none(),
+        "value_text should be None for ref property"
+    );
+    assert!(
+        reviewer.value_num.is_none(),
+        "value_num should be None for ref property"
+    );
+    assert!(
+        reviewer.value_date.is_none(),
+        "value_date should be None for ref property"
     );
 
     mat.shutdown();
@@ -2496,6 +2593,10 @@ async fn todo_state_auto_null_to_todo_sets_created_at() {
 
     mat.flush_background().await.unwrap();
 
+    // Capture today's date before the production call so the assertion is
+    // pinned to the same calendar day as the transition.
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
     // null → TODO
     set_todo_state_inner(
         &pool,
@@ -2509,16 +2610,17 @@ async fn todo_state_auto_null_to_todo_sets_created_at() {
 
     mat.flush_background().await.unwrap();
 
-    // Check created_at property was set
+    // Check created_at property was set to today's date
     let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let created_at = props.iter().find(|p| p.key == "created_at");
     assert!(
         created_at.is_some(),
         "created_at should be set on null→TODO transition"
     );
-    assert!(
-        created_at.unwrap().value_date.is_some(),
-        "created_at should have a value_date"
+    assert_eq!(
+        created_at.unwrap().value_date.as_deref(),
+        Some(today.as_str()),
+        "created_at value_date should equal today's date"
     );
 
     mat.shutdown();
@@ -2542,6 +2644,10 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
     .unwrap();
 
     mat.flush_background().await.unwrap();
+
+    // Capture today's date before the production call so the assertion is
+    // pinned to the same calendar day as the transition.
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
     // null → TODO
     set_todo_state_inner(
@@ -2569,16 +2675,17 @@ async fn todo_state_auto_todo_to_done_sets_completed_at() {
 
     mat.flush_background().await.unwrap();
 
-    // Check completed_at property was set
+    // Check completed_at property was set to today's date
     let props = get_properties_inner(&pool, block.id.clone()).await.unwrap();
     let completed_at = props.iter().find(|p| p.key == "completed_at");
     assert!(
         completed_at.is_some(),
         "completed_at should be set on TODO→DONE transition"
     );
-    assert!(
-        completed_at.unwrap().value_date.is_some(),
-        "completed_at should have a value_date"
+    assert_eq!(
+        completed_at.unwrap().value_date.as_deref(),
+        Some(today.as_str()),
+        "completed_at value_date should equal today's date"
     );
 
     mat.shutdown();
@@ -4507,8 +4614,8 @@ async fn m26_delete_property_def_rejection_message_includes_key_and_count() {
                 "rejection message must name the offending key, got: {msg:?}"
             );
             assert!(
-                msg.contains('1'),
-                "rejection message must surface the dependent-row count, got: {msg:?}"
+                msg.contains("1 block_properties"),
+                "rejection message must surface the dependent-row count and table context, got: {msg:?}"
             );
             assert!(
                 msg.contains("set_property"),

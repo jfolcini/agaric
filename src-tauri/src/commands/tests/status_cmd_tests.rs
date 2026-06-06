@@ -189,10 +189,13 @@ async fn get_status_total_ops_in_log_is_rate_limited_cache() {
     );
 }
 
-/// bg_dropped must increment whenever the retry queue receives a persisted
-/// failure OR a global rebuild task is silently dropped after retries.
+/// Exercises the status ← atomic copy path: get_status_inner reads the
+/// bg_dropped counter directly from the atomic and copies it into StatusInfo.
+/// Note: this exercises status<-atomic copy, not real task drop — the counter
+/// is nudged manually because triggering a real background-task failure
+/// requires mocking the consumer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn get_status_bg_dropped_increments_on_persisted_retry() {
+async fn get_status_reports_bg_dropped_counter() {
     use crate::materializer::retry_queue;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

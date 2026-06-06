@@ -157,6 +157,14 @@ async fn alias_collision_returns_error() {
         page_a.id,
         "alias must still point to page A after collision"
     );
+
+    assert!(
+        get_page_aliases_inner(&pool, page_b.id.as_str())
+            .await
+            .unwrap()
+            .is_empty(),
+        "page B must own no alias after a collision"
+    );
 }
 
 // ======================================================================
@@ -172,10 +180,10 @@ async fn today_journal_creates_page_for_today() {
     let mat = test_materializer(&pool);
     let space = test_space(&pool, "Personal").await;
 
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let page = today_journal_inner(&pool, DEV, &mat, &space).await.unwrap();
     settle(&mat).await;
 
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     assert_eq!(page.block_type, "page", "journal page must be a page block");
     assert_eq!(
         page.content,
@@ -295,6 +303,7 @@ async fn quick_capture_block_creates_today_journal_and_block() {
     let mat = test_materializer(&pool);
     let space = test_space(&pool, "Personal").await;
 
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let block = quick_capture_block_inner(&pool, DEV, &mat, "captured note".into(), &space)
         .await
         .unwrap();
@@ -320,7 +329,6 @@ async fn quick_capture_block_creates_today_journal_and_block() {
         parent.block_type, "page",
         "parent of a quick-captured block must be a page (the journal)"
     );
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     assert_eq!(
         parent.content,
         Some(today),
@@ -593,18 +601,60 @@ async fn restore_page_to_op_with_all_pages_target() {
     mat.shutdown();
 }
 
+/// Verifies that restoring with an unknown page_id (but a valid target_seq)
+/// returns `Ok` with `ops_reverted == 0`. The CTE finds no blocks for the
+/// unknown page, so no ops qualify for revert.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restore_page_to_op_nonexistent_page_returns_error() {
+async fn restore_page_to_op_unknown_page_returns_ok_with_zero_reverted() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    // No ops exist in the DB — target (DEV, 1) will not be found by get_op_by_seq
-    let result =
-        restore_page_to_op_inner(&pool, DEV, &mat, "FAKE_PAGE_XYZ".into(), DEV.into(), 1).await;
+    // Seed at least one op so that target_seq=1 is valid in op_log
+    let page = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Seed Page".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "seed child".into(),
+        Some(page.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Use seq=1 (known to exist) but a page id that does not exist in blocks
+    let result = restore_page_to_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        "NONEXISTENT_PAGE_ID".into(),
+        DEV.into(),
+        1,
+    )
+    .await;
 
     assert!(
-        matches!(result, Err(AppError::NotFound(_))),
-        "restoring with a nonexistent page/target should return NotFound, got: {result:?}"
+        result.is_ok(),
+        "unknown page_id with a valid seq must return Ok, got: {result:?}"
+    );
+    assert_eq!(
+        result.unwrap().ops_reverted,
+        0,
+        "unknown page_id must yield zero reverted ops"
     );
 
     mat.shutdown();

@@ -401,8 +401,17 @@ async fn most_linked_sort_counts_distinct_inbound_sources() {
     // The pre-DISTINCT bug would have reported 3 (two from SourcePage, one from OtherSource).
     assert_eq!(popular.inbound_link_count, 2);
     assert_eq!(loner.inbound_link_count, 0);
-    // Ordering: Popular first (highest count), Loner / SourcePage at tail.
+    // Ordering: Popular first (highest count), then zero-link pages by id ASC.
+    // Tiebreak within zero-link pages is id ASC (SQL: ORDER BY inbound_link_count DESC, b.id ASC).
+    assert_eq!(resp.items.len(), 4);
     assert_eq!(resp.items[0].content.as_deref(), Some("Popular"));
+    assert_eq!(resp.items[0].inbound_link_count, 2);
+    assert_eq!(resp.items[1].content.as_deref(), Some("Loner"));
+    assert_eq!(resp.items[1].inbound_link_count, 0);
+    assert_eq!(resp.items[2].content.as_deref(), Some("SourcePage"));
+    assert_eq!(resp.items[2].inbound_link_count, 0);
+    assert_eq!(resp.items[3].content.as_deref(), Some("OtherSource"));
+    assert_eq!(resp.items[3].inbound_link_count, 0);
 }
 
 // ── Sort: biggest ─────────────────────────────────────────────────────────
@@ -563,9 +572,19 @@ async fn cursor_pagination_subsequent_pages_most_linked() {
     )
     .await
     .unwrap();
-    // page2 ordering: 1, 0, then the seeded "src" pages also have 0 links each.
-    // We only assert the top two by link count are page2[0]=1, page2[1]=0.
+    // Full page-2 contents (ORDER BY inbound_link_count DESC, b.id ASC):
+    //   pos 3: "Page2" (01PAGE0000000000000000P02, count=1)
+    //   pos 4: "Page3" (01PAGE0000000000000000P03, count=0)
+    // Remaining 6 zero-link src pages follow on page 3+.
+    assert_eq!(page2.items.len(), 2);
+    assert_eq!(page2.items[0].content.as_deref(), Some("Page2"));
     assert_eq!(page2.items[0].inbound_link_count, 1);
+    assert_eq!(page2.items[0].id, "01PAGE0000000000000000P02");
+    assert_eq!(page2.items[1].content.as_deref(), Some("Page3"));
+    assert_eq!(page2.items[1].inbound_link_count, 0);
+    assert_eq!(page2.items[1].id, "01PAGE0000000000000000P03");
+    assert!(page2.has_more);
+    assert!(page2.next_cursor.is_some());
 }
 
 // ── has_property_flags bitmask ────────────────────────────────────────────
