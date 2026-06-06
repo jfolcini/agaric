@@ -35,6 +35,7 @@ mod boot;
 mod cache_refresh;
 mod draft_recovery;
 pub mod replay;
+mod sync_inbox;
 #[cfg(test)]
 mod tests;
 
@@ -42,6 +43,7 @@ pub use boot::recover_at_boot;
 pub use cache_refresh::refresh_caches_for_recovered_drafts;
 pub use draft_recovery::find_prev_edit;
 pub use replay::{ReplayReport, replay_unmaterialized_ops};
+pub use sync_inbox::replay_sync_inbox;
 
 // L-103 test wrapper: re-export the once-only-guard reset for in-crate
 // test code (`integration_tests.rs`) so multi-test runs aren't poisoned
@@ -77,4 +79,8 @@ pub struct RecoveryReport {
     pub ops_skipped_idempotent: u64,
     /// C-2b: non-fatal errors encountered during replay enqueue.
     pub replay_errors: Vec<String>,
+    /// #535: number of leftover write-ahead `loro_sync_inbox` slots replayed
+    /// (re-imported + re-projected, then cleared) at boot. Non-zero means a
+    /// prior crash interrupted the apply-remote durability window.
+    pub sync_inbox_replayed: u64,
 }

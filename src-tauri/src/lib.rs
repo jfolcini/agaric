@@ -806,27 +806,30 @@ pub fn run() {
             // single-digit ms at typical workspace scales. The periodic
             // flush task is spawned separately (it's a long-running
             // background task; blocking on it would pin boot).
+            let installed = crate::loro::shared::init();
+            tracing::info!(
+                installed,
+                "loro: process-global LoroState init complete (synchronous, pre-recovery)",
+            );
+            // Bind the process-global registry once: rehydrate reads it, and
+            // recovery's #535 sync-inbox replay re-imports leftover slots into
+            // it. `get()` is `Some` immediately after `init()` (the static is
+            // installed synchronously above), so the `expect` is infallible at
+            // this point in boot.
+            let loro_state = crate::loro::shared::get()
+                .expect("LoroState must be installed by shared::init() before recovery");
             {
-                let installed = crate::loro::shared::init();
-                tracing::info!(
-                    installed,
-                    "loro: process-global LoroState init complete (synchronous, pre-recovery)",
-                );
-                if let Some(state) = crate::loro::shared::get() {
-                    let n = tauri::async_runtime::block_on(
-                        crate::loro::snapshot::rehydrate_registry(
-                            &pools.write,
-                            &state.registry,
-                            &device_id,
-                        ),
+                let n = tauri::async_runtime::block_on(crate::loro::snapshot::rehydrate_registry(
+                    &pools.write,
+                    &loro_state.registry,
+                    &device_id,
+                ));
+                if n > 0 {
+                    tracing::info!(
+                        rehydrated_spaces = n,
+                        "loro: rehydrated per-space LoroDoc snapshots from \
+                         loro_doc_state (pre-recovery)",
                     );
-                    if n > 0 {
-                        tracing::info!(
-                            rehydrated_spaces = n,
-                            "loro: rehydrated per-space LoroDoc snapshots from \
-                             loro_doc_state (pre-recovery)",
-                        );
-                    }
                 }
             }
 
@@ -836,6 +839,7 @@ pub fn run() {
                 &pools.write,
                 &device_id,
                 &materializer,
+                &loro_state.registry,
             ))?;
             if !report.drafts_recovered.is_empty() {
                 tracing::info!(
