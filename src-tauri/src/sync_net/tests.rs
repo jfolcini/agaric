@@ -1,3 +1,5 @@
+//! mDNS lifecycle is not unit-tested here; see sync_integration_tests.rs for the full lifecycle test.
+
 use super::tls::{AllowAnyCert, PinningCertVerifier};
 use super::*;
 use crate::sync_protocol::{DeviceHead, SyncMessage};
@@ -434,18 +436,6 @@ fn mdns_service_type_follows_rfc6763() {
     );
 }
 
-/// mDNS announce/browse lifecycle test is skipped in unit tests because
-/// it requires binding to a real multicast socket on the host network,
-/// which is not available in sandboxed CI environments.
-///
-/// The lifecycle is exercised in manual integration testing and the
-/// dedicated `sync_integration_tests.rs` module.
-#[test]
-fn mdns_lifecycle_skipped_explanation() {
-    // This test documents why mDNS announce/browse is not unit-tested.
-    // See sync_integration_tests.rs for the full lifecycle test.
-}
-
 /// Verify the browse timeout constant is 5 seconds.
 #[test]
 fn mdns_browse_timeout_is_5_seconds() {
@@ -584,12 +574,8 @@ async fn cert_pinning_wrong_hash_fails() {
     };
     let err_msg = err.to_string();
     assert!(
-        err_msg.contains("cert")
-            || err_msg.contains("hash")
-            || err_msg.contains("tls")
-            || err_msg.contains("TLS")
-            || err_msg.contains("alert"),
-        "error should mention cert/hash/tls issue, got: {err_msg}"
+        err_msg.contains("hash") || err_msg.contains("mismatch"),
+        "error should indicate cert pinning rejection (hash/mismatch), got: {err_msg}"
     );
 
     server.shutdown().await;
@@ -1240,13 +1226,8 @@ async fn mtls_reconnection_with_wrong_cert_hash_fails() {
         Ok(_) => panic!("connection with wrong cert hash should fail (cert pinning rejection)"),
     };
     assert!(
-        err_msg.contains("cert")
-            || err_msg.contains("hash")
-            || err_msg.contains("tls")
-            || err_msg.contains("TLS")
-            || err_msg.contains("alert")
-            || err_msg.contains("pin"),
-        "error should indicate cert pinning rejection, got: {err_msg}"
+        err_msg.contains("hash") || err_msg.contains("mismatch"),
+        "error should indicate cert pinning rejection (hash/mismatch), got: {err_msg}"
     );
 
     server.shutdown().await;

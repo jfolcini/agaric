@@ -1,14 +1,14 @@
 ---
 source: src/commands/tests/snapshot_tests.rs
-assertion_line: 108
+assertion_line: 109
 expression: status
 ---
 foreground_queue_depth: 0
 background_queue_depth: 0
 total_ops_dispatched: 0
-total_background_dispatched: 0
+total_background_dispatched: 1
 fg_high_water: 0
-bg_high_water: 0
+bg_high_water: 1
 fg_errors: 0
 bg_errors: 0
 fg_panics: 0

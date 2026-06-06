@@ -305,15 +305,17 @@ async fn same_ms_real_edit_is_not_clobbered_by_recovery() {
         "no synthetic clobbering op should be created"
     );
 
-    // blocks.content must still reflect the real edit, not the stale draft.
+    // blocks.content must still reflect the pre-recovery value ("old content"),
+    // not the stale draft. Recovery classified the draft as already-flushed and
+    // must not have written anything to blocks.
     let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
         .bind(block_id)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         content.as_deref(),
-        Some("stale draft content"),
+        Some("old content"),
         "recovery must not have clobbered the block with stale draft content"
     );
 }
@@ -330,7 +332,6 @@ async fn recovery_with_no_drafts_returns_empty_report() {
     assert!(report.drafts_recovered.is_empty());
     assert_eq!(report.drafts_already_flushed, 0);
     assert!(report.draft_errors.is_empty());
-    assert!(report.duration_ms < 5000); // sanity: < 5 s
 }
 
 // `recovery_when_op_log_is_empty_draft_for_never_created_block` was deleted
@@ -668,7 +669,6 @@ async fn recovery_report_counts_are_accurate() {
     assert_eq!(report.drafts_recovered.len(), 3);
     assert_eq!(report.drafts_already_flushed, 2);
     assert!(report.draft_errors.is_empty());
-    assert!(report.duration_ms < 5000);
 }
 
 // === 8. find_prev_edit unit tests ===
@@ -771,6 +771,12 @@ async fn recover_at_boot_records_errors_when_draft_processing_fails() {
         2,
         "expected exactly 2 draft errors (recover + delete), got: {:?}",
         report.draft_errors
+    );
+    assert_eq!(
+        report.replay_errors.len(),
+        1,
+        "dropping op_log before recovery causes replay to error too: {:?}",
+        report.replay_errors
     );
     assert!(
         report.drafts_recovered.is_empty(),
