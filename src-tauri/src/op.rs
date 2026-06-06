@@ -216,7 +216,7 @@ pub struct SetPropertyPayload {
     pub value_text: Option<String>,
     pub value_num: Option<f64>,
     pub value_date: Option<String>,
-    pub value_ref: Option<String>,
+    pub value_ref: Option<BlockId>,
     #[serde(default)]
     pub value_bool: Option<bool>,
 }
@@ -507,7 +507,10 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
                 "set_property.value_date.empty".into(),
             ));
         }
-        if p.value_ref.as_ref().is_some_and(|s| s.trim().is_empty()) {
+        if p.value_ref
+            .as_ref()
+            .is_some_and(|b| b.as_str().trim().is_empty())
+        {
             return Err(crate::error::AppError::Validation(
                 "set_property.value_ref.empty".into(),
             ));
@@ -1702,6 +1705,33 @@ mod tests {
                 "empty value_ref ({empty:?}) must return the value_ref.empty error, got: {err:?}"
             );
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // #465: SetPropertyPayload.value_ref is Option<BlockId> — auto-uppercase
+    // -----------------------------------------------------------------------
+
+    /// Regression test for issue #465: `value_ref` is now `Option<BlockId>`,
+    /// so constructing a `SetPropertyPayload` with a lowercase ULID string
+    /// must produce the canonical uppercase form.  This ensures blake3 hash
+    /// determinism across devices (AGENTS.md invariant #8).
+    #[test]
+    fn set_property_value_ref_blockid_normalizes_lowercase() {
+        let lower = "abc123def456ghi789jkl01a";
+        let p = SetPropertyPayload {
+            block_id: BlockId::test_id("B1"),
+            key: "linked".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::from(lower)),
+            value_bool: None,
+        };
+        assert_eq!(
+            p.value_ref.as_ref().map(|b| b.as_str()),
+            Some("ABC123DEF456GHI789JKL01A"),
+            "value_ref BlockId must auto-uppercase the input ULID"
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -450,7 +450,7 @@ async fn migrate_pages_to_personal_space_batched(
             value_text: None,
             value_num: None,
             value_date: None,
-            value_ref: Some(SPACE_PERSONAL_ULID.to_owned()),
+            value_ref: Some(BlockId::from(SPACE_PERSONAL_ULID)),
             value_bool: None,
         });
         let record =
@@ -802,7 +802,7 @@ pub async fn migrate_orphan_tags_to_space(
             value_text: None,
             value_num: None,
             value_date: None,
-            value_ref: Some(target_space.to_owned()),
+            value_ref: Some(BlockId::from(target_space)),
             value_bool: None,
         });
         let record =

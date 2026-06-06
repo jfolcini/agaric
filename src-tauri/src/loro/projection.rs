@@ -627,6 +627,7 @@ pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
     block_id: &crate::ulid::BlockId,
     props: &[(String, crate::loro::engine::PropertyValue)],
+    value_types: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
     use crate::loro::engine::PropertyValue;
     // Authoritative replace: clear all existing rows first so remote
@@ -649,18 +650,6 @@ pub async fn reproject_block_properties_from_engine(
     )
     .execute(&mut *conn)
     .await?;
-
-    // P3 (#346): preload all `property_definitions` (key → value_type) ONCE
-    // instead of a per-String-typed-property SELECT inside the loop, which
-    // was an N+1 on every inbound sync. Behaviour is identical: a key absent
-    // from the map (no definition row) still defaults to "text" with a warn.
-    let value_types: std::collections::HashMap<String, String> =
-        sqlx::query!("SELECT key, value_type FROM property_definitions")
-            .fetch_all(&mut *conn)
-            .await?
-            .into_iter()
-            .map(|r| (r.key, r.value_type))
-            .collect();
 
     for (key, value) in props {
         if is_reserved_property_key(key) {
@@ -1941,6 +1930,20 @@ mod tests {
     // PEND-76 F1 — inbound property re-projection into block_properties.
     // ---------------------------------------------------------------------
 
+    /// Load all `property_definitions` rows into a `key → value_type` map.
+    /// Use this in tests that pass `value_types` to
+    /// `reproject_block_properties_from_engine` and need the seeded types to
+    /// take effect (e.g. a `Str` value for a `number`- or `ref`-typed key).
+    async fn load_value_types(pool: &SqlitePool) -> std::collections::HashMap<String, String> {
+        sqlx::query!("SELECT key, value_type FROM property_definitions")
+            .fetch_all(pool)
+            .await
+            .expect("load value_types")
+            .into_iter()
+            .map(|r| (r.key, r.value_type))
+            .collect()
+    }
+
     /// Seed the `property_definitions` rows the re-projection consults to
     /// recover SQL types, plus the owning block row (block_properties FK).
     async fn seed_block_and_property_defs(pool: &SqlitePool) {
@@ -1987,8 +1990,9 @@ mod tests {
             ("done".to_string(), PropertyValue::Bool(true)),
             ("due".to_string(), pv("2026-01-01")),
         ];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject");
         drop(conn);
@@ -2055,9 +2059,14 @@ mod tests {
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![("mystery".to_string(), pv("raw"))];
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
-            .await
-            .expect("reproject undefined");
+        reproject_block_properties_from_engine(
+            &mut conn,
+            &bid,
+            &props,
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .expect("reproject undefined");
         drop(conn);
 
         let row: (Option<String>,) = sqlx::query_as(
@@ -2085,8 +2094,9 @@ mod tests {
         // `effort` is a `number`-typed def (see seed); "not-a-number" cannot
         // parse as f64.
         let props = vec![("effort".to_string(), pv("not-a-number"))];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject");
         drop(conn);
@@ -2130,8 +2140,9 @@ mod tests {
             ("note".to_string(), pv("kept")),
             ("todo_state".to_string(), pv("DOING")),
         ];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject");
         drop(conn);
@@ -2158,8 +2169,9 @@ mod tests {
         // value_ref has a FK to blocks(id); point at the seeded BLOCK_A.
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![("link".to_string(), pv(BLOCK_A))];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject");
         drop(conn);
@@ -2194,8 +2206,9 @@ mod tests {
         const DANGLING: &str = "01HZ000000000000000000DANG";
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![("link".to_string(), pv(DANGLING))];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("a dangling ref must not FK-abort the inbound-sync tx");
         drop(conn);
@@ -2228,8 +2241,9 @@ mod tests {
 
         let bid = BlockId::from_trusted(BLOCK_A);
         let props = vec![("link".to_string(), PropertyValue::Num(42.0))];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("native Num under a ref-declared key must not FK-abort");
         drop(conn);
@@ -2273,9 +2287,10 @@ mod tests {
             ("note".to_string(), PropertyValue::Null), // explicit null (cleared)
             ("effort".to_string(), pv("not-a-number")), // number-typed Str that won't parse
         ];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
         // Must NOT error (no CHECK violation, no tx abort).
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject must succeed for null / unparseable values");
         drop(conn);
@@ -2307,8 +2322,9 @@ mod tests {
             ("due_date".to_string(), pv("2026-02-01")),
             ("scheduled_date".to_string(), pv("2026-01-15")),
         ];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
             .await
             .expect("reproject reserved keys");
         drop(conn);
@@ -2360,8 +2376,9 @@ mod tests {
             ("todo_state".to_string(), pv("TODO")),
             ("due_date".to_string(), pv("2026-03-03")),
         ];
+        let value_types = load_value_types(&pool).await;
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props1)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props1, &value_types)
             .await
             .expect("reproject 1");
         drop(conn);
@@ -2369,7 +2386,7 @@ mod tests {
         // Sync 2 — both absent (cleared on remote).
         let props2: Vec<(String, PropertyValue)> = vec![];
         let mut conn = pool.acquire().await.expect("acquire");
-        reproject_block_properties_from_engine(&mut conn, &bid, &props2)
+        reproject_block_properties_from_engine(&mut conn, &bid, &props2, &value_types)
             .await
             .expect("reproject 2");
         drop(conn);
@@ -2510,6 +2527,154 @@ mod tests {
             ids,
             vec![BLOCK_B.to_string()],
             "dangling tag id dropped; the valid edge is still projected"
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // reproject_block_deleted_at_from_engine tests
+    // ---------------------------------------------------------------------
+
+    /// Helper: insert a minimal `blocks` row (no parent, position 0).
+    async fn insert_block(pool: &SqlitePool, id: &str, deleted_at: Option<i64>) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', '', NULL, 0, ?)",
+        )
+        .bind(id)
+        .bind(deleted_at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reproject_deleted_at_cascade_sets_timestamp() {
+        // A block with `deleted_at` in the engine → DB `deleted_at` is set
+        // to that timestamp (cascade soft-delete via
+        // `project_delete_block_to_sql`).
+        let (pool, _dir) = fresh_pool().await;
+        insert_block(&pool, BLOCK_A, None).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let ts_ms: i64 = 1_767_225_600_000;
+        let ts_str = ts_ms.to_string();
+
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_deleted_at_from_engine(&mut conn, &bid, Some(&ts_str))
+            .await
+            .expect("reproject deleted_at");
+        drop(conn);
+
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(
+            deleted_at,
+            Some(ts_ms),
+            "deleted_at must be set to the engine timestamp"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_deleted_at_none_resurrects_block() {
+        // A block with `deleted_at = None` in the engine (remote restore) →
+        // DB `deleted_at` is cleared (NULL). Block has no deleted ancestor so
+        // the resurrection guard does not block it.
+        let (pool, _dir) = fresh_pool().await;
+        let ts_ms: i64 = 1_767_225_600_000;
+        insert_block(&pool, BLOCK_A, Some(ts_ms)).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
+            .await
+            .expect("reproject none");
+        drop(conn);
+
+        let deleted_at: Option<Option<i64>> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_optional(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(
+            deleted_at,
+            Some(None),
+            "deleted_at must be cleared (NULL) after remote restore"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_deleted_at_with_deleted_ancestor_stays_deleted() {
+        // A block whose ancestor is still deleted must NOT be resurrected even
+        // when `engine_deleted_at` is `None`. The resurrection guard
+        // (`has_deleted_ancestor`) prevents the restore.
+        let (pool, _dir) = fresh_pool().await;
+        const PARENT: &str = "01HZ00000000000000000000P1";
+        let ts_ms: i64 = 1_767_225_600_000;
+
+        // Parent is deleted.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'page', '', NULL, 0, ?)",
+        )
+        .bind(PARENT)
+        .bind(ts_ms)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Child is also deleted (cascade from parent).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, deleted_at) \
+             VALUES (?, 'content', '', ?, 1, ?)",
+        )
+        .bind(BLOCK_A)
+        .bind(PARENT)
+        .bind(ts_ms)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Engine says child is alive (None), but parent is still deleted.
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        reproject_block_deleted_at_from_engine(&mut conn, &bid, None)
+            .await
+            .expect("reproject with deleted ancestor");
+        drop(conn);
+
+        let deleted_at: Option<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch deleted_at");
+        assert_eq!(
+            deleted_at,
+            Some(ts_ms),
+            "block under a deleted ancestor must stay deleted"
+        );
+    }
+
+    #[tokio::test]
+    async fn reproject_deleted_at_non_integer_ts_returns_error() {
+        // If the engine `deleted_at` value is not a valid integer string,
+        // the function must return an `AppError::Validation` rather than panic.
+        let (pool, _dir) = fresh_pool().await;
+        insert_block(&pool, BLOCK_A, None).await;
+
+        let bid = BlockId::from_trusted(BLOCK_A);
+        let mut conn = pool.acquire().await.expect("acquire");
+        let result =
+            reproject_block_deleted_at_from_engine(&mut conn, &bid, Some("not-a-timestamp")).await;
+        drop(conn);
+
+        assert!(
+            result.is_err(),
+            "non-integer deleted_at must return an error, got Ok"
         );
     }
 

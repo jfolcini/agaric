@@ -805,10 +805,9 @@ pub async fn receive_request_and_send_files(
     let mut bytes_total: u64 = 0;
     if progress.is_some() && files_total > 0 {
         for id in &attachment_ids {
-            if let Ok(Some(fs_path)) = get_attachment_fs_path(pool, id).await {
-                if let Ok((size, _)) = read_attachment_file_metadata(app_data_dir, &fs_path).await {
-                    bytes_total = bytes_total.saturating_add(size);
-                }
+            if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
+                bytes_total =
+                    bytes_total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
             }
         }
         if let Some(p) = progress {
