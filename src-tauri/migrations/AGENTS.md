@@ -70,6 +70,10 @@ Precedent: `loro_doc_state.updated_at` (migration 0052) and `app_settings.update
 
 The op log (`op_log`) is the event-sourcing root. Migrations that change schema MUST NOT backfill op log rows for the new schema — that would inject synthetic ops into the user's history. Backfill should happen lazily through normal command paths, OR through a one-time materializer task triggered after the schema is in place.
 
+## Table-rebuild migrations (`_new_<table>` prefix convention)
+
+When a table rebuild is needed (e.g. to add a `FOREIGN KEY … ON DELETE CASCADE` that SQLite cannot add via `ALTER TABLE`), create the replacement as `_new_<table>`, backfill, then rename. Two legacy migrations (0038 `block_drafts_new` and 0044 `materializer_retry_queue_new`) used a suffix form (`<table>_new`) and are exceptions to this rule. From migration 0061 onward the canonical prefix form `_new_<table>` is used; future rebuilds must follow the prefix convention.
+
 ## Renaming + dropping tables
 
 Renaming or dropping a column / table is destructive. Always:

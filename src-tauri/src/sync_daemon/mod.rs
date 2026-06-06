@@ -44,10 +44,13 @@ use crate::sync_scheduler::SyncScheduler;
 
 // Re-export submodule items
 pub use discovery::{
-    build_fallback_peer, format_peer_address, format_peer_addresses, get_peer_cert_hash,
-    process_discovery_event, process_service_removed, resolve_peer_address,
-    should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+    build_fallback_peer, format_peer_addresses, get_peer_cert_hash, process_discovery_event,
+    resolve_peer_address, should_attempt_sync_with_discovered_peer, should_store_cert_hash,
 };
+// These helpers are only called from test siblings — guard against unused_imports
+// on non-test builds (same rationale as the orchestrator/server re-exports below).
+#[allow(unused_imports)]
+pub(crate) use discovery::{format_peer_address, process_service_removed};
 // `pub(crate) use` re-exports consumed only by `#[cfg(test)]` siblings
 // (sync_daemon/tests.rs and the crate-level `sync_integration_tests`).
 // Without this `#[allow]` rustc fires `unused_imports` on non-test

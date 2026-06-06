@@ -79,14 +79,16 @@ const OP_RECORD_BINDS_PER_OP: usize = 3;
 ///
 /// # Errors
 ///
-/// Propagates the same errors as [`super::compute_reverse`]:
+/// Propagates the same errors as [`super::compute_reverse`], including:
 ///   * `AppError::Validation` on unknown `op_type` strings.
-///   * `AppError::NotFound` when an `edit_block` / `move_block` /
-///     `delete_property` lookup finds no prior context.
-///   * `AppError::NonReversible` for `purge_block`, an attachment
-///     restore whose `add_attachment` is gone, or a move-of-create
-///     where the create lacks `position` (BUG-26).
-///   * `serde_json::Error` (via `From`) for malformed payloads.
+///   * `AppError::NotFound` when any op's prior context is missing
+///     (edit_block, move_block, set_property, delete_property arms).
+///   * `AppError::NonReversible` for non-reversible ops (e.g. purge_block,
+///     an attachment restore whose `add_attachment` is gone, or a
+///     move-of-create missing position — BUG-26).
+///   * `serde_json::Error` (via `From`) for malformed payloads in any arm.
+///
+/// An empty input slice returns `Ok(Vec::new())`.
 pub async fn compute_reverse_batch(
     pool: &SqlitePool,
     ops: &[OpRecord],
@@ -159,7 +161,7 @@ pub async fn compute_reverse_batch(
         let record = &ops[idx];
         let reverse = match ty {
             OpType::CreateBlock => block_ops::reverse_create_block(record)?,
-            OpType::DeleteBlock => block_ops::reverse_delete_block(pool, record)?,
+            OpType::DeleteBlock => block_ops::reverse_delete_block(record)?,
             OpType::EditBlock => {
                 let prior = edit_prior[edit_cursor].as_ref();
                 edit_cursor += 1;

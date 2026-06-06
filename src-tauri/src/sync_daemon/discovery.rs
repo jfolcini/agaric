@@ -127,7 +127,8 @@ pub fn resolve_peer_address(
 /// a multi-address try-all callsite in `try_sync_with_peer`. This
 /// single-address helper is retained for callers (and tests) that
 /// genuinely want only the top-priority address.
-pub fn format_peer_address(peer: &DiscoveredPeer) -> Option<String> {
+#[allow(dead_code)] // test seam — no production callers; tests use it directly
+pub(crate) fn format_peer_address(peer: &DiscoveredPeer) -> Option<String> {
     format_peer_addresses(peer).into_iter().next()
 }
 
@@ -269,7 +270,8 @@ pub fn process_discovery_event(
 /// which forwards `Removed` events here; this helper is exported so
 /// tests can drive the eviction path without constructing real
 /// `mdns_sd::ServiceEvent` values.
-pub fn process_service_removed(
+#[allow(dead_code)] // test seam — production removal goes through process_discovery_event
+pub(crate) fn process_service_removed(
     removed_device_id: &str,
     local_device_id: &str,
     discovered: &mut HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,

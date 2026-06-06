@@ -241,9 +241,10 @@ fn format_summary(date: NaiveDate) -> String {
     // `%d` → zero-padded day-of-month.  All three are ASCII in the C
     // locale chrono uses, so no locale-drift risk.
     let human = date.format("%a %b %d").to_string();
-    // Sanity-check: the month-day must match the input; `format` uses
-    // the date's fields, so this is just here to silence the unused
-    // `Datelike` import warning and to document the expected shape.
+    // Sanity-check: the zero-padded day produced by `%d` must match
+    // `date.day()` via `Datelike`; asserts that `format` and the
+    // calendar fields agree (guards against locale / format-string
+    // drift).
     debug_assert!(human.contains(&format!("{:02}", date.day())));
     format!("{SUMMARY_PREFIX}{human}")
 }

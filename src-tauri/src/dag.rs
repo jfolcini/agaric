@@ -578,11 +578,12 @@ pub async fn find_lca(
 ) -> Result<Option<(String, i64)>, AppError> {
     // Check if compaction has occurred (snapshots exist).  Drives the
     // compaction-aware error reporting inside `fetch_prev_edit`.
+    // EXISTS stops at the first matching row, which is cheaper than COUNT(*).
     let has_snapshots: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM log_snapshots WHERE status = 'complete'")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM log_snapshots WHERE status = 'complete')")
             .fetch_one(pool)
             .await?;
-    let has_snapshots = has_snapshots > 0;
+    let has_snapshots = has_snapshots != 0;
 
     // Walk chain A to its root (or local cycle) and collect every key.
     // Chain A has no early-exit predicate.

@@ -324,6 +324,40 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
     }
 }
 
+/// Shared helper for [`extract_block_id_from_payload`] and
+/// [`extract_attachment_id_from_payload`]: parse the payload JSON and return
+/// the value of `field` as an owned `String`, or `None` on missing field or
+/// parse error.
+///
+/// L-1: surfaces JSON parse failures as a warn-level log instead of silently
+/// returning `None`. AGENTS.md "Anti-patterns" forbids the silent-swallow
+/// pattern — corruption would lose the indexed column entry and produce
+/// hard-to-attribute "queries miss this op" bugs. Warn-and-continue keeps the
+/// existing call sites' behaviour while making the failure visible in logs.
+///
+/// The payload prefix is truncated at 80 chars so a multi-MB malformed payload
+/// does not flood the log line. `chars().take(80)` handles UTF-8 boundaries
+/// correctly (slicing by byte index can split a multi-byte codepoint).
+fn extract_str_field_from_payload(payload_json: &str, field: &'static str) -> Option<String> {
+    match serde_json::from_str::<serde_json::Value>(payload_json) {
+        Ok(value) => value.get(field)?.as_str().map(str::to_owned),
+        Err(e) => {
+            // Truncate at 80 chars so a multi-MB malformed payload does
+            // not flood the log line.  `chars().take(80)` handles UTF-8
+            // boundaries correctly (slicing by byte index can split a
+            // multi-byte codepoint).
+            let prefix: String = payload_json.chars().take(80).collect();
+            tracing::warn!(
+                error = %e,
+                op_payload_prefix = %prefix,
+                "failed to extract {} from payload",
+                field
+            );
+            None
+        }
+    }
+}
+
 /// Extract the `block_id` from a serialized payload JSON string.
 ///
 /// Used by [`crate::dag::insert_remote_op`] to populate the indexed
@@ -334,29 +368,7 @@ pub(crate) fn serialize_inner_payload(op_payload: &OpPayload) -> Result<String, 
 /// `delete_attachment` op targets an attachment_id only) or if the JSON
 /// cannot be parsed.
 pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String> {
-    // L-1: surface JSON parse failures as a warn-level log instead of
-    // silently returning None.  AGENTS.md "Anti-patterns" forbids the
-    // silent-swallow pattern — a future caller without an upstream
-    // hash check would silently lose the indexed `block_id` entry on
-    // corruption, producing very-hard-to-attribute "queries miss this
-    // op" bugs.  Warn-and-continue keeps the existing call sites'
-    // behaviour while making the failure visible in logs.
-    match serde_json::from_str::<serde_json::Value>(payload_json) {
-        Ok(value) => value.get("block_id")?.as_str().map(str::to_owned),
-        Err(e) => {
-            // Truncate at 80 chars so a multi-MB malformed payload does
-            // not flood the log line.  `chars().take(80)` handles UTF-8
-            // boundaries correctly (slicing by byte index can split a
-            // multi-byte codepoint).
-            let prefix: String = payload_json.chars().take(80).collect();
-            tracing::warn!(
-                error = %e,
-                op_payload_prefix = %prefix,
-                "failed to extract block_id from payload"
-            );
-            None
-        }
-    }
+    extract_str_field_from_payload(payload_json, "block_id")
 }
 
 /// Extract the `attachment_id` from a serialized payload JSON string.
@@ -373,18 +385,7 @@ pub(crate) fn extract_block_id_from_payload(payload_json: &str) -> Option<String
 /// JSON would lose the indexed entry and produce hard-to-attribute
 /// "reverse-attachment query misses this op" bugs.
 pub(crate) fn extract_attachment_id_from_payload(payload_json: &str) -> Option<String> {
-    match serde_json::from_str::<serde_json::Value>(payload_json) {
-        Ok(value) => value.get("attachment_id")?.as_str().map(str::to_owned),
-        Err(e) => {
-            let prefix: String = payload_json.chars().take(80).collect();
-            tracing::warn!(
-                error = %e,
-                op_payload_prefix = %prefix,
-                "failed to extract attachment_id from payload"
-            );
-            None
-        }
-    }
+    extract_str_field_from_payload(payload_json, "attachment_id")
 }
 
 // ---------------------------------------------------------------------------

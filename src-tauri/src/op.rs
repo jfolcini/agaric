@@ -138,8 +138,13 @@ pub struct CreateBlockPayload {
 pub struct EditBlockPayload {
     pub block_id: BlockId,
     pub to_text: String,
-    /// Previous edit reference as `(device_id, seq)`. Serialized as a JSON
-    /// two-element array `[device_id, seq]` or `null`.
+    /// `(device_id, seq)` reference to the immediately preceding edit of this
+    /// block — forms the CAS key for editor conflict detection. The `device_id`
+    /// string participates in the canonical payload / hash preimage (see
+    /// `normalize_block_ids`); it must be in its already-canonical form (today:
+    /// UUID, always ASCII-safe). Compare the I-Core-11 note on `parent_seqs`.
+    ///
+    /// Serialized as a JSON two-element array `[device_id, seq]` or `null`.
     pub prev_edit: Option<(String, i64)>,
 }
 
