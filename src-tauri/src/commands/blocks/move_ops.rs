@@ -289,8 +289,7 @@ pub async fn move_block_inner(
              WHERE b.deleted_at IS NULL AND d.depth < 100 \
          ) \
          UPDATE blocks SET space_id = ( \
-             SELECT bp.value_ref FROM block_properties bp \
-             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
          WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
            AND block_type != 'page'",

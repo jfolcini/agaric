@@ -177,15 +177,16 @@ pub async fn create_page_in_space_inner(
     // `space_id`) could land a page whose `parent_id` walks across a
     // space boundary, breaking the FEAT-3 "page sets are disjoint"
     // invariant. The check happens inside the tx so it is TOCTOU-safe
-    // against a concurrent move. The `space` ref-property lives in
-    // `value_ref` (see `set_property_in_tx` signature in
-    // `commands/blocks/crud.rs` and the bootstrap writes in
-    // `spaces/bootstrap.rs`).
+    // against a concurrent move. Phase 2: a block's space membership
+    // lives in `blocks.space_id` (the SOLE source of truth), so we read
+    // the parent's own `space_id` rather than a `block_properties`
+    // `space` row. A `NULL` column (or a missing parent row) is treated
+    // the same as the old "no `space` property" case below.
     if let Some(parent) = parent_id.as_ref() {
         let parent_space: Option<String> = sqlx::query_scalar!(
-            r#"SELECT value_ref as "space?: String"
-               FROM block_properties
-               WHERE block_id = ? AND key = 'space'"#,
+            r#"SELECT space_id as "space?: String"
+               FROM blocks
+               WHERE id = ?"#,
             parent,
         )
         .fetch_optional(&mut **tx)
@@ -199,10 +200,11 @@ pub async fn create_page_in_space_inner(
                 )));
             }
             None => {
-                // Parent has no `space` property — refuse rather than
-                // allow a cross-space orphan or invent a default.
+                // Parent has no `space_id` (NULL column or missing row) —
+                // refuse rather than allow a cross-space orphan or invent
+                // a default.
                 return Err(AppError::Validation(format!(
-                    "parent_id '{parent}' has no `space` property; cannot create child in space '{space_id}'"
+                    "parent_id '{parent}' has no space membership; cannot create child in space '{space_id}'"
                 )));
             }
         }
@@ -580,18 +582,15 @@ mod tests {
         .map(|r| (r.block_type, r.content, r.parent_id))
     }
 
-    /// Return the `value_ref` of the `space` property for `block_id`,
-    /// or `None` if no such property exists.
+    /// Return the space `block_id` belongs to (Phase 2: `blocks.space_id`
+    /// is the sole source of truth — the `block_properties(key='space')`
+    /// row is no longer materialized), or `None` if it carries no space.
     async fn get_space_property_ref(pool: &SqlitePool, block_id: &str) -> Option<String> {
-        sqlx::query_scalar!(
-            r#"SELECT value_ref FROM block_properties
-               WHERE block_id = ? AND key = 'space'"#,
-            block_id
-        )
-        .fetch_optional(pool)
-        .await
-        .unwrap()
-        .flatten()
+        sqlx::query_scalar!(r#"SELECT space_id FROM blocks WHERE id = ?"#, block_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+            .flatten()
     }
 
     #[tokio::test]

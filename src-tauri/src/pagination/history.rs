@@ -167,8 +167,7 @@ pub async fn list_page_history(
                     OR (ol.created_at = ?3 AND ol.seq < ?4) \
                     OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) \
                AND (?7 IS NULL OR ol.block_id IN ( \
-                    SELECT bp.block_id FROM block_properties bp \
-                    WHERE bp.key = 'space' AND bp.value_ref = ?7)) \
+                    SELECT id FROM blocks WHERE space_id = ?7)) \
              ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC \
              LIMIT ?5",
             op_type_filter,    // ?1

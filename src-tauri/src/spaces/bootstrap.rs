@@ -460,32 +460,38 @@ async fn migrate_pages_to_personal_space_batched(
         records.push(record);
     }
 
-    // Step C — chunked `INSERT OR REPLACE INTO block_properties`. The
-    // multi-row VALUES form binds 6 params per row; SQLite caps bind
-    // parameters at MAX_SQL_PARAMS (999) per statement so we chunk to
-    // PROPERTIES_INSERT_CHUNK (= 166) rows.
+    // Step C — chunked `UPDATE blocks SET space_id` (Phase 2: the
+    // `blocks.space_id` column is the SOLE source of truth; the
+    // `block_properties(key='space')` row is no longer materialized).
+    // The op-log `SetProperty(space)` appends above remain the
+    // append-only record; here we only project them onto the column.
     //
-    // `INSERT OR REPLACE` (NOT `INSERT OR IGNORE`) matches the
-    // upstream `set_property_in_tx` UPSERT semantics — if a stale
-    // property row somehow exists for one of these page_ids it will be
-    // overwritten with the Personal-space ref.
+    // Each page's space membership covers the page block itself
+    // (`id IN (chunk)`) and every block whose `page_id` points at one of
+    // these pages (`page_id IN (chunk)`), matching the
+    // `id=? OR page_id=?` grouping used elsewhere for space membership.
+    //
+    // SQLite caps bind parameters at MAX_SQL_PARAMS (999) per statement.
+    // Each chunk binds the personal-space ref once plus the chunk ids
+    // twice (once per `IN` list), so the bind budget per statement is
+    // `1 + 2*chunk_len`. Reusing PROPERTIES_INSERT_CHUNK (= 166) keeps us
+    // well under the cap (1 + 2*166 = 333 < 999).
     for chunk in page_ids.chunks(PROPERTIES_INSERT_CHUNK) {
-        let placeholders: Vec<&str> = chunk.iter().map(|_| "(?, ?, ?, ?, ?, ?)").collect();
+        let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+        let placeholders = placeholders.join(", ");
         let sql = format!(
-            "INSERT OR REPLACE INTO block_properties \
-             (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES {}",
-            placeholders.join(", ")
+            "UPDATE blocks SET space_id = ? \
+             WHERE id IN ({placeholders}) OR page_id IN ({placeholders})"
         );
         let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        q = q.bind(SPACE_PERSONAL_ULID);
+        // First `IN (...)` list — the page block ids themselves.
         for page_id in chunk {
-            q = q
-                .bind(page_id)
-                .bind("space")
-                .bind(None::<String>)
-                .bind(None::<f64>)
-                .bind(None::<String>)
-                .bind(SPACE_PERSONAL_ULID);
+            q = q.bind(page_id);
+        }
+        // Second `IN (...)` list — children whose `page_id` is one of them.
+        for page_id in chunk {
+            q = q.bind(page_id);
         }
         q.execute(&mut **tx).await?;
     }
@@ -501,13 +507,14 @@ async fn pages_without_space(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query!(
+        // #533 Phase 2: space membership is `blocks.space_id` (the old
+        // `block_properties(key='space')` rows are gone). "Without a space"
+        // is now `space_id IS NULL`. `is_space` remains a property flag
+        // (it marks a block AS a space; it was not migrated to a column).
         r#"SELECT id as "id!: String" FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM block_properties
-                 WHERE block_id = b.id AND key = 'space'
-             )
+             AND b.space_id IS NULL
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties
                  WHERE block_id = b.id
@@ -695,13 +702,13 @@ async fn pages_to_migrate(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<Vec<String>, AppError> {
     let rows = sqlx::query!(
+        // #533 Phase 2: a page's space is `blocks.space_id`, not a
+        // `block_properties(key='space')` row. Select pre-threshold pages
+        // currently in Personal via the column.
         r#"SELECT b.id as "id!: String" FROM blocks b
-           INNER JOIN block_properties p
-               ON p.block_id = b.id
-              AND p.key = 'space'
-              AND p.value_ref = ?
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
+             AND b.space_id = ?
              AND b.id < ?
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties s
@@ -744,13 +751,11 @@ pub async fn migrate_orphan_tags_to_space(
     // Step 1 — find every live, non-conflict tag block that has no
     // `space` property.
     let orphan_tags = sqlx::query!(
+        // #533 Phase 2: an unassigned tag is `space_id IS NULL`.
         r#"SELECT b.id as "id!: String" FROM blocks b
            WHERE b.block_type = 'tag'
              AND b.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM block_properties
-                 WHERE block_id = b.id AND key = 'space'
-             )
+             AND b.space_id IS NULL
            ORDER BY b.id"#,
     )
     .fetch_all(&mut **tx)
@@ -780,22 +785,21 @@ pub async fn migrate_orphan_tags_to_space(
          FROM ( \
              SELECT \
                  btr.tag_id, \
-                 p.value_ref AS space_id, \
+                 p.space_id AS space_id, \
                  COUNT(*) AS cnt, \
                  ROW_NUMBER() OVER ( \
                      PARTITION BY btr.tag_id \
-                     ORDER BY COUNT(*) DESC, p.value_ref ASC \
+                     ORDER BY COUNT(*) DESC, p.space_id ASC \
                  ) AS rn \
              FROM block_tag_refs btr \
              INNER JOIN blocks b \
                  ON b.id = btr.source_id \
                 AND b.deleted_at IS NULL \
-             INNER JOIN block_properties p \
-                 ON p.block_id = b.page_id \
-                AND p.key = 'space' \
-                AND p.value_ref IS NOT NULL \
+             INNER JOIN blocks p \
+                 ON p.id = b.page_id \
+                AND p.space_id IS NOT NULL \
              WHERE btr.tag_id IN (SELECT value FROM json_each(?1)) \
-             GROUP BY btr.tag_id, p.value_ref \
+             GROUP BY btr.tag_id, p.space_id \
          ) ranked \
          WHERE rn = 1",
     )
@@ -832,14 +836,17 @@ pub async fn migrate_orphan_tags_to_space(
             op_log::append_local_op_in_tx(tx, device_id, payload, crate::db::now_ms()).await?;
         records.push(record);
 
-        // Materialize the property row immediately so downstream
-        // enforcement steps in the same transaction see it.
+        // Materialize the space membership onto the column immediately so
+        // downstream enforcement steps in the same transaction see it
+        // (Phase 2: `blocks.space_id` is the SOLE source of truth; the
+        // op-log append above remains the append-only record). A tag block
+        // carries its own space, and any block whose `page_id` points at
+        // the tag is covered by the `id = ? OR page_id = ?` grouping.
         sqlx::query!(
-            "INSERT OR REPLACE INTO block_properties \
-             (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES (?, 'space', NULL, NULL, NULL, ?)",
-            tag_id,
+            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
             target_space,
+            tag_id,
+            tag_id,
         )
         .execute(&mut **tx)
         .await?;
@@ -934,13 +941,10 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
-        let space = sqlx::query_scalar!(
-            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-            tag_id,
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let space = sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", tag_id,)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(space, Some(SPACE_PERSONAL_ULID.to_string()));
     }
 
@@ -960,17 +964,9 @@ mod tests {
         .await
         .unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'page', 'Test', NULL, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'Test', NULL, 1, ?, ?)",
             source_id,
-            source_id,
-        )
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-        sqlx::query!(
-            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES (?, 'space', NULL, NULL, NULL, ?)",
             source_id,
             SPACE_WORK_ULID,
         )
@@ -991,13 +987,10 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
-        let space = sqlx::query_scalar!(
-            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-            tag_id,
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let space = sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", tag_id,)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
     }
 
@@ -1078,26 +1071,22 @@ mod tests {
         .await
         .unwrap();
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'page', 'Page', NULL, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?, ?)",
             page_id,
             page_id,
+            SPACE_WORK_ULID,
         )
         .execute(&mut *tx)
         .await
         .unwrap();
         sqlx::query!(
-            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref) \
-             VALUES (?, 'space', NULL, NULL, NULL, ?)",
-            page_id, SPACE_WORK_ULID,
-        )
-        .execute(&mut *tx).await.unwrap();
-        sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'content', 'content', ?, 2, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', 'content', ?, 2, ?, ?)",
             content_id,
             page_id,
             page_id,
+            SPACE_WORK_ULID,
         )
         .execute(&mut *tx)
         .await
@@ -1116,13 +1105,10 @@ mod tests {
         tx.commit().await.unwrap();
 
         assert_eq!(migrated, 1);
-        let space = sqlx::query_scalar!(
-            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-            tag_id,
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let space = sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", tag_id,)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(space, Some(SPACE_WORK_ULID.to_string()));
     }
 

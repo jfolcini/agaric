@@ -3259,6 +3259,16 @@ mod restore_cascade_tests {
             .await
             .unwrap();
         }
+        // Phase 2 (#533): space membership is read from `blocks.space_id`,
+        // not the `block_properties` `key='space'` row above. Set the
+        // denormalized column on the page and every block paged to it.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(SPACE)
+            .bind(PAGE_ID)
+            .bind(PAGE_ID)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     /// Returns a fresh LoroState — install_for_test pattern.  Unlike
@@ -3502,6 +3512,16 @@ mod delete_cascade_tests {
             .await
             .expect("seed child");
         }
+        // Phase 2 (#533): space membership is read from `blocks.space_id`,
+        // not the `block_properties` `key='space'` row above. Set the
+        // denormalized column on the page and every block paged to it.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(SPACE)
+            .bind(PAGE_ID)
+            .bind(PAGE_ID)
+            .execute(pool)
+            .await
+            .expect("seed denormalized space_id");
     }
 
     fn fresh_loro_state() -> &'static LoroState {
@@ -3728,6 +3748,16 @@ mod engine_path_tests {
         .execute(&pool)
         .await
         .unwrap();
+        // Phase 2 (#533): space membership is read from `blocks.space_id`,
+        // not the `block_properties` `key='space'` row above. Set the
+        // denormalized column on the page and every block paged to it.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(SPACE_ID)
+            .bind(PAGE_ID)
+            .bind(PAGE_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
         (pool, dir)
     }
 
@@ -3831,15 +3861,16 @@ mod engine_path_tests {
             .expect("apply create");
         tx.commit().await.expect("commit1");
 
-        // Production sets `blocks.page_id` via background rebuild
-        // (`cache::rebuild_page_ids`) or per-command updaters; the
-        // projection helper does not. Without page_id the EditBlock's
-        // `resolve_block_space` cannot reach the page's `space`
-        // property and the engine path falls back to the SQL-only
-        // fallback. Mirror the rebuild's effect inline so the
-        // EditBlock path resolves cleanly.
-        sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        // Production sets `blocks.page_id` / `blocks.space_id` via background
+        // rebuild (`cache::rebuild_page_ids` + `rebuild_space_ids`) or
+        // per-command updaters; the projection helper does not. Phase 2
+        // (#533): `resolve_block_space` reads `blocks.space_id` directly, so
+        // without it the EditBlock engine path falls back to the SQL-only
+        // fallback and the engine never sees the edit. Mirror the rebuild's
+        // effect inline so the EditBlock path resolves to SPACE_ID cleanly.
+        sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
             .bind(PAGE_ID)
+            .bind(SPACE_ID)
             .bind(BLOCK_ID)
             .execute(&pool)
             .await
@@ -3947,6 +3978,18 @@ mod engine_path_tests {
             .execute(pool)
             .await
             .expect("set page_id");
+        // Phase 2 (#533): a fresh block inherits its parent page's space via
+        // the post-commit `SetBlockPageId` materialize task, which this
+        // op-log-only seed does not run. Set `blocks.space_id` directly so
+        // `resolve_block_space(BLOCK_ID)` routes subsequent ops to SPACE_ID's
+        // engine (the seed previously relied on the now-removed
+        // `block_properties` `key='space'` read).
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(SPACE_ID)
+            .bind(BLOCK_ID)
+            .execute(pool)
+            .await
+            .expect("set space_id");
     }
 
     // -----------------------------------------------------------------

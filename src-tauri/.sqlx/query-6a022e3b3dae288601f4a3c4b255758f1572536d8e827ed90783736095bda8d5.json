@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id)              SELECT ?, 'content', ?, ?, 1, ?, (SELECT space_id FROM blocks WHERE id = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "6a022e3b3dae288601f4a3c4b255758f1572536d8e827ed90783736095bda8d5"
+}

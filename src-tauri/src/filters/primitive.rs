@@ -1490,21 +1490,16 @@ mod explain_query_plan_tests {
     async fn seed_pages(pool: &SqlitePool, n: u32) {
         for i in 0..n {
             let id = format!("01PAGE000000000000000F{i:04}");
+            // Phase 2: space membership lives in `blocks.space_id` (the
+            // column the query plans now filter on), not a
+            // `block_properties(key='space')` row.
             sqlx::query(
-                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-                 VALUES (?, 'page', ?, NULL, ?, ?)",
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+                 VALUES (?, 'page', ?, NULL, ?, ?, ?)",
             )
             .bind(&id)
             .bind(format!("p{i}"))
             .bind(i as i64)
-            .bind(&id)
-            .execute(pool)
-            .await
-            .unwrap();
-            sqlx::query(
-                "INSERT OR IGNORE INTO block_properties (block_id, key, value_ref) \
-                 VALUES (?, 'space', ?)",
-            )
             .bind(&id)
             .bind(TEST_SPACE_ID)
             .execute(pool)

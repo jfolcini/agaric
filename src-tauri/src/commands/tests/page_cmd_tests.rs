@@ -1908,8 +1908,11 @@ async fn import_markdown_stamps_space_property() {
     .expect("happy-path import must succeed");
     assert_eq!(result.page_title, "StampTest");
 
-    // Look up the imported page by content (filename-derived title)
-    // and verify its `space` property points to the requested space.
+    // Look up the imported page by content (filename-derived title) and
+    // verify its space membership points to the requested space. Phase 2
+    // (#533): membership lives in `blocks.space_id` (the sole source of
+    // truth; the `block_properties(key='space')` row was retired in
+    // migration 0087).
     let page_id: String = sqlx::query_scalar(
         "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'StampTest'",
     )
@@ -1917,18 +1920,15 @@ async fn import_markdown_stamps_space_property() {
     .await
     .expect("imported page must exist");
 
-    let space_ref: Option<String> = sqlx::query_scalar(
-        "SELECT value_ref FROM block_properties \
-         WHERE block_id = ? AND key = 'space'",
-    )
-    .bind(&page_id)
-    .fetch_one(&pool)
-    .await
-    .expect("imported page must have a space property row");
+    let space_ref: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .expect("imported page row must exist");
     assert_eq!(
         space_ref.as_deref(),
         Some(TEST_SPACE_ID),
-        "imported page's `space` property must point to the requested space \
+        "imported page's `space_id` must point to the requested space \
          (PEND-35 Tier 1.1: orphan-page fix)"
     );
 

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"id!: String\" FROM blocks b\n           WHERE b.block_type = 'tag'\n             AND b.deleted_at IS NULL\n             AND b.space_id IS NULL\n           ORDER BY b.id",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1303d60466a311d94e4c9c1769cd346c9e3a8650041459f7a9fed8ba3133ac6a"
+}

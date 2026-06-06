@@ -98,8 +98,8 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 /// The owning page is `b.id` if `b` is itself a page block (where
 /// `page_id` is set to `id` by `create_block_in_tx`), else `b.page_id`
 /// (an inherited reference to the page block at the top of the parent
-/// chain). The page's space comes from
-/// `block_properties(key = 'space', value_ref)`.
+/// chain). The page's space comes from the page block's own
+/// `blocks.space_id` column (Phase 2, #533).
 ///
 /// # Returns
 ///
@@ -109,9 +109,9 @@ pub(crate) fn normalize_ulid_arg(s: &str) -> String {
 ///   variant to the agent-visible error chain), or if the owning
 ///   page's space matches `space_id`.
 /// - [`AppError::Validation`] if the owning page exists in a different
-///   space, or has no `space` property at all (e.g. the caller passed
-///   a tag block ID, or a corrupted page that escaped the BUG-1 / H-3a
-///   IPC tightening).
+///   space, or has a NULL `space_id` / no owning page at all (e.g. the
+///   caller passed a tag block ID, or a corrupted page that escaped the
+///   BUG-1 / H-3a IPC tightening).
 pub(crate) async fn validate_block_in_space(
     pool: &SqlitePool,
     block_id: &str,
@@ -120,14 +120,14 @@ pub(crate) async fn validate_block_in_space(
     // `query_scalar` (non-macro) is used here because the LEFT JOIN
     // result distinguishes three cases — no row vs. row-with-NULL vs.
     // row-with-value — that the `query_scalar!` macro's `Option<T>`
-    // collapse would erase. The bound is one-row, indexed (the FK on
-    // `block_properties.block_id` and the PK on `blocks.id`), no scan.
+    // collapse would erase. The bound is one-row, indexed (the PK on
+    // `blocks.id` for both the input lookup and the page self-join),
+    // no scan.
     let row: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT bp.value_ref \
+        "SELECT pg.space_id \
          FROM blocks b \
-         LEFT JOIN block_properties bp \
-           ON bp.block_id = b.page_id \
-          AND bp.key = 'space' \
+         LEFT JOIN blocks pg \
+           ON pg.id = b.page_id \
          WHERE b.id = ?",
     )
     .bind(block_id)
@@ -138,10 +138,10 @@ pub(crate) async fn validate_block_in_space(
         // Block doesn't exist — defer to the downstream `*_inner` to
         // surface NotFound with a tool-specific message.
         None => Ok(()),
-        // Block exists but has no `space` property on its owning page —
-        // either a tag block (global, no owning page) or a corrupted
-        // page. Refuse: a space-scoped write cannot be authorised
-        // against an unscoped target.
+        // Block exists but its owning page has a NULL `space_id` (or it
+        // has no owning page) — either a tag block (global, no owning
+        // page) or a corrupted page. Refuse: a space-scoped write cannot
+        // be authorised against an unscoped target.
         Some(None) => Err(AppError::Validation(format!(
             "block '{block_id}' does not belong to any space; \
              cross-space writes are denied"

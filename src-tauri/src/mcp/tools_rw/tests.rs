@@ -527,11 +527,13 @@ async fn create_page_without_space_rejected() {
     );
 }
 
-/// PEND-24 C1: the page row must carry `space = <space_id>` after a
-/// successful create_page call. The bug this regression-tests for is
-/// the MCP path bypassing `create_block_inner_with_space` so the page
-/// landed without its `space` property and dropped out of every
-/// space-scoped query downstream.
+/// PEND-24 C1: the page row must carry its space after a successful
+/// create_page call. The bug this regression-tests for is the MCP path
+/// bypassing `create_block_inner_with_space` so the page landed without
+/// its space membership and dropped out of every space-scoped query
+/// downstream. Phase 2 (#533): space membership is the `blocks.space_id`
+/// column (the sole source of truth; the `block_properties(key='space')`
+/// row was retired), so assert the page's `space_id`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_page_writes_space_property() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;
@@ -546,17 +548,15 @@ async fn create_page_writes_space_property() {
     settle(&mat).await;
 
     let page_id = result["id"].as_str().expect("id in response").to_string();
-    let stamped: Option<String> = sqlx::query_scalar(
-        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind(&page_id)
-    .fetch_optional(&pool)
-    .await
-    .unwrap();
+    let stamped: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(&page_id)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         stamped.as_deref(),
         Some(space.as_str()),
-        "create_page must stamp the page with `space = <space_id>` (BUG-1 / H-3a)",
+        "create_page must stamp the page with `space_id = <space_id>` (BUG-1 / H-3a)",
     );
 }
 

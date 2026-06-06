@@ -67,14 +67,14 @@ async fn count_rows(pool: &SqlitePool, table: &str) -> i64 {
 }
 
 async fn space_property(pool: &SqlitePool, block_id: &str) -> Option<String> {
-    sqlx::query_scalar!(
-        r#"SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'"#,
-        block_id,
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap()
-    .flatten()
+    // Phase 2: `blocks.space_id` is the sole source of truth for space
+    // membership (the `block_properties(key='space')` row is no longer
+    // materialized). Read the column directly.
+    sqlx::query_scalar!(r#"SELECT space_id FROM blocks WHERE id = ?"#, block_id,)
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .flatten()
 }
 
 #[test]
@@ -138,16 +138,18 @@ async fn bootstrap_on_fresh_db_creates_two_spaces_and_no_other_state() {
         "fresh boot must create exactly two space blocks"
     );
 
-    // No pre-existing pages, so no `space` property rows should exist.
-    let space_prop_count: i64 = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) as "n!: i64" FROM block_properties WHERE key = 'space'"#,
+    // No pre-existing pages, so no block should carry a `space_id`
+    // (Phase 2: membership lives on `blocks.space_id`; the seeded space
+    // blocks themselves do not carry their own space_id).
+    let space_member_count: i64 = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) as "n!: i64" FROM blocks WHERE space_id IS NOT NULL"#,
     )
     .fetch_one(&pool)
     .await
     .unwrap();
     assert_eq!(
-        space_prop_count, 0,
-        "no pre-existing pages means no `space` property rows"
+        space_member_count, 0,
+        "no pre-existing pages means no block carries a space_id"
     );
 
     // Op log must contain exactly two CreateBlock + two SetProperty ops.
@@ -269,10 +271,11 @@ async fn bootstrap_skips_pages_that_already_have_space_property() {
     insert_page(&pool, "01JABCD0000000000000000001", "Already Scoped").await;
     // Simulate a page that was previously assigned to the Work space
     // (e.g. via a sync from another device that ran bootstrap first).
+    // Phase 2: membership is the `blocks.space_id` column.
     sqlx::query!(
-        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        "01JABCD0000000000000000001",
+        "UPDATE blocks SET space_id = ? WHERE id = ?",
         SPACE_WORK_ULID,
+        "01JABCD0000000000000000001",
     )
     .execute(&pool)
     .await
@@ -674,14 +677,14 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
 
 /// Helper: assert the BUG-1 invariant holds for the entire pool.
 async fn assert_every_page_has_space_or_is_space(pool: &SqlitePool) {
+    // Phase 2: a page is "scoped" iff it carries a `blocks.space_id`
+    // (the sole source of truth); a space block itself carries
+    // `is_space = "true"` and no own space_id.
     let leaks: Vec<String> = sqlx::query_scalar!(
         r#"SELECT id as "id!: String" FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM block_properties p
-                 WHERE p.block_id = b.id AND p.key = 'space'
-             )
+             AND b.space_id IS NULL
              AND NOT EXISTS (
                  SELECT 1 FROM block_properties p
                  WHERE p.block_id = b.id
@@ -776,16 +779,16 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     // `list_blocks(blockType='page', spaceId=…)` for one of the two
     // seeded spaces.
     let personal_pages: Vec<String> = sqlx::query_scalar!(
-        r#"SELECT block_id as "id!: String" FROM block_properties
-           WHERE key = 'space' AND value_ref = ?"#,
+        r#"SELECT id as "id!: String" FROM blocks
+           WHERE space_id = ?"#,
         SPACE_PERSONAL_ULID,
     )
     .fetch_all(&pool)
     .await
     .unwrap();
     let work_pages: Vec<String> = sqlx::query_scalar!(
-        r#"SELECT block_id as "id!: String" FROM block_properties
-           WHERE key = 'space' AND value_ref = ?"#,
+        r#"SELECT id as "id!: String" FROM blocks
+           WHERE space_id = ?"#,
         SPACE_WORK_ULID,
     )
     .fetch_all(&pool)
@@ -996,14 +999,15 @@ fn migration_threshold_ulid_parses_as_valid_ulid() {
     );
 }
 
-/// Set `space = SPACE_PERSONAL_ULID` on a page directly in the DB to
-/// simulate the post-`bootstrap_spaces` state where every old page has
-/// been backfilled into Personal.
+/// Assign a page to the Personal space directly in the DB to simulate
+/// the post-`bootstrap_spaces` state where every old page has been
+/// backfilled into Personal. Phase 2: membership is `blocks.space_id`.
 async fn assign_to_personal(pool: &SqlitePool, page_id: &str) {
     sqlx::query!(
-        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        page_id,
+        "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
         SPACE_PERSONAL_ULID,
+        page_id,
+        page_id,
     )
     .execute(pool)
     .await
@@ -1224,11 +1228,11 @@ async fn migrate_skips_user_created_space_blocks() {
     .unwrap();
     // And, for argument's sake, also assign it to Personal (mirrors the
     // pathological state the spec's "Skip space blocks" guard defends
-    // against).
+    // against). Phase 2: membership is `blocks.space_id`.
     sqlx::query!(
-        "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        user_space_id,
+        "UPDATE blocks SET space_id = ? WHERE id = ?",
         SPACE_PERSONAL_ULID,
+        user_space_id,
     )
     .execute(&pool)
     .await

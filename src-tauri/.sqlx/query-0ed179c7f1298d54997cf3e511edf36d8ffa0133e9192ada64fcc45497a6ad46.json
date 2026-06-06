@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT 1 AS \"ok!: i32\" FROM blocks\n           WHERE id = ? AND space_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "ok!: i32",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0ed179c7f1298d54997cf3e511edf36d8ffa0133e9192ada64fcc45497a6ad46"
+}

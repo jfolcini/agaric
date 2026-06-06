@@ -317,11 +317,11 @@ pub async fn list_tags_by_prefix(
 /// clamp.
 ///
 /// Tags are space-scoped: each tag block (`block_type = 'tag'`) carries
-/// its own `block_properties(key = 'space', value_ref = <space_id>)`
-/// row (see `spaces::cross_space_validation` and the `add_tag` cross-
-/// space guard at `commands/tags.rs:116`). The space filter therefore
-/// applies the same `value_ref` predicate used by
-/// `list_all_pages_in_space_inner` but keyed on the tag block itself
+/// its own `blocks.space_id` column (Phase 2, #533 — the previous
+/// `block_properties(key = 'space')` row was retired in migration 0087;
+/// see `spaces::cross_space_validation` and the `add_tag` cross-space
+/// guard at `commands/tags.rs:116`). The space filter therefore selects
+/// tag blocks directly on `space_id`, keyed on the tag block itself
 /// rather than on a page's owning block.
 ///
 /// The result set is bounded by the space's intrinsic tag count
@@ -338,8 +338,8 @@ pub async fn list_all_tags_in_space(
         r#"SELECT tc.tag_id, tc.name, tc.usage_count, tc.updated_at
          FROM tags_cache tc
          WHERE tc.tag_id IN (
-             SELECT bp.block_id FROM block_properties bp
-             WHERE bp.key = 'space' AND bp.value_ref = ?1
+             SELECT id FROM blocks
+             WHERE block_type = 'tag' AND space_id = ?1
          )
          ORDER BY tc.name"#,
         space_id,
@@ -660,6 +660,17 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        // Phase 2 (#533): space membership is keyed on `blocks.space_id`, the
+        // sole source of truth — reads no longer consult the `block_properties`
+        // row above. Set the column so `list_all_tags_in_space` (which filters
+        // on `block_type = 'tag' AND space_id = ?`) sees the tag.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(space_id)
+            .bind(tag_id)
+            .bind(tag_id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     /// Seed the space block so the FK on `block_properties.value_ref →
@@ -1028,22 +1039,24 @@ mod tests {
         }
         crate::tag_inheritance::rebuild_all(pool).await.unwrap();
 
-        // Space-scoped blocks: assign a couple of result blocks' owning
-        // page into `space` so the space filter is non-trivial. The space
-        // filter matches on `b.page_id`'s `space` property; give DBLK_A
-        // and BOTH_BLK a page_id pointing at a space-scoped page.
+        // Space-scoped blocks: assign a couple of result blocks into `space`
+        // so the space filter is non-trivial. Phase 2 (#533) — the projection
+        // filters on `b.space_id` directly (the sole source of truth; the
+        // `block_properties(key='space')` row is no longer read), so set the
+        // column on the result blocks. Give DBLK_A and BOTH_BLK a page_id
+        // pointing at the space-scoped page too, mirroring real materialized
+        // shape.
         insert_block(pool, "SPACE_PAGE", "page", "space page").await;
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind("SPACE_PAGE")
-        .bind(space)
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+            .bind(space)
+            .bind("SPACE_PAGE")
+            .execute(pool)
+            .await
+            .unwrap();
         for id in &["DBLK_A", "BOTH_BLK"] {
-            sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+            sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
                 .bind("SPACE_PAGE")
+                .bind(space)
                 .bind(id)
                 .execute(pool)
                 .await
