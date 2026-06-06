@@ -191,7 +191,7 @@ pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
-    device_id: &str,
+    _device_id: &str,
     passphrase: String,
     remote_device_id: String,
 ) -> Result<(), AppError> {
