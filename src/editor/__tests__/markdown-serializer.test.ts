@@ -966,7 +966,7 @@ describe('round-trip: serialize(parse(s)) === s', () => {
 // -- mark coalescing (bold-inside-italic) -------------------------------------
 // These test the fix for the data-loss bug where the serializer wrapped each
 // TextNode independently, creating ambiguous delimiter sequences.
-// See REVIEW-LATER.md "[2026-03-28] Serializer: bold-inside-italic mark merging"
+// These tests cover the bold-inside-italic mark merging fix (2026-03-28).
 
 describe('mark coalescing: nested marks across adjacent text nodes', () => {
   it('italic(a)+boldItalic(b)+italic(c) → *a**b**c*', () => {

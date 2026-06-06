@@ -415,7 +415,7 @@ pub(super) fn resolve_url(base: &str, href: &str) -> String {
 /// failure mode is benign (slightly mangled title text, never a panic
 /// or security issue).
 ///
-/// See REVIEW-LATER.md item I-Search-16 for the full discussion. The
+/// See GitHub issue tracker (I-Search-16) for the full discussion. The
 /// regression test `parse_title_chained_entity_known_limitation` in
 /// `link_metadata/tests.rs` pins the current over-decoding behaviour so
 /// that a future fix is recognised the moment it lands (the test will

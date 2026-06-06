@@ -88,7 +88,7 @@ To add a shortcut: append a `ShortcutBinding` entry to `catalog.ts` (`id`, `keys
 
 ## UI primitives & shared components
 
-Before you create a new component, look in `src/components/ui/` (shadcn-style primitives) and `src/components/` (domain primitives + feature components). Check before building anything new — duplication is the most-flagged class of REVIEW-LATER item.
+Before you create a new component, look in `src/components/ui/` (shadcn-style primitives) and `src/components/` (domain primitives + feature components). Check before building anything new — duplication is a frequently flagged code review item.
 
 The cross-feature primitives most worth knowing (not exhaustive — see `src/components/ui/` for the full set):
 

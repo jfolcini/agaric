@@ -297,7 +297,7 @@ struct JournalForDateArgs {
 /// activity feed like any other agent-authored write, but it is **not**
 /// a pure read. The Settings "Read-only access" tooltip
 /// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and the
-/// FEAT-4 entry in `REVIEW-LATER.md` surface this carve-out to the
+/// FEAT-4 surfaces this carve-out to the
 /// user. Splitting `journal_for_date` into RO+RW halves was rejected as
 /// a public API change requiring explicit user approval — the
 /// docs-only fix preserves the v1 tool surface.

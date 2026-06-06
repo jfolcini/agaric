@@ -2978,7 +2978,7 @@ async fn apply_op_success() {
     mat.shutdown();
 }
 // ──────────────────────────────────────────────────────────────────────
-// REVIEW-LATER C-2a — defense-in-depth observability for materializer
+// C-2a — defense-in-depth observability for materializer
 // divergence.
 //
 // When a foreground `ApplyOp` / `BatchApplyOps` task exhausts its 100ms
@@ -3319,7 +3319,7 @@ async fn foreground_applyop_exhausted_persists_and_re_enqueues_on_boot() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// REVIEW-LATER L-16 — Foreground retry: ordering of error log vs.
+// L-16 — Foreground retry: ordering of error log vs.
 // retry attempt.
 //
 // The shared `retry_with_backoff` helper used to emit the first-attempt
@@ -4379,7 +4379,7 @@ async fn adaptive_fts_threshold_small_db() {
     // holds for a small DB.
     //
     // Previously this was a 1-second polling loop on `> 0`, which raced
-    // under nextest parallelism (TEST-2 in REVIEW-LATER.md).
+    // under nextest parallelism (TEST-2).
     mat.wait_for_initial_block_count_cache().await;
     let cached = mat
         .metrics()
@@ -4445,7 +4445,7 @@ async fn adaptive_fts_threshold_large_corpus() {
     // actual block count from the DB and writes it to `cached_block_count`.
     // Wait for that deterministically before simulating the 10M-block
     // count below — otherwise the stale writer races our `.store(10M)` and
-    // clobbers it with the real count (TEST-2 in REVIEW-LATER.md).
+    // clobbers it with the real count (TEST-2).
     mat.wait_for_initial_block_count_cache().await;
 
     // Simulate a 10 M-block corpus.
@@ -5559,7 +5559,7 @@ async fn dispatch_delete_block_fires_rebuild_block_tag_refs_cache() {
 // here.
 
 // ============================================================================
-// REVIEW-LATER C-3c — orphaned attachments GC tests
+// C-3c — orphaned attachments GC tests
 // ============================================================================
 
 /// Helper: insert a row into `attachments` for the GC test.
@@ -6029,7 +6029,7 @@ async fn h6_batch_and_concurrent_apply_op_serialize_in_fifo() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// REVIEW-LATER L-15 — risk-area regression seats
+// L-15 — risk-area regression seats
 //
 // L-15 flagged the materializer as well-covered on happy paths but
 // thin on a handful of failure / saturation / dispatch-edge code paths.

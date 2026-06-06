@@ -2609,7 +2609,7 @@ async fn apply_delete_attachment_tx(
 /// Maximum number of attachment files inspected per batch before
 /// yielding the runtime. Bounding the chunk size prevents a vault with
 /// thousands of attachments from blocking the materializer for seconds
-/// at a time. See REVIEW-LATER.md item C-3c for context.
+/// at a time (C-3c).
 const CLEANUP_BATCH_SIZE: usize = 1000;
 
 /// Inter-batch yield duration in milliseconds. Combined with
@@ -2618,7 +2618,7 @@ const CLEANUP_BATCH_SIZE: usize = 1000;
 /// pathologically large vaults.
 const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 
-/// REVIEW-LATER C-3c — reconcile the `attachments/` directory under
+/// C-3c — reconcile the `attachments/` directory under
 /// `app_data_dir` against the rows of the `attachments` table.
 ///
 /// For every file under `<app_data_dir>/attachments/` (recursively),

@@ -25,7 +25,7 @@ use super::*;
 /// Soft cap applied to `list_pages_inner` / `get_page_inner` at the tool
 /// boundary. Callers may pass any `Option<i64>`; the value is clamped to
 /// [1, 100] before being forwarded to the underlying pagination layer.
-/// Matches the FEAT-4c tool-surface cap documented in REVIEW-LATER.
+/// Matches the FEAT-4c tool-surface cap.
 pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 
 /// Replace the full set of aliases for a page. Returns the aliases that were
@@ -597,7 +597,7 @@ pub async fn export_page_markdown_inner(
 /// blocks following the indentation hierarchy. Properties are set via
 /// SetProperty ops. Returns import statistics.
 ///
-/// REVIEW-LATER L-30 — All-or-nothing semantics: any per-block
+/// L-30 — All-or-nothing semantics: any per-block
 /// `create_block_in_tx` or per-property `set_property_in_tx` failure
 /// aborts the import. The enclosing `BEGIN IMMEDIATE` is rolled back on
 /// `Drop` (no commit reached), so partially-imported rows never land in
@@ -1140,7 +1140,7 @@ pub struct PageSubtreeResponse {
 /// [`AppError::Validation`]. This is the policy enforcement point for
 /// "no live links between spaces, ever": deep-linking into a foreign
 /// page from inside a different space's tab stack is impossible. See
-/// REVIEW-LATER FEAT-3p7.
+/// FEAT-3p7.
 ///
 /// The descendant walk intentionally uses the denormalized `page_id`
 /// column (index `idx_blocks_page_id`) rather than a recursive CTE —

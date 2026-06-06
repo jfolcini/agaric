@@ -11,11 +11,11 @@
  * alphabetically by `page_title`, regardless of the user-supplied
  * `BacklinkSort`. The user's sort applies only to block ordering
  * **within** each group. This mirrors the backend contract — see
- * `src-tauri/src/backlink/grouped.rs` and REVIEW-LATER `I-Search-12`
- * (option (a), reshuffling groups by the user's sort key, was rejected
- * for UX reasons: stable alphabetical group order preserves muscle
- * memory). This component therefore renders groups in the order it
- * receives them and must not re-sort them client-side.
+ * `src-tauri/src/backlink/grouped.rs` (I-Search-12: option (a),
+ * reshuffling groups by the user's sort key, was rejected for UX reasons —
+ * stable alphabetical group order preserves muscle memory). This component
+ * therefore renders groups in the order it receives them and must not
+ * re-sort them client-side.
  */
 
 import type React from 'react'

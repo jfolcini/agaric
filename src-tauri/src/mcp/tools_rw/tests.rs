@@ -826,7 +826,7 @@ async fn append_block_populates_last_append_inside_scope() {
 // subverted `BEGIN IMMEDIATE` — would surface as duplicate-seq
 // failures or FK violations under contention.
 //
-// Closes REVIEW-LATER L-124.
+// Closes L-124.
 // -------------------------------------------------------------------
 
 /// 4 agent connections × 6 iterations × `append_block + add_tag` plus

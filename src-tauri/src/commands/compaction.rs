@@ -184,7 +184,7 @@ pub async fn compact_op_log_cmd_inner(
     let mut tx = crate::db::begin_immediate_logged(pool, "cmd_compact_op_log").await?;
 
     // Recount inside the transaction (TOCTOU recount, not atomicity —
-    // see comment above and L-42 / L-43 in REVIEW-LATER).
+    // see comment above and L-42 / L-43).
     let eligible_in_tx: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM op_log WHERE created_at < ?",
         cutoff_ms

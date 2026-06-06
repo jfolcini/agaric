@@ -349,7 +349,7 @@ fn deserialize_roundtrip_preserves_normalization() {
     );
 }
 
-// --- REVIEW-LATER #61 edge-case tests ---
+// --- #61 edge-case tests ---
 
 /// Case normalization is idempotent: normalizing an already-uppercase ULID
 /// produces the same result as normalizing it a second time.

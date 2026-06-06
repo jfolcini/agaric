@@ -19,7 +19,7 @@
 //! Both helpers are `pub(crate)` so only the MCP module tree can import
 //! them — they have no meaning outside the JSON-RPC dispatch path.
 //!
-//! Resolves REVIEW-LATER MAINT-135.
+//! Resolves MAINT-135.
 
 use serde_json::Value;
 use sqlx::SqlitePool;

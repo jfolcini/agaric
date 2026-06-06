@@ -47,7 +47,7 @@ pub struct QueueMetrics {
     pub fg_panics: AtomicU64,
     pub bg_panics: AtomicU64,
     /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
-    /// 100ms in-memory retry exhausted (REVIEW-LATER C-2a).
+    /// 100ms in-memory retry exhausted (C-2a).
     ///
     /// The foreground queue intentionally retries failing apply tasks
     /// only once before dropping them — the assumption is that a
@@ -196,7 +196,7 @@ pub struct StatusInfo {
     pub fg_panics: u64,
     pub bg_panics: u64,
     /// Foreground `ApplyOp` / `BatchApplyOps` tasks dropped after the
-    /// 100ms in-memory retry exhausted (REVIEW-LATER C-2a). Surfaces
+    /// 100ms in-memory retry exhausted (C-2a). Surfaces
     /// silent materializer divergence: a non-zero value means an
     /// apply-op landed in the op log but never reached the
     /// materialized `blocks` table on this run. Pair with the

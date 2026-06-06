@@ -251,7 +251,7 @@ describe('MonthlyDayCell', () => {
 
   // UX-2: scale the inner clickable date circle on coarse pointers so the
   // visible tap target meets the 44 px minimum (the cell already does, but
-  // the circle is the visual affordance — see REVIEW-LATER.md UX-2).
+  // the circle is the visual affordance — UX-2).
   it('UX-2: inner date circle scales to 40 px on coarse pointers', () => {
     const { container } = render(<MonthlyDayCell {...defaultProps} />)
 

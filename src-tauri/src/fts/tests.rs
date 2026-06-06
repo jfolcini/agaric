@@ -2007,7 +2007,7 @@ fn sanitize_whitespace_only_quoted_phrase_yields_empty() {
 }
 
 // ======================================================================
-// FTS pagination with identical/close ranks (REVIEW-LATER #3 fix)
+// FTS pagination with identical/close ranks (#3 fix)
 // ======================================================================
 
 #[tokio::test]

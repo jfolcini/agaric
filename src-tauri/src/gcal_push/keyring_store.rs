@@ -542,7 +542,7 @@ impl TokenStore for KeyringTokenStore {
         let Some(json) = raw else {
             return Ok(None);
         };
-        // REVIEW-LATER L-130: drop the underlying `serde_json::Error`
+        // L-130: drop the underlying `serde_json::Error`
         // before it can reach tracing or bug-report bundles.  Its
         // `Display` includes a position + short context window of the
         // input — and since `json` is the keyring blob holding both
@@ -1042,7 +1042,7 @@ mod tests {
 
     #[tokio::test]
     async fn keyring_store_load_returns_error_for_malformed_json() {
-        // REVIEW-LATER L-130: malformed JSON in the keyring blob now
+        // L-130: malformed JSON in the keyring blob now
         // collapses to `AppError::Validation("keyring.malformed_blob")`
         // — see the L-130 fix in `KeyringTokenStore::load`.  The
         // previous behaviour propagated the underlying
@@ -1063,7 +1063,7 @@ mod tests {
 
     #[tokio::test]
     async fn keyring_load_with_malformed_json_returns_validation_without_token_chars() {
-        // REVIEW-LATER L-130: explicit anti-leakage test.  Construct a
+        // L-130: explicit anti-leakage test.  Construct a
         // backend that returns a malformed JSON payload spliced with a
         // sentinel string that resembles a token fragment, then assert
         // that the resulting validation error is exactly the literal

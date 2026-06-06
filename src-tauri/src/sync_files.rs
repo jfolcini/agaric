@@ -183,7 +183,7 @@ pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
 /// stub — without that check, the existence test alone would treat the
 /// stub as present forever and the next sync cycle would never re-request
 /// the file. The size comparison is the cheap path; a stronger content-hash
-/// verification is the deferred "better path" tracked in `REVIEW-LATER.md`.
+/// verification is the deferred "better path" (tracked in GitHub issues).
 ///
 /// If `metadata()` errors at all (file missing, permission denied,
 /// quarantined path), the entry is classified as missing — the most

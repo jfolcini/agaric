@@ -1,7 +1,7 @@
 /**
  * Tests for the Switch UI primitive (Radix Switch wrapper).
  *
- * Validates (per TEST-1 in REVIEW-LATER.md):
+ * Validates (per TEST-1):
  *  - Renders with controlled `checked` true/false (and `aria-checked` mirrors)
  *  - Calls `onCheckedChange` on click
  *  - Keyboard: Space toggles when focused

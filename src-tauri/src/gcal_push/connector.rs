@@ -142,7 +142,7 @@ fn event_to_patch(event: Event) -> Result<EventPatch, AppError> {
 /// contrast, `today()` returns the user's **local** date because every
 /// caller (reconcile sweep window `[today, today + window_days]`,
 /// journal-page lookup, agenda dates, GCal digest contents) wants the
-/// user's current calendar day, not UTC's.  See REVIEW-LATER.md H-16.
+/// user's current calendar day, not UTC's (H-16).
 pub trait Clock: Send + Sync + std::fmt::Debug {
     fn now(&self) -> DateTime<Utc>;
     fn today(&self) -> NaiveDate {
@@ -408,8 +408,7 @@ impl std::fmt::Display for CycleOutcome {
 /// Canonical string form of a [`GcalErrorKind`] for the cycle's
 /// log/UI surface.  Shared between the [`CycleOutcome`] [`Display`]
 /// impl and [`classify_date_err`] so the two classifiers cannot
-/// drift out of sync on per-variant wording (REVIEW-LATER MAINT-140
-/// + MAINT-151(h)).
+/// drift out of sync on per-variant wording (MAINT-140 + MAINT-151(h)).
 ///
 /// These strings are intentionally distinct from
 /// [`GcalErrorKind`]'s thiserror [`Display`] output — they are the
@@ -789,7 +788,7 @@ async fn push_date(
 ///
 /// Per-variant string formatting is centralised in [`kind_display`]
 /// so this classifier and [`classify_cycle_failure`] cannot drift
-/// (REVIEW-LATER MAINT-140 + MAINT-151(h)).  Outer enum-variant
+/// (MAINT-140 + MAINT-151(h)).  Outer enum-variant
 /// routing (`Unauthorized` / `Forbidden` / `CalendarGone` end the
 /// cycle; everything else is `Skipped`) stays here — only the
 /// reason-string formatting goes through the helper.
@@ -1948,7 +1947,7 @@ mod tests {
     ///
     /// The test simulates the connector path: 401 on
     /// `create_dedicated_calendar`. The bounded refresh isn't wired
-    /// through the per-date `api.rs` calls today (REVIEW-LATER:
+    /// through the per-date `api.rs` calls today (deferred:
     /// `fetch_with_auto_refresh` is only used at the OAuth layer),
     /// so the 401 reaching `run_cycle` IS the terminal event from
     /// the connector's point of view — semantically equivalent to
@@ -2469,7 +2468,7 @@ mod tests {
         );
     }
 
-    // ── Clock: local-vs-UTC `today()` (REVIEW-LATER H-16) ──────────
+    // ── Clock: local-vs-UTC `today()` (H-16) ──────────────────────
 
     /// `SystemClock::today()` must reflect the user's **local** date,
     /// not UTC's, so that the GCal reconcile window
@@ -2656,7 +2655,7 @@ mod tests {
         assert_eq!(outcome, CycleOutcome::Ok);
     }
 
-    // ── REVIEW-LATER C-1 — wired task loop dispatches `run_cycle` ──
+    // ── C-1 — wired task loop dispatches `run_cycle` ───────────────
     //
     // Smoke test: spawning the connector and pushing a `DirtyEvent`
     // through the channel must result in `run_cycle` actually running
@@ -2803,7 +2802,7 @@ mod tests {
 
 #[cfg(test)]
 mod tests_m89 {
-    //! Coverage for REVIEW-LATER item M-89: `recover_calendar_gone`
+    //! Coverage for M-89: `recover_calendar_gone`
     //! must wipe `gcal_agenda_event_map` and reset
     //! `gcal_settings.calendar_id` in a single `BEGIN IMMEDIATE`
     //! transaction so a crash between the two writes cannot leave the

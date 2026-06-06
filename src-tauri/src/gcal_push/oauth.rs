@@ -863,7 +863,7 @@ fn classify_refresh_error(
         StandardErrorResponse<BasicErrorResponseType>,
     >,
 ) -> AppError {
-    // REVIEW-LATER L-129: do NOT interpolate `err` (or any of its
+    // L-129: do NOT interpolate `err` (or any of its
     // inner fields) into the validation message.  The upstream
     // `Display` impls for `RequestTokenError` and
     // `StandardErrorResponse` include the parsed `error_description`
@@ -1457,7 +1457,7 @@ mod tests {
 
     #[test]
     fn classify_refresh_error_invalid_grant_maps_to_unauthorized() {
-        // REVIEW-LATER L-129: pin that the unauthorized mapping
+        // L-129: pin that the unauthorized mapping
         // remains intact after the closed-set refactor — this
         // codepath is what trips the connector's `gcal:reauth_required`
         // event and must not regress.
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[test]
     fn classify_refresh_error_does_not_leak_raw_err_display() {
-        // REVIEW-LATER L-129: the previous implementation interpolated
+        // L-129: the previous implementation interpolated
         // the upstream `RequestTokenError::Display` directly into the
         // validation message.  Google's documented refresh-error
         // responses include an `error_description` field, and a future
@@ -1573,7 +1573,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn refresh_with_empty_stored_refresh_token_returns_clean_error() {
-        // REVIEW-LATER TEST-45: pin the behaviour when the token store
+        // TEST-45: pin the behaviour when the token store
         // returns a `Token` whose `refresh` is `SecretString::from("")`.
         // Realistic causes: the initial OAuth flow didn't capture a
         // refresh token (Google only returns one on first consent with
@@ -1620,7 +1620,7 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "empty stored refresh token must surface AppError::Gcal(Unauthorized) \
-             (current behaviour pinned by REVIEW-LATER TEST-45 — see test docstring), \
+             (current behaviour pinned by TEST-45 — see test docstring), \
              got {result:?}"
         );
     }

@@ -451,7 +451,7 @@ pub(super) async fn process_single_foreground_task(
         }
     } else if !outcome.succeeded {
         metrics.fg_errors.fetch_add(1, Ordering::Relaxed);
-        // REVIEW-LATER C-2a: defense-in-depth observability for
+        // C-2a: defense-in-depth observability for
         // materializer divergence. `ApplyOp` / `BatchApplyOps` tasks
         // that exhaust the foreground retry are otherwise dropped
         // silently — `fg_errors` alone lumps every fg failure

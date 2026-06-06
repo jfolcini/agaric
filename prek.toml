@@ -532,7 +532,7 @@ files = "^src-tauri/Cargo\\.(toml|lock)$"
 
 # typos: language-agnostic typo checker (crate-ci/typos). Catches
 # misspellings in code, comments, identifiers, snapshot fixtures,
-# AGENTS.md, REVIEW-LATER.md — the surface markdownlint never
+# AGENTS.md — the surface markdownlint never
 # touches. Allow-list and excluded paths live in `_typos.toml`.
 # `pass_filenames = false` lets typos walk the repo itself and
 # apply its built-in binary detection (PNG/ICO icons, etc., which

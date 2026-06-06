@@ -9,7 +9,7 @@
  * Zero external dependencies. O(n) in both directions.
  *
  * This file is the public-API barrel for the split implementation
- * (REVIEW-LATER MAINT-117). Every existing
+ * (MAINT-117). Every existing
  * `import { ... } from './markdown-serializer'` continues to resolve here.
  */
 export * from './markdown-common'

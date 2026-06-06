@@ -1996,7 +1996,7 @@ fn format_peer_addresses_returns_empty_when_no_addresses() {
 
 /// L-62: when mDNS announces IPv6 link-local before IPv4, the formatter
 /// reorders so IPv4 is tried first — that is the whole point of the
-/// fix per REVIEW-LATER.md.
+/// fix (L-62).
 #[test]
 fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
     let peer = sync_net::DiscoveredPeer {
@@ -2290,8 +2290,7 @@ async fn daemon_start_and_shutdown() {
     // We just want the spawned daemon task to make a turn in its select!
     // loop before we issue shutdown. There is no production-side signal
     // exposing "select! loop entered", and adding one to the production
-    // type just for this test is out of scope (see TEST-4 in
-    // pending/REVIEW-LATER.md).
+    // type just for this test is out of scope (TEST-4).
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Shutdown should exit cleanly

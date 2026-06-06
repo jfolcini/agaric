@@ -149,8 +149,8 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // rather than compaction, it is the other documented "controlled
     // wholesale op_log wipe" in the system (the AGENTS.md invariant says
     // "except compaction" but the snapshot-driven RESET is an equivalently
-    // intentional mutation). Surface this finding in REVIEW-LATER if the
-    // wording needs tightening; for now we extend the same bypass mechanism
+    // intentional mutation). The wording may need tightening in the future;
+    // for now we extend the same bypass mechanism
     // here so sync RESET continues to function.
     crate::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
     sqlx::query!("DELETE FROM op_log").execute(&mut *tx).await?;

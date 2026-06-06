@@ -178,8 +178,7 @@ async fn count_blocks_by_type(
 /// result to the user, an MCP agent, or an export — must NOT use
 /// this function: use [`get_active_block_inner`] instead, which
 /// adds `AND deleted_at IS NULL` and surfaces soft-deleted rows as
-/// [`AppError::NotFound`]. See REVIEW-LATER M-98 for the audit that
-/// established this split.
+/// [`AppError::NotFound`]. M-98 audited and established this split.
 ///
 /// # Errors
 ///
@@ -245,7 +244,7 @@ pub async fn get_active_block_inner(
 /// dropped from the result. This is the policy enforcement point for
 /// "no live links between spaces, ever": foreign-space chips fall into
 /// the "unknown id" branch in the frontend and render as broken-link
-/// chips via the existing UX. See REVIEW-LATER FEAT-3p7.
+/// chips via the existing UX (FEAT-3p7).
 ///
 /// # Errors
 ///

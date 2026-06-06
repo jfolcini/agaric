@@ -196,7 +196,7 @@ tauri-plugin-process = "2.3.1"
 # MAINT-91 status: oauth2 v5.0 pins `reqwest ^0.12` (via its built-in
 # `reqwest` feature) while the repo pins `reqwest 0.13.2` (rustls above).
 # Dropping the `reqwest` feature here and writing a custom `AsyncHttpClient`
-# adapter over reqwest 0.13 is tracked in REVIEW-LATER.md as MAINT-91.
+# adapter over reqwest 0.13 is tracked as MAINT-91.
 # FEAT-5c considered tackling it opportunistically and deferred: the
 # adapter requires re-typing `OAuthClient::http_client` and
 # `classify_refresh_error`'s generic error parameter, which expands FEAT-5c's

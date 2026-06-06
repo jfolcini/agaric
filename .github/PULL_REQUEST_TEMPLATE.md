@@ -64,7 +64,7 @@ otherwise.
 ## Related issues
 
 <!--
-"Closes #123" / "Refs UX-249 from REVIEW-LATER.md" /
+"Closes #123" / "Refs UX-249" /
 "Follow-up to <commit-sha>".
 -->
 

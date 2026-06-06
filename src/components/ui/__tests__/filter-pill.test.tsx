@@ -1,7 +1,7 @@
 /**
  * Tests for the FilterPill UI primitive.
  *
- * Validates (per TEST-1 in REVIEW-LATER.md):
+ * Validates (per TEST-1):
  *  - Renders with label + group role
  *  - Calls `onRemove` when the remove button is clicked
  *  - Keyboard: Delete and Backspace on the remove button trigger `onRemove`

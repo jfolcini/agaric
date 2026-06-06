@@ -119,7 +119,7 @@ async fn delete_property_writes_op_log_entry() {
 }
 
 // ======================================================================
-// set_property — error paths (REVIEW-LATER TEST-11)
+// set_property — error paths (TEST-11)
 // ======================================================================
 //
 // TEST-11 — Pre-fix `set_property_inner` had only the

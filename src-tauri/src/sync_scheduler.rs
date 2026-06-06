@@ -2,7 +2,7 @@
 //!
 //! Provides per-peer mutual exclusion, exponential backoff on failure,
 //! debounced change notifications, and periodic resync tracking.
-//! Designed to be consumed by a future `SyncDaemon` (REVIEW-LATER #382).
+//! Designed to be consumed by a future `SyncDaemon` (issue #382).
 //!
 //! ## MAINT-168 — dual schedulers, no coordination
 //!

@@ -213,7 +213,7 @@ docs/BUILD.md                     # Complete build guide
 AGENTS.md                    # Developer conventions
 docs/ARCHITECTURE.md              # Architecture deep-dive
 docs/FEATURE-MAP.md               # Complete feature inventory
-REVIEW-LATER.md              # Deferred items and tech debt
+GitHub issues                # Deferred items and tech debt
 ```
 
 ## Database

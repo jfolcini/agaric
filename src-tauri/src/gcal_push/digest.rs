@@ -307,7 +307,7 @@ fn format_description_full(
 /// this file's `tests` module pins the ~500 upper bound — a future
 /// bump will fail that test and force the optimisation.
 ///
-/// See `REVIEW-LATER.md` L-128 for the full discussion.
+/// See L-128 for the full discussion.
 fn truncate_with_overflow_suffix(lines: &[String]) -> String {
     // Greedy from the tail: keep `kept` lines, drop the rest.  Recompute
     // the suffix length each time `dropped` rolls over to another digit.

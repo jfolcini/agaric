@@ -22,7 +22,7 @@ function makeDayEntry(dateStr: string, pageId: string | null = null): DayEntry {
   // TEST-FE-5: `displayDate` is intentionally rendered to a HUMAN-FACING format
   // distinct from `dateStr` so any test asserting on `agendaCounts` keys would
   // FAIL if the hook were ever refactored to key by `displayDate` instead of
-  // the canonical `dateStr`. Option B from the REVIEW-LATER item — pairs with
+  // the canonical `dateStr`. Option B (TEST-FE-5) — pairs with
   // the explicit `Object.keys(...).toEqual([...])` assertion below.
   const date = new Date(dateStr)
   const displayDate = date.toLocaleDateString('en-US', {
