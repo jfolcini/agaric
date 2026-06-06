@@ -346,7 +346,22 @@ proptest! {
                     // Just assert it returns (does not hang / panic). The
                     // commutativity property is asserted on valid chains
                     // below, where the result is well-defined.
-                    let _ = find_lca(&pool, &a, &b).await;
+                    let outcome = find_lca(&pool, &a, &b).await;
+                    // Contract: must return Ok(_) or Err(_) — never panic or hang.
+                    if let Ok(Some((dev, seq))) = outcome {
+                        // If a node is found it must be one actually present in
+                        // the graph: same device, seq in 1..=n.
+                        prop_assert_eq!(
+                            dev.as_str(),
+                            ADV_DEVICE,
+                            "find_lca returned a node from an unexpected device"
+                        );
+                        let seq_usize = usize::try_from(seq).unwrap_or(0);
+                        prop_assert!(
+                            seq_usize >= 1 && seq_usize <= n,
+                            "find_lca returned seq {seq} outside valid range 1..={n}"
+                        );
+                    }
                 }
             }
             Ok::<(), TestCaseError>(())

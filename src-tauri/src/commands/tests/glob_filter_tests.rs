@@ -122,7 +122,7 @@ async fn empty_include_and_exclude_returns_all_matches() {
     .await
     .unwrap();
     // 4 content blocks + 0 page-title hits because none contain "alpha".
-    assert!(resp.items.len() >= 4, "got {} items", resp.items.len());
+    assert_eq!(resp.items.len(), 4, "got {} items", resp.items.len());
 }
 
 #[tokio::test]
@@ -336,5 +336,5 @@ async fn legacy_tag_and_filter_still_works() {
     )
     .await
     .unwrap();
-    assert!(resp.items.len() >= 4);
+    assert_eq!(resp.items.len(), 4);
 }

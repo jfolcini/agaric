@@ -237,6 +237,11 @@ async fn resolve_not_returns_complement() {
     insert_tag_assoc(&pool, "BLK_1", "TAG_A").await;
     let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_A".into())));
     let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
+    assert_eq!(
+        result.len(),
+        2,
+        "NOT(TAG_A) complement should have exactly 2 elements, got {result:?}"
+    );
     assert!(result.contains("BLK_2"));
     assert!(result.contains("TAG_A"));
     assert!(!result.contains("BLK_1"));
@@ -251,7 +256,23 @@ async fn resolve_not_excludes_deleted_from_universal_set() {
     soft_delete(&pool, "BLK_2").await;
     let expr = TagExpr::Not(Box::new(TagExpr::Tag("TAG_A".into())));
     let result: FxHashSet<String> = resolve_expr(&pool, &expr, false).await.unwrap();
-    assert!(!result.contains("BLK_2"));
+    assert_eq!(
+        result.len(),
+        1,
+        "NOT(TAG_A) with BLK_2 deleted should have exactly 1 element, got {result:?}"
+    );
+    assert!(
+        result.contains("TAG_A"),
+        "complement should contain TAG_A (untagged, non-deleted)"
+    );
+    assert!(
+        !result.contains("BLK_1"),
+        "BLK_1 is tagged with TAG_A so must be excluded"
+    );
+    assert!(
+        !result.contains("BLK_2"),
+        "BLK_2 is deleted so must be excluded from universal set"
+    );
 }
 #[tokio::test]
 async fn resolve_nested_and_or() {

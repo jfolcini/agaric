@@ -2442,6 +2442,8 @@ async fn projected_agenda_cache_excludes_done_blocks() {
 
 #[tokio::test]
 async fn projected_agenda_cache_idempotent_rebuild() {
+    use std::collections::BTreeSet;
+
     let (pool, _dir) = test_pool().await;
 
     let today = chrono::Local::now().date_naive();
@@ -2450,53 +2452,82 @@ async fn projected_agenda_cache_idempotent_rebuild() {
     insert_repeating_block(&pool, "RPT05", &due, None, "weekly", None, None, None).await;
 
     rebuild_projected_agenda_cache(&pool).await.unwrap();
-    let first_count = count_rows(&pool, "projected_agenda_cache").await;
+    let first_rows: BTreeSet<(String, String, String)> =
+        sqlx::query_as("SELECT block_id, projected_date, source FROM projected_agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
 
     rebuild_projected_agenda_cache(&pool).await.unwrap();
-    let second_count = count_rows(&pool, "projected_agenda_cache").await;
+    let second_rows: BTreeSet<(String, String, String)> =
+        sqlx::query_as("SELECT block_id, projected_date, source FROM projected_agenda_cache")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
 
     assert_eq!(
-        first_count, second_count,
-        "consecutive rebuilds must produce identical results"
+        first_rows, second_rows,
+        "consecutive rebuilds must produce identical (block_id, projected_date, source) row sets"
     );
 }
 
+/// True differential: runs both [`rebuild_projected_agenda_cache_split`] and
+/// [`rebuild_projected_agenda_cache`] on identical fixtures in separate pools
+/// and asserts that the resulting `(block_id, projected_date, source)` row
+/// sets are byte-identical, confirming the split path is not a no-op and
+/// both paths share the same projection logic.
 #[tokio::test]
-async fn projected_agenda_cache_split_variant_matches_single_pool() {
-    let (pool, _dir) = test_pool().await;
+async fn projected_agenda_cache_split_matches_single_pool() {
+    use std::collections::BTreeSet;
 
     let today = chrono::Local::now().date_naive();
     let due = (today - chrono::Duration::days(5))
         .format("%Y-%m-%d")
         .to_string();
 
-    insert_repeating_block(&pool, "RPT06", &due, None, "daily", None, None, None).await;
+    // Two independent pools with identical fixture data.
+    let (pool_split, _dir_split) = test_pool().await;
+    let (pool_single, _dir_single) = test_pool().await;
 
-    rebuild_projected_agenda_cache_split(&pool, &pool)
+    for pool in [&pool_split, &pool_single] {
+        insert_repeating_block(pool, "RPT06", &due, None, "daily", None, None, None).await;
+    }
+
+    rebuild_projected_agenda_cache_split(&pool_split, &pool_split)
         .await
         .unwrap();
+    rebuild_projected_agenda_cache(&pool_single).await.unwrap();
 
-    let count = count_rows(&pool, "projected_agenda_cache").await;
-    // I-Cache-7: tightened from `count > 0` to exact count.
-    // L-26 follow-up would inject a fixed clock so this remains a strict
-    // `assert_eq!` regardless of wall-clock time of execution.
-    //
-    // Derivation: due = today - 5 days, daily repeat (+1 day),
-    // horizon = today + 365. The impl seeds `current = due`, then in each
-    // iteration shifts +1 and pushes when `current ∈ [today, today + 365]`:
-    //   Iters 1..=4: today - 4 .. today - 1  (< today, skipped)
-    //   Iter 5:      today                   (push)
-    //   ...
-    //   Iter 370:    today + 365             (push)
-    //   Iter 371:    today + 366             (> horizon → break)
-    // ⇒ count = 370 - 5 + 1 = 366.
-    //
-    // Robust to a 1-day midnight rollover between the test's
-    // `chrono::Local::now()` and the impl's: count = (370 + δ) - (5 + δ) + 1
-    // = 366 for any δ.
+    let split_rows: BTreeSet<(String, String, String)> =
+        sqlx::query_as("SELECT block_id, projected_date, source FROM projected_agenda_cache")
+            .fetch_all(&pool_split)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+
+    let single_rows: BTreeSet<(String, String, String)> =
+        sqlx::query_as("SELECT block_id, projected_date, source FROM projected_agenda_cache")
+            .fetch_all(&pool_single)
+            .await
+            .unwrap()
+            .into_iter()
+            .collect();
+
+    // Sanity: the fixture must produce non-empty output.
+    assert!(
+        !split_rows.is_empty(),
+        "split rebuild must produce projections for a daily-repeating block"
+    );
+
     assert_eq!(
-        count, 366,
-        "daily projections from due 5 days ago over 365-day horizon (got {count})"
+        split_rows, single_rows,
+        "split and single-pool rebuilds must produce identical \
+         (block_id, projected_date, source) row sets"
     );
 }
 
@@ -3783,9 +3814,8 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
 
     // Build a fixture that exercises every desired-state source: a
     // date-property hit, a date-tag hit, a `due_date` column hit, and a
-    // `scheduled_date` column hit — plus a deleted block, a conflict
-    // copy, and a template-page block (each must be excluded by the
-    // shared SQL).
+    // `scheduled_date` column hit — plus a deleted block and a
+    // template-page block (each must be excluded by the shared SQL).
     let (pool_single, _dir_a) = test_pool().await;
     let (pool_split, _dir_b) = test_pool().await;
 
@@ -3817,6 +3847,32 @@ async fn agenda_rebuild_single_and_split_produce_identical_cache() {
         insert_block(pool, "BLK05", "content", "deleted").await;
         set_property(pool, "BLK05", "due", Some("2025-08-05")).await;
         soft_delete_block(pool, "BLK05").await;
+
+        // Excluded: content block whose page has a `template` property
+        // (FEAT-5a template-page exclusion: `NOT EXISTS (... tp.block_id =
+        // b.page_id AND tp.key = 'template')`).
+        //
+        // BLK06_PAGE is a page block marked as a template; BLK06 is a
+        // content block that lives on that page (page_id = BLK06_PAGE).
+        // The due_date on BLK06 must not appear in agenda_cache.
+        insert_block(pool, "BLK06_PAGE", "page", "template page").await;
+        // `set_property` only handles value_date; use raw SQL so value_text is
+        // populated (the exactly_one_value CHECK requires exactly one non-NULL
+        // value column).
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('BLK06_PAGE', 'template', 'true')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, due_date) \
+             VALUES ('BLK06', 'content', 'task on template page', 'BLK06_PAGE', '2025-09-06')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
     }
 
     rebuild_agenda_cache(&pool_single).await.unwrap();

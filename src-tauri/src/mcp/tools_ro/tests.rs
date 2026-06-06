@@ -665,6 +665,71 @@ async fn search_snippet_len_truncates_mcp_but_not_fe_path() {
     );
 }
 
+/// Truncation on multibyte (emoji) content — a byte-based truncation bug
+/// would split a 4-byte codepoint and produce invalid UTF-8 or an incorrect
+/// char count.  This test builds a body that is entirely 4-byte emoji so the
+/// char count and byte count diverge maximally, then verifies that the MCP
+/// `search` path:
+///   1. returns at most SEARCH_SNIPPET_CAP chars (not silently over-counted),
+///   2. does not truncate to the empty string, and
+///   3. returns valid UTF-8 (no split codepoints).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_truncates_multibyte_content_safely() {
+    let (tools, mat, _dir) = mk_tools().await;
+
+    // "needle" at the front so FTS matches, then a wall of 4-byte emoji that
+    // pushes the body well past SEARCH_SNIPPET_CAP chars.
+    let emoji_body: String = "needle ".to_string() + &"🔥".repeat(SEARCH_SNIPPET_CAP + 100);
+
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        emoji_body,
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect("happy path for multibyte truncation test");
+
+    let items = result["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1, "exactly one block should match");
+
+    let content = items[0]["content"].as_str().unwrap_or("");
+
+    // 1. Char count must be bounded.
+    assert!(
+        content.chars().count() <= SEARCH_SNIPPET_CAP,
+        "multibyte content must be truncated to at most {} chars, got {}",
+        SEARCH_SNIPPET_CAP,
+        content.chars().count(),
+    );
+
+    // 2. Must not be over-truncated to nothing.
+    assert!(
+        !content.is_empty(),
+        "truncation must not produce an empty snippet",
+    );
+
+    // 3. Must be valid UTF-8 (no split codepoints).
+    assert!(
+        std::str::from_utf8(content.as_bytes()).is_ok(),
+        "truncated multibyte content must be valid UTF-8",
+    );
+}
+
 // -------------------------------------------------------------------
 // PEND-65 — MCP `search` tool: `filter` arg threads through to
 // `SearchFilter`. The structured-filter shape mirrors the Tauri

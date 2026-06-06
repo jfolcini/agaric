@@ -415,13 +415,66 @@ proptest! {
             apply_to_engine(&mut engine, &op)
                 .map_err(|e| TestCaseError::fail(format!("apply failed: {e}")))?;
 
-            // Track stream state for the next iteration.
+            // Read-back assertions: verify the engine reflects the op's
+            // effect immediately after apply.  Mirrors the pattern from
+            // `single_author_create_only_stream_apply_succeeds`.
             match &op {
                 OpPayload::CreateBlock(p) => {
                     created.push(p.block_id.as_str().to_string());
                 }
+                OpPayload::EditBlock(p) => {
+                    // The engine must hold the text just written by the edit.
+                    let snap = engine
+                        .read_block(p.block_id.as_str())
+                        .map_err(|e| TestCaseError::fail(format!("read_block after edit failed: {e}")))?
+                        .ok_or_else(|| TestCaseError::fail(
+                            format!("block {} absent after EditBlock", p.block_id.as_str())
+                        ))?;
+                    prop_assert_eq!(
+                        snap.content, p.to_text.clone(),
+                        "EditBlock must update block content in the engine"
+                    );
+                }
+                OpPayload::SetProperty(p) => {
+                    // The engine must hold the value just written.
+                    let stored = engine
+                        .read_property(p.block_id.as_str(), &p.key)
+                        .map_err(|e| TestCaseError::fail(format!("read_property after set failed: {e}")))?;
+                    let expected: Option<String> = p
+                        .value_text
+                        .clone()
+                        .or_else(|| p.value_num.map(|n| n.to_string()))
+                        .or_else(|| p.value_date.clone())
+                        .or_else(|| p.value_ref.clone())
+                        .or_else(|| p.value_bool.map(|b| b.to_string()));
+                    prop_assert_eq!(
+                        stored,
+                        Some(expected),
+                        "SetProperty must persist the value in the engine"
+                    );
+                }
+                OpPayload::MoveBlock(p) => {
+                    // After a move the block must still be present (not deleted).
+                    let snap = engine
+                        .read_block(p.block_id.as_str())
+                        .map_err(|e| TestCaseError::fail(format!("read_block after move failed: {e}")))?;
+                    prop_assert!(
+                        snap.is_some(),
+                        "MoveBlock: block {} must still exist in engine after move",
+                        p.block_id.as_str()
+                    );
+                }
                 OpPayload::DeleteBlock(p) => {
                     deleted.push(p.block_id.as_str().to_string());
+                    // The engine must mark the block as deleted.
+                    let is_deleted = engine
+                        .read_deleted(p.block_id.as_str())
+                        .map_err(|e| TestCaseError::fail(format!("read_deleted after delete failed: {e}")))?;
+                    prop_assert!(
+                        is_deleted,
+                        "DeleteBlock: block {} must be marked deleted in engine",
+                        p.block_id.as_str()
+                    );
                 }
                 _ => {}
             }

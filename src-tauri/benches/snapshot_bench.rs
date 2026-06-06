@@ -5,6 +5,8 @@
 //!   1. `create_snapshot`  — snapshot creation at varying DB sizes (10, 100, 1000 blocks)
 //!   2. `apply_snapshot`   — snapshot application to a fresh DB at varying sizes
 
+use std::hint::black_box;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::commands::create_block_inner;
@@ -242,12 +244,12 @@ fn bench_codec(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("encode", format!("{n}_blocks")),
             &n,
-            |b, _| b.iter(|| encode_snapshot(&data).unwrap()),
+            |b, _| b.iter(|| black_box(encode_snapshot(&data).unwrap())),
         );
         group.bench_with_input(
             BenchmarkId::new("decode", format!("{n}_blocks")),
             &n,
-            |b, _| b.iter(|| decode_snapshot(&encoded[..]).unwrap()),
+            |b, _| b.iter(|| black_box(decode_snapshot(&encoded[..]).unwrap())),
         );
     }
     group.finish();

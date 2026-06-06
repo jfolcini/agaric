@@ -84,9 +84,14 @@ async fn apply_op_tag_inheritance_dispatches_add_tag() {
     drop(conn);
 
     let rows = get_inherited(&pool).await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "AddTag dispatch must produce exactly one inherited row"
+    );
     assert!(
-        rows.iter().any(|r| r.0 == "C_APP" && r.1 == "TAG_APP"),
-        "AddTag dispatch must propagate to descendants"
+        rows.contains(&("C_APP".into(), "TAG_APP".into(), "PAGE_APP".into())),
+        "AddTag dispatch must propagate to descendants: expected (C_APP, TAG_APP, PAGE_APP), got {rows:?}"
     );
 }
 
@@ -117,9 +122,14 @@ async fn apply_op_tag_inheritance_dispatches_create_block() {
     drop(conn);
 
     let rows = get_inherited(&pool).await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "CreateBlock dispatch must produce exactly one inherited row"
+    );
     assert!(
-        rows.iter().any(|r| r.0 == "CHILD_CB" && r.1 == "TAG_CB"),
-        "CreateBlock dispatch must inherit parent tags"
+        rows.contains(&("CHILD_CB".into(), "TAG_CB".into(), "PAR_CB".into())),
+        "CreateBlock dispatch must inherit parent tags: expected (CHILD_CB, TAG_CB, PAR_CB), got {rows:?}"
     );
 }
 
