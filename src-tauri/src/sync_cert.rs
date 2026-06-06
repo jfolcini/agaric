@@ -37,7 +37,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::error::AppError;
-use crate::sync_net::{generate_self_signed_cert, SyncCert};
+use crate::sync_net::{SyncCert, generate_self_signed_cert};
 
 /// Wrapper for the persistent TLS certificate in Tauri managed state.
 #[derive(Clone, Debug)]

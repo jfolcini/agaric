@@ -1,6 +1,6 @@
 // Shared test helpers for command tests
-use crate::db::init_pool;
 pub use crate::db::ReadPool;
+use crate::db::init_pool;
 use crate::materializer::Materializer;
 pub use crate::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;

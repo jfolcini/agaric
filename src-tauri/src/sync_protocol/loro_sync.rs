@@ -42,7 +42,7 @@ use sqlx::SqlitePool;
 use crate::error::AppError;
 use crate::loro::registry::LoroEngineRegistry;
 use crate::space::SpaceId;
-use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION};
+use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use loro::VersionVector;
 
 /// Outcome of [`apply_remote`].  Discriminates between a successful
@@ -1173,7 +1173,10 @@ mod tests {
             .for_space(&space, "device-B")
             .expect("for_space B");
         assert!(
-            g.engine_mut().read_block(BLOCK_C).expect("read C").is_none(),
+            g.engine_mut()
+                .read_block(BLOCK_C)
+                .expect("read C")
+                .is_none(),
             "BLOCK_C must NOT be present on B — the engine import must be skipped on a fallback miss",
         );
 

@@ -10,7 +10,7 @@
 //!   6. `set_due_date_inner`
 //!   7. `set_scheduled_date_inner`
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     delete_property_inner, get_properties_inner, set_due_date_inner, set_priority_inner,

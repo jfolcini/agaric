@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::hash::{compute_op_hash, verify_op_hash};
 

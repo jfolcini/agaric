@@ -614,19 +614,19 @@ fn op_created_at_rfc3339(row: &sqlx::sqlite::SqliteRow, fallback: &str) -> Strin
         // Defensive: a TEXT column holding an all-digit ms value (or an
         // integer coerced to text) — render rfc3339 rather than emit a bare
         // integer string as `deleted_at`.
-        if let Ok(ms) = s.parse::<i64>() {
-            if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
-                return dt.to_rfc3339();
-            }
+        if let Ok(ms) = s.parse::<i64>()
+            && let Some(dt) = chrono::DateTime::from_timestamp_millis(ms)
+        {
+            return dt.to_rfc3339();
         }
         if !s.is_empty() {
             return s;
         }
     }
-    if let Ok(ms) = row.try_get::<i64, _>("created_at") {
-        if let Some(dt) = chrono::DateTime::from_timestamp_millis(ms) {
-            return dt.to_rfc3339();
-        }
+    if let Ok(ms) = row.try_get::<i64, _>("created_at")
+        && let Some(dt) = chrono::DateTime::from_timestamp_millis(ms)
+    {
+        return dt.to_rfc3339();
     }
     fallback.to_string()
 }
@@ -2563,20 +2563,52 @@ mod tests {
         // the only blocks rebuilt; every GHOST_* id below is absent from the
         // recovered blocks table.
         let ops: &[(i64, &str, &str)] = &[
-            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"Page A\",\"parent_id\":null,\"position\":1}"),
-            (2, "create_block", "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"child\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            (
+                1,
+                "create_block",
+                "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"Page A\",\"parent_id\":null,\"position\":1}",
+            ),
+            (
+                2,
+                "create_block",
+                "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"child\",\"parent_id\":\"PAGE1\",\"position\":2}",
+            ),
             // Valid property on a live block — must survive.
-            (3, "set_property", "{\"block_id\":\"CHILD1\",\"key\":\"priority\",\"value_text\":\"high\"}"),
+            (
+                3,
+                "set_property",
+                "{\"block_id\":\"CHILD1\",\"key\":\"priority\",\"value_text\":\"high\"}",
+            ),
             // Dangling block_id (GHOST_BLOCK never created) — must be skipped.
-            (4, "set_property", "{\"block_id\":\"GHOST_BLOCK\",\"key\":\"priority\",\"value_text\":\"low\"}"),
+            (
+                4,
+                "set_property",
+                "{\"block_id\":\"GHOST_BLOCK\",\"key\":\"priority\",\"value_text\":\"low\"}",
+            ),
             // Dangling value_ref (sole value points at missing block) — skip whole row.
-            (5, "set_property", "{\"block_id\":\"CHILD1\",\"key\":\"related\",\"value_ref\":\"GHOST_REF\"}"),
+            (
+                5,
+                "set_property",
+                "{\"block_id\":\"CHILD1\",\"key\":\"related\",\"value_ref\":\"GHOST_REF\"}",
+            ),
             // Valid tag — must survive.
-            (6, "add_tag", "{\"block_id\":\"CHILD1\",\"tag_id\":\"PAGE1\"}"),
+            (
+                6,
+                "add_tag",
+                "{\"block_id\":\"CHILD1\",\"tag_id\":\"PAGE1\"}",
+            ),
             // Dangling tag_id — skip.
-            (7, "add_tag", "{\"block_id\":\"CHILD1\",\"tag_id\":\"GHOST_TAG\"}"),
+            (
+                7,
+                "add_tag",
+                "{\"block_id\":\"CHILD1\",\"tag_id\":\"GHOST_TAG\"}",
+            ),
             // Dangling tagged block_id — skip.
-            (8, "add_tag", "{\"block_id\":\"GHOST_BLOCK\",\"tag_id\":\"PAGE1\"}"),
+            (
+                8,
+                "add_tag",
+                "{\"block_id\":\"GHOST_BLOCK\",\"tag_id\":\"PAGE1\"}",
+            ),
         ];
         for (seq, op_type, payload) in ops {
             sqlx::query(
@@ -2676,13 +2708,33 @@ mod tests {
         let ts = chrono::Utc::now().timestamp_millis();
 
         let ops: &[(i64, &str, &str)] = &[
-            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}"),
-            (2, "create_block", "{\"block_id\":\"B1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            (
+                1,
+                "create_block",
+                "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}",
+            ),
+            (
+                2,
+                "create_block",
+                "{\"block_id\":\"B1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}",
+            ),
             // Set todo_state, then CLEAR it (the all-NULL op that crashed boot).
-            (3, "set_property", "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":\"DOING\"}"),
-            (4, "set_property", "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":null,\"value_num\":null,\"value_date\":null,\"value_ref\":null,\"value_bool\":null}"),
+            (
+                3,
+                "set_property",
+                "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":\"DOING\"}",
+            ),
+            (
+                4,
+                "set_property",
+                "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":null,\"value_num\":null,\"value_date\":null,\"value_ref\":null,\"value_bool\":null}",
+            ),
             // An unrelated property that stays set — must survive the recovery.
-            (5, "set_property", "{\"block_id\":\"B1\",\"key\":\"priority\",\"value_text\":\"high\"}"),
+            (
+                5,
+                "set_property",
+                "{\"block_id\":\"B1\",\"key\":\"priority\",\"value_text\":\"high\"}",
+            ),
         ];
         for (seq, op_type, payload) in ops {
             sqlx::query(
@@ -2747,16 +2799,40 @@ mod tests {
         let ts = chrono::Utc::now().timestamp_millis();
 
         let ops: &[(i64, &str, &str)] = &[
-            (1, "create_block", "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}"),
-            (2, "create_block", "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}"),
+            (
+                1,
+                "create_block",
+                "{\"block_id\":\"PAGE1\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}",
+            ),
+            (
+                2,
+                "create_block",
+                "{\"block_id\":\"CHILD1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}",
+            ),
             // Live attachment on a recovered block — must be restored verbatim.
-            (3, "add_attachment", "{\"attachment_id\":\"ATT1\",\"block_id\":\"CHILD1\",\"mime_type\":\"image/png\",\"filename\":\"a.png\",\"size_bytes\":123,\"fs_path\":\"attachments/ATT1.png\"}"),
+            (
+                3,
+                "add_attachment",
+                "{\"attachment_id\":\"ATT1\",\"block_id\":\"CHILD1\",\"mime_type\":\"image/png\",\"filename\":\"a.png\",\"size_bytes\":123,\"fs_path\":\"attachments/ATT1.png\"}",
+            ),
             // Attachment whose owning block was never created — must be skipped
             // (restoring it would trip the block_id FK and abort startup).
-            (4, "add_attachment", "{\"attachment_id\":\"ATT2\",\"block_id\":\"GHOST\",\"mime_type\":\"image/png\",\"filename\":\"g.png\",\"size_bytes\":7,\"fs_path\":\"attachments/ATT2.png\"}"),
+            (
+                4,
+                "add_attachment",
+                "{\"attachment_id\":\"ATT2\",\"block_id\":\"GHOST\",\"mime_type\":\"image/png\",\"filename\":\"g.png\",\"size_bytes\":7,\"fs_path\":\"attachments/ATT2.png\"}",
+            ),
             // Added then deleted — the later delete must win (net absent).
-            (5, "add_attachment", "{\"attachment_id\":\"ATT3\",\"block_id\":\"CHILD1\",\"mime_type\":\"text/plain\",\"filename\":\"t.txt\",\"size_bytes\":4,\"fs_path\":\"attachments/ATT3.txt\"}"),
-            (6, "delete_attachment", "{\"attachment_id\":\"ATT3\",\"fs_path\":\"attachments/ATT3.txt\"}"),
+            (
+                5,
+                "add_attachment",
+                "{\"attachment_id\":\"ATT3\",\"block_id\":\"CHILD1\",\"mime_type\":\"text/plain\",\"filename\":\"t.txt\",\"size_bytes\":4,\"fs_path\":\"attachments/ATT3.txt\"}",
+            ),
+            (
+                6,
+                "delete_attachment",
+                "{\"attachment_id\":\"ATT3\",\"fs_path\":\"attachments/ATT3.txt\"}",
+            ),
         ];
         for (seq, op_type, payload) in ops {
             sqlx::query(

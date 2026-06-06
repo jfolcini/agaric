@@ -376,11 +376,11 @@ pub async fn reindex_fts_references(pool: &SqlitePool, block_id: &str) -> Result
         // staging loop is just an in-memory map.
         let mut to_insert: Vec<(String, String)> = Vec::with_capacity(rows.len());
         for row in &rows {
-            if row.deleted_at.is_none() {
-                if let Some(content) = row.content.as_deref() {
-                    let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
-                    to_insert.push((row.id.to_owned(), stripped));
-                }
+            if row.deleted_at.is_none()
+                && let Some(content) = row.content.as_deref()
+            {
+                let stripped = strip_for_fts_with_maps(content, &tag_names, &page_titles);
+                to_insert.push((row.id.to_owned(), stripped));
             }
         }
         insert_fts_rows_tx(&mut tx, &to_insert).await?;

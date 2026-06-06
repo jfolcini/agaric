@@ -8,7 +8,7 @@ use tokio::net::TcpListener;
 
 use super::connection::{InnerStream, SyncConnection};
 use super::sync_err;
-use super::tls::{build_server_tls_config, SyncCert};
+use super::tls::{SyncCert, build_server_tls_config};
 use crate::error::AppError;
 
 pub const MDNS_BROWSE_TIMEOUT: Duration = Duration::from_secs(5);

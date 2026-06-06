@@ -383,7 +383,7 @@ proptest! {
                 })
                 .collect();
             positions.sort_unstable();
-            let expected: Vec<i64> = (1..=order.len() as i64).collect();
+            let expected: Vec<i64> = (1..=i64::try_from(order.len()).unwrap()).collect();
             prop_assert_eq!(positions, expected);
         }
     }

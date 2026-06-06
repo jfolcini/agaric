@@ -5897,7 +5897,7 @@ async fn eval_grouped_blockrow_fetch_large_json_each() {
         assert!(g.truncated, "each over-cap group flagged truncated (#380)");
     }
     // Counts reflect the TRUE pre-truncation totals.
-    let total = (per_page as usize) * (n_pages as usize);
+    let total = usize::try_from(per_page).unwrap() * usize::try_from(n_pages).unwrap();
     assert_eq!(resp.total_count, total, "total_count counts pre-truncation");
     assert_eq!(
         resp.filtered_count, total,
@@ -7312,7 +7312,10 @@ async fn eval_grouped_compound_and_matches_unscoped_oracle() {
         .flat_map(|g| g.blocks.iter().map(|b| b.id.to_string()))
         .collect();
     got.sort();
-    let mut want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    let mut want: Vec<String> = expected
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
     want.sort();
     assert_eq!(
         got, want,
@@ -7410,7 +7413,15 @@ async fn eval_grouped_caps_blocks_per_group() {
     let n = MAX_BLOCKS_PER_GROUP + extra;
     for i in 0..n {
         let bid = format!("BLK_{i:05}");
-        insert_block_with_parent(&pool, &bid, "content", "b", Some("PAGE_A"), Some(i as i64)).await;
+        insert_block_with_parent(
+            &pool,
+            &bid,
+            "content",
+            "b",
+            Some("PAGE_A"),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await;
         insert_block_link(&pool, &bid, "TARGET").await;
     }
 
@@ -7454,7 +7465,15 @@ async fn eval_grouped_under_cap_not_truncated() {
     let n = MAX_BLOCKS_PER_GROUP; // exactly at the cap → NOT truncated
     for i in 0..n {
         let bid = format!("BLK_{i:05}");
-        insert_block_with_parent(&pool, &bid, "content", "b", Some("PAGE_A"), Some(i as i64)).await;
+        insert_block_with_parent(
+            &pool,
+            &bid,
+            "content",
+            "b",
+            Some("PAGE_A"),
+            Some(i64::try_from(i).unwrap()),
+        )
+        .await;
         insert_block_link(&pool, &bid, "TARGET").await;
     }
 
@@ -7489,7 +7508,7 @@ async fn eval_unlinked_caps_blocks_per_group() {
             "content",
             "Quokka mention",
             Some("PAGE_A"),
-            Some(i as i64),
+            Some(i64::try_from(i).unwrap()),
         )
         .await;
         insert_fts(&pool, &bid, "Quokka mention here").await;

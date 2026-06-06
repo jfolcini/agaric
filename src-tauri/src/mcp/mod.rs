@@ -33,8 +33,8 @@ pub mod tools_rw;
 pub mod rmcp_adapter;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::Notify;
 
 use sqlx::SqlitePool;
@@ -844,7 +844,7 @@ mod tests {
         use std::io::Write as _;
         use std::process::{Command, Stdio};
 
-        use crate::mcp::server::{handle_connection, PlaceholderRegistry};
+        use crate::mcp::server::{PlaceholderRegistry, handle_connection};
         use tokio::net::UnixListener;
 
         let dir = TempDir::new().unwrap();

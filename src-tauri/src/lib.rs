@@ -397,8 +397,8 @@ fn log_or_zero(r: Result<i64, sqlx::Error>, ctx: &str) -> i64 {
     }
 }
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Shared cancel flag for sync — registered in managed state before
 /// the `SyncDaemon` spawns so `cancel_sync` can access it even if the
@@ -455,6 +455,22 @@ pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBu
     app_data_dir.join("logs")
 }
 
+// Linux: WebKitGTK's DMABUF renderer hangs the webview on a blank,
+// unresponsive window with several GPU drivers (notably the NVIDIA
+// proprietary stack and some Intel/Mesa combos). It bites packaged builds
+// (AppImage/.deb) far more than `npm run dev`, which is why the symptom
+// shows up only after bundling. Forcing the renderer off restores the
+// stable path. Only set it when the user hasn't already chosen a value, so
+// an explicit override (e.g. WEBKIT_DISABLE_DMABUF_RENDERER=0) still wins.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+fn disable_webkit_dmabuf_if_unset() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        // SAFETY: called at app startup before any threads are spawned.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
+    }
+}
+
 #[cfg(not(tarpaulin_include))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -465,21 +481,12 @@ pub fn run() {
     use sync_cert::PersistedCert;
     use tauri::Manager;
     use tauri_specta::Builder;
+    use tracing_subscriber::EnvFilter;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    use tracing_subscriber::EnvFilter;
 
-    // Linux: WebKitGTK's DMABUF renderer hangs the webview on a blank,
-    // unresponsive window with several GPU drivers (notably the NVIDIA
-    // proprietary stack and some Intel/Mesa combos). It bites packaged builds
-    // (AppImage/.deb) far more than `npm run dev`, which is why the symptom
-    // shows up only after bundling. Forcing the renderer off restores the
-    // stable path. Only set it when the user hasn't already chosen a value, so
-    // an explicit override (e.g. WEBKIT_DISABLE_DMABUF_RENDERER=0) still wins.
     #[cfg(target_os = "linux")]
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
+    disable_webkit_dmabuf_if_unset();
 
     // BUG-34: Tracing-appender setup moved into the Tauri `setup()` hook so
     // it can use `app.path().app_data_dir()` (OS-correct location on every
@@ -1006,8 +1013,8 @@ pub fn run() {
             // are stale for those block_ids. Refresh them now and block until
             // the background queue drains so UI queries after setup never see
             // pre-recovery state.
-            if !report.drafts_recovered.is_empty() {
-                if let Err(e) = tauri::async_runtime::block_on(
+            if !report.drafts_recovered.is_empty()
+                && let Err(e) = tauri::async_runtime::block_on(
                     recovery::refresh_caches_for_recovered_drafts(
                         &pools.read,
                         &materializer,
@@ -1020,7 +1027,6 @@ pub fn run() {
                         "failed to refresh caches after draft recovery",
                     );
                 }
-            }
 
             // BUG-22: Spawn the retry-queue sweeper so any per-block tasks
             // persisted by a previous session (or accumulated during this
@@ -1319,7 +1325,7 @@ pub fn run() {
             // (desktop + mobile), so the same listener doubles as a
             // laptop-lid-closed optimization on desktop.
             app.manage(AppLifecycle(lifecycle.clone()));
-            if let Some(window) = app.get_webview_window("main") {
+            match app.get_webview_window("main") { Some(window) => {
                 let lifecycle_for_listener = lifecycle.clone();
                 window.on_window_event(move |event| {
                     if let tauri::WindowEvent::Focused(focused) = event {
@@ -1336,11 +1342,11 @@ pub fn run() {
                         }
                     }
                 });
-            } else {
+            } _ => {
                 tracing::warn!(
                     "main webview window not available at setup; app-lifecycle hooks inactive"
                 );
-            }
+            }}
 
             // Install rustls CryptoProvider before any TLS usage (#sync)
             let _ = rustls::crypto::ring::default_provider().install_default();

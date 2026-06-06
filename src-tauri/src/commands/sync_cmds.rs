@@ -12,7 +12,7 @@ use crate::db::{ReadPool, WritePool};
 use crate::device::DeviceId;
 use crate::error::AppError;
 use crate::pairing::PairingSession;
-use crate::pairing::{generate_qr_svg, pairing_qr_payload, verify_device_exchange, PairingMessage};
+use crate::pairing::{PairingMessage, generate_qr_svg, pairing_qr_payload, verify_device_exchange};
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_scheduler::SyncScheduler;
 
@@ -482,7 +482,7 @@ mod tests_m35 {
     //! `host:port` (host opaque, port a non-zero u16), so mDNS `*.local`
     //! hosts and other DNS names round-trip without resolution at the
     //! command layer. Resolution is deferred to the daemon.
-    use super::{validate_host_port, AppError};
+    use super::{AppError, validate_host_port};
 
     fn assert_accepts(addr: &str) {
         match validate_host_port(addr) {

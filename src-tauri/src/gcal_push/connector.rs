@@ -40,7 +40,7 @@ use std::time::Duration;
 use chrono::{DateTime, Days, NaiveDate, Utc};
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 
 use crate::error::{AppError, GcalErrorKind};
 use crate::pagination::ProjectedAgendaEntry;
@@ -51,8 +51,8 @@ use super::digest::{self, DigestResult, Event, PrivacyMode};
 use super::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use super::lease;
 use super::models::{
-    self, delete_event_map_by_date, get_event_map_for_date, upsert_event_map, GcalAgendaEventMap,
-    GcalSettingKey,
+    self, GcalAgendaEventMap, GcalSettingKey, delete_event_map_by_date, get_event_map_for_date,
+    upsert_event_map,
 };
 use super::oauth::Token;
 

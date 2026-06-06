@@ -1039,7 +1039,7 @@ mod tests {
             "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
         )
         .bind("SPACE_PAGE")
-        .bind(&space)
+        .bind(space)
         .execute(pool)
         .await
         .unwrap();

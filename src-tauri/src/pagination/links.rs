@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use super::{build_page_response, ActiveBlockRow, Cursor, PageRequest, PageResponse};
+use super::{ActiveBlockRow, Cursor, PageRequest, PageResponse, build_page_response};
 use crate::error::AppError;
 
 /// List backlinks — blocks that link *to* `target_id`, paginated.

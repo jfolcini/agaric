@@ -219,14 +219,16 @@ mod tests {
 
         let desktop = fs::read_to_string(data.path().join("applications/agaric.desktop")).unwrap();
         assert!(desktop.contains("Exec=\"/opt/Agaric.AppImage\" %u"));
-        assert!(data
-            .path()
-            .join("icons/hicolor/256x256/apps/agaric.png")
-            .is_file());
-        assert!(data
-            .path()
-            .join("icons/hicolor/128x128/apps/agaric.png")
-            .is_file());
+        assert!(
+            data.path()
+                .join("icons/hicolor/256x256/apps/agaric.png")
+                .is_file()
+        );
+        assert!(
+            data.path()
+                .join("icons/hicolor/128x128/apps/agaric.png")
+                .is_file()
+        );
     }
 
     #[test]

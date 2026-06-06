@@ -342,10 +342,10 @@ pub(crate) async fn search_with_toggles_partitioned(
                 blocks_has_more: false,
             });
         }
-        if let Some(ref token) = cancel {
-            if token.is_cancelled() {
-                return Err(AppError::Cancelled);
-            }
+        if let Some(ref token) = cancel
+            && token.is_cancelled()
+        {
+            return Err(AppError::Cancelled);
         }
         return fts_fetch_filter_only_partitioned(
             pool,
@@ -366,10 +366,10 @@ pub(crate) async fn search_with_toggles_partitioned(
         // mirroring `fts_fetch_rows`' up-front `is_cancelled()` check.
         // The palette's next-keystroke pattern fires fresh IPCs faster
         // than the scans can start, so bail before doing any work.
-        if let Some(ref token) = cancel {
-            if token.is_cancelled() {
-                return Err(AppError::Cancelled);
-            }
+        if let Some(ref token) = cancel
+            && token.is_cancelled()
+        {
+            return Err(AppError::Cancelled);
         }
         // PEND-69 F1 — two parallel regex scans, each with a
         // `limit + 1` probe. The pages scan pushes

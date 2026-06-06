@@ -1,7 +1,7 @@
 use sqlx::SqlitePool;
 
 use super::{
-    build_page_response, ActiveBlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL,
+    ActiveBlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest, PageResponse, build_page_response,
 };
 use crate::error::AppError;
 

@@ -271,16 +271,15 @@ pub async fn compact_op_log_cmd(
     // -return path (no eligible ops) reaches here with ops_deleted = 0
     // and nothing on disk has changed, so the sweep would be pointless
     // queue churn.
-    if result.ops_deleted > 0 {
-        if let Err(e) =
+    if result.ops_deleted > 0
+        && let Err(e) =
             materializer.try_enqueue_background(MaterializeTask::CleanupOrphanedAttachments)
-        {
-            tracing::warn!(
-                error = %e,
-                ops_deleted = result.ops_deleted,
-                "failed to enqueue CleanupOrphanedAttachments after compaction",
-            );
-        }
+    {
+        tracing::warn!(
+            error = %e,
+            ops_deleted = result.ops_deleted,
+            "failed to enqueue CleanupOrphanedAttachments after compaction",
+        );
     }
 
     Ok(result)

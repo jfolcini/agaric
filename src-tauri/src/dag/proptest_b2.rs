@@ -80,7 +80,7 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::proptest_db_harness::{op_chain_strategy, seed_chain, HARNESS_DEVICE};
+use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, seed_chain};
 use proptest::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;

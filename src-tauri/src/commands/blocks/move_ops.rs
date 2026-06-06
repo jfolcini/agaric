@@ -43,12 +43,12 @@ pub async fn move_block_inner(
     let new_parent_id = new_parent_id.map(BlockId::into_string);
 
     // 1. Validate block cannot become its own parent (pure-logic check, no DB)
-    if let Some(ref pid) = new_parent_id {
-        if pid == &block_id {
-            return Err(AppError::InvalidOperation(format!(
-                "block '{block_id}' cannot be its own parent"
-            )));
-        }
+    if let Some(ref pid) = new_parent_id
+        && pid == &block_id
+    {
+        return Err(AppError::InvalidOperation(format!(
+            "block '{block_id}' cannot be its own parent"
+        )));
     }
 
     // 1b. #400: `new_index` is a 0-based sibling slot. "Move to the top" / "nest

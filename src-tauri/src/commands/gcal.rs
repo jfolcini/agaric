@@ -30,8 +30,8 @@ use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::gcal_push::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
 use crate::gcal_push::lease::{self, LeaseState};
 use crate::gcal_push::models::{self, GcalSettingKey};
-use crate::gcal_push::oauth::{persist_oauth_account_email, OAuthClient};
-use crate::gcal_push::oauth_callback::{bind_one_shot, CallbackParams};
+use crate::gcal_push::oauth::{OAuthClient, persist_oauth_account_email};
+use crate::gcal_push::oauth_callback::{CallbackParams, bind_one_shot};
 use crate::spaces::bootstrap::SPACE_PERSONAL_ULID;
 
 // ---------------------------------------------------------------------------
@@ -101,11 +101,7 @@ fn lease_state_to_holder(state: &LeaseState, this_device: &str) -> LeaseHolder {
 }
 
 fn optionalize(s: String) -> Option<String> {
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 async fn last_push_at(pool: &SqlitePool) -> Result<Option<String>, AppError> {
@@ -1347,8 +1343,8 @@ mod tests {
     }
 
     fn id_token_for_email(email: &str) -> String {
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
         let payload = URL_SAFE_NO_PAD.encode(
             serde_json::json!({ "email": email, "aud": "agaric" })

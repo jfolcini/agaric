@@ -697,25 +697,25 @@ impl Redactor {
         // builder result below cannot panic on empty-needle input.
         let mut needles: Vec<&str> = Vec::with_capacity(3 + ctx.peer_device_ids.len());
         let mut replacements: Vec<&'static str> = Vec::with_capacity(3 + ctx.peer_device_ids.len());
-        if let Some(home) = ctx.home {
-            if !home.is_empty() {
-                needles.push(home);
-                replacements.push("~");
-            }
+        if let Some(home) = ctx.home
+            && !home.is_empty()
+        {
+            needles.push(home);
+            replacements.push("~");
         }
-        if let Some(id) = ctx.device_id {
-            if !id.is_empty() {
-                needles.push(id);
-                replacements.push("[REDACTED_DEVICE_ID]");
-            }
+        if let Some(id) = ctx.device_id
+            && !id.is_empty()
+        {
+            needles.push(id);
+            replacements.push("[REDACTED_DEVICE_ID]");
         }
         // H-9a (1): specific GCal account email replaced BEFORE the generic
         // email regex so the known account keeps its precise tag.
-        if let Some(email) = ctx.gcal_email {
-            if !email.is_empty() {
-                needles.push(email);
-                replacements.push("[REDACTED:GCAL_EMAIL]");
-            }
+        if let Some(email) = ctx.gcal_email
+            && !email.is_empty()
+        {
+            needles.push(email);
+            replacements.push("[REDACTED:GCAL_EMAIL]");
         }
         // H-9a (2): every known peer device ID — the local `device_id` is
         // already covered above, but cross-device sync logs reference peer IDs
@@ -1210,16 +1210,14 @@ mod tests {
     /// such body matches no longer trigger.
     #[test]
     fn is_error_or_warn_line_rejects_body_match() {
-        let info_with_error_in_body =
-            "2026-04-28T10:23:45.123456Z  INFO  agaric::module: this contains ERROR somewhere in the message body but level is INFO";
+        let info_with_error_in_body = "2026-04-28T10:23:45.123456Z  INFO  agaric::module: this contains ERROR somewhere in the message body but level is INFO";
         assert!(
             !is_error_or_warn_line(info_with_error_in_body),
             "INFO line whose body mentions ERROR must NOT be classified as an error/warn line"
         );
 
         // Also guard against " WARN " appearing in a DEBUG body.
-        let debug_with_warn_in_body =
-            "2026-04-28T10:23:45.123456Z  DEBUG agaric::module: emitting WARN about future deprecation";
+        let debug_with_warn_in_body = "2026-04-28T10:23:45.123456Z  DEBUG agaric::module: emitting WARN about future deprecation";
         assert!(
             !is_error_or_warn_line(debug_with_warn_in_body),
             "DEBUG line whose body mentions WARN must NOT be classified as an error/warn line"
@@ -2017,7 +2015,7 @@ mod tests {
         assert!(is_safe_token(
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         )); // 64 — sha256/blake3
-            // Snake_case identifier with digit/underscore
+        // Snake_case identifier with digit/underscore
         assert!(is_safe_token("bug_report"));
         assert!(is_safe_token("tls13"));
         // Empty
@@ -2046,7 +2044,7 @@ mod tests {
         assert!(!is_safe_token("555-123-4567"));
         assert!(!is_safe_token("(555) 123-4567"));
         assert!(!is_safe_token("12345678901234567890")); // 20 digits — over u64
-                                                         // Sentence / free text.
+        // Sentence / free text.
         assert!(!is_safe_token("the quick brown fox"));
         assert!(!is_safe_token("an error occurred"));
         // Path with $HOME shape.
@@ -2054,9 +2052,9 @@ mod tests {
         // Base32-shaped but wrong length (not a ULID).
         assert!(!is_safe_token("01HZQK7M5N")); // too short
         assert!(!is_safe_token("01HZQK7M5N6PQRSTVWXYZABCDEFG")); // too long
-                                                                 // ULID with disallowed Crockford char (I/L/O/U).
+        // ULID with disallowed Crockford char (I/L/O/U).
         assert!(!is_safe_token("01HZQK7M5N6PQRSTVWXYZABCDI")); // ends in I
-                                                               // CamelCase only — not a Rust path.
+        // CamelCase only — not a Rust path.
         assert!(!is_safe_token("FooBar"));
         // file ref outside src/.
         assert!(!is_safe_token("/etc/passwd:42"));

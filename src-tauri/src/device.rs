@@ -115,20 +115,20 @@ pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::erro
                 f.write_all(new_id.as_bytes())?;
                 f.sync_all()?;
             } // file closed before rename
-              // POSIX `rename` is atomic on the same filesystem: the final
-              // entry either points at the fully-written tempfile or doesn't
-              // exist. There is no intermediate state where it points at an
-              // empty/short file.
+            // POSIX `rename` is atomic on the same filesystem: the final
+            // entry either points at the fully-written tempfile or doesn't
+            // exist. There is no intermediate state where it points at an
+            // empty/short file.
             fs::rename(&temp_path, config_path)?;
             // Sync the parent directory so the rename's directory-entry
             // update is durable across crash recovery. Best-effort: on
             // platforms where directory fsync is not supported (notably
             // Windows), we silently ignore the failure — the rename itself
             // was already kernel-atomic and the data is on disk.
-            if let Some(parent) = config_path.parent() {
-                if let Ok(dir) = fs::File::open(parent) {
-                    let _ = dir.sync_all();
-                }
+            if let Some(parent) = config_path.parent()
+                && let Ok(dir) = fs::File::open(parent)
+            {
+                let _ = dir.sync_all();
             }
             Ok(new_id)
         }

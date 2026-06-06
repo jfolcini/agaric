@@ -23,7 +23,7 @@ use std::future::Future;
 
 use serde_json::Value;
 
-use super::actor::{ActorContext, ACTOR};
+use super::actor::{ACTOR, ActorContext};
 use crate::error::AppError;
 
 /// Wrap an async dispatch closure in `ACTOR.scope(...)` so downstream
@@ -43,7 +43,7 @@ pub(crate) fn scoped_dispatch<F, Fut>(
     ctx: &ActorContext,
     name: &str,
     handler: F,
-) -> impl Future<Output = Result<Value, AppError>> + Send + 'static
+) -> impl Future<Output = Result<Value, AppError>> + Send + 'static + use<F, Fut>
 where
     F: FnOnce(String) -> Fut + Send + 'static,
     Fut: Future<Output = Result<Value, AppError>> + Send + 'static,
@@ -65,7 +65,7 @@ pub(crate) fn unknown_tool_error(name: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::actor::{current_actor, Actor};
+    use crate::mcp::actor::{Actor, current_actor};
     use serde_json::json;
 
     fn test_ctx() -> ActorContext {

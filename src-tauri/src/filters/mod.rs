@@ -20,6 +20,6 @@
 pub mod primitive;
 
 pub use primitive::{
-    FilterPrimitive, LastEditedSpec, PagesProjection, Projection, PropertyPredicate, PropertyValue,
-    SearchProjection, WhereClause, PAGES_ALLOWED_KEYS, SEARCH_ALLOWED_KEYS,
+    FilterPrimitive, LastEditedSpec, PAGES_ALLOWED_KEYS, PagesProjection, Projection,
+    PropertyPredicate, PropertyValue, SEARCH_ALLOWED_KEYS, SearchProjection, WhereClause,
 };

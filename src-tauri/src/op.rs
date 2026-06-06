@@ -476,12 +476,12 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
 
     // Reject NaN / Infinity — these are not valid domain values and would
     // corrupt downstream consumers that expect finite numbers.
-    if let Some(num) = p.value_num {
-        if !num.is_finite() {
-            return Err(crate::error::AppError::Validation(format!(
-                "value_num must be finite, got {num}"
-            )));
-        }
+    if let Some(num) = p.value_num
+        && !num.is_finite()
+    {
+        return Err(crate::error::AppError::Validation(format!(
+            "value_num must be finite, got {num}"
+        )));
     }
 
     let count = [
@@ -1733,7 +1733,9 @@ mod tests {
             value_bool: None,
         };
         assert_eq!(
-            p.value_ref.as_ref().map(|b| b.as_str()),
+            p.value_ref
+                .as_ref()
+                .map(super::super::ulid::BlockId::as_str),
             Some("ABC123DEF456GHI789JKL01A"),
             "value_ref BlockId must auto-uppercase the input ULID"
         );

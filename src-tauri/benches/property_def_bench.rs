@@ -6,7 +6,7 @@
 //!   3. `update_property_def_options`  — update options on a select-type def
 //!   4. `delete_property_def`          — delete a definition (re-insert between iterations)
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     create_property_def_inner, delete_property_def_inner, list_property_defs_inner,

@@ -26,11 +26,11 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
+use super::FOREGROUND_CAPACITY;
+use super::MaterializeTask;
 use super::dedup::dedup_tasks;
 use super::handlers::{handle_background_task, handle_foreground_task};
 use super::metrics::QueueMetrics;
-use super::MaterializeTask;
-use super::FOREGROUND_CAPACITY;
 use crate::gcal_push::connector::GcalConnectorHandle;
 
 #[cfg(not(tarpaulin_include))]
@@ -207,10 +207,11 @@ where
     // intermediate failures don't leave the operator-facing logs
     // silent. Panic-exhausted paths are NOT logged here; they were
     // already emitted at `error` level in their respective arms.
-    if !outcome.succeeded && !outcome.panicked {
-        if let Some(msg) = outcome.last_error_msg.as_deref() {
-            tracing::error!(label, error = msg, "error processing materializer task");
-        }
+    if !outcome.succeeded
+        && !outcome.panicked
+        && let Some(msg) = outcome.last_error_msg.as_deref()
+    {
+        tracing::error!(label, error = msg, "error processing materializer task");
     }
 
     outcome
@@ -632,14 +633,14 @@ pub(super) async fn run_background(
                 // infinite-retry bug for a clear-before-commit data loss
                 // on crash. Non-retryable tasks short-circuit inside
                 // `clear_on_success` via `RetryKind::from_task`.
-                if succeeded {
-                    if let Err(e) = super::retry_queue::clear_on_success(&pool, &task).await {
-                        tracing::warn!(
-                            error = %e,
-                            "issue #378: failed to clear retry-queue row after durable bg success; \
-                             row will be re-leased and re-cleared on the next sweep"
-                        );
-                    }
+                if succeeded
+                    && let Err(e) = super::retry_queue::clear_on_success(&pool, &task).await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        "issue #378: failed to clear retry-queue row after durable bg success; \
+                         row will be re-leased and re-cleared on the next sweep"
+                    );
                 }
                 // BUG-22 / PEND-03: Persist exhausted failures for retryable
                 // tasks to `materializer_retry_queue` so the boot-time /

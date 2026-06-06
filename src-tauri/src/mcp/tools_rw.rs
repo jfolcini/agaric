@@ -39,7 +39,7 @@
 use std::future::Future;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::actor::ActorContext;
@@ -48,8 +48,8 @@ use super::handler_utils::{
     normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
-    ToolDescription, ToolRegistry, TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE,
-    TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY,
+    TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use crate::commands::{
     add_tag_inner, create_block_inner, create_block_inner_with_space, delete_block_inner,

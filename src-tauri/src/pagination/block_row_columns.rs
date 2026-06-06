@@ -61,8 +61,7 @@
 /// clause inline as a string literal because the proc-macro
 /// requires a `LitStr` token (it cannot interpolate a `const &str`).
 #[allow(dead_code)]
-pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
-    "id as \"id!: crate::ulid::BlockId\", block_type, content, \
+pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str = "id as \"id!: crate::ulid::BlockId\", block_type, content, \
      parent_id as \"parent_id: crate::ulid::BlockId\", position, deleted_at, \
      todo_state, \
      priority, due_date, scheduled_date, \
@@ -80,8 +79,7 @@ pub(crate) const BLOCK_ROW_CANONICAL_SELECT: &str =
 /// MAINT-223 (PEND-28a H1 follow-up) extracted this const from the
 /// 3 runtime callsites to give them the same drift-detection
 /// coverage that Test B gives the macro sites.
-pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str =
-    "id, block_type, content, parent_id, position, deleted_at, \
+pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str = "id, block_type, content, parent_id, position, deleted_at, \
      todo_state, \
      priority, due_date, scheduled_date, page_id";
 
@@ -106,8 +104,7 @@ pub(crate) const BLOCK_ROW_RUNTIME_SELECT: &str =
 ///
 /// MAINT-229 (MAINT-223 follow-up) extracted this const from the 2
 /// `pagination/properties.rs` callsites that MAINT-223 deferred.
-pub(crate) const BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS: &str =
-    "b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, \
+pub(crate) const BLOCK_ROW_RUNTIME_SELECT_WITH_B_ALIAS: &str = "b.id, b.block_type, b.content, b.parent_id, b.position, b.deleted_at, \
      b.todo_state, \
      b.priority, b.due_date, b.scheduled_date, b.page_id";
 

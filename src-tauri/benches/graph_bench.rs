@@ -4,7 +4,7 @@
 //! Criterion benchmark for the graph-view link query:
 //!   - `list_page_links_inner` — rolls up content-block links to parent pages
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::list_page_links_inner;
 use agaric_lib::db::init_pool;

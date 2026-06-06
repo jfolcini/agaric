@@ -16,7 +16,7 @@ use crate::filters::{FilterPrimitive, PagesProjection, Projection};
 use crate::import;
 use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult};
 use crate::materializer::Materializer;
-use crate::pagination::{BlockRow, Cursor, PageRequest, PageResponse, NULL_POSITION_SENTINEL};
+use crate::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest, PageResponse};
 use crate::space::SpaceScope;
 use crate::ulid::{BlockId, PageId};
 
@@ -268,7 +268,8 @@ fn resolve_ulids_for_export(
         .into_owned();
 
     // Replace [[ULID]] → [[Page Title]]
-    let result = PAGE_LINK_RE
+
+    PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             if let Some(title) = page_titles.get(ulid) {
@@ -277,9 +278,7 @@ fn resolve_ulids_for_export(
                 format!("[[{ulid}]]") // Keep original if not found
             }
         })
-        .into_owned();
-
-    result
+        .into_owned()
 }
 
 /// Export a page and its full descendant subtree as a Markdown string with
@@ -505,10 +504,10 @@ pub async fn export_page_markdown_inner(
     // never renders empty.
     let mut ref_ids: HashSet<String> = HashSet::new();
     for r in &property_rows {
-        if let Some(rf) = r.value_ref.as_deref() {
-            if !rf.is_empty() {
-                ref_ids.insert(rf.to_string());
-            }
+        if let Some(rf) = r.value_ref.as_deref()
+            && !rf.is_empty()
+        {
+            ref_ids.insert(rf.to_string());
         }
     }
     let mut ref_titles: HashMap<String, String> = HashMap::new();
@@ -572,11 +571,7 @@ pub async fn export_page_markdown_inner(
                 num_str = format!("{n}");
                 &num_str
             } else if let Some(b) = prop.value_bool {
-                if b != 0 {
-                    "true"
-                } else {
-                    "false"
-                }
+                if b != 0 { "true" } else { "false" }
             } else {
                 ""
             };
@@ -1083,13 +1078,13 @@ pub async fn list_pages_inner(
 ) -> Result<PageResponse<BlockRow>, AppError> {
     // limit-clamp-followup Phase 1: reject limits outside
     // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
-    if let Some(l) = limit {
-        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "list_pages limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
+    if let Some(l) = limit
+        && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "list_pages limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
                  For larger result sets, use cursor pagination."
-            )));
-        }
+        )));
     }
     let page = PageRequest::new(cursor, limit)?;
     // FEAT-3 Phase 2: `list_pages` is the MCP (agent) page enumeration
@@ -1200,13 +1195,13 @@ pub async fn get_page_inner(
 
     // limit-clamp-followup Phase 1: reject limits outside
     // `[1, MCP_PAGE_LIMIT_CAP]` loudly (was silently clamped).
-    if let Some(l) = limit {
-        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "get_page limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
+    if let Some(l) = limit
+        && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "get_page limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}. \
                  For larger result sets, use cursor pagination."
-            )));
-        }
+        )));
     }
     let page_req = PageRequest::new(cursor, limit)?;
     let fetch_limit = page_req.limit + 1;
@@ -2044,8 +2039,7 @@ fn keyset_for(sort: PageSort) -> SortKeyset {
         // (`#[ignore]`'d). Materialising `pages_cache.last_edited_at` is the
         // deferred remedy (see the `PageSort::RecentlyModified` comment).
         PageSort::RecentlyModified => SortKeyset::StringDescNullCoalesced {
-            key_expr_template:
-                "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
+            key_expr_template: "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), ?{S})",
             null_sentinel: LAST_MOD_NULL_SENTINEL,
         },
         // PEND-56b: read from the materialised `pages_cache` column
@@ -2497,12 +2491,12 @@ pub async fn list_pages_with_metadata_inner(
     limit: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
     // Mirror the limit-clamp policy from `list_pages_inner`.
-    if let Some(l) = limit {
-        if !(1..=MCP_PAGE_LIMIT_CAP).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "list_pages_with_metadata limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}"
-            )));
-        }
+    if let Some(l) = limit
+        && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "list_pages_with_metadata limit must be in [1, {MCP_PAGE_LIMIT_CAP}]; got {l}"
+        )));
     }
     let req = PageRequest::new(cursor, limit)?;
     // Reject any cursor whose sort-mode discriminator doesn't match the

@@ -1,13 +1,13 @@
 // Bench helpers cast small loop indices between usize/i64 freely.
 #![allow(clippy::cast_possible_wrap)]
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::{list_tags_by_prefix_inner, list_tags_for_block_inner};
 use agaric_lib::db::init_pool;
 use agaric_lib::pagination::PageRequest;
 use agaric_lib::tag_inheritance::rebuild_all;
-use agaric_lib::tag_query::{eval_tag_query, TagExpr};
+use agaric_lib::tag_query::{TagExpr, eval_tag_query};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

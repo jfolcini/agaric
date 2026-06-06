@@ -31,7 +31,7 @@ pub use index::{
     update_fts_for_block_split_with_maps, update_fts_for_block_with_maps,
 };
 pub use search::search_fts;
-pub use toggle_filter::{search_with_toggles, SearchToggles};
+pub use toggle_filter::{SearchToggles, search_with_toggles};
 
 // PEND-61 Phase 1 — partitioned FTS scan for the multi-mode palette.
 // `search_with_toggles_partitioned` is the single entry-point; it
@@ -47,4 +47,4 @@ pub(crate) use search::sanitize_fts_query;
 // `page_limit` / `block_limit` against this ceiling and rejects an
 // over-limit request (the cursor path rejects via `PageRequest::new`).
 pub(crate) use search::MAX_SEARCH_RESULTS;
-pub(crate) use strip::{load_ref_maps_for_block, PAGE_LINK_RE, TAG_REF_RE};
+pub(crate) use strip::{PAGE_LINK_RE, TAG_REF_RE, load_ref_maps_for_block};

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::cache::{
     rebuild_agenda_cache, rebuild_page_ids, rebuild_pages_cache, rebuild_tags_cache,

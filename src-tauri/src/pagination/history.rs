@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 
-use super::{build_page_response, Cursor, HistoryEntry, PageRequest, PageResponse};
+use super::{Cursor, HistoryEntry, PageRequest, PageResponse, build_page_response};
 use crate::error::AppError;
 
 /// List op-log history for a specific block, paginated.

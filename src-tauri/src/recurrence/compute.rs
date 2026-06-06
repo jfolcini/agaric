@@ -148,33 +148,33 @@ pub(crate) async fn handle_recurrence_in_tx(
     .await?
     .flatten();
 
-    if let Some(ref until_str) = repeat_until {
-        if let Some(ref_date) = reference_date {
-            // L-100: validate ISO-8601 date shape before the lex compare.
-            // The lex comparison `ref_date > until_str` is only meaningful
-            // when both sides are exactly `YYYY-MM-DD` (10 chars). The query
-            // above reads `value_date`, but `set_property` allows type-loose
-            // writes — a `repeat-until` planted as `"2025-12-31T23:59:59Z"`
-            // would compare wrong (`T` > `-`) and the recurrence would
-            // never stop. We re-use `crate::commands::is_valid_iso_date`
-            // (already imported) which enforces the same strict shape used
-            // when the value was originally written via `set_property_in_tx`.
-            // On malformed input we warn loudly and stop the recurrence
-            // (`Ok(false)`) rather than silently letting it continue past
-            // the deadline.
-            if !is_valid_iso_date(until_str) {
-                tracing::warn!(
-                    block_id,
-                    until_str = %until_str,
-                    "repeat-until is not a valid YYYY-MM-DD date; stopping recurrence"
-                );
-                return Ok(false);
-            }
-            // Simple lexicographic comparison works for YYYY-MM-DD strings
-            if ref_date > until_str.as_str() {
-                // Shifted date is past the repeat-until deadline — stop recurring
-                return Ok(false);
-            }
+    if let Some(ref until_str) = repeat_until
+        && let Some(ref_date) = reference_date
+    {
+        // L-100: validate ISO-8601 date shape before the lex compare.
+        // The lex comparison `ref_date > until_str` is only meaningful
+        // when both sides are exactly `YYYY-MM-DD` (10 chars). The query
+        // above reads `value_date`, but `set_property` allows type-loose
+        // writes — a `repeat-until` planted as `"2025-12-31T23:59:59Z"`
+        // would compare wrong (`T` > `-`) and the recurrence would
+        // never stop. We re-use `crate::commands::is_valid_iso_date`
+        // (already imported) which enforces the same strict shape used
+        // when the value was originally written via `set_property_in_tx`.
+        // On malformed input we warn loudly and stop the recurrence
+        // (`Ok(false)`) rather than silently letting it continue past
+        // the deadline.
+        if !is_valid_iso_date(until_str) {
+            tracing::warn!(
+                block_id,
+                until_str = %until_str,
+                "repeat-until is not a valid YYYY-MM-DD date; stopping recurrence"
+            );
+            return Ok(false);
+        }
+        // Simple lexicographic comparison works for YYYY-MM-DD strings
+        if ref_date > until_str.as_str() {
+            // Shifted date is past the repeat-until deadline — stop recurring
+            return Ok(false);
         }
     }
 

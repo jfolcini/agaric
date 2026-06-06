@@ -6,7 +6,7 @@
 //!   2. `edit_block_inner`    — every keystroke save
 //!   3. `list_blocks_inner`   — every view render
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     batch_resolve_inner, create_block_inner, edit_block_inner, get_batch_properties_inner,

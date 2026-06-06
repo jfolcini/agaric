@@ -12,7 +12,7 @@
 //!
 //! Manual only — never in CI or pre-commit (see AGENTS.md).
 
-use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,

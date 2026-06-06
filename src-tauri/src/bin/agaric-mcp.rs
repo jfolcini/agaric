@@ -134,10 +134,10 @@ fn resolve_socket_path_from(
     if let Some(path) = override_arg {
         return path;
     }
-    if let Some(s) = env {
-        if !s.is_empty() {
-            return PathBuf::from(s);
-        }
+    if let Some(s) = env
+        && !s.is_empty()
+    {
+        return PathBuf::from(s);
     }
     default_path
 }

@@ -932,7 +932,7 @@ async fn reverse_edit_block_prev_edit_points_to_reversed_op_from_different_devic
     match reverse {
         OpPayload::EditBlock(ref p) => {
             assert_eq!(p.to_text, "original");
-            let (ref dev, seq) = p.prev_edit.as_ref().unwrap();
+            let (dev, seq) = p.prev_edit.as_ref().unwrap();
             assert_eq!(dev, dev_b);
             assert_eq!(*seq, edit_b.seq);
         }

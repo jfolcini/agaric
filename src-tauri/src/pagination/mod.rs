@@ -15,7 +15,7 @@
 //! on those columns (`list_children` and `list_trash`, respectively).  This keeps
 //! the API surface small and the cursor remains opaque to callers anyway.
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;

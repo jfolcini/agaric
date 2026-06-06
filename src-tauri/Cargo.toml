@@ -11,7 +11,7 @@ members = ["."]
 [package]
 name = "agaric"
 version = "0.4.0"
-edition = "2021"
+edition = "2024"
 license = "GPL-3.0-or-later"
 publish = false
 # Two binaries in this crate — `agaric` (the Tauri app, implicit via

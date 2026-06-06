@@ -1570,62 +1570,62 @@ pub async fn filtered_blocks_query_inner(
     // (when `include_inherited`) — same UX-250 union semantics as
     // `tag_query::resolve_tag_leaves`.
     let mut tag_binds: Vec<String> = Vec::new();
-    if let Some(tf) = &tag_filters {
-        if !tf.tag_ids.is_empty() || !tf.prefixes.is_empty() {
-            let mode = tf.mode.to_lowercase();
-            let conjunction = if mode == "and" { " AND " } else { " OR " };
+    if let Some(tf) = &tag_filters
+        && (!tf.tag_ids.is_empty() || !tf.prefixes.is_empty())
+    {
+        let mode = tf.mode.to_lowercase();
+        let conjunction = if mode == "and" { " AND " } else { " OR " };
 
-            // Build per-tag/per-prefix subquery fragments.
-            let mut clauses: Vec<String> = Vec::new();
-            for tag_id in &tf.tag_ids {
-                let p = next_param;
-                next_param += 1;
-                tag_binds.push(tag_id.clone());
-                let mut union_arms = vec![
-                    format!(
-                        "SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?{p}"
-                    ),
-                    format!(
-                        "SELECT 1 FROM block_tag_refs btr WHERE btr.source_id = b.id AND btr.tag_id = ?{p}"
-                    ),
-                ];
-                if tf.include_inherited {
-                    union_arms.push(format!(
+        // Build per-tag/per-prefix subquery fragments.
+        let mut clauses: Vec<String> = Vec::new();
+        for tag_id in &tf.tag_ids {
+            let p = next_param;
+            next_param += 1;
+            tag_binds.push(tag_id.clone());
+            let mut union_arms = vec![
+                format!(
+                    "SELECT 1 FROM block_tags bt WHERE bt.block_id = b.id AND bt.tag_id = ?{p}"
+                ),
+                format!(
+                    "SELECT 1 FROM block_tag_refs btr WHERE btr.source_id = b.id AND btr.tag_id = ?{p}"
+                ),
+            ];
+            if tf.include_inherited {
+                union_arms.push(format!(
                         "SELECT 1 FROM block_tag_inherited bti WHERE bti.block_id = b.id AND bti.tag_id = ?{p}"
                     ));
-                }
-                clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
             }
-            for prefix in &tf.prefixes {
-                let p = next_param;
-                next_param += 1;
-                // LIKE-escape the user-supplied prefix and append `%` —
-                // mirrors `tag_query::resolve_tag_prefix_leaves`.
-                let escaped = format!("{}%", crate::sql_utils::escape_like(prefix));
-                tag_binds.push(escaped);
-                let mut union_arms = vec![
-                    format!(
-                        "SELECT 1 FROM tags_cache tc \
+            clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+        }
+        for prefix in &tf.prefixes {
+            let p = next_param;
+            next_param += 1;
+            // LIKE-escape the user-supplied prefix and append `%` —
+            // mirrors `tag_query::resolve_tag_prefix_leaves`.
+            let escaped = format!("{}%", crate::sql_utils::escape_like(prefix));
+            tag_binds.push(escaped);
+            let mut union_arms = vec![
+                format!(
+                    "SELECT 1 FROM tags_cache tc \
                          JOIN block_tags bt ON bt.tag_id = tc.tag_id \
                          WHERE bt.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                    ),
-                    format!(
-                        "SELECT 1 FROM tags_cache tc \
+                ),
+                format!(
+                    "SELECT 1 FROM tags_cache tc \
                          JOIN block_tag_refs btr ON btr.tag_id = tc.tag_id \
                          WHERE btr.source_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                    ),
-                ];
-                if tf.include_inherited {
-                    union_arms.push(format!(
-                        "SELECT 1 FROM tags_cache tc \
+                ),
+            ];
+            if tf.include_inherited {
+                union_arms.push(format!(
+                    "SELECT 1 FROM tags_cache tc \
                          JOIN block_tag_inherited bti ON bti.tag_id = tc.tag_id \
                          WHERE bti.block_id = b.id AND tc.name LIKE ?{p} ESCAPE '\\'"
-                    ));
-                }
-                clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
+                ));
             }
-            sql.push_str(&format!(" AND ({})", clauses.join(conjunction)));
+            clauses.push(format!("EXISTS ({})", union_arms.join(" UNION ALL ")));
         }
+        sql.push_str(&format!(" AND ({})", clauses.join(conjunction)));
     }
 
     sql.push_str(" ORDER BY b.id ASC LIMIT ?3");

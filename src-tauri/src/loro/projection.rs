@@ -44,7 +44,7 @@ use sqlx::SqliteConnection;
 
 use crate::error::AppError;
 use crate::loro::engine::BlockSnapshot;
-use crate::op::{is_reserved_property_key, SetPropertyPayload};
+use crate::op::{SetPropertyPayload, is_reserved_property_key};
 
 /// Project a `CreateBlock` engine state into SQL.
 ///

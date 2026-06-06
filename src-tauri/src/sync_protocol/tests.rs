@@ -2,7 +2,7 @@ use super::*;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
 use crate::op::{CreateBlockPayload, OpPayload};
-use crate::op_log::{append_local_op_at, OpRecord};
+use crate::op_log::{OpRecord, append_local_op_at};
 use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -1279,7 +1279,7 @@ fn json_shape_head_exchange_matches_wire_format() {
 
 #[test]
 fn json_shape_all_variants_have_type_tag() {
-    use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION};
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 
     let variants: Vec<(&str, SyncMessage)> = vec![
         ("HeadExchange", SyncMessage::HeadExchange { heads: vec![] }),
@@ -1820,7 +1820,7 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
     use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync_types::{LoroSyncMessage, LORO_SYNC_PROTOCOL_VERSION};
+    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());

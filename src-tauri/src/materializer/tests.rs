@@ -4961,7 +4961,7 @@ mod gcal_hook {
     use super::*;
     use crate::gcal_push::connector::{DirtyEvent, GcalConnectorHandle};
     use std::sync::Arc as StdArcInner;
-    use tokio::sync::{mpsc, Notify};
+    use tokio::sync::{Notify, mpsc};
 
     /// Install a freshly-constructed [`GcalConnectorHandle`] on `mat`
     /// and return the receiving end so the test can assert on emitted

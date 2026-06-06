@@ -5,12 +5,12 @@ use crate::cache;
 use crate::error::AppError;
 use crate::fts;
 use crate::gcal_push::connector::GcalConnectorHandle;
-use crate::gcal_push::dirty_producer::{compute_dirty_event, snapshot_for_op, BlockDateSnapshot};
+use crate::gcal_push::dirty_producer::{BlockDateSnapshot, compute_dirty_event, snapshot_for_op};
 use crate::op::{
-    is_reserved_property_key, AddAttachmentPayload, AddTagPayload, CreateBlockPayload,
-    DeleteAttachmentPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
-    MoveBlockPayload, OpType, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
-    SetPropertyPayload,
+    AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
+    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
+    PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
+    is_reserved_property_key,
 };
 use crate::op_log::OpRecord;
 use crate::tag_inheritance;
@@ -76,15 +76,15 @@ pub(super) async fn handle_foreground_task(
             // unmaterialised ops), so reject it loudly in ALL builds rather
             // than silently corrupting the cursor. Removed once the per-device
             // watermark cursor lands (deferred with multi-device sync).
-            if let Some(first) = records.first() {
-                if records.iter().any(|r| r.device_id != first.device_id) {
-                    return Err(AppError::InvalidOperation(
-                        "BatchApplyOps received a mixed-device batch; the single global \
+            if let Some(first) = records.first()
+                && records.iter().any(|r| r.device_id != first.device_id)
+            {
+                return Err(AppError::InvalidOperation(
+                    "BatchApplyOps received a mixed-device batch; the single global \
                          apply cursor cannot represent per-device watermarks — per-device \
                          cursor partitioning is required (backend audit #412)"
-                            .into(),
-                    ));
-                }
+                        .into(),
+                ));
             }
             // FEAT-5h — collect per-op pre-mutation snapshots so we
             // can emit DirtyEvents for every op in the batch after
@@ -195,7 +195,7 @@ pub(super) async fn handle_foreground_task(
             notify_gcal_for_events(gcal_handle, pending_events);
             Ok(())
         }
-        MaterializeTask::Barrier(ref notify) => {
+        MaterializeTask::Barrier(notify) => {
             notify.notify_one();
             Ok(())
         }
@@ -2943,7 +2943,7 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
-        MaterializeTask::ReindexBlockLinks { ref block_id } => {
+        MaterializeTask::ReindexBlockLinks { block_id } => {
             // SQL-review §H-2: after the per-block `block_links` diff is
             // written, roll up to the page-level `page_link_cache` so
             // `list_page_links_inner` can read from a precomputed
@@ -2978,7 +2978,7 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
-        MaterializeTask::ReindexBlockTagRefs { ref block_id } => {
+        MaterializeTask::ReindexBlockTagRefs { block_id } => {
             dispatch_split_or_single(
                 pool,
                 read_pool,
@@ -2987,7 +2987,7 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
-        MaterializeTask::UpdateFtsBlock { ref block_id } => {
+        MaterializeTask::UpdateFtsBlock { block_id } => {
             // Load tag/page reference maps scoped to THIS block's own refs and
             // feed them into the `_with_maps` variants (which keep the strip
             // path sync — no DB round-trip inside the regex replace).
@@ -3017,10 +3017,10 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
-        MaterializeTask::ReindexFtsReferences { ref block_id } => {
+        MaterializeTask::ReindexFtsReferences { block_id } => {
             fts::reindex_fts_references(pool, block_id).await
         }
-        MaterializeTask::RemoveFtsBlock { ref block_id } => {
+        MaterializeTask::RemoveFtsBlock { block_id } => {
             fts::remove_fts_for_block(pool, block_id).await
         }
         MaterializeTask::RebuildFtsIndex => {
@@ -3083,7 +3083,7 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
-        MaterializeTask::ApplyOp(ref record) => {
+        MaterializeTask::ApplyOp(record) => {
             // L-14 (bg mirror): mirror the foreground catch-all — an
             // `ApplyOp` in the background queue is a dispatch bug. Promote
             // to error level and return `Err(Validation)` so the bg
@@ -3126,7 +3126,7 @@ pub(super) async fn handle_background_task(
                 ))
             }
         }
-        MaterializeTask::Barrier(ref notify) => {
+        MaterializeTask::Barrier(notify) => {
             notify.notify_one();
             Ok(())
         }

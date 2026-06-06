@@ -2204,7 +2204,7 @@ mod tests {
     /// DB row.
     #[tokio::test]
     async fn append_inside_agent_scope_stamps_origin_agent_prefix() {
-        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        use crate::mcp::actor::{ACTOR, Actor, ActorContext};
         let (pool, _dir) = test_pool().await;
 
         let ctx = ActorContext {
@@ -2242,7 +2242,7 @@ mod tests {
     /// same thread after an MCP handler returns.
     #[tokio::test]
     async fn origin_falls_back_to_user_after_agent_scope_ends() {
-        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        use crate::mcp::actor::{ACTOR, Actor, ActorContext};
         let (pool, _dir) = test_pool().await;
 
         // First op — inside the agent scope.
@@ -2295,7 +2295,7 @@ mod tests {
     /// it was agent- or user-invoked at the origin device.
     #[tokio::test]
     async fn origin_does_not_affect_op_hash() {
-        use crate::mcp::actor::{Actor, ActorContext, ACTOR};
+        use crate::mcp::actor::{ACTOR, Actor, ActorContext};
         let (pool_a, _dir_a) = test_pool().await;
         let (pool_b, _dir_b) = test_pool().await;
 
@@ -2396,7 +2396,7 @@ mod tests {
     /// list; for a single-call test this yields a one-element Vec.
     #[tokio::test]
     async fn append_local_op_in_tx_populates_last_append_inside_scope() {
-        use crate::task_locals::{take_appends, LAST_APPEND};
+        use crate::task_locals::{LAST_APPEND, take_appends};
         use std::cell::RefCell;
 
         let (pool, _dir) = test_pool().await;

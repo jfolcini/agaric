@@ -19,15 +19,15 @@ use rmcp::{
     model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation},
     service::ServiceExt,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use super::run_connection;
 use super::MCP_DISCONNECT_GRACE_PERIOD;
+use super::run_connection;
 use crate::error::AppError;
+use crate::mcp::McpLifecycle;
 use crate::mcp::actor::ActorContext;
 use crate::mcp::registry::{ToolDescription, ToolRegistry};
-use crate::mcp::McpLifecycle;
 
 /// Registry whose `call_tool` parks on `sleep(self.sleep)` before
 /// returning success — drives the FEAT-4e grace-period race between

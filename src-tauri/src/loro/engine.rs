@@ -785,10 +785,10 @@ impl LoroEngine {
         let mut out = Vec::new();
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
-            if let Ok(meta) = tree.get_meta(node) {
-                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
-                    out.push(bid);
-                }
+            if let Ok(meta) = tree.get_meta(node)
+                && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+            {
+                out.push(bid);
             }
             if let Some(children) = tree.children(TreeParentId::Node(node)) {
                 stack.extend(children);
@@ -2044,10 +2044,10 @@ impl LoroEngine {
         // parent-before-child, which the DFS guarantees regardless).
         stack.reverse();
         while let Some(node) = stack.pop() {
-            if let Ok(meta) = tree.get_meta(node) {
-                if let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID) {
-                    out.push(crate::ulid::BlockId::from_trusted(&bid));
-                }
+            if let Ok(meta) = tree.get_meta(node)
+                && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+            {
+                out.push(crate::ulid::BlockId::from_trusted(&bid));
             }
             if let Some(mut children) = tree.children(TreeParentId::Node(node)) {
                 children.reverse();
@@ -2269,10 +2269,10 @@ fn list_find_string(list: &LoroList, needle: &str) -> Option<usize> {
     let len = list.len();
     for idx in 0..len {
         let Some(voc) = list.get(idx) else { continue };
-        if let Ok(LoroValue::String(s)) = voc.into_value() {
-            if s.as_str() == needle {
-                return Some(idx);
-            }
+        if let Ok(LoroValue::String(s)) = voc.into_value()
+            && s.as_str() == needle
+        {
+            return Some(idx);
         }
     }
     None
@@ -2768,10 +2768,12 @@ mod op_coverage_tests {
         // A block_id that has never existed at all must also yield an
         // empty vec (no entry in the block_properties root).
         let fresh = LoroEngine::new();
-        assert!(fresh
-            .read_all_properties(BLOCK_B)
-            .expect("read all")
-            .is_empty());
+        assert!(
+            fresh
+                .read_all_properties(BLOCK_B)
+                .expect("read all")
+                .is_empty()
+        );
     }
 }
 

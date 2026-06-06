@@ -1,6 +1,6 @@
 //! Cursor-paginated query for undated tasks.
 
-use super::{build_page_response, BlockRow, Cursor, PageRequest, PageResponse};
+use super::{BlockRow, Cursor, PageRequest, PageResponse, build_page_response};
 use crate::error::AppError;
 use sqlx::SqlitePool;
 

@@ -561,8 +561,8 @@ mod tests {
     /// loop, and the `save_all_engines` call the seam exists to cover.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn spawn_periodic_snapshot_persists_engine_state() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::time::Duration;
 
         let (pool, _dir) = fresh_pool().await;

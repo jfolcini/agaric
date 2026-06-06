@@ -76,7 +76,7 @@ use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
     MoveBlockPayload, OpPayload, RestoreBlockPayload, SetPropertyPayload,
 };
-use crate::op_log::{append_local_op_at, OpRecord};
+use crate::op_log::{OpRecord, append_local_op_at};
 use crate::ulid::BlockId;
 
 /// Device id used for every seeded op. A single device keeps the
@@ -252,7 +252,7 @@ impl ChainModel {
     fn live_ids(&self) -> Vec<String> {
         self.state
             .iter()
-            .filter(|(_, &live)| live)
+            .filter(|&(_, &live)| live)
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -260,7 +260,7 @@ impl ChainModel {
     fn deleted_ids(&self) -> Vec<String> {
         self.state
             .iter()
-            .filter(|(_, &live)| !live)
+            .filter(|&(_, &live)| !live)
             .map(|(id, _)| id.clone())
             .collect()
     }

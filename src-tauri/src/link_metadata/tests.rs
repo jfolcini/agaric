@@ -5,8 +5,8 @@ use super::html_parser::{
     extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
 };
 use super::{
-    cleanup_stale, fetch_metadata, get_cached, read_body_limited, upsert, LinkMetadata,
-    MAX_BODY_SIZE,
+    LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached, read_body_limited,
+    upsert,
 };
 use crate::db::init_pool;
 use crate::db::now_ms;

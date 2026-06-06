@@ -768,10 +768,10 @@ async fn fts_fetch_rows(
     // The next-keystroke palette pattern fires fresh IPCs faster than
     // SQLite can deliver a connection, so checking here catches the
     // burst before we waste a pool slot.
-    if let Some(ref token) = cancel {
-        if token.is_cancelled() {
-            return Err(AppError::Cancelled);
-        }
+    if let Some(ref token) = cancel
+        && token.is_cancelled()
+    {
+        return Err(AppError::Cancelled);
     }
     // Build dynamic SQL with optional filter clauses.
     // Base parameters: ?1=query, ?2=cursor_flag, ?3=cursor_rank, ?4=cursor_id, ?5=limit

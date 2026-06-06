@@ -19,8 +19,8 @@ pub mod bootstrap;
 pub mod cross_space_validation;
 
 pub use bootstrap::{
-    bootstrap_spaces, migrate_personal_pages_to_work, MIGRATION_THRESHOLD_ULID,
-    SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID, SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID,
+    MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
+    SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID, bootstrap_spaces, migrate_personal_pages_to_work,
 };
 
 #[cfg(test)]

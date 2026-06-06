@@ -39,7 +39,7 @@
 //! Keeping the seeder local means a future change to the upstream seeder
 //! cannot silently shift this bench's fixture out from under it.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::list_projected_agenda_inner;
 use agaric_lib::db::init_pool;

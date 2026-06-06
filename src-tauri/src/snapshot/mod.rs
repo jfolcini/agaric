@@ -27,13 +27,13 @@ mod tests;
 
 pub use codec::{decode_snapshot, encode_snapshot};
 pub use create::{
-    cleanup_old_snapshots, compact_op_log, create_snapshot, get_latest_snapshot,
-    DEFAULT_RETENTION_DAYS,
+    DEFAULT_RETENTION_DAYS, cleanup_old_snapshots, compact_op_log, create_snapshot,
+    get_latest_snapshot,
 };
 #[allow(unused_imports)]
 pub(crate) use create::{
-    collect_frontier, collect_tables, measure_op_log_size, SNAPSHOT_WARN_PAYLOAD_BYTES,
-    SNAPSHOT_WARN_ROW_COUNT,
+    SNAPSHOT_WARN_PAYLOAD_BYTES, SNAPSHOT_WARN_ROW_COUNT, collect_frontier, collect_tables,
+    measure_op_log_size,
 };
 pub use restore::apply_snapshot;
 pub use types::{

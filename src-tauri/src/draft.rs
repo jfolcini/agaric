@@ -9,10 +9,10 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::db::{now_ms, CommandTx};
+use crate::db::{CommandTx, now_ms};
 use crate::error::AppError;
 use crate::op::{EditBlockPayload, OpPayload};
-use crate::op_log::{append_local_op_in_tx, OpRecord};
+use crate::op_log::{OpRecord, append_local_op_in_tx};
 use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
@@ -58,10 +58,10 @@ pub async fn save_draft_if_changed(
     block_id: &str,
     content: &str,
 ) -> Result<bool, AppError> {
-    if let Some(existing) = get_draft(pool, block_id).await? {
-        if existing.content == content {
-            return Ok(false);
-        }
+    if let Some(existing) = get_draft(pool, block_id).await?
+        && existing.content == content
+    {
+        return Ok(false);
     }
     save_draft(pool, block_id, content).await?;
     Ok(true)

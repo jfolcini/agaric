@@ -216,12 +216,12 @@ impl rustls::client::danger::ServerCertVerifier for PinningCertVerifier {
         let _ = self.observed_hash.set(hex_hash.clone());
 
         // If we have an expected hash, enforce it.
-        if let Some(ref expected) = self.expected_hash {
-            if *expected != hex_hash {
-                return Err(rustls::Error::General(format!(
-                    "cert pin mismatch: expected {expected}, got {hex_hash}"
-                )));
-            }
+        if let Some(ref expected) = self.expected_hash
+            && *expected != hex_hash
+        {
+            return Err(rustls::Error::General(format!(
+                "cert pin mismatch: expected {expected}, got {hex_hash}"
+            )));
         }
 
         // Verify CN matches expected device ID format (S-2: defense-in-depth).

@@ -516,7 +516,7 @@ mod engine_apply_unit_tests {
 mod dispatch_for_record_regression {
     use super::dispatch_for_record;
     use crate::db::init_pool;
-    use crate::loro::shared::{install_for_test, LoroState};
+    use crate::loro::shared::{LoroState, install_for_test};
     use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload, SetPropertyPayload};
     use crate::op_log::append_local_op;
     use crate::space::SpaceId;
