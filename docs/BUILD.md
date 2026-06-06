@@ -13,6 +13,8 @@ cargo tauri dev                          # run the app
 prek run --all-files                     # run every CI gate locally
 ```
 
+First-time setup is automated by `bash scripts/setup.sh` (wraps the steps above).
+
 Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
 
 ## After-clone setup
@@ -84,18 +86,20 @@ bacon                       # default: cargo check, re-runs on save
 
 Keep a `bacon` window open next to the editor. Defaults are sensible; optional `bacon.toml` wires up custom jobs (clippy, nextest, …). No project-side config needed.
 
-### Faster linker (Linux only)
+### Speed up Rust builds (Linux only, optional)
 
-`mold` cuts the link step on Linux ~3-4×. Activation is one apt install + one copy:
+The link step is the long pole of incremental Rust compiles on this codebase, not codegen. The [`mold`](https://github.com/rui314/mold) linker cuts it dramatically. Activation is one install + one copy:
 
 ```sh
 sudo apt install mold        # Debian/Ubuntu (mold has been in main since 22.04)
 cp .cargo/config.toml.example .cargo/config.toml
 ```
 
-After activation, incremental `cargo build --bin agaric-mcp` after touching a single Rust file lands in ~12 s instead of ~30-40 s on this codebase (228 Rust files, ~200K LOC). Safe to delete `.cargo/config.toml` any time — it only affects the linker pick on Linux.
+After activation, an incremental `cargo check` after touching a single Rust file drops from ~20 s to ~7-10 s (~60% faster; measured 2026-05-16 on this project — 200K LOC across 228 files).
 
-The `.example` file ships staged so a fresh clone doesn't break on contributors who haven't installed mold yet (an unconditional `[target.…] rustflags` would fail every build with a confusing `cannot find -fuse-ld=mold` error).
+`mold` must be installed separately — it is not bundled. Without it, `gcc`/`clang`'s `-fuse-ld=mold` errors with a clear `cannot find -fuse-ld=mold` rather than failing silently.
+
+The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked. This keeps a fresh clone from breaking on contributors who haven't installed mold yet (an unconditional `[target.…] rustflags` would fail every build). It is **Linux-only**: leave it untouched on macOS/Windows. Safe to delete any time — it only affects the linker pick on Linux.
 
 ## Testing
 
@@ -205,11 +209,13 @@ git push --delete origin <bad-tag>            # remote
 scripts/release.sh <correct-version>          # re-cut cleanly
 ```
 
-## Android signing
+## Android release signing
 
-The Android release pipeline signs APKs and AABs with a keystore stored in GitHub Secrets. Local builds produce unsigned debug APKs by default.
+The `android-build-and-release` job in `.github/workflows/release.yml` builds the aarch64 release APK and signs it with a keystore stored in GitHub Secrets. Local builds produce unsigned APKs by default; if the secrets are absent in CI, the job stages the APK as `agaric-<tag>-android-aarch64-unsigned.apk` so the pipeline keeps working before a keystore is provisioned.
 
-**Generate a keystore (one-time):**
+### Generate the keystore (one-time)
+
+The signing keystore is **not** stored in the repo — it lives only in GitHub Secrets (base64-encoded) and in the maintainer's offline backup. Generate it once with `keytool`:
 
 ```bash
 keytool -genkeypair -v -storetype PKCS12 \
@@ -217,25 +223,38 @@ keytool -genkeypair -v -storetype PKCS12 \
   -alias agaric-release -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-Set four GitHub Secrets:
+**Critical:** back up the keystore offline. Losing it means losing the ability to publish updates for the existing app ID.
 
-| Secret | Value |
+### Required CI secrets
+
+Four secrets must be set under repo Settings → Secrets and variables → Actions. The `Sign Android APK` step reads all four:
+
+| Secret | Holds |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | `base64 -w 0 < agaric-release.keystore` |
-| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
-| `ANDROID_KEY_ALIAS` | the alias (`agaric-release` above) |
-| `ANDROID_KEY_PASSWORD` | the key password (often same as keystore password) |
+| `ANDROID_KEYSTORE_BASE64` | the PKCS12 keystore, base64-encoded (`base64 -w 0 < agaric-release.keystore`); CI decodes it with `base64 -d` into a temp `release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password (passed as `--ks-pass env:…`) |
+| `ANDROID_KEY_ALIAS` | the key alias (`agaric-release` above) |
+| `ANDROID_KEY_PASSWORD` | the key password, often the same as the keystore password (passed as `--key-pass env:…`) |
 
-**Critical:** back up the keystore. Losing it means losing the ability to publish updates for the existing app ID.
+When `ANDROID_KEYSTORE_BASE64` is present, CI decodes the keystore, runs `zipalign -p -f 4`, then `apksigner sign` (APK signing scheme v2/v3 + v4 idsig), verifies with `apksigner verify`, and `shred`s the decoded `.jks`. When it is absent, the APK ships unsigned (see above).
 
-Sign a local release APK:
+### Sign an APK locally for testing
+
+Mirror the CI flow with the build-tools binaries:
 
 ```bash
-$ANDROID_HOME/build-tools/<latest>/apksigner sign \
+BUILD_TOOLS="$ANDROID_HOME/build-tools/<latest>"
+"$BUILD_TOOLS/zipalign" -p -f 4 app-universal-release-unsigned.apk aligned.apk
+"$BUILD_TOOLS/apksigner" sign \
   --ks agaric-release.keystore \
   --ks-key-alias agaric-release \
-  --out signed.apk unsigned.apk
+  --out signed.apk aligned.apk
+"$BUILD_TOOLS/apksigner" verify --verbose signed.apk
 ```
+
+### Distribution / Play Store
+
+There is **no Play Store upload step** in the release pipeline. The `android-build-and-release` job attaches the signed APK (plus its SBOMs and SLSA provenance) to the GitHub Release via `gh release upload` — that is the only automated distribution. Publishing to the Play Store, if and when wired, is a manual/follow-up step; see `.github/workflows/release.yml`.
 
 ## Signing posture
 

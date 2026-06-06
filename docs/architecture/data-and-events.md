@@ -73,7 +73,7 @@ SQLite, WAL mode, FK on, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autoche
 
 Append-only. Composite primary key `(device_id, seq)` where `seq` is the device-local monotonic counter (`COALESCE(MAX(seq), 0) + 1 WHERE device_id = ?`). Per-device counters mean two peers can produce `seq = 5` independently without collision; renumbering would break the hash chain.
 
-**Hash chain.** Each op carries a `blake3` hash of the previous op's hash + this op's preimage. The preimage is a null-byte-separated concat of fields (`\0`-delimited so a payload containing the delimiter would be unrepresentable — fields are guarded against `\0`). `origin` is intentionally excluded from the preimage so local-only attribution metadata (e.g. `agent:claude`) doesn't perturb cross-device op identity.
+**Hash chain.** Each op carries a `blake3` hash of its own preimage. The chain is **positional, not Merkle**: the preimage includes `parent_seqs` (the `(device_id, seq)` *positions* of the parent op(s)), not the parent op's hash — so a child's hash does not transitively depend on its ancestors' hashes. The preimage is a null-byte-separated concat of fields (`\0`-delimited so a payload containing the delimiter would be unrepresentable — fields are guarded against `\0`). `origin` is intentionally excluded from the preimage so local-only attribution metadata (e.g. `agent:claude`) doesn't perturb cross-device op identity. See [`op-log-format.md`](op-log-format.md) for the exact preimage byte layout and verification rules.
 
 ULIDs are normalised to uppercase Crockford-Base32 in the preimage (and in every `block_id` slot) — the hash is byte-stable only when the normalisation is.
 
