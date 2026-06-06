@@ -46,7 +46,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboar
     setFocused: vi.fn(),
     handleFlush: vi.fn(() => null as string | null),
     remove: vi.fn(async () => {}),
-    edit: vi.fn(async () => {}),
+    edit: vi.fn(async () => true),
     indent: vi.fn(async () => true),
     dedent: vi.fn(async () => true),
     moveUp: vi.fn(async () => true),
@@ -526,7 +526,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
   it('reverts edit when remove fails after successful edit', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    params.edit = vi.fn(async () => {})
+    params.edit = vi.fn(async () => true)
     params.remove = vi.fn(async () => {
       throw new Error('remove failed')
     })
@@ -677,7 +677,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
 
   it('reverts edit when remove fails after successful edit', async () => {
     const params = makeDefaultParams()
-    params.edit = vi.fn(async () => {})
+    params.edit = vi.fn(async () => true)
     params.remove = vi.fn(async () => {
       throw new Error('remove failed')
     })

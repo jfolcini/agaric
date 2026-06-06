@@ -58,7 +58,7 @@ export interface UseBlockKeyboardHandlersParams {
   setFocused: (id: string | null) => void
   handleFlush: () => string | null
   remove: (id: string) => Promise<void>
-  edit: (id: string, content: string) => Promise<void>
+  edit: (id: string, content: string) => Promise<boolean>
   indent: (id: string) => Promise<boolean>
   dedent: (id: string) => Promise<boolean>
   moveUp: (id: string) => Promise<boolean>

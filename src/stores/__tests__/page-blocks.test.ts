@@ -322,20 +322,22 @@ describe('PageBlockStore', () => {
         deleted_at: null,
       })
 
-      await store.getState().edit('A', 'new')
+      const ok = await store.getState().edit('A', 'new')
 
+      expect(ok).toBe(true)
       expect(store.getState().blocks[0]?.content).toBe('new')
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'new' })
     })
 
-    it('rolls back optimistic content on backend error', async () => {
+    it('rolls back optimistic content and resolves false on backend error', async () => {
       store.setState({
         blocks: [makeBlock({ id: 'A', content: 'old' })],
       })
       mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
 
-      await store.getState().edit('A', 'new')
+      const ok = await store.getState().edit('A', 'new')
 
+      expect(ok).toBe(false)
       expect(store.getState().blocks[0]?.content).toBe('old')
     })
 

@@ -328,14 +328,14 @@ export function BlockTree({
 
   const handleQuerySave = async (expression: string) => {
     if (!queryBuilderBlockId) return
-    try {
-      await pageStore.getState().edit(queryBuilderBlockId, `{{query ${expression}}}`)
-      setQueryBuilderOpen(false)
-      await load()
-    } catch (err) {
-      logger.error('BlockTree', 'Failed to insert query', { blockId: queryBuilderBlockId }, err)
-      notify.error(t('queryBuilder.saveFailed'))
-    }
+    // `edit()` handles its own error path (rollback + generic save-failed
+    // toast) and resolves `false` on failure rather than throwing. Keep the
+    // dialog open in that case so the user doesn't lose the query they built;
+    // only close + reload once the write actually landed.
+    const ok = await pageStore.getState().edit(queryBuilderBlockId, `{{query ${expression}}}`)
+    if (!ok) return
+    setQueryBuilderOpen(false)
+    await load()
   }
 
   // #264 — "Turn into" from the block context-menu. Converts the right-clicked
