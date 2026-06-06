@@ -1437,6 +1437,30 @@ pub async fn restore_block_inner(
     )
     .execute(&mut **tx)
     .await?;
+    // #533: keep `space_id` in step with the just-refreshed `page_id` for
+    // the restored subtree, synchronously (parity with the PEND-24 M6
+    // page_id treatment above — callers read space-scoped lists right after
+    // commit). Non-page rows derive from their owning page's `space`
+    // property; pages keep their own.
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET space_id = ( \
+             SELECT bp.value_ref FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+         ) \
+         WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+           AND block_type != 'page'",
+        block_id,
+    )
+    .execute(&mut **tx)
+    .await?;
 
     // P-4: Recompute inherited tags for restored subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
@@ -2936,6 +2960,25 @@ pub(crate) async fn set_property_in_tx(
         )
         .execute(&mut **tx)
         .await?;
+        // #533: `space` stays a property row (source of truth) but also
+        // drives the denormalized `blocks.space_id` query column. Space is
+        // a page-level property: stamp the page's own row AND every block
+        // whose owning page is this one (`page_id = block_id`) so the
+        // denormalized column matches the old `b.page_id IN (...)` filter
+        // for the whole page — a re-assignment (move-to-space) of a
+        // populated page must move its descendants too, and a space change
+        // does not enqueue a page_id/space_id rebuild. Keeps parity with
+        // the sync/replay path (`project_set_property_to_sql`).
+        if key == "space" {
+            sqlx::query!(
+                "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
+                value_ref,
+                block_id,
+                block_id
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
     }
 
     // Return block + op record; caller is responsible for commit + dispatch.

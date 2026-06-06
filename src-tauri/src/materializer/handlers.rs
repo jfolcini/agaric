@@ -3088,6 +3088,9 @@ pub(super) async fn handle_background_task(
         }
         MaterializeTask::SetBlockPageId { block_id } => {
             cache::set_block_page_id_from_parent(pool, block_id).await?;
+            // #533: space_id rides the same task — a fresh block inherits
+            // its parent's space. Must run after page_id is set.
+            cache::set_block_space_id_from_parent(pool, block_id).await?;
             Ok(())
         }
         MaterializeTask::RebuildPageIds => {
@@ -3097,7 +3100,10 @@ pub(super) async fn handle_background_task(
                 cache::rebuild_page_ids_split,
                 cache::rebuild_page_ids,
             )
-            .await
+            .await?;
+            // #533: space_id is derived from the freshly rebuilt page_id,
+            // so it reconciles on the same task right after.
+            cache::rebuild_space_ids(pool).await
         }
         MaterializeTask::RebuildPageLinkCache => {
             dispatch_split_or_single(

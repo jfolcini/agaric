@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id, b.block_type, b.content, b.parent_id, b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id,\n                bp.value_text AS repeat_rule,\n                bp_until.value_date AS repeat_until,\n                bp_count.value_num AS repeat_count,\n                bp_seq.value_num AS repeat_seq\n         FROM blocks b\n         JOIN block_properties bp ON bp.block_id = b.id AND bp.key = 'repeat'\n         LEFT JOIN block_properties bp_until ON bp_until.block_id = b.id AND bp_until.key = 'repeat-until'\n         LEFT JOIN block_properties bp_count ON bp_count.block_id = b.id AND bp_count.key = 'repeat-count'\n         LEFT JOIN block_properties bp_seq ON bp_seq.block_id = b.id AND bp_seq.key = 'repeat-seq'\n         WHERE b.deleted_at IS NULL\n           AND (b.todo_state IS NULL OR b.todo_state != 'DONE')\n           AND bp.value_text IS NOT NULL\n           AND (b.due_date IS NOT NULL OR b.scheduled_date IS NOT NULL)\n           AND NOT EXISTS (\n               SELECT 1 FROM block_properties tp\n               WHERE tp.block_id = b.page_id AND tp.key = 'template'\n           )\n           AND (?1 IS NULL OR b.page_id IN (\n                SELECT bp_sp.block_id FROM block_properties bp_sp\n                WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?1))",
+  "query": "SELECT id as \"id: crate::ulid::ActiveBlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position,\n                deleted_at,\n                 todo_state, priority, due_date, scheduled_date,\n                page_id as \"page_id: crate::ulid::BlockId\"\n         FROM blocks b\n         WHERE parent_id IS ?1 AND deleted_at IS NULL\n           AND (?2 IS NULL OR (\n                position > ?3\n                OR (position = ?3 AND id > ?4)))\n           AND (?6 IS NULL OR b.space_id = ?6)\n         ORDER BY position ASC, id ASC\n         LIMIT ?5",
   "describe": {
     "columns": [
       {
-        "name": "id",
+        "name": "id: crate::ulid::ActiveBlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id",
+        "name": "parent_id: crate::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id",
+        "name": "page_id: crate::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -123,54 +123,10 @@
             "name": "page_id"
           }
         }
-      },
-      {
-        "name": "repeat_rule",
-        "ordinal": 11,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "value_text"
-          }
-        }
-      },
-      {
-        "name": "repeat_until",
-        "ordinal": 12,
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "value_date"
-          }
-        }
-      },
-      {
-        "name": "repeat_count",
-        "ordinal": 13,
-        "type_info": "Float",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "value_num"
-          }
-        }
-      },
-      {
-        "name": "repeat_seq",
-        "ordinal": 14,
-        "type_info": "Float",
-        "origin": {
-          "Table": {
-            "table": "block_properties",
-            "name": "value_num"
-          }
-        }
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 6
     },
     "nullable": [
       false,
@@ -183,12 +139,8 @@
       true,
       true,
       true,
-      true,
-      true,
-      true,
-      true,
       true
     ]
   },
-  "hash": "26ce0d7591e173d4beed331a91d87885b37dc2a940b769ab6962026aaed46d4b"
+  "hash": "bc66b65b497e741a8047f3cf55ebe66a1ef15044b0457ed991ed62d29554a5d9"
 }

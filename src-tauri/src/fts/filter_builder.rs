@@ -128,19 +128,14 @@ impl StructuralFilterBuilder {
         self.binds.push(ScalarBind::I64(count));
     }
 
-    /// `AND b.page_id IN (SELECT bp.block_id FROM block_properties bp
-    /// WHERE bp.key = 'space' AND bp.value_ref = ?N)` when `Some`.
+    /// `AND b.space_id = ?N` when `Some`.
     ///
-    /// The sub-select body is single-spaced and identical across all
-    /// three builders (the original `\`-continuation source strings
-    /// collapse the inter-line indentation to a single space); only the
+    /// The fragment is identical across all three builders; only the
     /// leading `prefix` glue differs by builder indentation.
     pub(super) fn add_space(&mut self, prefix: &str, space_id: Option<&str>) {
         if let Some(sid) = space_id {
             let i = self.next_param;
-            self.sql.push_str(&format!(
-                "{prefix}b.page_id IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?{i})"
-            ));
+            self.sql.push_str(&format!("{prefix}b.space_id = ?{i}"));
             self.next_param += 1;
             self.binds.push(ScalarBind::Str(sid.to_string()));
         }
@@ -274,10 +269,7 @@ mod tests {
     fn space_fragment_matches_canonical_inner() {
         let mut fb = StructuralFilterBuilder::new(6);
         fb.add_space(FTS_PREFIX, Some("space1"));
-        assert_eq!(
-            fb.sql(),
-            "\n           AND b.page_id IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?6)"
-        );
+        assert_eq!(fb.sql(), "\n           AND b.space_id = ?6");
         assert_eq!(fb.next_param(), 7);
     }
 

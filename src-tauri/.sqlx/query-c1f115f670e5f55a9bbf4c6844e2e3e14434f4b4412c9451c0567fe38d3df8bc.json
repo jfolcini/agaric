@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM blocks b\n           WHERE b.deleted_at IS NOT NULL\n             AND b.space_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c1f115f670e5f55a9bbf4c6844e2e3e14434f4b4412c9451c0567fe38d3df8bc"
+}

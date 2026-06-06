@@ -208,9 +208,7 @@ fn build_projection_sql(candidate_clause: &str) -> String {
          FROM blocks b \
          WHERE {candidate_clause} \
            AND b.deleted_at IS NULL \
-           AND (? IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           AND (? IS NULL OR b.space_id = ?) \
            AND (? IS NULL OR b.block_type = ?) \
            AND (? IS NULL OR b.id > ?) \
          ORDER BY b.id ASC \

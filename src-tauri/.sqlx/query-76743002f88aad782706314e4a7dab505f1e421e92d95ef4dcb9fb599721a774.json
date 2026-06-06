@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET space_id = (SELECT b2.space_id FROM blocks b2 WHERE b2.id = blocks.parent_id) WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "76743002f88aad782706314e4a7dab505f1e421e92d95ef4dcb9fb599721a774"
+}

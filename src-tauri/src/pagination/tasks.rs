@@ -49,9 +49,7 @@ pub async fn list_unfinished_tasks(
            AND (b.due_date < ?1 OR b.scheduled_date < ?1)
            AND b.todo_state IN (SELECT value FROM json_each(?2))
            AND (?3 IS NULL OR (COALESCE(b.due_date, b.scheduled_date) < ?4 OR (COALESCE(b.due_date, b.scheduled_date) = ?4 AND b.id < ?5)))
-           AND (?7 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?7))
+           AND (?7 IS NULL OR b.space_id = ?7)
          ORDER BY COALESCE(b.due_date, b.scheduled_date) DESC, b.id DESC
          LIMIT ?6"#,
         before_date, // ?1

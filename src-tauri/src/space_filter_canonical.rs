@@ -1,5 +1,17 @@
 //! Drift-detection parity test for the space-filter SQL fragment.
 //!
+//! ## #533 — fragment collapsed to a native column
+//!
+//! Space membership is now a first-class `blocks.space_id` column
+//! (migration 0086), so the read filter is the trivial
+//! `(?N IS NULL OR b.space_id = ?N)` — see [`SPACE_FILTER_CANONICAL`].
+//! The elaborate `block_properties` sub-select that the MAINT-172
+//! history below was written to police no longer exists, which also
+//! makes the sqlx-codegen rejection moot (there is nothing left to
+//! compose). The fragment is still inlined at ~30 sites, so this parity
+//! guard is retained against drift in the new shape; the historical
+//! notes are kept for context.
+//!
 //! ## MAINT-172 closure (session 680)
 //!
 //! PEND-12 (`build.rs` codegen via `OUT_DIR` files + `include_str!`
@@ -63,7 +75,7 @@
 /// `sqlx::query!` / `sqlx::query_as!` reject `concat!()` /
 /// `include_str!()` composition (see the module doc above).
 #[cfg(test)]
-pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR b.page_id IN (\n    SELECT bp.block_id FROM block_properties bp\n    WHERE bp.key = 'space' AND bp.value_ref = ?N))";
+pub(crate) const SPACE_FILTER_CANONICAL: &str = "(?N IS NULL OR b.space_id = ?N)";
 
 #[cfg(test)]
 mod tests {
@@ -132,7 +144,7 @@ mod tests {
     #[test]
     fn space_filter_canonical_normalises_to_self() {
         let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
-        let alternate = "(?2 IS NULL OR b.page_id IN (SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?2))";
+        let alternate = "(?2 IS NULL OR b.space_id = ?2)";
         assert_eq!(
             canonical_norm,
             normalize(alternate),
@@ -213,7 +225,7 @@ mod tests {
         // continuations used in plain (non-raw) Rust string-literal
         // SQL (e.g. `commands/agenda.rs:119` style: `… bp \⏎     WHERE …`).
         let pattern_re = Regex::new(
-            r"(?s)\(\s*\?\d*[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]+b\.page_id[\s\\]+IN[\s\\]+\([\s\\]*SELECT[\s\\]+bp\w*\.block_id[\s\\]+FROM[\s\\]+block_properties[\s\\]+bp\w*[\s\\]+WHERE[\s\\]+bp\w*\.key[\s\\]*=[\s\\]*'space'[\s\\]+AND[\s\\]+bp\w*\.value_ref[\s\\]*=[\s\\]*\?\d*[\s\\]*\)[\s\\]*\)"
+            r"(?s)\(\s*\?\d*[\s\\]+IS[\s\\]+NULL[\s\\]+OR[\s\\]+b\.space_id[\s\\]*=[\s\\]*\?\d*[\s\\]*\)"
         ).expect("space-filter pattern regex must compile");
 
         let canonical_norm = normalize(SPACE_FILTER_CANONICAL);
@@ -259,8 +271,7 @@ mod tests {
             "the src/**/*.rs walk found zero canonical-shape space-filter \
              sites; the pattern regex or SPACE_FILTER_CANONICAL shape \
              likely changed and silently disabled this drift guard. \
-             Audit `grep -rn \"b.page_id IN (SELECT bp.block_id\" \
-             src-tauri/src/`.",
+             Audit `grep -rn \"b.space_id = ?\" src-tauri/src/`.",
         );
     }
 

@@ -4164,6 +4164,15 @@ async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
         .execute(pool)
         .await
         .unwrap();
+    // #533: mirror the denormalized `blocks.space_id` column — every block
+    // whose owning page is `block_id` (pages carry `page_id = id`) is in
+    // this space. Equivalent to the old `b.page_id IN (...)` filter.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(space_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// Insert a block with an explicit `page_id` column value. Required for
@@ -4193,6 +4202,15 @@ async fn insert_block_with_page_id(
     .execute(pool)
     .await
     .unwrap();
+    // #533: a block inherits the denormalized `space_id` of its owning
+    // page (mirrors production `set_block_space_id_from_parent`), so tests
+    // that assign the page's space before inserting children still resolve.
+    sqlx::query("UPDATE blocks SET space_id = (SELECT p.space_id FROM blocks p WHERE p.id = ?) WHERE id = ?")
+        .bind(page_id)
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

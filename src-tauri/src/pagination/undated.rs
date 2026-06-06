@@ -39,9 +39,7 @@ pub async fn list_undated_tasks(
            AND b.scheduled_date IS NULL
            AND b.deleted_at IS NULL
            AND (?1 IS NULL OR b.id > ?2)
-           AND (?4 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?4))
+           AND (?4 IS NULL OR b.space_id = ?4)
          ORDER BY b.id ASC
          LIMIT ?3"#,
         cursor_flag, // ?1

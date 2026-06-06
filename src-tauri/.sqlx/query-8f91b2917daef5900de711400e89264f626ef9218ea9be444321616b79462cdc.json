@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT pa.page_id AS \"page_id!: PageId\", pa.alias AS \"alias!\", b.content AS \"title?\"\n         FROM page_aliases pa\n         JOIN blocks b ON b.id = pa.page_id\n         WHERE pa.alias LIKE ?1 ESCAPE '\\' COLLATE NOCASE\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR b.id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?3))\n         ORDER BY length(pa.alias), pa.alias\n         LIMIT ?2",
+  "query": "SELECT pa.page_id AS \"page_id!: PageId\", pa.alias AS \"alias!\", b.content AS \"title?\"\n         FROM page_aliases pa\n         JOIN blocks b ON b.id = pa.page_id\n         WHERE pa.alias LIKE ?1 ESCAPE '\\' COLLATE NOCASE\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR b.space_id = ?3)\n         ORDER BY length(pa.alias), pa.alias\n         LIMIT ?2",
   "describe": {
     "columns": [
       {
@@ -46,5 +46,5 @@
       true
     ]
   },
-  "hash": "eb70b8d902efc6989a68cfe23451880967cffb0c6649bdc019ec4f39851e7d88"
+  "hash": "8f91b2917daef5900de711400e89264f626ef9218ea9be444321616b79462cdc"
 }

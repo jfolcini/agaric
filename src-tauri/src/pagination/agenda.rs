@@ -50,9 +50,7 @@ pub async fn list_agenda(
          WHERE ac.date = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR ac.source = ?2)
            AND (?3 IS NULL OR b.id > ?4)
-           AND (?6 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?6))
+           AND (?6 IS NULL OR b.space_id = ?6)
          ORDER BY b.id ASC
          LIMIT ?5"#,
         date,        // ?1
@@ -122,9 +120,7 @@ pub async fn list_agenda_range(
            AND b.deleted_at IS NULL
            AND (?3 IS NULL OR ac.source = ?3)
            AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))
-           AND (?8 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?8))
+           AND (?8 IS NULL OR b.space_id = ?8)
          ORDER BY ac.date ASC, b.id ASC
          LIMIT ?7"#,
         start_date,  // ?1

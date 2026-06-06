@@ -50,9 +50,7 @@ pub async fn list_backlinks(
          JOIN blocks b ON b.id = bl.source_id
          WHERE bl.target_id = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR bl.source_id > ?3)
-           AND (?5 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?5))
+           AND (?5 IS NULL OR b.space_id = ?5)
          ORDER BY bl.source_id ASC
          LIMIT ?4"#,
         target_id,   // ?1

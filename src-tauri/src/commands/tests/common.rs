@@ -120,6 +120,17 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .execute(pool)
         .await
         .unwrap();
+    // #533: mirror the denormalized `blocks.space_id` column the way the
+    // materializer would — every block whose owning page is `block_id`
+    // (the page carries `page_id = id`, so the page itself is included)
+    // belongs to this space. Equivalent to the old `b.page_id IN (...)`
+    // filter the column replaced.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(TEST_SPACE_ID)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// FEAT-3p4 — variant of [`ensure_test_space`] that seeds the
@@ -147,6 +158,14 @@ pub async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) 
     sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
         .bind(block_id)
         .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    // #533: keep the denormalized `blocks.space_id` column in step (see
+    // `assign_to_test_space`).
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(space_id)
+        .bind(block_id)
         .execute(pool)
         .await
         .unwrap();
@@ -183,6 +202,20 @@ pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     )
     .bind(TEST_SPACE_ID)
     .bind(TEST_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    // #533: derive the denormalized `blocks.space_id` column from the
+    // freshly seeded `space` properties — identical to `rebuild_space_ids`
+    // / migration 0086. Runs last so it observes every block's `page_id`
+    // (stamped above) and every `space` property (incl. cross-space
+    // pre-assignments preserved by the NOT EXISTS guard).
+    sqlx::query(
+        "UPDATE blocks SET space_id = ( \
+             SELECT bp.value_ref FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+         )",
+    )
     .execute(pool)
     .await
     .unwrap();

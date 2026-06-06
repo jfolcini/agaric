@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT\n             b.id,\n             b.content AS title,\n             b.block_type,\n             (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS \"deleted: bool\"\n           FROM blocks b\n           WHERE b.id IN (SELECT value FROM json_each(?1))\n             AND (?2 IS NULL OR b.page_id IN (\n                 SELECT bp.block_id\n                 FROM block_properties bp\n                 WHERE bp.key = 'space' AND bp.value_ref = ?2\n             ))",
+  "query": "SELECT\n             b.id,\n             b.content AS title,\n             b.block_type,\n             (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS \"deleted: bool\"\n           FROM blocks b\n           WHERE b.id IN (SELECT value FROM json_each(?1))\n             AND (?2 IS NULL OR b.space_id = ?2)",
   "describe": {
     "columns": [
       {
@@ -53,5 +53,5 @@
       false
     ]
   },
-  "hash": "0537a5cc57b52cfeb6b4ea82c9b84c88003c32c9b4e101cd6bf6fd3db3ff7f69"
+  "hash": "a98904f0342679ac32131ea8974e80217ee7cc55b14cfbacc7df4751009b5cc2"
 }

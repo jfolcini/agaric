@@ -1657,8 +1657,12 @@ async fn batch_resolve_returns_matching_blocks() {
     // (canonical for tag blocks), dropping the tag from the resolve set.
     // Surfaced as a 1-in-3 flake during the M-6 hygiene sweep.
     settle(&mat).await;
-    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+    // #533: stamp space_id alongside page_id — the settle() above ran
+    // rebuild_space_ids, which derives space_id from page_id (NULL at that
+    // moment), so the directly-assigned value must be restored here.
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(&b2.id)
+        .bind(TEST_SPACE_ID)
         .bind(&b2.id)
         .execute(&pool)
         .await
@@ -1719,8 +1723,11 @@ async fn batch_resolve_marks_deleted_block() {
     // delete. Production never hits this shape (content blocks never
     // get direct space properties), so the work-around lives only in
     // the test fixture.
-    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+    // #533: re-stamp space_id too — rebuild_space_ids during settle
+    // derived it from the (then-NULL) page_id and cleared it.
+    sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
         .bind(&block.id)
+        .bind(TEST_SPACE_ID)
         .bind(&block.id)
         .execute(&pool)
         .await

@@ -40,9 +40,7 @@ pub async fn list_by_tag(
          JOIN blocks b ON b.id = bt.block_id
          WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL
            AND (?2 IS NULL OR bt.block_id > ?3)
-           AND (?5 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?5))
+           AND (?5 IS NULL OR b.space_id = ?5)
          ORDER BY bt.block_id ASC
          LIMIT ?4"#,
         tag_id,      // ?1
