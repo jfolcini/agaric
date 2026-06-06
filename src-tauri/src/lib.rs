@@ -1567,6 +1567,26 @@ pub fn run() {
             // Spawn the connector task.  The handle + state trio are
             // registered on Tauri so the five gcal commands can
             // resolve.
+            // FEAT-5b — shared `OAuthClient` for the desktop OAuth
+            // flow. A single shared instance is load-bearing: the
+            // PKCE verifier produced by `begin_authorize` must be
+            // recoverable by the matching `exchange_code` call, and
+            // both go through this client. The `redirect_url`
+            // configured here is a sentinel — every flow overrides
+            // it with its per-flow loopback port in `begin_authorize`
+            // / `exchange_code`. A construction-time failure here
+            // means the pinned Google endpoint URLs failed to parse,
+            // which is structurally impossible — surface via `expect`
+            // so a regression in `OAuthClient::google` panics at
+            // startup rather than silently disabling Connect.
+            // The client is also passed to `spawn_connector` so the
+            // background loop can proactively refresh expiring tokens
+            // before calling `run_cycle` (#462).
+            let oauth_client = std::sync::Arc::new(
+                gcal_push::oauth::OAuthClient::google(0)
+                    .expect("Google OAuth endpoints must parse"),
+            );
+
             let pool_for_gcal_connector = pools_write_for_gcal.clone();
             let device_for_gcal_connector = device_id_for_gcal.clone();
             let connector_task = spawn_connector(
@@ -1575,6 +1595,7 @@ pub fn run() {
                 gcal_token_store.clone(),
                 gcal_emitter.clone(),
                 device_for_gcal_connector,
+                oauth_client.clone(),
             );
             app.manage(connector_task.handle.clone());
             // FEAT-5h — wire the connector handle into the
@@ -1591,23 +1612,6 @@ pub fn run() {
             app.manage(commands::GcalTokenStoreState(gcal_token_store));
             app.manage(commands::GcalEventEmitterState(gcal_emitter));
             app.manage(commands::GcalClientState(gcal_client));
-
-            // FEAT-5b — shared `OAuthClient` for the desktop OAuth
-            // flow. A single shared instance is load-bearing: the
-            // PKCE verifier produced by `begin_authorize` must be
-            // recoverable by the matching `exchange_code` call, and
-            // both go through this client. The `redirect_url`
-            // configured here is a sentinel — every flow overrides
-            // it with its per-flow loopback port in `begin_authorize`
-            // / `exchange_code`. A construction-time failure here
-            // means the pinned Google endpoint URLs failed to parse,
-            // which is structurally impossible — surface via `expect`
-            // so a regression in `OAuthClient::google` panics at
-            // startup rather than silently disabling Connect.
-            let oauth_client = std::sync::Arc::new(
-                gcal_push::oauth::OAuthClient::google(0)
-                    .expect("Google OAuth endpoints must parse"),
-            );
             app.manage(commands::GcalOAuthClientState(oauth_client));
 
             Ok(())

@@ -411,11 +411,23 @@ fn invalidations_for_op(
                 // inline `#[ULID]` tag refs if the creator passed
                 // non-empty content (imports, paste, programmatic
                 // creates). Scan for them.
-                tasks.push(MaterializeTask::ReindexBlockTagRefs { block_id });
+                tasks.push(MaterializeTask::ReindexBlockTagRefs {
+                    block_id: Arc::clone(&block_id),
+                });
+                // Incremental page_id set for the new block (no descendants to walk).
+                // Skipped for page blocks: their page_id = id invariant is enforced
+                // by the page_id_self_for_pages CHECK constraint at INSERT time.
+                // Falls through to the unconditional RebuildPageIds only if block_id
+                // is empty (defensive).
+                if hint.block_type != "page" {
+                    tasks.push(MaterializeTask::SetBlockPageId { block_id });
+                }
+            } else {
+                // Defensive fallback: no block_id in payload → full rebuild.
+                tasks.push(MaterializeTask::RebuildPageIds);
             }
             tasks.push(MaterializeTask::RebuildTagInheritanceCache);
             tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
-            tasks.push(MaterializeTask::RebuildPageIds);
         }
         "edit_block" => {
             // L-13: use the cached `OpRecord::block_id` sidecar
@@ -610,6 +622,9 @@ mod tests {
             MaterializeTask::RebuildTagInheritanceCache => "RebuildTagInheritanceCache".into(),
             MaterializeTask::RebuildProjectedAgendaCache => "RebuildProjectedAgendaCache".into(),
             MaterializeTask::RebuildPageIds => "RebuildPageIds".into(),
+            MaterializeTask::SetBlockPageId { block_id } => {
+                format!("SetBlockPageId({block_id})")
+            }
             MaterializeTask::RebuildBlockTagRefsCache => "RebuildBlockTagRefsCache".into(),
             MaterializeTask::RebuildPageLinkCache => "RebuildPageLinkCache".into(),
             MaterializeTask::Barrier(_) => "Barrier".into(),
@@ -701,9 +716,9 @@ mod tests {
                 "RebuildTagsCache",
                 "UpdateFtsBlock(BLK1)",
                 "ReindexBlockTagRefs(BLK1)",
+                "SetBlockPageId(BLK1)",
                 "RebuildTagInheritanceCache",
                 "RebuildProjectedAgendaCache",
-                "RebuildPageIds",
             ],
         );
     }
@@ -713,6 +728,8 @@ mod tests {
         let payload = r#"{"block_id":"PG1","block_type":"page"}"#;
         let r = make_record("create_block", payload, Some("PG1"));
         let tasks = invalidations_for_op(&r, None).unwrap();
+        // Page blocks don't get SetBlockPageId: page_id = id is enforced
+        // by the page_id_self_for_pages CHECK constraint at INSERT time.
         assert_eq!(
             labels(&tasks),
             vec![
@@ -721,7 +738,6 @@ mod tests {
                 "ReindexBlockTagRefs(PG1)",
                 "RebuildTagInheritanceCache",
                 "RebuildProjectedAgendaCache",
-                "RebuildPageIds",
             ],
         );
     }
@@ -737,9 +753,9 @@ mod tests {
             vec![
                 "UpdateFtsBlock(C1)",
                 "ReindexBlockTagRefs(C1)",
+                "SetBlockPageId(C1)",
                 "RebuildTagInheritanceCache",
                 "RebuildProjectedAgendaCache",
-                "RebuildPageIds",
             ],
         );
     }

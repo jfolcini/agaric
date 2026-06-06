@@ -303,12 +303,12 @@ mod tests {
     /// Minimal in-memory registry. Records the actor observed inside
     /// `call_tool` so the test can assert that the rmcp adapter's
     /// `ACTOR.scope(...)` actually reaches the registry layer.
-    struct SpikeMockRegistry {
+    struct MockRoRegistry {
         observed_actor: Arc<Mutex<Option<Actor>>>,
         call_count: Arc<Mutex<usize>>,
     }
 
-    impl ToolRegistry for SpikeMockRegistry {
+    impl ToolRegistry for MockRoRegistry {
         fn list_tools(&self) -> Vec<ToolDescription> {
             vec![ToolDescription {
                 name: SEARCH_TOOL_NAME.to_string(),
@@ -356,7 +356,7 @@ mod tests {
     /// that subtly changes `ServerCapabilities::builder` is caught.
     #[test]
     fn rmcp_adapter_advertises_tools_capability() {
-        let registry = Arc::new(SpikeMockRegistry {
+        let registry = Arc::new(MockRoRegistry {
             observed_actor: Arc::new(Mutex::new(None)),
             call_count: Arc::new(Mutex::new(0)),
         });
@@ -396,7 +396,7 @@ mod tests {
     async fn rmcp_adapter_search_round_trip_emits_activity_and_actor() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
-        let registry = Arc::new(SpikeMockRegistry {
+        let registry = Arc::new(MockRoRegistry {
             observed_actor: observed.clone(),
             call_count: count.clone(),
         });
@@ -433,7 +433,7 @@ mod tests {
             .list_all_tools()
             .await
             .expect("tools/list round-trip");
-        assert_eq!(tools.len(), 1, "spike advertises one tool");
+        assert_eq!(tools.len(), 1, "mock registry advertises one tool");
         assert_eq!(tools[0].name, SEARCH_TOOL_NAME);
 
         // Call the tool.
@@ -501,8 +501,7 @@ mod tests {
         let emitted = emitter.entries();
         assert_eq!(emitted.len(), 1, "one mcp:activity event per tool call");
         assert_eq!(emitted[0].tool_name, SEARCH_TOOL_NAME);
-        // Tauri event channel constant — pin it so the emitter
-        // contract is locked in for the spike.
+        // pin the Tauri event channel constant.
         assert_eq!(MCP_ACTIVITY_EVENT, "mcp:activity");
     }
 
@@ -520,7 +519,7 @@ mod tests {
     async fn rmcp_adapter_unknown_tool_returns_resource_not_found_with_activity() {
         let observed = Arc::new(Mutex::new(None));
         let count = Arc::new(Mutex::new(0));
-        let registry = Arc::new(SpikeMockRegistry {
+        let registry = Arc::new(MockRoRegistry {
             observed_actor: observed,
             call_count: count.clone(),
         });

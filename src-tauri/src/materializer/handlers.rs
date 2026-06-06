@@ -3065,6 +3065,10 @@ pub(super) async fn handle_background_task(
             )
             .await
         }
+        MaterializeTask::SetBlockPageId { block_id } => {
+            cache::set_block_page_id_from_parent(pool, block_id).await?;
+            Ok(())
+        }
         MaterializeTask::RebuildPageIds => {
             dispatch_split_or_single(
                 pool,

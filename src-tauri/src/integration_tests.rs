@@ -1244,14 +1244,16 @@ async fn materializer_processes_background_tasks_after_page_create() {
 
     let bg = mat.metrics().bg_processed.load(Ordering::Relaxed);
     // A `create_block` op with `block_type = "page"` fans out to exactly
-    // 6 background tasks via `dispatch::enqueue_background_tasks`:
+    // 5 background tasks via `dispatch::enqueue_background_tasks`:
     // RebuildPagesCache, UpdateFtsBlock, ReindexBlockTagRefs,
-    // RebuildTagInheritanceCache, RebuildProjectedAgendaCache,
-    // RebuildPageIds. `flush_background` then enqueues one Barrier,
-    // which the worker also counts as a processed task — total 7.
+    // RebuildTagInheritanceCache, RebuildProjectedAgendaCache.
+    // SetBlockPageId is skipped for page blocks — their page_id = id
+    // is enforced by the page_id_self_for_pages CHECK constraint at
+    // INSERT time. `flush_background` then enqueues one Barrier,
+    // which the worker also counts as a processed task — total 6.
     assert_eq!(
-        bg, 7,
-        "page creation dispatches exactly 6 bg tasks + 1 flush barrier, got {bg}"
+        bg, 6,
+        "page creation dispatches exactly 5 bg tasks + 1 flush barrier, got {bg}"
     );
 }
 

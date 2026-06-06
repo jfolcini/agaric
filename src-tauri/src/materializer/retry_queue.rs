@@ -104,6 +104,8 @@ pub(crate) enum RetryKind {
     RebuildTagInheritanceCache,
     /// Mirror of [`MaterializeTask::RebuildPageIds`].
     RebuildPageIds,
+    /// Mirror of [`MaterializeTask::SetBlockPageId`].
+    SetBlockPageId,
     /// Mirror of [`MaterializeTask::RebuildBlockTagRefsCache`].
     RebuildBlockTagRefsCache,
     /// Mirror of [`MaterializeTask::RebuildPageLinkCache`] (SQL-review §H-2).
@@ -141,6 +143,7 @@ impl RetryKind {
             Self::RebuildProjectedAgendaCache => Cow::Borrowed("RebuildProjectedAgendaCache"),
             Self::RebuildTagInheritanceCache => Cow::Borrowed("RebuildTagInheritanceCache"),
             Self::RebuildPageIds => Cow::Borrowed("RebuildPageIds"),
+            Self::SetBlockPageId => Cow::Borrowed("SetBlockPageId"),
             Self::RebuildBlockTagRefsCache => Cow::Borrowed("RebuildBlockTagRefsCache"),
             Self::RebuildPageLinkCache => Cow::Borrowed("RebuildPageLinkCache"),
             Self::ApplyOp { device_id, seq } => Cow::Owned(format!("ApplyOp:{seq}:{device_id}")),
@@ -160,6 +163,7 @@ impl RetryKind {
             "RebuildProjectedAgendaCache" => return Some(Self::RebuildProjectedAgendaCache),
             "RebuildTagInheritanceCache" => return Some(Self::RebuildTagInheritanceCache),
             "RebuildPageIds" => return Some(Self::RebuildPageIds),
+            "SetBlockPageId" => return Some(Self::SetBlockPageId),
             "RebuildBlockTagRefsCache" => return Some(Self::RebuildBlockTagRefsCache),
             "RebuildPageLinkCache" => return Some(Self::RebuildPageLinkCache),
             _ => {}
@@ -228,6 +232,9 @@ impl RetryKind {
             Self::RebuildProjectedAgendaCache => Some(MaterializeTask::RebuildProjectedAgendaCache),
             Self::RebuildTagInheritanceCache => Some(MaterializeTask::RebuildTagInheritanceCache),
             Self::RebuildPageIds => Some(MaterializeTask::RebuildPageIds),
+            Self::SetBlockPageId => Some(MaterializeTask::SetBlockPageId {
+                block_id: Arc::from(block_id),
+            }),
             Self::RebuildBlockTagRefsCache => Some(MaterializeTask::RebuildBlockTagRefsCache),
             Self::RebuildPageLinkCache => Some(MaterializeTask::RebuildPageLinkCache),
             // ApplyOp requires `OpRecord` lookup from `op_log`.
@@ -290,6 +297,9 @@ impl RetryKind {
             )),
             MaterializeTask::RebuildPageIds => {
                 Some((Self::RebuildPageIds, GLOBAL_TASK_SENTINEL.to_string()))
+            }
+            MaterializeTask::SetBlockPageId { block_id } => {
+                Some((Self::SetBlockPageId, block_id.to_string()))
             }
             MaterializeTask::RebuildBlockTagRefsCache => Some((
                 Self::RebuildBlockTagRefsCache,
