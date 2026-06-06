@@ -23,7 +23,7 @@ import { shouldSplitOnBlur } from '../editor/use-roving-editor'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '../lib/file-utils'
 import { addAttachmentWithBytes } from '../lib/tauri'
 import { useBlockStore } from '../stores/blocks'
-import { type PageBlockState, usePageBlockStore } from '../stores/page-blocks'
+import { type PageBlockState, usePageBlockStore, usePageBlockStoreApi } from '../stores/page-blocks'
 import { FormattingToolbar } from './FormattingToolbar'
 import { SelectionBubbleMenu } from './SelectionBubbleMenu'
 import { StaticBlock } from './StaticBlock'
@@ -126,8 +126,7 @@ function EditableBlockInner({
   onSelect,
 }: EditableBlockProps): React.ReactElement {
   const setFocused = useBlockStore((s) => s.setFocused)
-  const edit = usePageBlockStore((s) => s.edit)
-  const splitBlock = usePageBlockStore((s) => s.splitBlock)
+  const { edit, splitBlock } = usePageBlockStoreApi().getState()
   const prioritySelector = useCallback(
     (s: PageBlockState) => s.blocksById.get(blockId)?.priority ?? null,
     [blockId],
@@ -149,7 +148,7 @@ function EditableBlockInner({
   const splitBlockRef = useRef(splitBlock)
   splitBlockRef.current = splitBlock
 
-  // ── Draft autosave: poll editor content while focused ──────────────
+  // ── Draft autosave: subscribe to TipTap update events while focused ──
   const [liveContent, setLiveContent] = useState('')
 
   useEffect(() => {
@@ -157,11 +156,12 @@ function EditableBlockInner({
       setLiveContent('')
       return
     }
-    const interval = setInterval(() => {
-      const md = rovingEditorRef.current.getMarkdown()
-      if (md !== null) setLiveContent(md)
-    }, 500)
-    return () => clearInterval(interval)
+    rovingEditorRef.current.setOnMarkdownChange((md) => {
+      setLiveContent(md)
+    })
+    return () => {
+      rovingEditorRef.current.setOnMarkdownChange(null)
+    }
   }, [isFocused, blockId])
 
   const { discardDraft } = useDraftAutosave(isFocused ? blockId : null, liveContent)
@@ -198,8 +198,8 @@ function EditableBlockInner({
         persistUnmount(
           rovingEditorRef.current,
           rovingEditorRef.current.activeBlockId,
-          edit,
-          splitBlock,
+          editRef.current,
+          splitBlockRef.current,
         )
       }
       // Mount into the new block
@@ -207,7 +207,7 @@ function EditableBlockInner({
       setFocused(id)
       rovingEditorRef.current.mount(id, content)
     },
-    [content, setFocused, edit, splitBlock],
+    [content, setFocused],
   )
 
   const { handleBlur } = useEditorBlur({

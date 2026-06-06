@@ -237,6 +237,7 @@ function makeRovingEditor() {
     activeBlockId: null,
     getMarkdown: vi.fn(() => null),
     originalMarkdown: '',
+    setOnMarkdownChange: vi.fn(),
   }
 }
 
