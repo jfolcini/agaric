@@ -266,9 +266,11 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
 /// SQL-2 (PEND-58f): the `LOWER(pc.title) GLOB ?` clause is a
 /// `pages_cache` SCAN and does NOT use `idx_pages_cache_title_nocase`
 /// (expression mismatch on `LOWER(...)`, GLOB-not-LIKE, leading-wildcard
-/// substring patterns). The scan is acceptable because `pages_cache` is
-/// the small per-page summary table — see migration
-/// `0068_pages_cache_title_index.sql`.
+/// substring patterns). Migration 0068's comment claims the index serves
+/// the `LOWER(title) GLOB ?` path — that claim is incorrect; the index
+/// only helps explicit `title COLLATE NOCASE` range/equality forms, not
+/// GLOB. The scan is acceptable because `pages_cache` is the small
+/// per-page summary table.
 pub(crate) fn append_page_glob_subselect(
     sql: &mut String,
     prefix: &str,

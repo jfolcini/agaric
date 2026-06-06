@@ -17,7 +17,7 @@ pub fn reverse_create_block(record: &OpRecord) -> Result<OpPayload, AppError> {
     }))
 }
 
-pub fn reverse_delete_block(_pool: &SqlitePool, record: &OpRecord) -> Result<OpPayload, AppError> {
+pub fn reverse_delete_block(record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: DeleteBlockPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::RestoreBlock(RestoreBlockPayload {
         block_id: payload.block_id,

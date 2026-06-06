@@ -193,27 +193,34 @@ async fn read_legacy_settings(pool: &SqlitePool) -> Result<LegacySettings, AppEr
         WindowDays,
     };
 
-    let calendar_id = models::get_setting(pool, CalendarId)
-        .await?
-        .unwrap_or_default();
-    let privacy_mode = models::get_setting(pool, PrivacyMode)
-        .await?
+    // Fetch all six keys in a single SQL round-trip instead of six
+    // sequential awaits.
+    let mut batch = models::get_settings_batch(
+        pool,
+        &[
+            CalendarId,
+            PrivacyMode,
+            WindowDays,
+            PushLeaseDeviceId,
+            PushLeaseExpiresAt,
+            OauthAccountEmail,
+        ],
+    )
+    .await?;
+
+    let calendar_id = batch.remove(&CalendarId).unwrap_or_default();
+    let privacy_mode = batch
+        .remove(&PrivacyMode)
         .unwrap_or_else(|| "full".to_owned());
     // window_days is stored as a string ("30") in the legacy KV.
     // Fall back to 30 on parse / missing-row failure.
-    let window_days = models::get_setting(pool, WindowDays)
-        .await?
+    let window_days = batch
+        .remove(&WindowDays)
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(30);
-    let push_lease_device_id = models::get_setting(pool, PushLeaseDeviceId)
-        .await?
-        .unwrap_or_default();
-    let push_lease_expires_at = models::get_setting(pool, PushLeaseExpiresAt)
-        .await?
-        .unwrap_or_default();
-    let oauth_account_email = models::get_setting(pool, OauthAccountEmail)
-        .await?
-        .unwrap_or_default();
+    let push_lease_device_id = batch.remove(&PushLeaseDeviceId).unwrap_or_default();
+    let push_lease_expires_at = batch.remove(&PushLeaseExpiresAt).unwrap_or_default();
+    let oauth_account_email = batch.remove(&OauthAccountEmail).unwrap_or_default();
 
     Ok(LegacySettings {
         calendar_id,

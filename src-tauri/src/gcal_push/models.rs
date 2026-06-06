@@ -200,11 +200,16 @@ pub async fn get_settings_batch(
     }
     let rows = q.fetch_all(pool).await?;
     let mut out = HashMap::with_capacity(keys.len());
+    // Build a &str → GcalSettingKey lookup so the inner loop is O(1)
+    // per row rather than O(keys) (avoids O(rows × keys) for large
+    // batches such as space-config reloads).
+    let lookup: std::collections::HashMap<&str, GcalSettingKey> =
+        keys.iter().map(|k| (k.as_str(), *k)).collect();
     for row in rows {
         let row_key: String = row.try_get("key")?;
         let row_value: String = row.try_get("value")?;
-        if let Some(key) = keys.iter().find(|k| k.as_str() == row_key) {
-            out.insert(*key, row_value);
+        if let Some(&key) = lookup.get(row_key.as_str()) {
+            out.insert(key, row_value);
         }
     }
     Ok(out)

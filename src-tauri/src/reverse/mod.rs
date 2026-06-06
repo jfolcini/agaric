@@ -27,7 +27,7 @@ pub async fn compute_reverse(
         .map_err(|e| AppError::Validation(format!("unknown op_type in record: {e}")))?;
     match op_type {
         OpType::CreateBlock => block_ops::reverse_create_block(&record),
-        OpType::DeleteBlock => block_ops::reverse_delete_block(pool, &record),
+        OpType::DeleteBlock => block_ops::reverse_delete_block(&record),
         OpType::EditBlock => block_ops::reverse_edit_block(pool, &record).await,
         OpType::MoveBlock => block_ops::reverse_move_block(pool, &record).await,
         OpType::AddTag => tag_ops::reverse_add_tag(&record),

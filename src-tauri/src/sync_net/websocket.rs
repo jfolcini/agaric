@@ -266,10 +266,15 @@ pub(crate) fn device_id_from_service_fullname(fullname: &str) -> Option<String> 
 // 3. WebSocket Server
 // =========================================================================
 
+/// Maximum back-off duration for consecutive `accept()` failures (M-53).
+/// Used by [`compute_accept_backoff_duration`] and the comment at the
+/// call-site to keep both in sync.
+const ACCEPT_BACKOFF_CAP: Duration = Duration::from_secs(30);
+
 /// Compute the back-off duration for the *next* accept attempt after a
 /// run of consecutive `accept()` failures (M-53).
 ///
-/// The schedule is `100ms × 2^(n-1)` capped at 30 s, where `n` is the
+/// The schedule is `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where `n` is the
 /// 1-based count of consecutive failures (so the first failure waits
 /// 100 ms, the second 200 ms, the third 400 ms, …, until the 30 s cap
 /// kicks in around the ninth failure). A `failure_count` of 0 means
@@ -288,7 +293,7 @@ pub(crate) fn compute_accept_backoff_duration(failure_count: u32) -> Duration {
     let exponent = failure_count.saturating_sub(1).min(32);
     let factor: u64 = 1u64.checked_shl(exponent).unwrap_or(u64::MAX);
     let millis: u64 = 100u64.saturating_mul(factor);
-    Duration::from_millis(millis).min(Duration::from_secs(30))
+    Duration::from_millis(millis).min(ACCEPT_BACKOFF_CAP)
 }
 
 /// A TLS-secured WebSocket server for sync connections.
@@ -410,9 +415,9 @@ impl SyncServer {
                                 accept_failure_count = accept_failure_count.saturating_add(1);
                                 let backoff =
                                     compute_accept_backoff_duration(accept_failure_count);
-                                // Backoff is capped at MAX_BACKOFF_MS (30s),
-                                // so the conversion is always lossless;
-                                // saturate to u64::MAX defensively.
+                                // Backoff is capped at ACCEPT_BACKOFF_CAP (30 s),
+                                // so the as_millis() conversion is always
+                                // lossless; saturate to u64::MAX defensively.
                                 let backoff_ms_u64 =
                                     u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX);
                                 tracing::warn!(

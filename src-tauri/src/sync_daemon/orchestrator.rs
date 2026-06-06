@@ -231,6 +231,12 @@ pub(crate) async fn daemon_loop(
                         cancel: &cancel,
                         cert: &cert,
                     };
+                    // KNOWN: the sync session is awaited inline; a slow peer
+                    // (bounded by HANDSHAKE_TIMEOUT) blocks the select loop
+                    // for this round. Branch B's JoinSet pattern shows the
+                    // spawned alternative; refactoring Branch A is tracked
+                    // in #490 M3.
+                    //
                     // M-46: Branch A is single-shot (one peer per discovery
                     // event), so the bool return is informational only — no
                     // for-loop to break out of. Discard explicitly.
@@ -349,6 +355,10 @@ pub(crate) async fn daemon_loop(
                     cancel: &cancel,
                     cert: &cert,
                 };
+                // KNOWN: sequential inline awaits; shutdown may be delayed
+                // by up to HANDSHAKE_TIMEOUT per due peer. See Branch B's
+                // JoinSet refactor for the concurrent alternative (#490 M3).
+                //
                 // M-46: run_sequential_sync_round iterates peers in order
                 // and breaks as soon as any peer reports cancellation, so a
                 // "stop this round" cancel is honoured for every subsequent

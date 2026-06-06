@@ -248,6 +248,9 @@ impl PropertyValue {
             LoroValue::Null => Ok(PropertyValue::Null),
             LoroValue::String(s) => Ok(PropertyValue::Str((*s).clone())),
             LoroValue::Double(n) => Ok(PropertyValue::Num(n)),
+            // NOTE: large i64 values (> 2^53) lose precision when cast to f64.
+            // Safe for the date-ms / priority integers actually stored, but not
+            // contractually guaranteed for arbitrary i64 payloads.
             LoroValue::I64(i) => Ok(PropertyValue::Num(i as f64)),
             LoroValue::Bool(b) => Ok(PropertyValue::Bool(b)),
             other => Err(AppError::Validation(format!(
@@ -502,6 +505,11 @@ impl LoroEngine {
     /// siblings keep their slot (they remain in the tree), matching the old
     /// behaviour where a deleted block kept its `position`. Returns `1` if the
     /// node is somehow not found among its parent's children (defensive).
+    ///
+    /// NOTE: the inner `children.iter().position(...)` is O(K) per call. When
+    /// projecting all K siblings in a batch this becomes O(K²). Bulk callers
+    /// should use [`Self::children_ordered_block_ids`] directly and derive
+    /// positions from the returned index rather than calling this per-node.
     fn child_rank_position(&self, node: TreeID) -> i64 {
         let tree = self.tree();
         let parent = tree.parent(node).unwrap_or(TreeParentId::Root);
@@ -555,10 +563,6 @@ impl LoroEngine {
         })
     }
 
-    /// Marker-gated, post-import legacy sibling-order migration shared by both
-    /// import paths (#400). Runs the reorder only for a genuine pre-#400 doc
-    /// (no marker AND at least one node carries the legacy `position` meta);
-    /// for a new-scheme or empty doc it just stamps the marker.
     /// Test-only: forge a genuine pre-#400 doc in place. Stamps each named
     /// node's legacy [`FIELD_POSITION`] meta to the given value (so
     /// [`Self::any_node_has_legacy_position`] is true) and removes the scheme
@@ -1638,9 +1642,12 @@ impl LoroEngine {
     ///
     /// Value mapping per entry:
     /// * `LoroValue::Null` (explicit clear) → `None`
-    /// * `LoroValue::String(s)` → `Some(s)`
-    /// * any other variant → `Err(AppError::Validation)` (writer /
-    ///   reader drift — the engine only ever stores String|Null).
+    /// * `LoroValue::String` / `Double` / `I64` / `Bool` → rendered to
+    ///   their legacy-string form via `PropertyValue::from_loro` +
+    ///   `as_legacy_string` (covers all scalar types the engine stores
+    ///   after PEND-80).
+    /// * Container values → `Err(AppError::Validation)` (writer/reader
+    ///   drift — only scalars are ever stored).
     ///
     /// Returns an empty `Vec` when the block has never had any
     /// properties (no entry in the `block_properties` root).
@@ -1967,7 +1974,8 @@ impl LoroEngine {
     }
 
     /// Import `bytes` into the doc and return every block_id present
-    /// in the post-import top-level `blocks` LoroMap.
+    /// in the post-import block-hierarchy LoroTree, in parent-before-child
+    /// pre-order so the caller's FK-ordered SQL projection succeeds.
     ///
     /// Sync-pull projection driver. The receiver's caller passes each
     /// returned block_id to
