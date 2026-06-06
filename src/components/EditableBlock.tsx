@@ -56,6 +56,9 @@ function persistUnmount(
  * `addAttachmentWithBytes` (PEND-76 F2 — backend is the sole writer), and
  * shows success/error toasts.
  */
+/** Files smaller than this show no progress toast — the IPC round-trip is fast enough. */
+const ATTACH_PROGRESS_THRESHOLD_BYTES = 1_048_576 // 1 MB
+
 async function processFileAttachments(files: File[], blockId: string, t: TFunction): Promise<void> {
   for (const file of files) {
     const info = extractFileInfo(file)
@@ -64,6 +67,10 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
       notify.error(t(allowed.reason, allowed.i18nContext))
       continue
     }
+    const showProgress = info.sizeBytes >= ATTACH_PROGRESS_THRESHOLD_BYTES
+    const progressToastId = showProgress
+      ? notify.loading(t('blockTree.attachingFileMessage', { filename: info.filename }))
+      : undefined
     try {
       const bytes = await readFileBytes(file)
       await addAttachmentWithBytes({
@@ -72,8 +79,10 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
         mimeType: info.mimeType,
         bytes,
       })
+      if (progressToastId !== undefined) notify.dismiss(progressToastId)
       notify.success(t('blockTree.attachedFileMessage', { filename: info.filename }))
     } catch (err) {
+      if (progressToastId !== undefined) notify.dismiss(progressToastId)
       reportIpcError('EditableBlock', 'blockTree.attachFileFailed', err, t, {
         blockId,
         filename: info.filename,
