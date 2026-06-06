@@ -337,11 +337,14 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::RenameAttachment(p) => {
-            // Undo rename: restore the old filename.
+            // `reverse_payload` is already swapped by `reverse_rename_attachment`,
+            // so the filename to restore lives in `new_filename` (mirroring the
+            // forward materializer, which also writes `p.new_filename`). Reading
+            // `old_filename` here would re-apply the current name — a no-op undo.
             let attachment_id_str = p.attachment_id.as_str();
             sqlx::query!(
                 "UPDATE attachments SET filename = ? WHERE id = ?",
-                p.old_filename,
+                p.new_filename,
                 attachment_id_str
             )
             .execute(&mut **tx)
