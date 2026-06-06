@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id as \"id!: String\"\n           FROM blocks b\n           JOIN block_properties bp_tpl\n               ON bp_tpl.block_id = b.id\n              AND bp_tpl.key = 'template'\n              AND bp_tpl.value_text = 'true'\n           WHERE b.block_type = 'page'\n             AND b.deleted_at IS NULL\n             AND b.space_id = ?1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ad2a2de466a2b00b105ae508a92037157b85c80af2238046f0abee566bbc40b5"
+}

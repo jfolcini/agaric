@@ -94,6 +94,15 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
         .execute(pool)
         .await
         .unwrap();
+    // #533: mirror the denormalized `blocks.space_id` column — every block
+    // whose owning page is `block_id` (pages carry `page_id = id`) belongs
+    // to this space. Equivalent to the old `b.page_id IN (...)` filter.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(TEST_SPACE_ID)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// FEAT-3p4 — bulk-assign every block currently in the DB (excluding the
@@ -123,6 +132,19 @@ pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     )
     .bind(TEST_SPACE_ID)
     .bind(TEST_SPACE_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    // #533: derive the denormalized `blocks.space_id` column from the
+    // freshly seeded `space` properties — identical to `rebuild_space_ids`
+    // / migration 0086. Runs last so it observes every block's `page_id`
+    // (stamped above) and every `space` property.
+    sqlx::query(
+        "UPDATE blocks SET space_id = ( \
+             SELECT bp.value_ref FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+         )",
+    )
     .execute(pool)
     .await
     .unwrap();

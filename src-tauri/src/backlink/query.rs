@@ -87,9 +87,7 @@ pub async fn eval_backlink_query(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ?1 AND bl.source_id != ?1 \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+           AND (?2 IS NULL OR b.space_id = ?2)",
         block_id,
         space_id,
     )
@@ -212,9 +210,7 @@ async fn eval_created_sort_keyset(
                  JOIN blocks b ON b.id = bl.source_id \
                  WHERE bl.target_id = ? AND bl.source_id != ? \
                    AND b.deleted_at IS NULL \
-                   AND (? IS NULL OR b.page_id IN ( \
-                        SELECT bp.block_id FROM block_properties bp \
-                        WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+                   AND (? IS NULL OR b.space_id = ?) \
                    AND ({frag})",
                 frag = cf.sql,
             );
@@ -276,9 +272,7 @@ async fn eval_created_sort_keyset(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ? AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
-           AND (? IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           AND (? IS NULL OR b.space_id = ?) \
            AND (? IS NULL OR b.id {cursor_cmp} ?) \
            {filter_clause} \
          ORDER BY b.id {order_dir} LIMIT ?",
@@ -366,9 +360,7 @@ async fn eval_property_sort_materialised(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id = ? AND bl.source_id != ? \
            AND b.deleted_at IS NULL \
-           AND (? IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?)) \
+           AND (? IS NULL OR b.space_id = ?) \
            {filter_clause}"
     );
     let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))

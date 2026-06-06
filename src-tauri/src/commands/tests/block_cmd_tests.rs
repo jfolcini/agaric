@@ -5202,6 +5202,84 @@ async fn move_blocks_to_space_rehomes_existing_member() {
     assert_eq!(rows[0].as_deref(), Some("MBS2_SPACE_B"));
 }
 
+/// #533 regression: moving a *populated* page to another space must
+/// propagate the denormalized `blocks.space_id` to the page's content
+/// descendants — not just the page row. A space-property change enqueues
+/// no `RebuildPageIds`, so the synchronous group update in
+/// `set_property_in_tx` is the only thing that keeps the child's
+/// space-filtered reads correct.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_blocks_to_space_propagates_space_id_to_descendants_533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    seed_space(&pool, "MBS6_SPACE_A").await;
+    seed_space(&pool, "MBS6_SPACE_B").await;
+    // A page with a content child; `insert_block` stamps child.page_id =
+    // parent (MBS6_PAGE), the shape the production path produces.
+    insert_block(&pool, "MBS6_PAGE", "page", "pg", None, Some(1)).await;
+    insert_block(
+        &pool,
+        "MBS6_CHILD",
+        "content",
+        "c",
+        Some("MBS6_PAGE"),
+        Some(1),
+    )
+    .await;
+
+    // Move the page to A, then rehome to B — both via the production path.
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS6_PAGE".into()],
+        "MBS6_SPACE_A".into(),
+    )
+    .await
+    .unwrap();
+    let child_a: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'MBS6_CHILD'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        child_a.as_deref(),
+        Some("MBS6_SPACE_A"),
+        "child must inherit the page's space_id on the first assignment"
+    );
+
+    move_blocks_to_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec!["MBS6_PAGE".into()],
+        "MBS6_SPACE_B".into(),
+    )
+    .await
+    .unwrap();
+    let page_b: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'MBS6_PAGE'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let child_b: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'MBS6_CHILD'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        page_b.as_deref(),
+        Some("MBS6_SPACE_B"),
+        "page space_id rehomed to B"
+    );
+    assert_eq!(
+        child_b.as_deref(),
+        Some("MBS6_SPACE_B"),
+        "child space_id must rehome to B with its page (regression: was left stale at A)"
+    );
+}
+
 /// Lenient batch: missing / soft-deleted ids are silently skipped; only
 /// the live subset is moved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

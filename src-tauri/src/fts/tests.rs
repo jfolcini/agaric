@@ -3496,6 +3496,14 @@ async fn assign_to_space_for_fts(pool: &SqlitePool, block_id: &str, space_id: &s
         .execute(pool)
         .await
         .unwrap();
+    // #533: mirror the denormalized `blocks.space_id` column the FTS filter
+    // now reads (every block whose owning page is `block_id`).
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+        .bind(space_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

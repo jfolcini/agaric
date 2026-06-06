@@ -144,9 +144,7 @@ pub async fn resolve_page_by_alias_inner(
          JOIN blocks b ON b.id = pa.page_id
          WHERE pa.alias = ?1 COLLATE NOCASE
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR pa.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?2))"#,
+           AND (?2 IS NULL OR b.space_id = ?2)"#,
         alias,
         space_filter,
     )
@@ -229,9 +227,7 @@ pub async fn list_page_aliases_by_prefix_inner(
          JOIN blocks b ON b.id = pa.page_id
          WHERE pa.alias LIKE ?1 ESCAPE '\' COLLATE NOCASE
            AND b.deleted_at IS NULL
-           AND (?3 IS NULL OR b.id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?3))
+           AND (?3 IS NULL OR b.space_id = ?3)
          ORDER BY length(pa.alias), pa.alias
          LIMIT ?2"#,
         like_pattern,
@@ -1528,9 +1524,7 @@ pub async fn list_all_pages_in_space_inner(
              FROM blocks b \
              WHERE b.block_type = 'page' \
                AND b.deleted_at IS NULL \
-               AND b.page_id IN ( \
-                   SELECT bp.block_id FROM block_properties bp \
-                   WHERE bp.key = 'space' AND bp.value_ref = ?) \
+               AND b.space_id = ? \
                AND b.id IN ( \
                    SELECT block_id FROM block_tags WHERE tag_id IN ({placeholders})) \
              ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC",
@@ -1555,10 +1549,7 @@ pub async fn list_all_pages_in_space_inner(
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?1
-             )
+             AND b.space_id = ?1
            ORDER BY COALESCE(b.content, '') COLLATE NOCASE ASC, b.id ASC"#,
         space_id,
     )
@@ -1601,10 +1592,7 @@ pub async fn list_template_page_ids_in_space_inner(
               AND bp_tpl.value_text = 'true'
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?1
-             )"#,
+             AND b.space_id = ?1"#,
         space_id,
     )
     .fetch_all(pool)
@@ -2419,10 +2407,7 @@ const PAGES_METADATA_BASE_SELECT: &str = r#"SELECT
            LEFT JOIN pages_cache pc ON pc.page_id = b.id
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
-             AND b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?1
-             )
+             AND b.space_id = ?1
         "#;
 
 /// PEND-58e E9 — test-only accessor that composes the **real** first-page
@@ -2554,10 +2539,7 @@ pub async fn list_pages_with_metadata_inner(
              LEFT JOIN pages_cache pc ON pc.page_id = b.id \
              WHERE b.block_type = 'page' \
                AND b.deleted_at IS NULL \
-               AND b.page_id IN ( \
-                   SELECT bp.block_id FROM block_properties bp \
-                   WHERE bp.key = 'space' AND bp.value_ref = ?1 \
-               ){filter_sql}"
+               AND b.space_id = ?1{filter_sql}"
         );
         let mut count_query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()))
             .bind(&filter.space_id);

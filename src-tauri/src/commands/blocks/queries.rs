@@ -164,10 +164,7 @@ async fn count_blocks_by_type(
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE block_type = ?1 AND deleted_at IS NULL
-             AND (?2 IS NULL OR b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?2
-             ))"#,
+             AND (?2 IS NULL OR b.space_id = ?2)"#,
         block_type,
         space_id,
     )
@@ -303,11 +300,7 @@ pub async fn batch_resolve_inner(
              (CASE WHEN b.deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS "deleted: bool"
            FROM blocks b
            WHERE b.id IN (SELECT value FROM json_each(?1))
-             AND (?2 IS NULL OR b.page_id IN (
-                 SELECT bp.block_id
-                 FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?2
-             ))"#,
+             AND (?2 IS NULL OR b.space_id = ?2)"#,
         ids_json,
         space_filter,
     )
@@ -684,10 +677,7 @@ pub async fn count_trash_inner(pool: &SqlitePool, space_id: &str) -> Result<i64,
     let count: i64 = sqlx::query_scalar!(
         r#"SELECT COUNT(*) FROM blocks b
            WHERE b.deleted_at IS NOT NULL
-             AND b.page_id IN (
-                 SELECT bp.block_id FROM block_properties bp
-                 WHERE bp.key = 'space' AND bp.value_ref = ?1
-             )"#,
+             AND b.space_id = ?1"#,
         space_id,
     )
     .fetch_one(pool)
@@ -761,6 +751,15 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        // #533: mirror the denormalized `blocks.space_id` column these
+        // queries now filter on (every block whose owning page is
+        // `block_id`).
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
+            .bind(space_id)
+            .bind(block_id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     /// Insert a live (non-deleted) page block at the top level (no parent).

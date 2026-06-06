@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET space_id = ( SELECT bp.value_ref FROM block_properties bp WHERE bp.key = 'space' AND bp.block_id = blocks.page_id )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b9e80874b80327a5253d50512da875d527e33d9196160f86903a348a1c16a07f"
+}

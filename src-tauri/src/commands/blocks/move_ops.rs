@@ -273,6 +273,32 @@ pub async fn move_block_inner(
     .execute(&mut **tx)
     .await?;
 
+    // #533: keep the denormalized `space_id` column in step with the
+    // just-updated `page_id` for the moved subtree, synchronously (the
+    // async `RebuildPageIds` task chains `rebuild_space_ids`, but callers
+    // read space-scoped lists right after commit — mirror the synchronous
+    // `page_id` treatment above). Non-page rows derive `space_id` from
+    // their owning page's `space` property; pages keep their own.
+    sqlx::query(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET space_id = ( \
+             SELECT bp.value_ref FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+         ) \
+         WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+           AND block_type != 'page'",
+    )
+    .bind(&block_id)
+    .execute(&mut **tx)
+    .await?;
+
     // P-4: Recompute inherited tags for moved subtree
     crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &block_id).await?;
 

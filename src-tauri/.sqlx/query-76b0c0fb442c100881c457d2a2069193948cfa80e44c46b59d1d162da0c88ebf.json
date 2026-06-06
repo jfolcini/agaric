@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id: crate::ulid::ActiveBlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\"\n         FROM block_links bl\n         JOIN blocks b ON b.id = bl.source_id\n         WHERE bl.target_id = ?1 AND b.deleted_at IS NULL\n           AND (?2 IS NULL OR bl.source_id > ?3)\n           AND (?5 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?5))\n         ORDER BY bl.source_id ASC\n         LIMIT ?4",
+  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\", ac.date as \"ac_date: String\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date >= ?1 AND ac.date <= ?2\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR ac.source = ?3)\n           AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))\n           AND (?8 IS NULL OR b.space_id = ?8)\n         ORDER BY ac.date ASC, b.id ASC\n         LIMIT ?7",
   "describe": {
     "columns": [
       {
-        "name": "id: crate::ulid::ActiveBlockId",
+        "name": "id!: crate::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -123,10 +123,21 @@
             "name": "page_id"
           }
         }
+      },
+      {
+        "name": "ac_date: String",
+        "ordinal": 11,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agenda_cache",
+            "name": "date"
+          }
+        }
       }
     ],
     "parameters": {
-      "Right": 5
+      "Right": 8
     },
     "nullable": [
       false,
@@ -139,8 +150,9 @@
       true,
       true,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "65d6c5fb1dbd31b9050f1df3dad92d95838fd81269d59f8c4e95110af15630be"
+  "hash": "76b0c0fb442c100881c457d2a2069193948cfa80e44c46b59d1d162da0c88ebf"
 }

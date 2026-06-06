@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\", ac.date as \"ac_date: String\"\n         FROM agenda_cache ac\n         JOIN blocks b ON b.id = ac.block_id\n         WHERE ac.date >= ?1 AND ac.date <= ?2\n           AND b.deleted_at IS NULL\n           AND (?3 IS NULL OR ac.source = ?3)\n           AND (?4 IS NULL OR (ac.date > ?5 OR (ac.date = ?5 AND b.id > ?6)))\n           AND (?8 IS NULL OR b.page_id IN (\n                SELECT bp.block_id FROM block_properties bp\n                WHERE bp.key = 'space' AND bp.value_ref = ?8))\n         ORDER BY ac.date ASC, b.id ASC\n         LIMIT ?7",
+  "query": "SELECT b.id as \"id!: crate::ulid::BlockId\", b.block_type, b.content, b.parent_id as \"parent_id: crate::ulid::BlockId\", b.position,\n                b.deleted_at,\n                b.todo_state, b.priority, b.due_date, b.scheduled_date,\n                b.page_id as \"page_id: crate::ulid::BlockId\", COALESCE(b.due_date, b.scheduled_date) as \"sort_date: String\"\n         FROM blocks b\n         WHERE b.deleted_at IS NULL\n           AND (b.due_date < ?1 OR b.scheduled_date < ?1)\n           AND b.todo_state IN (SELECT value FROM json_each(?2))\n           AND (?3 IS NULL OR (COALESCE(b.due_date, b.scheduled_date) < ?4 OR (COALESCE(b.due_date, b.scheduled_date) = ?4 AND b.id < ?5)))\n           AND (?7 IS NULL OR b.space_id = ?7)\n         ORDER BY COALESCE(b.due_date, b.scheduled_date) DESC, b.id DESC\n         LIMIT ?6",
   "describe": {
     "columns": [
       {
@@ -125,19 +125,14 @@
         }
       },
       {
-        "name": "ac_date: String",
+        "name": "sort_date: String",
         "ordinal": 11,
         "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "agenda_cache",
-            "name": "date"
-          }
-        }
+        "origin": "Expression"
       }
     ],
     "parameters": {
-      "Right": 8
+      "Right": 7
     },
     "nullable": [
       false,
@@ -151,8 +146,8 @@
       true,
       true,
       true,
-      false
+      true
     ]
   },
-  "hash": "1fd6fba4ac1167fabbc0395317d75c2bf403559b557792b575c859fd934ae061"
+  "hash": "1ae47989ab194a4e3a8879f2cf191390a41913e5132e58231d1a602ce8c88004"
 }

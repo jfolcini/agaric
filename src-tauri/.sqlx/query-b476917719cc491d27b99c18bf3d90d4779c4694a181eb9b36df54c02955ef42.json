@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COUNT(*) FROM block_links bl JOIN blocks b ON b.id = bl.source_id WHERE bl.target_id = ?1 AND bl.source_id != ?1 AND b.deleted_at IS NULL AND (?2 IS NULL OR b.space_id = ?2)",
+  "describe": {
+    "columns": [
+      {
+        "name": "COUNT(*)",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b476917719cc491d27b99c18bf3d90d4779c4694a181eb9b36df54c02955ef42"
+}

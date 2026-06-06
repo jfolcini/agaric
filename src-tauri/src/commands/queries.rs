@@ -822,9 +822,7 @@ pub async fn count_backlinks_batch_inner(
          JOIN blocks b ON b.id = bl.source_id \
          WHERE bl.target_id IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
          GROUP BY bl.target_id";
     let rows = sqlx::query_as::<_, (String, i64)>(sql)
         .bind(ids_json)
@@ -1460,9 +1458,7 @@ pub async fn filtered_blocks_query_inner(
          FROM blocks b \
          WHERE b.deleted_at IS NULL \
            AND (?1 IS NULL OR b.id > ?2) \
-           AND (?4 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?4)) \
+           AND (?4 IS NULL OR b.space_id = ?4) \
            AND (?5 IS NULL OR b.block_type = ?5)",
     );
 

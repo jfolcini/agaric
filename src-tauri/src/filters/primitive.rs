@@ -684,11 +684,7 @@ impl Projection for PagesProjection {
     /// implementation of the shared vocabulary. T-B3's `Space` test
     /// asserts this fragment is emitted (not `unsupported()`).
     fn compile_space(&self, space_id: &str) -> WhereClause {
-        WhereClause::new(
-            "b.page_id IN (SELECT block_id FROM block_properties \
-             WHERE key = 'space' AND value_ref = ?)",
-            vec![Bind::Text(space_id.to_string())],
-        )
+        WhereClause::new("b.space_id = ?", vec![Bind::Text(space_id.to_string())])
     }
     fn compile_priority(&self, priority: &str) -> WhereClause {
         WhereClause::new("b.priority = ?", vec![Bind::Text(priority.to_string())])
@@ -975,7 +971,7 @@ mod tests {
         let where_space = p.compile(&FilterPrimitive::Space {
             space_id: "01SPACE0001".into(),
         });
-        assert!(where_space.sql.contains("'space'"));
+        assert!(where_space.sql.contains("b.space_id = ?"));
     }
 
     #[test]
@@ -1538,10 +1534,7 @@ mod explain_query_plan_tests {
              FROM blocks b \
              LEFT JOIN pages_cache pc ON pc.page_id = b.id \
              WHERE b.block_type = 'page' AND b.deleted_at IS NULL \
-               AND b.page_id IN ( \
-                   SELECT bp.block_id FROM block_properties bp \
-                   WHERE bp.key = 'space' AND bp.value_ref = ? \
-               ) \
+               AND b.space_id = ? \
                AND {fragment}"
         );
         let rows: Vec<(i64, i64, i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))

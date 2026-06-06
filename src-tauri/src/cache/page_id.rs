@@ -171,6 +171,53 @@ pub async fn set_block_page_id_from_parent(
     Ok(())
 }
 
+/// Full rebuild of the denormalized `space_id` column on `blocks` (#533).
+///
+/// `space_id` is a derived cache: a block belongs to the space named by
+/// the `space` property attached to its owning page. The owning page is
+/// `blocks.page_id` (a page's own `page_id` equals its id per the
+/// `page_id_self_for_pages` CHECK, so pages pick up their own space too).
+/// This mirrors the canonical read filter and the 0086 backfill verbatim,
+/// so it is the source-of-truth reconciliation for any drift. It must run
+/// AFTER [`rebuild_page_ids`] — it reads the freshly materialized
+/// `page_id`. Orphan blocks (NULL `page_id`) reset to NULL `space_id`.
+pub async fn rebuild_space_ids(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("space_id", || rebuild_space_ids_impl(pool)).await
+}
+
+async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    let result = sqlx::query!(
+        "UPDATE blocks SET space_id = ( \
+             SELECT bp.value_ref FROM block_properties bp \
+             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+         )"
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Set `space_id` for a single newly created block by inheriting from its
+/// parent (#533). A fresh block lives in the same space as its parent's
+/// page, so it copies the parent's already-materialized `space_id`. Used
+/// alongside [`set_block_page_id_from_parent`] on `create_block` — only
+/// the one new row ever changes, so the full `rebuild_space_ids` is
+/// unnecessary.
+pub async fn set_block_space_id_from_parent(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "UPDATE blocks \
+         SET space_id = (SELECT b2.space_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
+         WHERE id = ?",
+        block_id
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     //! Issue #111 — regression tests for migration 0073's
@@ -327,6 +374,110 @@ mod tests {
             page_id.as_deref(),
             Some("PAGE01"),
             "child block must inherit page_id from its ancestor page via parent chain"
+        );
+    }
+
+    /// #533: `rebuild_space_ids` derives `space_id` for every block from
+    /// the `space` property attached to its owning page (the page being
+    /// `blocks.page_id`, which equals the page's own id). Children inherit
+    /// their page's space; a block whose page has no space property gets
+    /// NULL.
+    #[tokio::test]
+    async fn rebuild_space_ids_derives_from_page_space_property_533() {
+        let (pool, _dir) = test_pool().await;
+
+        // A space block, a page assigned to it, and a child under the page.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
+             ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01'), \
+             ('PAGE01',  'page', 'p',     NULL, 2, 'PAGE01'), \
+             ('CHILD01', 'content', 'c',  'PAGE01', 1, 'PAGE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed blocks");
+
+        // PAGE01 belongs to SPACE01 via the `space` property (on the page).
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_ref) \
+             VALUES ('PAGE01', 'space', 'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed space property");
+
+        super::rebuild_space_ids(&pool)
+            .await
+            .expect("rebuild_space_ids must succeed");
+
+        let space_of = |id: &str| {
+            let pool = pool.clone();
+            let id = id.to_string();
+            async move {
+                sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("space_id lookup")
+            }
+        };
+
+        assert_eq!(
+            space_of("PAGE01").await.as_deref(),
+            Some("SPACE01"),
+            "the page carries its own space_id"
+        );
+        assert_eq!(
+            space_of("CHILD01").await.as_deref(),
+            Some("SPACE01"),
+            "a child inherits its page's space_id"
+        );
+        assert_eq!(
+            space_of("SPACE01").await,
+            None,
+            "a block whose page has no space property gets NULL space_id"
+        );
+    }
+
+    /// #533: `set_block_space_id_from_parent` is the O(1) incremental path
+    /// used on `create_block` — a fresh child copies its parent's
+    /// already-materialized `space_id`.
+    #[tokio::test]
+    async fn set_block_space_id_from_parent_inherits_space_533() {
+        let (pool, _dir) = test_pool().await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
+             ('SPACE01', 'page',    's', NULL,     1, 'SPACE01', NULL), \
+             ('PAGE01',  'page',    'p', NULL,     2, 'PAGE01', 'SPACE01'), \
+             ('PARENT1', 'content', 'a', 'PAGE01', 1, 'PAGE01', 'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed page + parent with space_id");
+
+        // New child inserted before the materializer runs (space_id NULL).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES ('CHILD1', 'content', 'c', 'PARENT1', 1, 'PAGE01', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed child with NULL space_id");
+
+        super::set_block_space_id_from_parent(&pool, "CHILD1")
+            .await
+            .expect("set_block_space_id_from_parent must succeed");
+
+        let space_id: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'CHILD1'")
+                .fetch_one(&pool)
+                .await
+                .expect("space_id lookup");
+        assert_eq!(
+            space_id.as_deref(),
+            Some("SPACE01"),
+            "child inherits space_id from its parent"
         );
     }
 

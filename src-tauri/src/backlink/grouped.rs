@@ -69,9 +69,7 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2))",
+           AND (?2 IS NULL OR b.space_id = ?2)",
     )
     .bind(block_id)
     .bind(space_id)
@@ -133,9 +131,7 @@ pub async fn eval_backlink_query_grouped(
            AND b.deleted_at IS NULL \
            AND b.page_id IS NOT NULL \
            AND b.page_id != COALESCE(tgt.page_id, tgt.id) \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
            AND (?3 IS NULL OR b.id IN (SELECT value FROM json_each(?3)))",
     )
     .bind(block_id)
@@ -471,9 +467,7 @@ pub async fn eval_unlinked_references(
            AND fb.block_id NOT IN ( \
              SELECT source_id FROM block_links WHERE target_id = ?2 \
            ) \
-           AND (?3 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?3)) \
+           AND (?3 IS NULL OR b.space_id = ?3) \
          ORDER BY fb.block_id \
          LIMIT {}",
         FTS_ROW_CAP + 1

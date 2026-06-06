@@ -61,9 +61,7 @@ pub async fn count_agenda_batch_inner(
          JOIN blocks b ON b.id = ac.block_id
          WHERE ac.date IN (SELECT value FROM json_each(?1))
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?2))
+           AND (?2 IS NULL OR b.space_id = ?2)
          GROUP BY ac.date"#,
         dates_json,
         space_filter,
@@ -123,9 +121,7 @@ pub async fn count_agenda_batch_by_source_inner(
          JOIN blocks b ON b.id = ac.block_id \
          WHERE ac.date IN (SELECT value FROM json_each(?1)) \
            AND b.deleted_at IS NULL \
-           AND (?2 IS NULL OR b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?2)) \
+           AND (?2 IS NULL OR b.space_id = ?2) \
          GROUP BY ac.date, ac.source",
         dates_json,
         scope_param,
@@ -273,9 +269,7 @@ pub async fn list_projected_agenda_inner(
            )
            AND (?3 IS NULL OR (pac.projected_date > ?4
                OR (pac.projected_date = ?4 AND pac.block_id > ?5)))
-           AND (?7 IS NULL OR b.page_id IN (
-                SELECT bp.block_id FROM block_properties bp
-                WHERE bp.key = 'space' AND bp.value_ref = ?7))
+           AND (?7 IS NULL OR b.space_id = ?7)
          ORDER BY pac.projected_date ASC, pac.block_id ASC
          LIMIT ?6",
     )
@@ -433,9 +427,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
                SELECT 1 FROM block_properties tp
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
            )
-           AND (?1 IS NULL OR b.page_id IN (
-                SELECT bp_sp.block_id FROM block_properties bp_sp
-                WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?1))"#,
+           AND (?1 IS NULL OR b.space_id = ?1)"#,
         space_id, // ?1
     )
     .fetch_all(pool)

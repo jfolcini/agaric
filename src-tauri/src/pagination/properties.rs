@@ -223,9 +223,7 @@ pub async fn query_by_property(
                AND b.deleted_at IS NULL \
                AND (?1 IS NULL OR b.{col} {sql_op} ?1) \
                AND (?2 IS NULL OR b.id > ?3) \
-               AND (?5 IS NULL OR b.page_id IN ( \
-                    SELECT bp.block_id FROM block_properties bp \
-                    WHERE bp.key = 'space' AND bp.value_ref = ?5)) \
+               AND (?5 IS NULL OR b.space_id = ?5) \
                AND (?6 IS NULL OR b.parent_id IS NOT ?6) \
                AND (?7 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
                AND (?8 IS NULL OR b.block_type = ?8) \
@@ -297,9 +295,7 @@ pub async fn query_by_property(
                AND {text_pred} \
                AND {date_pred} \
                AND (?4 IS NULL OR b.id > ?5) \
-               AND (?7 IS NULL OR b.page_id IN ( \
-                    SELECT bp_sp.block_id FROM block_properties bp_sp \
-                    WHERE bp_sp.key = 'space' AND bp_sp.value_ref = ?7)) \
+               AND (?7 IS NULL OR b.space_id = ?7) \
                AND (?8 IS NULL OR b.parent_id IS NOT ?8) \
                AND (?9 = 0 OR (b.content IS NOT NULL AND TRIM(b.content, x'20090a0d') != '')) \
                AND (?10 IS NULL OR b.block_type = ?10) \

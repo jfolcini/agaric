@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT ac.date, ac.source, COUNT(*) AS \"cnt!: i64\" FROM agenda_cache ac JOIN blocks b ON b.id = ac.block_id WHERE ac.date IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NULL AND (?2 IS NULL OR b.page_id IN ( SELECT bp.block_id FROM block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?2)) GROUP BY ac.date, ac.source",
+  "query": "SELECT ac.date, ac.source, COUNT(*) AS \"cnt!: i64\" FROM agenda_cache ac JOIN blocks b ON b.id = ac.block_id WHERE ac.date IN (SELECT value FROM json_each(?1)) AND b.deleted_at IS NULL AND (?2 IS NULL OR b.space_id = ?2) GROUP BY ac.date, ac.source",
   "describe": {
     "columns": [
       {
@@ -41,5 +41,5 @@
       false
     ]
   },
-  "hash": "ac4a37ab7294570b1fdb6ca76b476b5427da1db22395f979f84ab3be3b26de86"
+  "hash": "dc7d3ee773f0bff145ab045b5705894bd718fef139e1383785bd540efbf72d84"
 }

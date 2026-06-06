@@ -141,7 +141,10 @@ pub use block_tag_refs::{
     rebuild_block_tag_refs_cache, rebuild_block_tag_refs_cache_split, reindex_block_tag_refs,
     reindex_block_tag_refs_split,
 };
-pub use page_id::{rebuild_page_ids, rebuild_page_ids_split, set_block_page_id_from_parent};
+pub use page_id::{
+    rebuild_page_ids, rebuild_page_ids_split, rebuild_space_ids, set_block_page_id_from_parent,
+    set_block_space_id_from_parent,
+};
 pub use page_links::{
     rebuild_page_link_cache, rebuild_page_link_cache_split, reindex_page_link_cache_for_block,
 };
@@ -205,6 +208,8 @@ use sqlx::SqlitePool;
 #[cfg(test)]
 pub async fn rebuild_all_caches(pool: &SqlitePool) -> Result<(), AppError> {
     rebuild_page_ids(pool).await?;
+    // #533: space_id is derived from page_id, so it must rebuild after it.
+    rebuild_space_ids(pool).await?;
     rebuild_block_tag_refs_cache(pool).await?;
     rebuild_tags_cache(pool).await?;
     rebuild_pages_cache(pool).await?;
