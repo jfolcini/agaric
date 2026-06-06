@@ -1705,7 +1705,7 @@ export type PageWithMetadataRow = {
 	content: string | null,
 	parentId: BlockId | null,
 	position: number | null,
-	deletedAt: string | null,
+	deletedAt: number | null,
 	todoState: string | null,
 	priority: string | null,
 	dueDate: string | null,
