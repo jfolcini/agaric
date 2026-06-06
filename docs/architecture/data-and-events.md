@@ -67,7 +67,7 @@ SQLite, WAL mode, FK on, `synchronous=NORMAL`, `busy_timeout=5000`, `wal_autoche
 
 **Migrations:** `src-tauri/migrations/*.sql`, versioned SQL, auto-run on boot. `sqlx::query!` / `query_as!` macros validate every query at compile time; the offline cache is `.sqlx/` (committed; CI fails on stale via `sqlx-prepare-check`).
 
-**Triggers:** an append-only enforcement trigger on `op_log` (with a sentinel bypass for compaction), and `check_block_type_insert` / `check_block_type_update` on `blocks` that enforce the `block_type` enum at the SQL layer (migration `0005_block_type_check.sql`). Cache tables are rebuilt by the materializer, not by triggers — kept simple to avoid Sql-side hidden state.
+**Triggers:** an append-only enforcement trigger on `op_log` (with a sentinel bypass for compaction). The `block_type` enum is enforced at the SQL layer by the `block_type_valid` CHECK constraint on `blocks` (migration `0085_blocks_block_type_check.sql`, which replaced the original migration-0005 BEFORE INSERT/UPDATE triggers — a CHECK survives table rebuilds automatically). Cache tables are rebuilt by the materializer, not by triggers — kept simple to avoid Sql-side hidden state.
 
 ## Op log
 

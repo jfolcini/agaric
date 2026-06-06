@@ -1306,10 +1306,10 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
 // 17c. TEST-50: apply_snapshot_rejects_invalid_block_type
 // =======================================================================
 
-/// TEST-50: `block_type` is constrained by the
-/// `check_block_type_insert` BEFORE INSERT trigger
-/// (migration 0005) to one of `content` / `tag` / `page`. A value
-/// outside that enum (here `"banana"`) must abort the apply.
+/// TEST-50: `block_type` is constrained by the `block_type_valid` CHECK
+/// (migration 0085, which replaced the migration-0005 BEFORE INSERT/UPDATE
+/// triggers) to one of `content` / `tag` / `page`. A value outside that
+/// enum (here `"banana"`) must abort the apply.
 #[tokio::test]
 async fn apply_snapshot_rejects_invalid_block_type() {
     let (pool, _dir) = test_pool().await;
@@ -1347,7 +1347,56 @@ async fn apply_snapshot_rejects_invalid_block_type() {
     assert!(
         result.is_err(),
         "block_type 'banana' is not in (content|tag|page) — \
-         check_block_type_insert trigger must abort"
+         the block_type_valid CHECK must abort"
+    );
+}
+
+/// #541: the `block_type` enum is enforced by the `block_type_valid` CHECK
+/// constraint (migration 0085) rather than the old migration-0005 BEFORE
+/// triggers. Pins three things: valid types insert, an invalid type is
+/// rejected by the CHECK, and the two legacy triggers no longer exist.
+#[tokio::test]
+async fn block_type_valid_check_replaces_triggers() {
+    let (pool, _dir) = test_pool().await;
+
+    // Valid enum values insert cleanly. (A 'page' row must satisfy the
+    // page_id_self_for_pages CHECK, i.e. page_id = id.)
+    sqlx::query("INSERT INTO blocks (id, block_type) VALUES ('BT_CONTENT', 'content')")
+        .execute(&pool)
+        .await
+        .expect("content block_type must insert");
+    sqlx::query("INSERT INTO blocks (id, block_type) VALUES ('BT_TAG', 'tag')")
+        .execute(&pool)
+        .await
+        .expect("tag block_type must insert");
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, page_id) VALUES ('BT_PAGE', 'page', 'BT_PAGE')",
+    )
+    .execute(&pool)
+    .await
+    .expect("page block_type must insert");
+
+    // An out-of-enum value is rejected by the CHECK constraint.
+    let err = sqlx::query("INSERT INTO blocks (id, block_type) VALUES ('BT_BAD', 'banana')")
+        .execute(&pool)
+        .await
+        .expect_err("invalid block_type must be rejected");
+    assert!(
+        err.to_string().contains("block_type_valid"),
+        "rejection should come from the block_type_valid CHECK, got: {err}"
+    );
+
+    // The two migration-0005 triggers must be gone (replaced by the CHECK).
+    let trigger_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+         AND name IN ('check_block_type_insert', 'check_block_type_update')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        trigger_count, 0,
+        "the migration-0005 block_type triggers must be dropped by 0085"
     );
 }
 
