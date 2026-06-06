@@ -48,11 +48,10 @@ vi.mock('../../lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('../../lib/tauri')>()
   return {
     ...mod,
-    // PEND-35 Tier 2.4c — `StaticBlock` uses `getProperty` for the
-    // single-key `image_width` read; default mock returns null so
-    // tests that don't seed a width fall through to the "no stored
-    // width" path without firing a backend round-trip.
-    getProperty: vi.fn(() => Promise.resolve(null)),
+    // #543 — `StaticBlock` reads image_width/alignment/caption via a single
+    // `getBatchProperties([blockId])` call; default mock returns no rows so
+    // tests that don't seed properties fall through to the defaults.
+    getBatchProperties: vi.fn(() => Promise.resolve({})),
     setProperty: vi.fn(() => Promise.resolve({})),
     // PEND-76 F2 — image attachments are rendered from raw bytes read
     // over IPC and wrapped in a blob URL. Default mock returns a tiny
@@ -86,8 +85,8 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 
-const { getProperty, setProperty, readAttachment } = await import('../../lib/tauri')
-const mockedGetProperty = vi.mocked(getProperty)
+const { getBatchProperties, setProperty, readAttachment } = await import('../../lib/tauri')
+const mockedGetBatchProperties = vi.mocked(getBatchProperties)
 const mockedSetProperty = vi.mocked(setProperty)
 const mockedReadAttachment = vi.mocked(readAttachment)
 
@@ -112,7 +111,7 @@ describe('StaticBlock', () => {
     // Restore default behavior for mocked tauri functions.
     // PEND-35 Tier 2.4c — `getProperty` returns the single row (or
     // null) from the backend's `block_properties` PK lookup.
-    mockedGetProperty.mockResolvedValue(null)
+    mockedGetBatchProperties.mockResolvedValue({})
     mockedSetProperty.mockResolvedValue({} as never)
     mockedReadAttachment.mockResolvedValue(new Uint8Array([137, 80, 78, 71]))
     // happy-dom supports createObjectURL/revokeObjectURL, but stub them so the
@@ -1040,15 +1039,18 @@ describe('StaticBlock', () => {
     it('applies stored width from properties', async () => {
       ;(window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'] = {}
       mockBatchAttachments([makeAttachment()])
-      // PEND-35 Tier 2.4c — `getProperty` returns the single
-      // `image_width` row directly (single-key PK lookup).
-      mockedGetProperty.mockResolvedValueOnce({
-        key: 'image_width',
-        value_text: '50',
-        value_num: null,
-        value_date: null,
-        value_ref: null,
-        value_bool: null,
+      // #543 — image properties come back in one batched call keyed by block id.
+      mockedGetBatchProperties.mockResolvedValueOnce({
+        B1: [
+          {
+            key: 'image_width',
+            value_text: '50',
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          },
+        ],
       })
 
       const { container } = render(<StaticBlock blockId="B1" content="Hello" onFocus={vi.fn()} />)
@@ -1060,10 +1062,9 @@ describe('StaticBlock', () => {
         expect((wrapper as HTMLElement).style.maxWidth).toBe('50%')
       })
 
-      // Regression pin (PEND-35 Tier 2.4c): the read goes through the
-      // dedicated single-key command, NOT the full-vocabulary
-      // `getProperties` it used to.
-      expect(mockedGetProperty).toHaveBeenCalledWith('B1', 'image_width')
+      // Regression pin (#543): the read goes through the single batched
+      // command for the block, not three single-key getProperty round-trips.
+      expect(mockedGetBatchProperties).toHaveBeenCalledWith(['B1'])
     })
 
     it('defaults to full width when no property is set', async () => {

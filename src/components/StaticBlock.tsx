@@ -17,7 +17,7 @@ import { useBatchAttachments } from '../hooks/useBatchAttachments'
 import { useTagClickHandler } from '../hooks/useRichContentCallbacks'
 import { logger } from '../lib/logger'
 import { openUrl } from '../lib/open-url'
-import { getProperty } from '../lib/tauri'
+import { getBatchProperties } from '../lib/tauri'
 import { cn } from '../lib/utils'
 import { useResolveStore } from '../stores/resolve'
 import { AttachmentRenderer } from './AttachmentRenderer'
@@ -154,36 +154,23 @@ function StaticBlockInner({
   useEffect(() => {
     if (!hasImageAttachments) return
     let cancelled = false
-    getProperty(blockId, 'image_width')
-      .then((widthProp) => {
+    // #543: one batched IPC for all three image properties instead of three
+    // separate single-key getProperty round-trips on every image-block mount.
+    getBatchProperties([blockId])
+      .then((byBlock) => {
         if (cancelled) return
-        if (widthProp?.value_text) {
-          setImageWidth(widthProp.value_text)
+        const byKey = new Map((byBlock[blockId] ?? []).map((r) => [r.key, r]))
+        const width = byKey.get('image_width')?.value_text
+        if (width) setImageWidth(width)
+        const align = byKey.get('image_alignment')?.value_text
+        if (align === 'left' || align === 'center' || align === 'right') {
+          setImageAlignment(align)
         }
+        const caption = byKey.get('image_caption')?.value_text
+        if (caption != null) setImageCaption(caption)
       })
       .catch((err) => {
-        logger.warn('StaticBlock', 'image width property fetch failed', undefined, err)
-      })
-    getProperty(blockId, 'image_alignment')
-      .then((alignProp) => {
-        if (cancelled) return
-        const v = alignProp?.value_text
-        if (v === 'left' || v === 'center' || v === 'right') {
-          setImageAlignment(v)
-        }
-      })
-      .catch((err) => {
-        logger.warn('StaticBlock', 'image alignment property fetch failed', undefined, err)
-      })
-    getProperty(blockId, 'image_caption')
-      .then((captionProp) => {
-        if (cancelled) return
-        if (captionProp?.value_text != null) {
-          setImageCaption(captionProp.value_text)
-        }
-      })
-      .catch((err) => {
-        logger.warn('StaticBlock', 'image caption property fetch failed', undefined, err)
+        logger.warn('StaticBlock', 'image property batch fetch failed', undefined, err)
       })
     return () => {
       cancelled = true
