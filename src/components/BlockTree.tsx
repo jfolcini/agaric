@@ -19,7 +19,7 @@
 
 import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -306,19 +306,19 @@ export function BlockTree({
   // on save, write the generated `{{query …}}` expression to that block. ──
   const openQueryBuilder = () => {
     setQueryBuilderBlockId(focusedBlockId)
-    // Defer mounting the focus-trapping dialog by a tick: opening it
-    // synchronously inside the slash-command handler blurs the editor while
-    // React is mid-render, and the editor's blur flush (`flushSync` in
-    // useEditorBlur) then warns "flushSync called from inside a lifecycle
-    // method". Letting the current commit settle first avoids that.
-    setTimeout(() => setQueryBuilderOpen(true), 0)
+    // Mark the open as a non-urgent transition: opening it synchronously
+    // inside the slash-command handler blurs the editor while React is
+    // mid-render, and the editor's blur flush (`flushSync` in useEditorBlur)
+    // then warns "flushSync called from inside a lifecycle method".
+    // startTransition lets the current commit settle first, avoiding that.
+    startTransition(() => setQueryBuilderOpen(true))
   }
   // ── Emoji picker (#286) — /emoji opens the browse-grid dialog for the
-  // focused block. Defer mounting the focus-trapping dialog by a tick for the
-  // same reason as the query builder (avoid a flushSync-in-render warning from
+  // focused block. Mark the open as a non-urgent transition for the same
+  // reason as the query builder (avoid a flushSync-in-render warning from
   // the editor blur flush when the dialog steals focus mid-commit). ──────────
   const openEmojiPicker = () => {
-    setTimeout(() => setEmojiPickerOpen(true), 0)
+    startTransition(() => setEmojiPickerOpen(true))
   }
   // Insert the chosen native emoji at the caret via the active roving editor.
   // The dialog dismisses itself on select (closeOnSelect default).
@@ -329,7 +329,7 @@ export function BlockTree({
   const handleQuerySave = async (expression: string) => {
     if (!queryBuilderBlockId) return
     try {
-      await editBlock(queryBuilderBlockId, `{{query ${expression}}}`)
+      await pageStore.getState().edit(queryBuilderBlockId, `{{query ${expression}}}`)
       setQueryBuilderOpen(false)
       await load()
     } catch (err) {
