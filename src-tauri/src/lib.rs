@@ -2,11 +2,6 @@
 pub mod appimage_integration;
 pub mod backlink;
 pub mod block_descendants;
-// #400: the sparse-position helper is retired from the live create/move/
-// recurrence paths (sibling order is now the engine's fractional index); it
-// survives only as an independent oracle for the descendants proptest.
-#[cfg(test)]
-pub mod block_positions;
 pub mod cache;
 pub mod cancellation;
 pub mod commands;

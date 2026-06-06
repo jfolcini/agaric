@@ -355,7 +355,7 @@ impl GcalSettingsSnapshot {
     }
 }
 
-fn parse_window_days(raw: &str) -> i64 {
+pub(crate) fn parse_window_days(raw: &str) -> i64 {
     raw.parse::<i64>()
         .ok()
         .map(|n| n.clamp(MIN_WINDOW_DAYS, MAX_WINDOW_DAYS))
@@ -1157,6 +1157,19 @@ async fn run_task_loop(
             }
         }
     }
+
+    // Best-effort lease release on clean shutdown.  A crash or forced kill
+    // cannot reach this path — the stale-expiry seizure in `claim_lease`
+    // covers that recovery.  Errors are logged at warn rather than
+    // propagated so the task always exits cleanly.
+    if let Err(e) = lease::release_lease(&pool, &device_id).await {
+        tracing::warn!(
+            target: "gcal",
+            error = %e,
+            "failed to release push-lease on shutdown — will expire naturally",
+        );
+    }
+
     tracing::info!(target: "gcal", "connector task exited");
 }
 

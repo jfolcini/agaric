@@ -12,7 +12,7 @@
 //! walks the job vector; jobs whose individual `interval` has elapsed
 //! since their last run AND whose `predicate` returns `true` are run
 //! in declared order, with errors logged at warn level (no propagation
-//! — the next tick retries naturally). Jobs run sequentially within a
+//! — a failed job is retried only after its own `interval` elapses again, not on the very next tick). Jobs run sequentially within a
 //! single tick rather than in parallel because (a) most jobs touch the
 //! same DB pool and serialisation kills lock contention, (b) the
 //! deferred jobs are cheap relative to the 60 s ticker so a short
@@ -196,6 +196,11 @@ const TOMBSTONE_PURGE_BATCH_LIMIT: i64 = 1000;
 /// to `purge_blocks_by_ids_inner` so the cascade order, FK-defer,
 /// op-log emission, and post-commit dispatch all share one tested
 /// code path with the manual "Empty Trash" UI button.
+///
+/// **Per-run cap:** at most [`TOMBSTONE_PURGE_BATCH_LIMIT`] rows are
+/// processed per invocation. Since this job runs on a 24 h cadence, a
+/// large accumulated backlog (e.g. after a long offline period) drains
+/// over multiple days rather than in a single blocking transaction.
 pub async fn tombstone_purge(
     pool: &SqlitePool,
     device_id: &str,
@@ -352,9 +357,11 @@ pub async fn run_tick(jobs: &mut [MaintenanceJob]) {
             continue;
         }
         let result = (job.run)().await;
-        job.last_run = Some(Instant::now());
         match result {
-            Ok(()) => tracing::debug!(job = job.name, "maintenance job ran"),
+            Ok(()) => {
+                job.last_run = Some(Instant::now());
+                tracing::debug!(job = job.name, "maintenance job ran");
+            }
             Err(e) => tracing::warn!(job = job.name, error = %e, "maintenance job failed"),
         }
     }
@@ -463,6 +470,30 @@ mod tests {
             counter.load(Ordering::Relaxed),
             1,
             "second tick (well within interval) must NOT re-run the job"
+        );
+    }
+
+    /// A failing job must NOT advance `last_run`, so it is retried on the
+    /// next tick (as soon as its `interval` elapses from the *previous*
+    /// successful run, or immediately if it has never succeeded). Pins the
+    /// corrected retry-on-failure behavior: `last_run` is updated only on
+    /// `Ok`, never on `Err`.
+    #[tokio::test]
+    async fn run_tick_does_not_advance_last_run_on_failure() {
+        let job = MaintenanceJob {
+            name: "failing_job",
+            interval: Duration::from_secs(3600),
+            last_run: None,
+            predicate: dummy_predicate_true(),
+            run: Box::new(|| {
+                Box::pin(async { Err(AppError::Validation("simulated job failure".into())) })
+            }),
+        };
+        let mut jobs = vec![job];
+        run_tick(&mut jobs).await;
+        assert!(
+            jobs[0].last_run.is_none(),
+            "last_run must stay None after a failing job so it is retried immediately on the next tick"
         );
     }
 

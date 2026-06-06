@@ -177,7 +177,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // the content-block branch when the LHS is not a valid key.
             let key = key_candidate.trim().to_string();
             let value = value.trim().to_string();
-            // Attach to the last block at or above this depth
+            // Attach to the immediately preceding block (Logseq emits property lines directly under their owning block).
             if let Some(last) = blocks.last_mut() {
                 last.properties.push((key, value));
             }

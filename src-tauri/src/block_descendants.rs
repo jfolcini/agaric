@@ -230,9 +230,6 @@ where
 }
 
 #[cfg(test)]
-mod proptest_b4;
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
