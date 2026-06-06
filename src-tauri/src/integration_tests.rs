@@ -1246,8 +1246,9 @@ async fn materializer_processes_background_tasks_after_page_create() {
     );
 }
 
-/// Editing a block triggers at least one background materializer task
-/// (ReindexBlockLinks + RebuildPagesCache).
+/// Editing a block triggers exactly 4 background materializer tasks:
+/// ReindexBlockLinks + ReindexBlockTagRefs + UpdateFtsBlock (3 tasks),
+/// plus 1 Barrier from flush_background() = 4 total.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn materializer_processes_background_tasks_after_edit() {
     let (pool, _dir) = test_pool().await;
@@ -1266,9 +1267,11 @@ async fn materializer_processes_background_tasks_after_edit() {
 
     let bg_after = mat.metrics().bg_processed.load(Ordering::Relaxed);
     let bg_delta = bg_after - bg_before;
-    assert!(
-        bg_delta >= 1,
-        "expected at least 1 new background task after edit, got delta {bg_delta}"
+    // edit_block on a content block dispatches: ReindexBlockLinks + ReindexBlockTagRefs
+    // + UpdateFtsBlock (3 tasks). flush_background() adds 1 Barrier = 4 total.
+    assert_eq!(
+        bg_delta, 4,
+        "edit_block on content block must dispatch exactly 4 bg tasks (3 tasks + 1 flush barrier), got {bg_delta}"
     );
 }
 

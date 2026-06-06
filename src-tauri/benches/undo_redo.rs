@@ -12,7 +12,7 @@
 //!
 //! Manual only — never in CI or pre-commit (see AGENTS.md).
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 
 use agaric_lib::commands::{
     compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,
@@ -485,45 +485,46 @@ fn bench_restore_page_to_op(c: &mut Criterion) {
     for total_ops in [100, 500, 1000] {
         let num_blocks = total_ops / 2;
 
+        let rt = Runtime::new().unwrap();
         group.bench_with_input(
             BenchmarkId::from_parameter(total_ops),
             &total_ops,
             |b, _| {
-                let rt = Runtime::new().unwrap();
-                b.iter_custom(|iters| {
-                    let start = std::time::Instant::now();
-                    for _ in 0..iters {
-                        let dir = TempDir::new().unwrap();
-                        let pool = rt.block_on(fresh_pool(&dir, "restore"));
-                        let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
-
-                        // Seed: num_blocks children × 1 edit each = 2*num_blocks ops + 1 page create
-                        let (_page_id, _last_seq) =
-                            rt.block_on(seed_flat_page(&pool, num_blocks, 1));
-
-                        // target_seq at midpoint: the Nth op (= num_blocks-th op, which is the
-                        // last create_block before edits start; seq is 1-based, page create is seq=1,
-                        // then creates are seq 2..num_blocks+1, edits are num_blocks+2..2*num_blocks+1)
-                        let target_seq = (num_blocks as i64) + 1; // last create_block seq
-
-                        let page_id = format!("PAGE{:020}", 0);
+                b.to_async(&rt).iter_batched(
+                    || {
                         rt.block_on(async {
-                            restore_page_to_op_inner(
-                                &pool,
-                                BENCH_DEVICE,
-                                &materializer,
-                                page_id,
-                                BENCH_DEVICE.to_string(),
-                                target_seq,
-                            )
-                            .await
-                            .unwrap()
-                        });
+                            let dir = TempDir::new().unwrap();
+                            let pool = fresh_pool(&dir, "restore").await;
+                            let materializer = Materializer::new(pool.clone());
 
-                        rt.block_on(async { materializer.shutdown() });
-                    }
-                    start.elapsed()
-                });
+                            // Seed: num_blocks children × 1 edit each = 2*num_blocks ops + 1 page create
+                            let (_page_id, _last_seq) = seed_flat_page(&pool, num_blocks, 1).await;
+
+                            // target_seq at midpoint: the Nth op (= num_blocks-th op, which is the
+                            // last create_block before edits start; seq is 1-based, page create is seq=1,
+                            // then creates are seq 2..num_blocks+1, edits are num_blocks+2..2*num_blocks+1)
+                            let target_seq = (num_blocks as i64) + 1; // last create_block seq
+                            let page_id = format!("PAGE{:020}", 0);
+
+                            (dir, pool, materializer, page_id, target_seq)
+                        })
+                    },
+                    |(dir, pool, materializer, page_id, target_seq)| async move {
+                        restore_page_to_op_inner(
+                            &pool,
+                            BENCH_DEVICE,
+                            &materializer,
+                            page_id,
+                            BENCH_DEVICE.to_string(),
+                            target_seq,
+                        )
+                        .await
+                        .unwrap();
+                        materializer.shutdown();
+                        drop(dir);
+                    },
+                    BatchSize::PerIteration,
+                );
             },
         );
     }
