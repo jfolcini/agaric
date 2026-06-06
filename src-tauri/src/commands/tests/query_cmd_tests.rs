@@ -977,6 +977,171 @@ async fn query_by_property_with_lt_operator() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_with_neq_operator() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "OP_NEQ1", "content", "early", None, Some(1)).await;
+    insert_block(&pool, "OP_NEQ2", "content", "middle", None, Some(2)).await;
+    insert_block(&pool, "OP_NEQ3", "content", "late", None, Some(3)).await;
+
+    insert_property_date(&pool, "OP_NEQ1", "deadline", "2025-01-01").await;
+    insert_property_date(&pool, "OP_NEQ2", "deadline", "2025-06-15").await;
+    insert_property_date(&pool, "OP_NEQ3", "deadline", "2025-12-31").await;
+
+    // Query blocks with deadline != "2025-06-15"
+    let result = query_by_property_inner(
+        &pool,
+        "deadline".into(),
+        None,
+        Some("2025-06-15".into()),
+        Some("neq".into()),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        2,
+        "neq operator should return blocks with deadline not equal to 2025-06-15"
+    );
+    assert_eq!(result.items[0].id, "OP_NEQ1", "first match is OP_NEQ1");
+    assert_eq!(result.items[1].id, "OP_NEQ3", "second match is OP_NEQ3");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_with_lte_operator() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "OP_LTE1", "content", "early", None, Some(1)).await;
+    insert_block(&pool, "OP_LTE2", "content", "middle", None, Some(2)).await;
+    insert_block(&pool, "OP_LTE3", "content", "late", None, Some(3)).await;
+
+    insert_property_date(&pool, "OP_LTE1", "deadline", "2025-01-01").await;
+    insert_property_date(&pool, "OP_LTE2", "deadline", "2025-06-15").await;
+    insert_property_date(&pool, "OP_LTE3", "deadline", "2025-12-31").await;
+
+    // Query blocks with deadline <= "2025-06-15"
+    let result = query_by_property_inner(
+        &pool,
+        "deadline".into(),
+        None,
+        Some("2025-06-15".into()),
+        Some("lte".into()),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        2,
+        "lte operator should return blocks with deadline on or before 2025-06-15"
+    );
+    assert_eq!(result.items[0].id, "OP_LTE1", "first match is OP_LTE1");
+    assert_eq!(result.items[1].id, "OP_LTE2", "second match is OP_LTE2");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_with_gte_operator() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "OP_GTE1", "content", "early", None, Some(1)).await;
+    insert_block(&pool, "OP_GTE2", "content", "middle", None, Some(2)).await;
+    insert_block(&pool, "OP_GTE3", "content", "late", None, Some(3)).await;
+
+    insert_property_date(&pool, "OP_GTE1", "deadline", "2025-01-01").await;
+    insert_property_date(&pool, "OP_GTE2", "deadline", "2025-06-15").await;
+    insert_property_date(&pool, "OP_GTE3", "deadline", "2025-12-31").await;
+
+    // Query blocks with deadline >= "2025-06-15"
+    let result = query_by_property_inner(
+        &pool,
+        "deadline".into(),
+        None,
+        Some("2025-06-15".into()),
+        Some("gte".into()),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        2,
+        "gte operator should return blocks with deadline on or after 2025-06-15"
+    );
+    assert_eq!(result.items[0].id, "OP_GTE2", "first match is OP_GTE2");
+    assert_eq!(result.items[1].id, "OP_GTE3", "second match is OP_GTE3");
+}
+
+// #384 regression: neq must not drop rows whose value lives in the sibling (value_date) column
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_by_property_neq_sibling_column_regression_384() {
+    let (pool, _dir) = test_pool().await;
+
+    // OP_384_DATE: deadline stored in value_date column (value_text = NULL)
+    insert_block(&pool, "OP_384_DATE", "content", "date-col", None, Some(1)).await;
+    insert_property_date(&pool, "OP_384_DATE", "deadline", "2025-03-01").await;
+
+    // OP_384_TEXT: deadline stored in value_text column (value_date = NULL)
+    insert_block(&pool, "OP_384_TEXT", "content", "text-col", None, Some(2)).await;
+    insert_property(&pool, "OP_384_TEXT", "deadline", "2025-06-15").await;
+
+    // Query: deadline != "2025-06-15" using value_text parameter
+    // OP_384_DATE has value_text = NULL → the null-sibling fix keeps it (IS NULL guard is TRUE)
+    // OP_384_TEXT has value_text = "2025-06-15" → "2025-06-15" != "2025-06-15" = FALSE → excluded
+    let result = query_by_property_inner(
+        &pool,
+        "deadline".into(),
+        Some("2025-06-15".into()), // value_text
+        None,                      // value_date
+        Some("neq".into()),
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result.items.len(),
+        1,
+        "neq must preserve the row whose deadline lives in value_date (sibling column fix)"
+    );
+    assert_eq!(
+        result.items[0].id, "OP_384_DATE",
+        "the date-column row must be kept by the neq null-sibling guard"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_property_defaults_to_eq() {
     let (pool, _dir) = test_pool().await;
 

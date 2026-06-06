@@ -5,7 +5,7 @@
 //!   1. `parse_logseq_markdown` — pure parsing, no DB
 //!   2. `import_markdown_inner`  — full pipeline: parse + create page + insert blocks
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 
 use agaric_lib::commands::{create_space_inner, import_markdown_inner};
 use agaric_lib::db::init_pool;
@@ -100,44 +100,54 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
             BenchmarkId::from_parameter(format!("{n}_blocks")),
             &n,
             |b, _| {
-                b.to_async(&rt).iter(|| {
-                    let content = markdown.clone();
-                    async {
-                        let dir = TempDir::new().unwrap();
-                        let pool = fresh_pool(&dir, "import").await;
-                        let materializer = Materializer::new(pool.clone());
+                let content = markdown.clone();
+                b.to_async(&rt).iter_batched(
+                    || {
+                        rt.block_on(async {
+                            let dir = TempDir::new().unwrap();
+                            let pool = fresh_pool(&dir, "import").await;
+                            let materializer = Materializer::new(pool.clone());
 
-                        // PEND-35 1.1: import_markdown_inner now requires a
-                        // valid space_id. Seed one per iteration via the
-                        // public `create_space_inner` API so the bench
-                        // exercises the full validated path.
-                        let space_id = create_space_inner(
-                            &pool,
-                            DEV_BENCH,
-                            &materializer,
-                            "Bench Space".into(),
-                            None,
-                        )
-                        .await
-                        .unwrap()
-                        .into_string();
+                            // PEND-35 1.1: import_markdown_inner now requires a
+                            // valid space_id. Seed one per iteration via the
+                            // public `create_space_inner` API so the bench
+                            // exercises the full validated path.
+                            let space_id = create_space_inner(
+                                &pool,
+                                DEV_BENCH,
+                                &materializer,
+                                "Bench Space".into(),
+                                None,
+                            )
+                            .await
+                            .unwrap()
+                            .into_string();
 
-                        let result = import_markdown_inner(
-                            &pool,
-                            DEV_BENCH,
-                            &materializer,
-                            content,
-                            Some("BenchPage.md".into()),
-                            space_id,
-                        )
-                        .await
-                        .unwrap();
+                            (dir, pool, materializer, space_id)
+                        })
+                    },
+                    |(dir, pool, materializer, space_id)| {
+                        let content = content.clone();
+                        async move {
+                            let result = import_markdown_inner(
+                                &pool,
+                                DEV_BENCH,
+                                &materializer,
+                                content,
+                                Some("BenchPage.md".into()),
+                                space_id,
+                            )
+                            .await
+                            .unwrap();
 
-                        assert_eq!(result.blocks_created, n as i64);
+                            assert_eq!(result.blocks_created, n as i64);
 
-                        materializer.shutdown();
-                    }
-                });
+                            materializer.shutdown();
+                            drop(dir);
+                        }
+                    },
+                    BatchSize::PerIteration,
+                );
             },
         );
     }

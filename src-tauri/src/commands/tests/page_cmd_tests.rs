@@ -3700,5 +3700,8 @@ async fn load_page_subtree_rejects_malformed_root_id() {
     let err = load_page_subtree_inner(&pool, "not-a-ulid", "01TESTSPACE000000000000001")
         .await
         .expect_err("malformed ULID must error");
-    matches!(err, AppError::Ulid(_));
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed root id must surface as Ulid, got {err:?}"
+    );
 }
