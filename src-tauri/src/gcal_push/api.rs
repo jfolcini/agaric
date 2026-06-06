@@ -6,7 +6,7 @@
 //! * Create / delete the dedicated "Agaric Agenda" calendar (one per
 //!   account; ID persisted in `gcal_settings.calendar_id` by
 //!   FEAT-5e).
-//! * Insert / patch / delete / get an all-day digest event on the
+//! * Insert / patch / delete an all-day digest event on the
 //!   dedicated calendar.
 //! * Translate the FEAT-5d [`digest::Event`] (inclusive end-date) to
 //!   and from GCal's exclusive-end wire format.
@@ -368,54 +368,6 @@ impl GcalApi {
             NotFoundMeans::EventGone,
         )
         .await
-    }
-
-    /// GET a single event.  Used by FEAT-5e's reconcile sweep to
-    /// verify the remote copy still exists.
-    ///
-    /// # Returns
-    /// * `Ok(Some(_))` on a 200 response.
-    /// * `Ok(None)` if the event was deleted externally (HTTP 404 on
-    ///   an event path).
-    /// * `Err(AppError::Gcal(CalendarGone))` if the calendar itself is
-    ///   gone (404 on the calendar path — detection heuristic below).
-    /// * Any other [`GcalErrorKind`] for other failure modes.
-    ///
-    /// # 404 disambiguation heuristic
-    ///
-    /// GCal returns 404 on `/calendars/{id}/events/{event_id}` whether
-    /// the calendar or the event is the missing resource.  The
-    /// response body sometimes helps (`"calendarId"` in the error
-    /// reason) but is not guaranteed.  We treat a 404 here as
-    /// `EventGone` by default — callers who need to distinguish
-    /// should probe the calendar itself via a `list_calendars`
-    /// equivalent, which is out of scope for this module (we only own
-    /// one calendar, its ID is known).
-    #[tracing::instrument(skip(self, token), err)]
-    pub async fn get_event(
-        &self,
-        token: &Token,
-        calendar_id: &str,
-        event_id: &str,
-    ) -> Result<Option<EventResponse>, AppError> {
-        let url = join_calendar_path(&self.base_url, calendar_id, &["events", event_id])?;
-        // 404 on event path → treat as "gone"; map to Ok(None) so the
-        // reconcile sweep can simply re-insert.
-        let body: WireEventResponse = match self
-            .send_json::<(), _>(
-                reqwest::Method::GET,
-                &url,
-                token,
-                None,
-                NotFoundMeans::EventGone,
-            )
-            .await
-        {
-            Ok(b) => b,
-            Err(AppError::Gcal(GcalErrorKind::EventGone)) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        body.into_event_response().map(Some)
     }
 
     // ---------------------------------------------------------------
@@ -1154,58 +1106,6 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::Gcal(GcalErrorKind::EventGone))),
             "404 on event path must map to EventGone, got {result:?}"
-        );
-    }
-
-    // ── get_event ──────────────────────────────────────────────────
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn get_event_200_returns_some() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/calendars/{TEST_CAL_ID}/events/{TEST_EVENT_ID}"
-            )))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "id": TEST_EVENT_ID,
-                "summary": "Agaric Agenda — 2026-04-22",
-                "description": "",
-                "start": { "date": "2026-04-22" },
-                "end":   { "date": "2026-04-23" },
-                "transparency": "transparent",
-            })))
-            .mount(&server)
-            .await;
-
-        let api = make_api(&server.uri());
-        let resp = api
-            .get_event(&make_token(), TEST_CAL_ID, TEST_EVENT_ID)
-            .await
-            .expect("get must succeed");
-        let unwrapped = resp.expect("must be Some");
-        assert_eq!(unwrapped.id, TEST_EVENT_ID);
-        assert_eq!(unwrapped.event.end.date, "2026-04-22");
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn get_event_404_returns_none() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path(format!(
-                "/calendars/{TEST_CAL_ID}/events/{TEST_EVENT_ID}"
-            )))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
-
-        let api = make_api(&server.uri());
-        let resp = api
-            .get_event(&make_token(), TEST_CAL_ID, TEST_EVENT_ID)
-            .await
-            .expect("get must succeed as Ok(None), not Err");
-        assert!(
-            resp.is_none(),
-            "404 on event path from get_event must map to Ok(None), got {resp:?}"
         );
     }
 

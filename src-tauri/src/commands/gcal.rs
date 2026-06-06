@@ -158,9 +158,7 @@ pub async fn get_gcal_status_inner(
     let window_raw = models::get_setting(pool, GcalSettingKey::WindowDays)
         .await?
         .unwrap_or_default();
-    let window_days = window_raw
-        .parse::<i64>()
-        .unwrap_or(crate::gcal_push::connector::DEFAULT_WINDOW_DAYS);
+    let window_days = crate::gcal_push::connector::parse_window_days(&window_raw);
     let push_lease = lease::read_current_lease(pool).await?;
     let last_push = last_push_at(pool).await?;
 

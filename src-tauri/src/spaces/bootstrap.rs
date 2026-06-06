@@ -6,6 +6,8 @@
 //! transaction is individually idempotent so a partial/crashed bootstrap
 //! can be retried safely on the next boot.
 
+use std::collections::HashMap;
+
 use sqlx::SqlitePool;
 
 use crate::commands::set_property_in_tx;
@@ -757,40 +759,61 @@ pub async fn migrate_orphan_tags_to_space(
         return Ok(0);
     }
 
-    // Step 2 — for each orphan tag, find the space that references it
-    // most frequently. Tags with zero references go to Personal.
+    // Step 2 — compute the majority space for ALL orphan tags in a single
+    // query. This replaces the original N+1 pattern (one GROUP BY per tag)
+    // with a single bulk pass using json_each + ROW_NUMBER() OVER (PARTITION
+    // BY tag_id ...) so only one round-trip is needed regardless of the
+    // number of orphan tags.
     //
-    // The query joins block_tag_refs → source blocks → their space
-    // property. A tag referenced by blocks in multiple spaces gets
-    // assigned to the majority space; ties are broken in favour of
-    // Personal (deterministic, matches the page-migration default).
+    // Tags with zero references are absent from the result; the loop below
+    // falls back to Personal for those (same policy as before).
+    let tag_ids_json = serde_json::to_string(
+        &orphan_tags
+            .iter()
+            .map(|r| r.id.as_str())
+            .collect::<Vec<_>>(),
+    )?;
+    // Runtime query (not macro) so no .sqlx cache entry is needed for the
+    // dynamic json_each + window-function shape.
+    let majority_rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT tag_id, space_id \
+         FROM ( \
+             SELECT \
+                 btr.tag_id, \
+                 p.value_ref AS space_id, \
+                 COUNT(*) AS cnt, \
+                 ROW_NUMBER() OVER ( \
+                     PARTITION BY btr.tag_id \
+                     ORDER BY COUNT(*) DESC, p.value_ref ASC \
+                 ) AS rn \
+             FROM block_tag_refs btr \
+             INNER JOIN blocks b \
+                 ON b.id = btr.source_id \
+                AND b.deleted_at IS NULL \
+             INNER JOIN block_properties p \
+                 ON p.block_id = b.page_id \
+                AND p.key = 'space' \
+                AND p.value_ref IS NOT NULL \
+             WHERE btr.tag_id IN (SELECT value FROM json_each(?1)) \
+             GROUP BY btr.tag_id, p.value_ref \
+         ) ranked \
+         WHERE rn = 1",
+    )
+    .bind(&tag_ids_json)
+    .fetch_all(&mut **tx)
+    .await?;
+
+    // Build a tag_id → majority_space_id lookup.  Tags absent from the
+    // result had zero references and will fall back to Personal below.
+    let majority_space: HashMap<String, String> = majority_rows.into_iter().collect();
+
     let mut migrated = 0;
     for row in &orphan_tags {
         let tag_id = &row.id;
 
-        let space_counts = sqlx::query!(
-            r#"SELECT p.value_ref as "space_id!: String",
-                      COUNT(*) as "cnt!: i64"
-               FROM block_tag_refs r
-               INNER JOIN blocks b
-                   ON b.id = r.source_id
-                  AND b.deleted_at IS NULL
-               INNER JOIN block_properties p
-                   ON p.block_id = b.page_id
-                  AND p.key = 'space'
-                  AND p.value_ref IS NOT NULL
-               WHERE r.tag_id = ?
-               GROUP BY p.value_ref
-               ORDER BY COUNT(*) DESC
-               LIMIT 1"#,
-            tag_id,
-        )
-        .fetch_optional(&mut **tx)
-        .await?;
-
-        let target_space = space_counts
-            .as_ref()
-            .map(|r| r.space_id.as_str())
+        let target_space = majority_space
+            .get(tag_id.as_str())
+            .map(String::as_str)
             .unwrap_or(SPACE_PERSONAL_ULID);
 
         // Step 3 — emit a SetProperty op assigning this tag to the
