@@ -4350,7 +4350,7 @@ describe('BlockTree handleDatePick date format', () => {
     ])
 
     await act(async () => {
-      await mockCalendarOnSelect?.(new Date(2025, 2, 15))
+      mockCalendarOnSelect?.(new Date(2025, 2, 15))
     })
 
     // Positive signal: handleDateMode awaits `list_all_pages_in_space`
