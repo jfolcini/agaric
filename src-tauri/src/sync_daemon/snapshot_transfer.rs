@@ -630,7 +630,7 @@ mod tests {
     use crate::op::OpPayload;
     use crate::op_log::append_local_op;
     use crate::snapshot::{
-        create_snapshot, BlockSnapshot, SnapshotData, SnapshotTables, SCHEMA_VERSION,
+        BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot,
     };
     use crate::sync_events::RecordingEventSink;
     use crate::sync_net::test_connection_pair;

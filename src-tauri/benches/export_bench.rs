@@ -4,7 +4,7 @@
 //! Criterion benchmark for Markdown export:
 //!   - `export_page_markdown_inner` — serialize a page with N child blocks
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::export_page_markdown_inner;
 use agaric_lib::db::init_pool;

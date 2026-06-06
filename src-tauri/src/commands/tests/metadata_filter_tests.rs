@@ -8,7 +8,7 @@
 //! `metadata_filter`'s own unit tests).
 
 use crate::commands::queries::{
-    search_blocks_inner, DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
+    DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter, search_blocks_inner,
 };
 use crate::db::init_pool;
 use sqlx::SqlitePool;

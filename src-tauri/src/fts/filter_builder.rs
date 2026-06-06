@@ -27,7 +27,7 @@
 //! the `search_fts` builder (11-space indent) and the toggle builders
 //! (13-space indent).
 
-use super::metadata_filter::{append_metadata_sql, MetaBind, MetadataPredicates};
+use super::metadata_filter::{MetaBind, MetadataPredicates, append_metadata_sql};
 
 /// One bound value, tagged with its SQLite affinity. Recorded in
 /// declaration order alongside the SQL fragment that references it, so

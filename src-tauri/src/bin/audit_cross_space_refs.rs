@@ -100,7 +100,9 @@ fn parse_args(args: &[String]) -> ParsedArgs {
                 Some(v) => match v.parse::<usize>() {
                     Ok(n) => limit = n,
                     Err(_) => {
-                        return ParsedArgs::BadArg(format!("--limit expects an integer, got '{v}'"))
+                        return ParsedArgs::BadArg(format!(
+                            "--limit expects an integer, got '{v}'"
+                        ));
                     }
                 },
                 None => return ParsedArgs::BadArg("--limit requires an integer argument".into()),
@@ -112,7 +114,7 @@ fn parse_args(args: &[String]) -> ParsedArgs {
                     Err(_) => {
                         return ParsedArgs::BadArg(format!(
                             "--limit expects an integer, got '{value}'"
-                        ))
+                        ));
                     }
                 }
             }

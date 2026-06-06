@@ -6,7 +6,7 @@
 //!   2. `count_agenda_batch_by_source_inner` — per-source badge counts
 //!   3. `list_projected_agenda_inner`     — repeating-task projection
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     count_agenda_batch_by_source_inner, count_agenda_batch_inner, list_projected_agenda_inner,

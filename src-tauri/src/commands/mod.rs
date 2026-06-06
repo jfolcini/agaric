@@ -18,7 +18,7 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{is_reserved_property_key, DeletePropertyPayload, OpPayload, UndoResult};
+use crate::op::{DeletePropertyPayload, OpPayload, UndoResult, is_reserved_property_key};
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::pairing::PairingSession;
@@ -66,8 +66,8 @@ pub use attachments::{
     read_attachment_inner,
 };
 pub use blocks::{
-    batch_resolve, batch_resolve_inner, count_trash, count_trash_inner, create_block,
-    create_block_inner, create_block_inner_with_space, create_blocks_batch,
+    CreateBlockSpec, batch_resolve, batch_resolve_inner, count_trash, count_trash_inner,
+    create_block, create_block_inner, create_block_inner_with_space, create_blocks_batch,
     create_blocks_batch_inner, delete_block, delete_block_inner, delete_blocks_by_ids,
     delete_blocks_by_ids_inner, edit_block, edit_block_inner, first_child_for_blocks,
     first_child_for_blocks_inner, get_active_block_inner, get_block, get_block_inner, get_blocks,
@@ -76,26 +76,26 @@ pub use blocks::{
     purge_all_deleted_inner, purge_block, purge_block_inner, purge_blocks_by_ids,
     purge_blocks_by_ids_inner, restore_all_deleted, restore_all_deleted_inner, restore_block,
     restore_block_inner, restore_blocks_by_ids, restore_blocks_by_ids_inner,
-    trash_descendant_counts, trash_descendant_counts_inner, CreateBlockSpec,
+    trash_descendant_counts, trash_descendant_counts_inner,
 };
 pub use bug_report::{
-    collect_bug_report_metadata, collect_bug_report_metadata_inner, read_logs_for_report,
-    read_logs_for_report_inner, BugReport, LogFileEntry,
+    BugReport, LogFileEntry, collect_bug_report_metadata, collect_bug_report_metadata_inner,
+    read_logs_for_report, read_logs_for_report_inner,
 };
 pub use compaction::{
-    compact_op_log_cmd, compact_op_log_cmd_inner, get_compaction_status,
-    get_compaction_status_inner, CompactionResult, CompactionStatus, PageLink, RestoreToOpResult,
+    CompactionResult, CompactionStatus, PageLink, RestoreToOpResult, compact_op_log_cmd,
+    compact_op_log_cmd_inner, get_compaction_status, get_compaction_status_inner,
 };
 pub use drafts::{
-    delete_draft, flush_all_drafts, flush_all_drafts_inner, flush_draft, flush_draft_inner,
-    list_drafts, list_drafts_inner, save_draft, FlushAllDraftsResult,
+    FlushAllDraftsResult, delete_draft, flush_all_drafts, flush_all_drafts_inner, flush_draft,
+    flush_draft_inner, list_drafts, list_drafts_inner, save_draft,
 };
 pub use gcal::{
-    begin_gcal_oauth, begin_gcal_oauth_inner, disconnect_gcal, disconnect_gcal_inner,
-    force_gcal_resync, force_gcal_resync_inner, get_gcal_status, get_gcal_status_inner,
-    set_gcal_privacy_mode, set_gcal_privacy_mode_inner, set_gcal_window_days,
-    set_gcal_window_days_inner, BeginOauthOutcome, GcalClientState, GcalEventEmitterState,
-    GcalOAuthClientState, GcalStatus, GcalTokenStoreState, LeaseHolder,
+    BeginOauthOutcome, GcalClientState, GcalEventEmitterState, GcalOAuthClientState, GcalStatus,
+    GcalTokenStoreState, LeaseHolder, begin_gcal_oauth, begin_gcal_oauth_inner, disconnect_gcal,
+    disconnect_gcal_inner, force_gcal_resync, force_gcal_resync_inner, get_gcal_status,
+    get_gcal_status_inner, set_gcal_privacy_mode, set_gcal_privacy_mode_inner,
+    set_gcal_window_days, set_gcal_window_days_inner,
 };
 pub use history::{
     apply_reverse_in_tx, compute_block_vs_current_diff, compute_block_vs_current_diff_inner,
@@ -114,21 +114,21 @@ pub use link_metadata::{
 };
 pub use logging::{get_log_dir, log_frontend};
 pub use mcp::{
-    get_mcp_rw_socket_path, get_mcp_rw_socket_path_inner, get_mcp_rw_status,
-    get_mcp_rw_status_inner, get_mcp_socket_path, get_mcp_socket_path_inner, get_mcp_status,
-    get_mcp_status_inner, mcp_disconnect_all, mcp_disconnect_all_inner, mcp_rw_disconnect_all,
-    mcp_rw_disconnect_all_inner, mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled,
-    mcp_set_enabled_inner, McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate,
+    McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_socket_path,
+    get_mcp_rw_socket_path_inner, get_mcp_rw_status, get_mcp_rw_status_inner, get_mcp_socket_path,
+    get_mcp_socket_path_inner, get_mcp_status, get_mcp_status_inner, mcp_disconnect_all,
+    mcp_disconnect_all_inner, mcp_rw_disconnect_all, mcp_rw_disconnect_all_inner,
+    mcp_rw_set_enabled, mcp_rw_set_enabled_inner, mcp_set_enabled, mcp_set_enabled_inner,
 };
 pub use pages::{
-    export_page_markdown, export_page_markdown_inner, get_page_aliases, get_page_aliases_inner,
-    get_page_inner, get_page_unscoped_inner, import_markdown, import_markdown_inner,
-    import_markdown_with_progress, list_all_pages_in_space, list_all_pages_in_space_inner,
-    list_page_aliases_by_prefix, list_page_aliases_by_prefix_inner, list_page_links,
-    list_page_links_inner, list_page_links_inner_split, list_pages_inner,
-    list_template_page_ids_in_space, list_template_page_ids_in_space_inner, load_page_subtree,
-    load_page_subtree_inner, resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases,
-    set_page_aliases_inner, PageHeading, PageSubtreeResponse, MCP_PAGE_LIMIT_CAP,
+    MCP_PAGE_LIMIT_CAP, PageHeading, PageSubtreeResponse, export_page_markdown,
+    export_page_markdown_inner, get_page_aliases, get_page_aliases_inner, get_page_inner,
+    get_page_unscoped_inner, import_markdown, import_markdown_inner, import_markdown_with_progress,
+    list_all_pages_in_space, list_all_pages_in_space_inner, list_page_aliases_by_prefix,
+    list_page_aliases_by_prefix_inner, list_page_links, list_page_links_inner,
+    list_page_links_inner_split, list_pages_inner, list_template_page_ids_in_space,
+    list_template_page_ids_in_space_inner, load_page_subtree, load_page_subtree_inner,
+    resolve_page_by_alias, resolve_page_by_alias_inner, set_page_aliases, set_page_aliases_inner,
 };
 pub use properties::{
     create_property_def, create_property_def_inner, delete_property, delete_property_def,
@@ -142,18 +142,17 @@ pub use properties::{
     update_property_def_options_inner,
 };
 pub use queries::{
-    count_backlinks_batch, count_backlinks_batch_inner, filtered_blocks_query,
-    filtered_blocks_query_inner, get_backlinks, get_backlinks_inner, get_status, get_status_inner,
-    list_backlinks_grouped, list_backlinks_grouped_inner, list_unfinished_tasks,
-    list_unfinished_tasks_inner, list_unlinked_references, list_unlinked_references_inner,
-    query_backlinks_filtered, query_backlinks_filtered_inner, query_by_property,
-    query_by_property_inner, search_blocks, search_blocks_inner, DateFilter, DateOp, MatchOffset,
-    NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter, SearchPropertyFilter,
-    TagFilterExpr,
+    DateFilter, DateOp, MatchOffset, NamedDateRange, PropertyFilter, SearchBlockRow, SearchFilter,
+    SearchPropertyFilter, TagFilterExpr, count_backlinks_batch, count_backlinks_batch_inner,
+    filtered_blocks_query, filtered_blocks_query_inner, get_backlinks, get_backlinks_inner,
+    get_status, get_status_inner, list_backlinks_grouped, list_backlinks_grouped_inner,
+    list_unfinished_tasks, list_unfinished_tasks_inner, list_unlinked_references,
+    list_unlinked_references_inner, query_backlinks_filtered, query_backlinks_filtered_inner,
+    query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
 };
 pub use spaces::{
-    create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
-    list_spaces, list_spaces_inner, SpaceRow,
+    SpaceRow, create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
+    list_spaces, list_spaces_inner,
 };
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,

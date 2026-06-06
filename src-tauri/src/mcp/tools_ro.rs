@@ -52,16 +52,16 @@
 use std::future::Future;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
 use super::actor::ActorContext;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
-    ToolDescription, ToolRegistry, TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE,
-    TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS,
-    TOOL_LIST_TAGS, TOOL_SEARCH,
+    TOOL_GET_AGENDA, TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS,
+    TOOL_LIST_PAGES, TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_TAGS, TOOL_SEARCH, ToolDescription,
+    ToolRegistry,
 };
 use crate::commands::{
     get_active_block_inner, get_page_unscoped_inner, journal_for_date_inner,
@@ -731,12 +731,12 @@ fn tool_desc_journal_for_date() -> ToolDescription {
 /// exceeded the documented cap. Returns the value unchanged so the
 /// caller can pass it straight through to `*_inner`.
 fn validate_limit(tool: &str, limit: Option<i64>, cap: i64) -> Result<Option<i64>, AppError> {
-    if let Some(l) = limit {
-        if !(1..=cap).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "{tool}: limit must be in [1, {cap}], got {l}"
-            )));
-        }
+    if let Some(l) = limit
+        && !(1..=cap).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "{tool}: limit must be in [1, {cap}], got {l}"
+        )));
     }
     Ok(limit)
 }

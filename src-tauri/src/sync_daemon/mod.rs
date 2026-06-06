@@ -26,8 +26,8 @@ pub(crate) mod android_multicast;
 #[cfg(test)]
 mod tests;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
@@ -57,11 +57,11 @@ pub(crate) use discovery::{format_peer_address, process_service_removed};
 // builds because no production code path imports through this module.
 #[allow(unused_imports)]
 pub(crate) use orchestrator::{
-    run_sequential_sync_round, run_sync_session, try_sync_with_peer, SyncSessionContext,
+    SyncSessionContext, run_sequential_sync_round, run_sync_session, try_sync_with_peer,
 };
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
-pub(crate) use server::{handle_incoming_sync, verify_peer_cert, CertVerifyResult};
+pub(crate) use server::{CertVerifyResult, handle_incoming_sync, verify_peer_cert};
 
 // ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound

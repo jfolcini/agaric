@@ -39,8 +39,8 @@ use super::*;
 use crate::db::init_pool;
 use crate::op::{OpPayload, OpType};
 use crate::proptest_db_harness::{
-    observe_prior_position, observe_prior_property, observe_prior_text, op_chain_strategy,
-    seed_chain, AppliedChain, HARNESS_DEVICE,
+    AppliedChain, HARNESS_DEVICE, observe_prior_position, observe_prior_property,
+    observe_prior_text, op_chain_strategy, seed_chain,
 };
 use proptest::prelude::*;
 use std::path::PathBuf;
@@ -119,7 +119,7 @@ async fn assert_inverse_law(
             return Err(TestCaseError::fail(format!(
                 "compute_reverse({}) errored unexpectedly: {e}",
                 rec.seq
-            )))
+            )));
         }
     };
 
@@ -138,7 +138,7 @@ async fn assert_inverse_law(
                 (other, prior) => {
                     return Err(TestCaseError::fail(format!(
                         "reverse of edit_block must be EditBlock(prior); got {other:?}, oracle prior={prior:?}"
-                    )))
+                    )));
                 }
             }
         }
@@ -161,7 +161,7 @@ async fn assert_inverse_law(
                 (other, prior) => {
                     return Err(TestCaseError::fail(format!(
                         "reverse of move_block must be MoveBlock(prior); got {other:?}, oracle prior={prior:?}"
-                    )))
+                    )));
                 }
             }
         }
@@ -185,7 +185,7 @@ async fn assert_inverse_law(
                 (other, prior) => {
                     return Err(TestCaseError::fail(format!(
                         "reverse of set_property mismatched oracle; got {other:?}, oracle prior={prior:?}"
-                    )))
+                    )));
                 }
             }
         }
@@ -203,7 +203,7 @@ async fn assert_inverse_law(
                 (other, prior) => {
                     return Err(TestCaseError::fail(format!(
                         "reverse of delete_property must be SetProperty(prior); got {other:?}, oracle prior={prior:?}"
-                    )))
+                    )));
                 }
             }
         }
@@ -248,7 +248,7 @@ async fn assert_inverse_law(
         OpPayload::PurgeBlock(_) | OpPayload::AddAttachment(_) | OpPayload::DeleteAttachment(_) => {
             return Err(TestCaseError::fail(format!(
                 "harness emitted an op it should not: {payload:?}"
-            )))
+            )));
         }
     }
     Ok(())

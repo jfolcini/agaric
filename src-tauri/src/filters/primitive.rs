@@ -608,9 +608,9 @@ impl Projection for PagesProjection {
         // `CAST(strftime('%s','now',?) AS INTEGER) * 1000` (the `?` is the
         // `-N days` modifier), matching the column's units.
         const EPOCH: &str = "0"; // 1970-01-01T00:00:00Z in epoch-ms
-                                 // Parse an RFC 3339 timestamp to epoch-ms. Bounds are pre-validated
-                                 // by `validate_last_edited_date`; the fallback to `0` keeps a
-                                 // malformed value from panicking (it would simply match nothing).
+        // Parse an RFC 3339 timestamp to epoch-ms. Bounds are pre-validated
+        // by `validate_last_edited_date`; the fallback to `0` keeps a
+        // malformed value from panicking (it would simply match nothing).
         fn to_ms(ts: &str) -> i64 {
             let parsed = chrono::DateTime::parse_from_rfc3339(ts);
             // #383: bounds are pre-validated by `validate_last_edited_date`, so
@@ -1485,7 +1485,7 @@ mod tests {
 #[cfg(test)]
 mod explain_query_plan_tests {
     use super::*;
-    use crate::commands::tests::common::{ensure_test_space, test_pool, TEST_SPACE_ID};
+    use crate::commands::tests::common::{TEST_SPACE_ID, ensure_test_space, test_pool};
     use sqlx::SqlitePool;
 
     /// Seed enough page rows that SQLite picks a representative plan

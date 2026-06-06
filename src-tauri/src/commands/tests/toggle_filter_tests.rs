@@ -23,9 +23,9 @@
 //! - UTF-16 offset correctness for CJK + emoji content.
 
 use super::common::{
-    assign_all_to_test_space, ensure_test_space, insert_block, test_pool, TEST_SPACE_ID,
+    TEST_SPACE_ID, assign_all_to_test_space, ensure_test_space, insert_block, test_pool,
 };
-use crate::commands::{search_blocks_inner, MatchOffset, SearchFilter};
+use crate::commands::{MatchOffset, SearchFilter, search_blocks_inner};
 use crate::error::AppError;
 use crate::fts::rebuild_fts_index;
 

@@ -7,7 +7,7 @@
 //!   3. `flush_draft`           — convert draft to `edit_block` op on blur
 //!   4. Parameterised: steady-state cost with 10 / 100 / 1000 drafts in DB
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::create_block_inner;
 use agaric_lib::commands::list_drafts_inner;

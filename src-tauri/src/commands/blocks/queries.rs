@@ -74,13 +74,13 @@ pub async fn list_blocks_inner(
     // got truncated to 100 with no signal.  Strict validation surfaces
     // the contract violation at the IPC boundary so a future BUG-48 fails
     // synchronously rather than as mysterious data loss months later.
-    if let Some(l) = limit {
-        if !(1..=100).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "list_blocks limit must be in [1, 100]; got {l}. \
+    if let Some(l) = limit
+        && !(1..=100).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "list_blocks limit must be in [1, 100]; got {l}. \
                  For larger result sets, use cursor pagination."
-            )));
-        }
+        )));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
 
@@ -395,13 +395,13 @@ pub async fn list_trash_inner(
     limit: Option<i64>,
     space_id: String,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    if let Some(l) = limit {
-        if !(1..=100).contains(&l) {
-            return Err(AppError::Validation(format!(
-                "list_trash limit must be in [1, 100]; got {l}. \
+    if let Some(l) = limit
+        && !(1..=100).contains(&l)
+    {
+        return Err(AppError::Validation(format!(
+            "list_trash limit must be in [1, 100]; got {l}. \
                  For larger result sets, use cursor pagination."
-            )));
-        }
+        )));
     }
     let page = pagination::PageRequest::new(cursor, limit)?;
     pagination::list_trash(pool, &page, Some(space_id.as_str())).await

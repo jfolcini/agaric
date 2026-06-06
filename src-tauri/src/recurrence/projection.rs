@@ -177,10 +177,10 @@ pub(crate) fn project_block_dates<F>(
                 None => break,
             };
 
-            if let Some(until) = repeat_until {
-                if current > until {
-                    break;
-                }
+            if let Some(until) = repeat_until
+                && current > until
+            {
+                break;
             }
 
             if current > range_end {

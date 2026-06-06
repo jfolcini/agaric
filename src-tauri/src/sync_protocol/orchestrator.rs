@@ -323,21 +323,19 @@ impl SyncOrchestrator {
                     .unwrap_or_default();
 
                 // Validate the remote device claims a known peer identity
-                if !remote_id.is_empty() {
-                    if let Some(expected) = &self.expected_remote_id {
-                        if &remote_id != expected {
-                            let msg = format!(
-                                "peer device_id mismatch: expected {expected}, got {remote_id}"
-                            );
-                            self.state = SyncState::Failed(msg.clone());
-                            self.session.state = self.state.clone();
-                            self.emit(crate::sync_events::SyncEvent::Error {
-                                message: msg.clone(),
-                                remote_device_id: remote_id,
-                            });
-                            return Err(AppError::InvalidOperation(msg));
-                        }
-                    }
+                if !remote_id.is_empty()
+                    && let Some(expected) = &self.expected_remote_id
+                    && &remote_id != expected
+                {
+                    let msg =
+                        format!("peer device_id mismatch: expected {expected}, got {remote_id}");
+                    self.state = SyncState::Failed(msg.clone());
+                    self.session.state = self.state.clone();
+                    self.emit(crate::sync_events::SyncEvent::Error {
+                        message: msg.clone(),
+                        remote_device_id: remote_id,
+                    });
+                    return Err(AppError::InvalidOperation(msg));
                 }
 
                 self.remote_device_id = Some(remote_id.clone());

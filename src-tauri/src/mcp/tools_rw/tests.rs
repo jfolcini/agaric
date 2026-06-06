@@ -765,7 +765,7 @@ async fn delete_block_stamps_origin_agent_in_op_log() {
 /// (or doubles them) is caught here, not in the dispatch layer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_populates_last_append_inside_scope() {
-    use crate::task_locals::{take_appends, LAST_APPEND};
+    use crate::task_locals::{LAST_APPEND, take_appends};
     use std::cell::RefCell;
 
     let (tools, mat, pool, space, _dir) = mk_tools().await;

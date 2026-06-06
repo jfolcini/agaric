@@ -5,8 +5,8 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::types::{BacklinkFilter, CompareOp};
 use super::SMALL_IN_LIMIT;
+use super::types::{BacklinkFilter, CompareOp};
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
 use crate::sql_utils::escape_like;
@@ -329,12 +329,24 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
 
             BacklinkFilter::DueDate { op, value } => {
                 let sql = match op {
-                    CompareOp::Eq => "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL",
-                    CompareOp::Neq => "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL",
-                    CompareOp::Lt => "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL",
-                    CompareOp::Lte => "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL",
-                    CompareOp::Gt => "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL",
-                    CompareOp::Gte => "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL",
+                    CompareOp::Eq => {
+                        "SELECT id FROM blocks WHERE due_date = ? AND deleted_at IS NULL"
+                    }
+                    CompareOp::Neq => {
+                        "SELECT id FROM blocks WHERE due_date != ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+                    }
+                    CompareOp::Lt => {
+                        "SELECT id FROM blocks WHERE due_date < ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+                    }
+                    CompareOp::Lte => {
+                        "SELECT id FROM blocks WHERE due_date <= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+                    }
+                    CompareOp::Gt => {
+                        "SELECT id FROM blocks WHERE due_date > ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+                    }
+                    CompareOp::Gte => {
+                        "SELECT id FROM blocks WHERE due_date >= ? AND due_date IS NOT NULL AND deleted_at IS NULL"
+                    }
                     CompareOp::Contains | CompareOp::StartsWith => {
                         return Err(AppError::Validation(format!(
                             "DueDate filter does not support {op:?} operator"

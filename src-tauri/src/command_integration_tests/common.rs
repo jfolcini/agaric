@@ -1,8 +1,8 @@
 //! Shared helpers for command integration tests.
 
 pub use crate::commands::*;
-pub use crate::db::init_pool;
 pub use crate::db::ReadPool;
+pub use crate::db::init_pool;
 pub use crate::error::AppError;
 pub use crate::materializer::Materializer;
 pub use crate::space::{SpaceId, SpaceScope};

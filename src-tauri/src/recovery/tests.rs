@@ -532,9 +532,11 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
     let report = recover_at_boot_test(&pool, device_id).await.unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1);
-    assert!(report
-        .drafts_recovered
-        .contains(&"block-unflushed".to_owned()));
+    assert!(
+        report
+            .drafts_recovered
+            .contains(&"block-unflushed".to_owned())
+    );
     assert_eq!(report.drafts_already_flushed, 1);
 
     // All drafts should be deleted

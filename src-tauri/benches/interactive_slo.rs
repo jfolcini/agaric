@@ -48,7 +48,7 @@
 //! `attachment_bench.rs`, `property_bench.rs`) and avoids depending on
 //! Criterion's filesystem layout.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
     batch_resolve_inner, count_agenda_batch_inner, count_backlinks_batch_inner, create_block_inner,

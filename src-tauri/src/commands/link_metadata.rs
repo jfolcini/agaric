@@ -23,10 +23,10 @@ pub async fn fetch_link_metadata_inner(
 ) -> Result<LinkMetadata, AppError> {
     // Check cache first — return if fresh (< 7 days). Read-only path:
     // never touches the write pool on a cache hit.
-    if let Some(cached) = link_metadata::get_cached(read_pool, &url).await? {
-        if !is_stale(cached.fetched_at, 7) {
-            return Ok(cached);
-        }
+    if let Some(cached) = link_metadata::get_cached(read_pool, &url).await?
+        && !is_stale(cached.fetched_at, 7)
+    {
+        return Ok(cached);
     }
     // Cache miss or stale — fetch from network (no DB usage), then
     // acquire the write pool *only* for the upsert.
@@ -93,7 +93,7 @@ pub async fn get_link_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{init_pool, init_pools, DbPools};
+    use crate::db::{DbPools, init_pool, init_pools};
     use crate::link_metadata::{self, LinkMetadata};
     use sqlx::SqlitePool;
     use tempfile::TempDir;

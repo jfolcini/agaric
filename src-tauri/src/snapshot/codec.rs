@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::io::Read;
 use std::rc::Rc;
 
-use super::types::{SnapshotData, SCHEMA_VERSION};
+use super::types::{SCHEMA_VERSION, SnapshotData};
 use crate::error::AppError;
 
 // ---------------------------------------------------------------------------

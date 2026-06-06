@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::pagination;
 use crate::pagination::ActiveBlockRow;
-use crate::ulid::{verify_active, ActiveBlockId, BlockId};
+use crate::ulid::{ActiveBlockId, BlockId, verify_active};
 
 use super::sanitize_internal_error;
 use super::*;
@@ -64,7 +64,7 @@ fn emit_property_changed_event(
     block_id: String,
     changed_keys: Vec<String>,
 ) {
-    use crate::sync_events::{PropertyChangedEvent, EVENT_PROPERTY_CHANGED};
+    use crate::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
     use tauri::Emitter;
     if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
@@ -205,12 +205,12 @@ pub async fn set_todo_state_inner(
     block_id: ActiveBlockId,
     state: Option<String>,
 ) -> Result<ActiveBlockRow, AppError> {
-    if let Some(ref s) = state {
-        if s.is_empty() || s.len() > 50 {
-            return Err(AppError::Validation(
-                "Todo state must be 1-50 characters".into(),
-            ));
-        }
+    if let Some(ref s) = state
+        && (s.is_empty() || s.len() > 50)
+    {
+        return Err(AppError::Validation(
+            "Todo state must be 1-50 characters".into(),
+        ));
     }
 
     // H-4: open one IMMEDIATE tx covering every write below — the
@@ -439,12 +439,12 @@ pub async fn set_todo_state_batch_inner(
             block_ids.len()
         )));
     }
-    if let Some(ref s) = state {
-        if s.is_empty() || s.len() > 50 {
-            return Err(AppError::Validation(
-                "Todo state must be 1-50 characters".into(),
-            ));
-        }
+    if let Some(ref s) = state
+        && (s.is_empty() || s.len() > 50)
+    {
+        return Err(AppError::Validation(
+            "Todo state must be 1-50 characters".into(),
+        ));
     }
 
     // I-CommandsCRUD-2 / AGENTS.md invariant #8 — `BlockId` normalises to
@@ -568,12 +568,12 @@ pub async fn set_priority_inner(
     block_id: ActiveBlockId,
     level: Option<String>,
 ) -> Result<ActiveBlockRow, AppError> {
-    if let Some(ref l) = level {
-        if l.is_empty() || l.len() > 50 {
-            return Err(AppError::Validation(
-                "priority must be 1-50 characters".into(),
-            ));
-        }
+    if let Some(ref l) = level
+        && (l.is_empty() || l.len() > 50)
+    {
+        return Err(AppError::Validation(
+            "priority must be 1-50 characters".into(),
+        ));
     }
 
     // M-97: open the CommandTx before the property_definitions read so
@@ -646,12 +646,12 @@ pub async fn set_due_date_inner(
     block_id: ActiveBlockId,
     date: Option<String>,
 ) -> Result<ActiveBlockRow, AppError> {
-    if let Some(ref d) = date {
-        if !is_valid_iso_date(d) {
-            return Err(AppError::Validation(format!(
-                "due_date must be YYYY-MM-DD format, got '{d}'"
-            )));
-        }
+    if let Some(ref d) = date
+        && !is_valid_iso_date(d)
+    {
+        return Err(AppError::Validation(format!(
+            "due_date must be YYYY-MM-DD format, got '{d}'"
+        )));
     }
     set_property_inner(
         pool,
@@ -681,12 +681,12 @@ pub async fn set_scheduled_date_inner(
     block_id: ActiveBlockId,
     date: Option<String>,
 ) -> Result<ActiveBlockRow, AppError> {
-    if let Some(ref d) = date {
-        if !is_valid_iso_date(d) {
-            return Err(AppError::Validation(format!(
-                "scheduled_date must be YYYY-MM-DD format, got '{d}'"
-            )));
-        }
+    if let Some(ref d) = date
+        && !is_valid_iso_date(d)
+    {
+        return Err(AppError::Validation(format!(
+            "scheduled_date must be YYYY-MM-DD format, got '{d}'"
+        )));
     }
     set_property_inner(
         pool,
@@ -828,7 +828,7 @@ pub async fn create_property_def_inner(
             None => {
                 return Err(AppError::Validation(
                     "select-type definitions require an options array".into(),
-                ))
+                ));
             }
             Some(opts) => {
                 let parsed: Vec<String> = serde_json::from_str(opts).map_err(|_| {

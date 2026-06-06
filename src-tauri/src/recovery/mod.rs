@@ -41,7 +41,7 @@ mod tests;
 pub use boot::recover_at_boot;
 pub use cache_refresh::refresh_caches_for_recovered_drafts;
 pub use draft_recovery::find_prev_edit;
-pub use replay::{replay_unmaterialized_ops, ReplayReport};
+pub use replay::{ReplayReport, replay_unmaterialized_ops};
 
 // L-103 test wrapper: re-export the once-only-guard reset for in-crate
 // test code (`integration_tests.rs`) so multi-test runs aren't poisoned

@@ -38,7 +38,7 @@
 use crate::cache::{TAG_REF_RE, ULID_LINK_RE};
 use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
-use crate::space::{resolve_block_space, SpaceId};
+use crate::space::{SpaceId, resolve_block_space};
 use crate::ulid::BlockId;
 use std::collections::HashMap;
 
@@ -145,16 +145,16 @@ pub async fn validate_content_cross_space_refs(
     let target_spaces = resolve_block_spaces_batch(&mut *conn, &targets).await?;
     for target_str in targets {
         // Only a target assigned to a DIFFERENT space is a violation.
-        if let Some(target_space) = target_spaces.get(target_str) {
-            if *target_space != source_space {
-                return Err(AppError::Validation(format!(
-                    "cross-space reference: block '{}' (space {}) references '{}' (space {})",
-                    source_block_id.as_str(),
-                    source_space.as_str(),
-                    target_str,
-                    target_space.as_str(),
-                )));
-            }
+        if let Some(target_space) = target_spaces.get(target_str)
+            && *target_space != source_space
+        {
+            return Err(AppError::Validation(format!(
+                "cross-space reference: block '{}' (space {}) references '{}' (space {})",
+                source_block_id.as_str(),
+                source_space.as_str(),
+                target_str,
+                target_space.as_str(),
+            )));
         }
     }
 
@@ -198,17 +198,17 @@ pub async fn validate_ref_property_cross_space(
     let target_space = resolve_block_space(&mut *conn, &target_id).await?;
 
     // Tolerate an orphan target; only a different assigned space violates.
-    if let Some(target_space) = target_space {
-        if target_space != source_space {
-            return Err(AppError::Validation(format!(
-                "cross-space ref property: '{}' target '{}' (space {}) differs from source '{}' (space {})",
-                property_key,
-                target_str,
-                target_space.as_str(),
-                source_block_id.as_str(),
-                source_space.as_str(),
-            )));
-        }
+    if let Some(target_space) = target_space
+        && target_space != source_space
+    {
+        return Err(AppError::Validation(format!(
+            "cross-space ref property: '{}' target '{}' (space {}) differs from source '{}' (space {})",
+            property_key,
+            target_str,
+            target_space.as_str(),
+            source_block_id.as_str(),
+            source_space.as_str(),
+        )));
     }
 
     Ok(())

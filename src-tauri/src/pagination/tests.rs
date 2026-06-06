@@ -4442,8 +4442,8 @@ async fn list_trash_filters_by_space() {
 mod tests_p8 {
     use super::super::*;
     use super::{
-        assign_to_space, insert_block, insert_op_log_entry, insert_space_block, test_pool,
-        SPACE_A_ID, SPACE_B_ID,
+        SPACE_A_ID, SPACE_B_ID, assign_to_space, insert_block, insert_op_log_entry,
+        insert_space_block, test_pool,
     };
     use sqlx::SqlitePool;
 
@@ -4628,8 +4628,8 @@ mod tests_p8 {
 
 mod tests_p7 {
     use super::{
-        assign_to_space, insert_block, insert_block_with_page_id, insert_space_block, test_pool,
-        SPACE_A_ID, SPACE_B_ID,
+        SPACE_A_ID, SPACE_B_ID, assign_to_space, insert_block, insert_block_with_page_id,
+        insert_space_block, test_pool,
     };
     use crate::commands::{batch_resolve_inner, get_page_inner};
     use crate::error::AppError;

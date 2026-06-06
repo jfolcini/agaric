@@ -4,8 +4,8 @@ use super::coordinator::Materializer;
 use super::{CreateBlockHint, MaterializeTask};
 use crate::error::AppError;
 use crate::op_log::OpRecord;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc;
 
 /// L-1: shared shape of [`Materializer::fg_sender`] /
@@ -665,9 +665,11 @@ mod tests {
             .collect();
         let tasks = inbound_sync_fts_tasks(&changed);
         assert_eq!(tasks.len(), SYNC_FTS_PER_BLOCK_MAX);
-        assert!(tasks
-            .iter()
-            .all(|t| matches!(t, MaterializeTask::UpdateFtsBlock { .. })));
+        assert!(
+            tasks
+                .iter()
+                .all(|t| matches!(t, MaterializeTask::UpdateFtsBlock { .. }))
+        );
     }
 
     /// Above the threshold (snapshot/boot re-sync) a SINGLE full

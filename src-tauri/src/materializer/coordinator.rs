@@ -3,7 +3,7 @@
 use super::consumer;
 use super::metrics::{QueueMetrics, StatusInfo};
 use super::{
-    MaterializeTask, BACKGROUND_CAPACITY, FOREGROUND_CAPACITY, QUEUE_PRESSURE_DENOMINATOR,
+    BACKGROUND_CAPACITY, FOREGROUND_CAPACITY, MaterializeTask, QUEUE_PRESSURE_DENOMINATOR,
     QUEUE_PRESSURE_NUMERATOR,
 };
 use crate::error::AppError;
@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinSet;
 
 /// #385: minimum interval between `SELECT COUNT(*) FROM op_log` refreshes
@@ -392,10 +392,10 @@ impl Materializer {
             if s.load(Ordering::Acquire) {
                 break;
             }
-            if let Some(ref l) = lifecycle {
-                if l.is_backgrounded() {
-                    continue;
-                }
+            if let Some(ref l) = lifecycle
+                && l.is_backgrounded()
+            {
+                continue;
             }
             let fg_processed = m.fg_processed.load(Ordering::Relaxed);
             let bg_processed = m.bg_processed.load(Ordering::Relaxed);

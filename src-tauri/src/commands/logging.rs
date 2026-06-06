@@ -178,7 +178,7 @@ mod tests {
             s.push('a');
         }
         s.push('😀'); // 4 bytes
-                      // Pad past the cap.
+        // Pad past the cap.
         for _ in 0..16 {
             s.push('b');
         }

@@ -43,8 +43,8 @@
 //! protocol layer's concern, not this layer's.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use sqlx::SqlitePool;
 use tokio::sync::Notify;
@@ -59,13 +59,13 @@ use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnectio
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 
+use super::SharedEventSink;
 use super::discovery::{
     format_peer_addresses, get_peer_cert_hash, process_discovery_event, resolve_peer_address,
     should_store_cert_hash,
 };
 use super::server::handle_incoming_sync;
 use super::snapshot_transfer;
-use super::SharedEventSink;
 
 // ---------------------------------------------------------------------------
 // daemon_loop — the core async select! loop
@@ -412,10 +412,10 @@ pub(crate) async fn daemon_loop(
 
     // Cleanup
     server.shutdown().await;
-    if let Some(mdns) = mdns {
-        if let Err(e) = mdns.shutdown() {
-            tracing::warn!(error = %e, "mDNS shutdown error");
-        }
+    if let Some(mdns) = mdns
+        && let Err(e) = mdns.shutdown()
+    {
+        tracing::warn!(error = %e, "mDNS shutdown error");
     }
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())
@@ -703,18 +703,16 @@ pub(crate) async fn try_sync_with_peer(
                 tracing::warn!(peer_id, error = %e, "failed to save peer address");
             }
             // TOFU: Store observed cert hash if none was stored (initiator side)
-            if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref()) {
-                if let Some(ref observed) = conn.peer_cert_hash() {
-                    if let Err(e) =
-                        peer_refs::upsert_peer_ref_with_cert(ctx.pool, peer_id, observed).await
-                    {
-                        tracing::warn!(
-                            peer_id,
-                            error = %e,
-                            "failed to store peer cert hash (TOFU)"
-                        );
-                    }
-                }
+            if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref())
+                && let Some(ref observed) = conn.peer_cert_hash()
+                && let Err(e) =
+                    peer_refs::upsert_peer_ref_with_cert(ctx.pool, peer_id, observed).await
+            {
+                tracing::warn!(
+                    peer_id,
+                    error = %e,
+                    "failed to store peer cert hash (TOFU)"
+                );
             }
             let session = orch.session();
             ctx.event_sink.on_sync_event(SyncEvent::Complete {
@@ -915,44 +913,47 @@ pub(crate) async fn run_sync_session(
     // hits "cancel sync" (otherwise the run_sync_session loop's cancel
     // check is dead code once we reach this phase).
     if orch.is_succeeded() {
-        if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(pool).await {
-            // PEND-06 Tier 2 — wire the active sync's event sink into
-            // file transfer so per-frame progress lands on the same
-            // `Channel<SyncProgressUpdate>` that streamed op-sync
-            // transitions. `expected_remote_id` is the device id we
-            // told the orchestrator at session start; the session's
-            // `remote_device_id` is the same value once HeadExchange
-            // populates it.
-            let remote_device_id = orch.expected_remote_id().unwrap_or("").to_string();
-            let progress = crate::sync_files::FileTransferProgress {
-                event_sink,
-                remote_device_id: &remote_device_id,
-            };
-            match crate::sync_files::run_file_transfer_initiator(
-                conn,
-                pool,
-                &app_data_dir,
-                cancel,
-                Some(&progress),
-            )
-            .await
-            {
-                Ok(stats) => {
-                    if stats.files_received > 0 || stats.files_sent > 0 {
-                        tracing::info!(
-                            files_rx = stats.files_received,
-                            files_tx = stats.files_sent,
-                            "initiator file transfer complete"
-                        );
+        match crate::sync_files::app_data_dir_from_pool(pool).await {
+            Ok(app_data_dir) => {
+                // PEND-06 Tier 2 — wire the active sync's event sink into
+                // file transfer so per-frame progress lands on the same
+                // `Channel<SyncProgressUpdate>` that streamed op-sync
+                // transitions. `expected_remote_id` is the device id we
+                // told the orchestrator at session start; the session's
+                // `remote_device_id` is the same value once HeadExchange
+                // populates it.
+                let remote_device_id = orch.expected_remote_id().unwrap_or("").to_string();
+                let progress = crate::sync_files::FileTransferProgress {
+                    event_sink,
+                    remote_device_id: &remote_device_id,
+                };
+                match crate::sync_files::run_file_transfer_initiator(
+                    conn,
+                    pool,
+                    &app_data_dir,
+                    cancel,
+                    Some(&progress),
+                )
+                .await
+                {
+                    Ok(stats) => {
+                        if stats.files_received > 0 || stats.files_sent > 0 {
+                            tracing::info!(
+                                files_rx = stats.files_received,
+                                files_tx = stats.files_sent,
+                                "initiator file transfer complete"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        // File transfer failure should not abort the sync
+                        tracing::warn!(error = %e, "initiator file transfer failed (non-fatal)");
                     }
                 }
-                Err(e) => {
-                    // File transfer failure should not abort the sync
-                    tracing::warn!(error = %e, "initiator file transfer failed (non-fatal)");
-                }
             }
-        } else {
-            tracing::warn!("could not determine app_data_dir, skipping file transfer");
+            _ => {
+                tracing::warn!("could not determine app_data_dir, skipping file transfer");
+            }
         }
     }
 

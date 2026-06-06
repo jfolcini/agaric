@@ -169,7 +169,7 @@ mod tests_m64 {
     use super::*;
     use crate::db::init_pool;
     use crate::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
-    use crate::op_log::{append_local_op_at, OpRecord};
+    use crate::op_log::{OpRecord, append_local_op_at};
     use crate::ulid::BlockId;
     use std::path::PathBuf;
     use tempfile::TempDir;

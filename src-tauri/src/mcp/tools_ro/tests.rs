@@ -2342,7 +2342,7 @@ async fn snapshot_journal_for_date_response_shape() {
 /// `mcp::server::tests::handle_tools_call_multi_op_tool_*`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_pages_does_not_populate_last_append() {
-    use crate::task_locals::{take_appends, LAST_APPEND};
+    use crate::task_locals::{LAST_APPEND, take_appends};
     use std::cell::RefCell;
 
     let (tools, _mat, _dir) = mk_tools().await;

@@ -34,9 +34,9 @@ pub(crate) fn pem_to_der(pem: &str) -> Result<Vec<u8>, AppError> {
 
 #[cfg(test)]
 pub use connection::test_connection_pair;
-pub use connection::{connect_to_peer, SyncConnection};
-pub use tls::{generate_self_signed_cert, SyncCert};
+pub use connection::{SyncConnection, connect_to_peer};
+pub use tls::{SyncCert, generate_self_signed_cert};
 pub use websocket::{
-    parse_service_event, DiscoveredPeer, MdnsService, ServiceEventKind, SyncServer,
-    MDNS_BROWSE_TIMEOUT, MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE,
+    DiscoveredPeer, MDNS_BROWSE_TIMEOUT, MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE, MdnsService,
+    ServiceEventKind, SyncServer, parse_service_event,
 };

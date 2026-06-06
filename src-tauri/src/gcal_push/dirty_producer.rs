@@ -835,12 +835,14 @@ mod tests {
             missing: true,
             ..BlockDateSnapshot::default()
         };
-        assert!(compute_dirty_event(
-            &set_property("due_date", Some("2026-04-25"), None),
-            &prior,
-            today()
-        )
-        .is_none());
+        assert!(
+            compute_dirty_event(
+                &set_property("due_date", Some("2026-04-25"), None),
+                &prior,
+                today()
+            )
+            .is_none()
+        );
         assert!(compute_dirty_event(&delete_property("due_date"), &prior, today()).is_none());
         assert!(compute_dirty_event(&edit_block(), &prior, today()).is_none());
         assert!(compute_dirty_event(&delete_block(), &prior, today()).is_none());

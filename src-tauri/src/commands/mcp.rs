@@ -32,8 +32,8 @@ use specta::Type;
 use super::sanitize_internal_error;
 use crate::error::AppError;
 use crate::mcp::{
-    self, default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
-    McpLifecycle, McpRwLifecycle, MCP_RO_ENABLED_MARKER, MCP_RW_ENABLED_MARKER,
+    self, MCP_RO_ENABLED_MARKER, MCP_RW_ENABLED_MARKER, McpLifecycle, McpRwLifecycle,
+    default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
 };
 
 // ---------------------------------------------------------------------------

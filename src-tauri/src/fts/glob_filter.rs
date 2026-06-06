@@ -116,12 +116,12 @@ fn validate(input: &str) -> Result<(), AppError> {
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                if matches!(next, '{' | '}' | '[' | ']') {
-                    return Err(AppError::Validation(
-                        "InvalidGlob: escapes not supported".into(),
-                    ));
-                }
+            if let Some(&next) = chars.peek()
+                && matches!(next, '{' | '}' | '[' | ']')
+            {
+                return Err(AppError::Validation(
+                    "InvalidGlob: escapes not supported".into(),
+                ));
             }
             continue;
         }

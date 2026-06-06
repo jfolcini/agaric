@@ -491,7 +491,7 @@ fn install_crypto_provider() {
 
 /// Set up a TLS server/client pair and return both connections + server handle.
 async fn setup_tls_pair() -> (SyncConnection, SyncConnection, crate::sync_net::SyncServer) {
-    use crate::sync_net::{connect_to_peer, generate_self_signed_cert, SyncServer};
+    use crate::sync_net::{SyncServer, connect_to_peer, generate_self_signed_cert};
 
     install_crypto_provider();
     let server_cert = generate_self_signed_cert("responder").unwrap();

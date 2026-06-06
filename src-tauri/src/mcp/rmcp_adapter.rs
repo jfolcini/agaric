@@ -46,9 +46,9 @@ use serde_json::Value;
 use ulid::Ulid;
 
 use super::activity::{
-    emit_tool_completion, ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent,
+    ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent, emit_tool_completion,
 };
-use super::actor::{Actor, ActorContext, ACTOR};
+use super::actor::{ACTOR, Actor, ActorContext};
 use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
 use crate::error::AppError;
@@ -278,7 +278,7 @@ mod tests {
         model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation},
         service::ServiceExt,
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     /// Build a `ClientInfo` with a custom `clientInfo.name` so the
     /// adapter's `peer_info().client_info.name` is observable in
@@ -295,9 +295,9 @@ mod tests {
     use super::*;
     use crate::error::AppError;
     use crate::mcp::activity::{
-        ActivityContext, ActivityRing, RecordingEmitter, MCP_ACTIVITY_EVENT,
+        ActivityContext, ActivityRing, MCP_ACTIVITY_EVENT, RecordingEmitter,
     };
-    use crate::mcp::actor::{current_actor, Actor};
+    use crate::mcp::actor::{Actor, current_actor};
     use crate::mcp::registry::{ToolDescription, ToolRegistry};
 
     /// Minimal in-memory registry. Records the actor observed inside

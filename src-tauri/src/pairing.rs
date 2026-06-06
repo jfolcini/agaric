@@ -277,24 +277,24 @@ pub fn verify_device_exchange(
         }
     };
 
-    if let Some(expected) = expected_peer_id {
-        if device_id != expected {
-            return Err(crate::error::AppError::InvalidOperation(format!(
-                "device ID mismatch: expected {expected}, got {device_id}"
-            )));
-        }
+    if let Some(expected) = expected_peer_id
+        && device_id != expected
+    {
+        return Err(crate::error::AppError::InvalidOperation(format!(
+            "device ID mismatch: expected {expected}, got {device_id}"
+        )));
     }
 
     // H-1: passphrase comparison. AGENTS.md threat model treats sync
     // peers as the user's own devices, so a constant-time compare is
     // not required — a wrong passphrase is the user mistyping or
     // scanning the wrong QR, not an adversary probing timing.
-    if let Some(expected_pass) = expected_passphrase {
-        if msg_passphrase != expected_pass {
-            return Err(crate::error::AppError::Validation(
-                "pairing.passphrase.mismatch".into(),
-            ));
-        }
+    if let Some(expected_pass) = expected_passphrase
+        && msg_passphrase != expected_pass
+    {
+        return Err(crate::error::AppError::Validation(
+            "pairing.passphrase.mismatch".into(),
+        ));
     }
 
     Ok((device_id, cert_hash))

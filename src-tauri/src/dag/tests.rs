@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::{init_pool, ReadPool};
+use crate::db::{ReadPool, init_pool};
 use crate::hash::compute_op_hash;
 use crate::op_log::append_local_op_at;
 use crate::ulid::BlockId;
@@ -253,10 +253,11 @@ async fn insert_remote_op_rejects_partial_unresolved_parent_seqs() {
 
     let err = insert_remote_op(&pool, &record).await;
     assert!(err.is_err(), "partial-unresolved must reject");
-    assert!(err
-        .unwrap_err()
-        .to_string()
-        .contains("dag.parent_seqs.unresolved"));
+    assert!(
+        err.unwrap_err()
+            .to_string()
+            .contains("dag.parent_seqs.unresolved")
+    );
 }
 
 /// Issue #112 sub-item 3: the batched existence check (one query via

@@ -201,7 +201,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
         (
             table: $table:literal,
             columns: [$($col:literal),+ $(,)?],
-            rows: $rows:expr,
+            rows: $rows:expr_2021,
             bind: |$query:ident, $row:ident| $bind:block $(,)?
         ) => {{
             const COLUMNS: &[&str] = &[$($col),+];

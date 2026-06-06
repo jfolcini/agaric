@@ -15,8 +15,8 @@ use crate::error::AppError;
 use crate::hash::{compute_op_hash, verify_op_hash};
 use crate::op::*;
 use crate::op_log::{
-    extract_attachment_id_from_payload, extract_block_id_from_payload, get_op_by_seq,
-    serialize_inner_payload, OpRecord,
+    OpRecord, extract_attachment_id_from_payload, extract_block_id_from_payload, get_op_by_seq,
+    serialize_inner_payload,
 };
 
 /// M-4: hard cap on the number of `prev_edit` chain steps `find_lca` will

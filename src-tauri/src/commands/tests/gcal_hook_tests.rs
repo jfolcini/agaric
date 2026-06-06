@@ -12,7 +12,7 @@ use crate::gcal_push::connector::{DirtyEvent, GcalConnectorHandle};
 use crate::materializer::Materializer;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 
 // ---------------------------------------------------------------------------
 // Helpers

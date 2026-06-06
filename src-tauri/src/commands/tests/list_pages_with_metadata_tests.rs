@@ -9,12 +9,12 @@
 use sqlx::SqlitePool;
 
 use crate::commands::pages::{
-    compose_list_pages_with_metadata_sql, list_pages_with_metadata_inner,
     ListPagesWithMetadataFilter, PageSort, PageWithMetadataRow,
+    compose_list_pages_with_metadata_sql, list_pages_with_metadata_inner,
 };
 use crate::commands::tests::common::{
-    assign_to_space, ensure_test_space, ensure_test_space_b, insert_block, test_pool,
-    TEST_SPACE_B_ID, TEST_SPACE_ID,
+    TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
+    insert_block, test_pool,
 };
 use crate::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
@@ -774,8 +774,8 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     // A cursor lacking the position-slot discriminator (e.g. one
     // emitted by `list_blocks` or a pre-PEND-56 client) must be
     // rejected with RequiresRefresh.
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let legacy_json = r#"{"id":"01PAGE000000000000000000A1"}"#;
     let legacy_cursor = URL_SAFE_NO_PAD.encode(legacy_json);
     let err = list_pages_with_metadata_inner(

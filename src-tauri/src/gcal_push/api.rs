@@ -670,10 +670,10 @@ fn classify_error(
 /// cheaper to maintain than handling the rare date-form edge case.
 fn retry_after_from_headers(headers: &[(String, String)]) -> u64 {
     for (name, value) in headers {
-        if name.eq_ignore_ascii_case("retry-after") {
-            if let Ok(secs) = value.trim().parse::<u64>() {
-                return secs.saturating_mul(1000);
-            }
+        if name.eq_ignore_ascii_case("retry-after")
+            && let Ok(secs) = value.trim().parse::<u64>()
+        {
+            return secs.saturating_mul(1000);
         }
     }
     DEFAULT_RETRY_AFTER_MS
@@ -823,7 +823,7 @@ mod tests {
     use super::*;
     use chrono::{Duration as ChronoDuration, Utc};
     use secrecy::SecretString;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
     use wiremock::matchers::{body_string_contains, header, method, path};

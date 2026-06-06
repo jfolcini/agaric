@@ -406,8 +406,8 @@ mod tests_m83 {
 
     #[cfg(windows)]
     mod tests_m83_windows {
-        use crate::mcp::server::{serve, PlaceholderRegistry};
-        use crate::mcp::{McpLifecycle, SocketKind, MCP_RO_PIPE_PATH, MCP_RW_PIPE_PATH};
+        use crate::mcp::server::{PlaceholderRegistry, serve};
+        use crate::mcp::{MCP_RO_PIPE_PATH, MCP_RW_PIPE_PATH, McpLifecycle, SocketKind};
         use std::sync::Arc;
         use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 

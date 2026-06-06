@@ -3,7 +3,7 @@
 //! the conditional-write optimisation in `save_draft_if_changed`.
 
 use super::*;
-use crate::db::{init_pool, ReadPool};
+use crate::db::{ReadPool, init_pool};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -636,8 +636,8 @@ async fn sweep_orphan_drafts_no_op_on_empty_table() {
 /// the task is spawned, then sets the shutdown flag so the loop exits.
 #[tokio::test]
 async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let (pool, _dir) = test_pool().await;
 

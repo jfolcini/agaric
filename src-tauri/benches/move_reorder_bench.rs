@@ -6,7 +6,7 @@
 //! The command uses transactions with cycle detection CTEs and sibling
 //! position shifts, making it non-trivial under load.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::move_block_inner;
 use agaric_lib::db::init_pool;

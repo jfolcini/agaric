@@ -3,10 +3,10 @@
 //!   - `list_property_keys`   — distinct property key listing
 //!   - `query_backlinks_filtered_inner` — Tauri command wrapper
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
 use agaric_lib::backlink::{
-    eval_backlink_query, list_property_keys, BacklinkFilter, BacklinkSort, CompareOp, SortDir,
+    BacklinkFilter, BacklinkSort, CompareOp, SortDir, eval_backlink_query, list_property_keys,
 };
 use agaric_lib::commands::{count_backlinks_batch_inner, list_unlinked_references_inner};
 use agaric_lib::db::init_pool;

@@ -28,24 +28,23 @@ pub(crate) fn verify_peer_cert(
     stored_hash: Option<&str>,
 ) -> CertVerifyResult {
     // B-34: Verify device ID matches TLS certificate CN
-    if let Some(cn) = cert_cn {
-        if cn != remote_id {
-            return CertVerifyResult::CnMismatch {
-                remote_id: remote_id.to_string(),
-                cert_cn: cn.to_string(),
-            };
-        }
+    if let Some(cn) = cert_cn
+        && cn != remote_id
+    {
+        return CertVerifyResult::CnMismatch {
+            remote_id: remote_id.to_string(),
+            cert_cn: cn.to_string(),
+        };
     }
 
     // B-33: Verify TLS certificate hash matches stored cert_hash
-    if let Some(stored) = stored_hash {
-        if let Some(observed) = observed_hash {
-            if stored != observed {
-                return CertVerifyResult::HashMismatch {
-                    remote_id: remote_id.to_string(),
-                };
-            }
-        }
+    if let Some(stored) = stored_hash
+        && let Some(observed) = observed_hash
+        && stored != observed
+    {
+        return CertVerifyResult::HashMismatch {
+            remote_id: remote_id.to_string(),
+        };
     }
 
     CertVerifyResult::Ok
@@ -176,19 +175,16 @@ pub(crate) async fn handle_incoming_sync(
             CertVerifyResult::Ok => {
                 // TOFU: Store cert hash on first authenticated connection
                 // (trust-on-first-use, same model as SSH known_hosts)
-                if stored_hash.is_none() {
-                    if let Some(ref observed) = conn.peer_cert_hash() {
-                        if let Err(e) =
-                            peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed)
-                                .await
-                        {
-                            tracing::warn!(
-                                peer_id = %remote_id,
-                                error = %e,
-                                "failed to store peer cert hash (TOFU)"
-                            );
-                        }
-                    }
+                if stored_hash.is_none()
+                    && let Some(ref observed) = conn.peer_cert_hash()
+                    && let Err(e) =
+                        peer_refs::upsert_peer_ref_with_cert(&pool_ref, &remote_id, observed).await
+                {
+                    tracing::warn!(
+                        peer_id = %remote_id,
+                        error = %e,
+                        "failed to store peer cert hash (TOFU)"
+                    );
                 }
             }
             CertVerifyResult::CnMismatch {
@@ -332,41 +328,44 @@ pub(crate) async fn handle_incoming_sync(
     // *is* threaded through to `run_file_transfer_initiator`.
     let responder_cancel = std::sync::atomic::AtomicBool::new(false);
     if orch.is_succeeded() {
-        if let Ok(app_data_dir) = crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
-            // PEND-06 Tier 2 — pass `None`: the responder is the
-            // *incoming* side of a sync session, so no `start_sync`
-            // command on this device has set up a `Channel` for file
-            // progress. The active `Channel` lives on the initiator's
-            // device; emitting `FileProgress` here would just drop on
-            // the floor in `TauriEventSink`. Surfacing responder-side
-            // file-receive progress to the local UI is a follow-up
-            // (would need a new `app.emit` event or a daemon-owned
-            // long-lived channel).
-            match crate::sync_files::run_file_transfer_responder(
-                &mut conn,
-                &pool_ref,
-                &app_data_dir,
-                &responder_cancel,
-                None,
-            )
-            .await
-            {
-                Ok(stats) => {
-                    if stats.files_received > 0 || stats.files_sent > 0 {
-                        tracing::info!(
-                            files_rx = stats.files_received,
-                            files_tx = stats.files_sent,
-                            "responder file transfer complete"
-                        );
+        match crate::sync_files::app_data_dir_from_pool(&pool_ref).await {
+            Ok(app_data_dir) => {
+                // PEND-06 Tier 2 — pass `None`: the responder is the
+                // *incoming* side of a sync session, so no `start_sync`
+                // command on this device has set up a `Channel` for file
+                // progress. The active `Channel` lives on the initiator's
+                // device; emitting `FileProgress` here would just drop on
+                // the floor in `TauriEventSink`. Surfacing responder-side
+                // file-receive progress to the local UI is a follow-up
+                // (would need a new `app.emit` event or a daemon-owned
+                // long-lived channel).
+                match crate::sync_files::run_file_transfer_responder(
+                    &mut conn,
+                    &pool_ref,
+                    &app_data_dir,
+                    &responder_cancel,
+                    None,
+                )
+                .await
+                {
+                    Ok(stats) => {
+                        if stats.files_received > 0 || stats.files_sent > 0 {
+                            tracing::info!(
+                                files_rx = stats.files_received,
+                                files_tx = stats.files_sent,
+                                "responder file transfer complete"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        // File transfer failure should not abort the sync
+                        tracing::warn!(error = %e, "responder file transfer failed (non-fatal)");
                     }
                 }
-                Err(e) => {
-                    // File transfer failure should not abort the sync
-                    tracing::warn!(error = %e, "responder file transfer failed (non-fatal)");
-                }
             }
-        } else {
-            tracing::warn!("could not determine app_data_dir, skipping file transfer");
+            _ => {
+                tracing::warn!("could not determine app_data_dir, skipping file transfer");
+            }
         }
     }
 

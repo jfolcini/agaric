@@ -8,9 +8,9 @@ use crate::draft::{delete_draft, get_all_drafts};
 use crate::error::AppError;
 use crate::materializer::Materializer;
 
+use super::RecoveryReport;
 use super::draft_recovery::recover_single_draft;
 use super::replay::{heal_orphaned_apply_cursor, replay_unmaterialized_ops};
-use super::RecoveryReport;
 
 // ---------------------------------------------------------------------------
 // L-103: once-only guard

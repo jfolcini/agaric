@@ -19,8 +19,8 @@
 //! Cross-platform (not gated on `target_os = "android"`) because the same
 //! mechanism applies to iOS / backgrounded desktop use.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::Notify;
 

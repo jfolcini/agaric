@@ -1,8 +1,8 @@
 use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::op::{
-    validate_set_property, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
-    EditBlockPayload, PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
+    CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
+    PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload, validate_set_property,
 };
 use std::sync::Arc;
 
@@ -30,10 +30,10 @@ use crate::space::SpaceScope;
 /// that nullify a column — stay inline; trying to capture their shapes
 /// in this macro would obscure intent without saving lines.
 macro_rules! purge_descendants_table {
-    ($tx:expr, $block_id:expr, $table:literal $(,)?) => {
+    ($tx:expr_2021, $block_id:expr_2021, $table:literal $(,)?) => {
         purge_descendants_table!($tx, $block_id, $table, "block_id")
     };
-    ($tx:expr, $block_id:expr, $table:literal, $col:literal $(,)?) => {
+    ($tx:expr_2021, $block_id:expr_2021, $table:literal, $col:literal $(,)?) => {
         sqlx::query(concat!(
             $crate::descendants_cte_purge!(),
             "DELETE FROM ",
@@ -233,14 +233,14 @@ pub(crate) async fn create_block_in_tx(
         Some(block_id.as_str().to_string())
     } else if let Some(ref pid) = parent_id {
         // Look up parent's page_id. If parent is a page, use parent's id.
-        let parent_page = sqlx::query_scalar!(
+
+        sqlx::query_scalar!(
             "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?",
             pid
         )
         .fetch_optional(&mut **tx)
         .await?
-        .flatten();
-        parent_page
+        .flatten()
     } else {
         None
     };
@@ -288,11 +288,11 @@ pub(crate) async fn create_block_in_tx(
     // `RebuildPagesCache` task, so this recompute is a no-op for it (the
     // row doesn't exist yet in-tx) — exactly as on the ApplyOp path, where
     // page creates rely on the rebuild for their row.
-    if block_type != "page" {
-        if let Some(owning_page) = page_id.clone() {
-            crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &[owning_page])
-                .await?;
-        }
+    if block_type != "page"
+        && let Some(owning_page) = page_id.clone()
+    {
+        crate::materializer::recompute_pages_cache_counts_for_pages(&mut *tx, &[owning_page])
+            .await?;
     }
 
     // Return block + op record; caller is responsible for commit + dispatch.
@@ -1307,13 +1307,13 @@ pub async fn restore_block_inner(
             )));
         }
         Some(ref r) => {
-            if let Some(ref actual_deleted_at) = r.deleted_at {
-                if *actual_deleted_at != deleted_at_ref {
-                    return Err(AppError::InvalidOperation(format!(
-                        "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
-                        deleted_at_ref, actual_deleted_at
-                    )));
-                }
+            if let Some(ref actual_deleted_at) = r.deleted_at
+                && *actual_deleted_at != deleted_at_ref
+            {
+                return Err(AppError::InvalidOperation(format!(
+                    "block '{block_id}' deleted_at mismatch: expected '{}', got '{}'",
+                    deleted_at_ref, actual_deleted_at
+                )));
             }
         }
     }
@@ -2668,13 +2668,13 @@ fn validate_property_value(
     validate_set_property(payload)?;
 
     // 2. ISO-date format check on `value_date`.
-    if let Some(ref date_str) = payload.value_date {
-        if !is_valid_iso_date(date_str) {
-            return Err(AppError::Validation(format!(
-                "Invalid date format: '{}'. Expected YYYY-MM-DD.",
-                date_str
-            )));
-        }
+    if let Some(ref date_str) = payload.value_date
+        && !is_valid_iso_date(date_str)
+    {
+        return Err(AppError::Validation(format!(
+            "Invalid date format: '{}'. Expected YYYY-MM-DD.",
+            date_str
+        )));
     }
 
     // "Clear" calls (all-null) are only valid for reserved keys —
@@ -2752,23 +2752,22 @@ fn validate_property_value(
         // options. A NULL options column means "no restriction" — a
         // select-type definition without options is treated permissively
         // so custom keys stay flexible.
-        if expected_type == "select" {
-            if let Some(opts_json) = options_json {
-                if let Some(ref actual) = payload.value_text {
-                    let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
-                        AppError::Validation(format!(
-                            "Property '{}' has malformed options JSON: {e}",
-                            payload.key
-                        ))
-                    })?;
-                    if !allowed.iter().any(|a| a == actual) {
-                        return Err(AppError::Validation(format!(
-                            "Property '{}' value '{actual}' is not in allowed options: {}",
-                            payload.key,
-                            allowed.join(", ")
-                        )));
-                    }
-                }
+        if expected_type == "select"
+            && let Some(opts_json) = options_json
+            && let Some(ref actual) = payload.value_text
+        {
+            let allowed: Vec<String> = serde_json::from_str(opts_json).map_err(|e| {
+                AppError::Validation(format!(
+                    "Property '{}' has malformed options JSON: {e}",
+                    payload.key
+                ))
+            })?;
+            if !allowed.iter().any(|a| a == actual) {
+                return Err(AppError::Validation(format!(
+                    "Property '{}' value '{actual}' is not in allowed options: {}",
+                    payload.key,
+                    allowed.join(", ")
+                )));
             }
         }
     }

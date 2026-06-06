@@ -493,10 +493,10 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
             // Cursor predicate: keep only entries strictly AFTER the
             // cursor's (date, id). Mirrors the cache path's
             // `?cursor_date < projected_date OR (= AND ?cursor_id < block_id)`.
-            if let Some((cd, ci)) = cursor_key {
-                if (entry.projected_date.as_str(), entry.block.id.as_str()) <= (cd, ci) {
-                    return false;
-                }
+            if let Some((cd, ci)) = cursor_key
+                && (entry.projected_date.as_str(), entry.block.id.as_str()) <= (cd, ci)
+            {
+                return false;
             }
             let key = (
                 entry.projected_date.clone(),

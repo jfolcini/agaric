@@ -30,9 +30,9 @@
 // Test helpers frequently cast small usize loop indices to i64 for SQL binds.
 #![allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
 
-use crate::commands::tests::common::{assign_all_to_test_space, TEST_SPACE_ID};
+use crate::commands::tests::common::{TEST_SPACE_ID, assign_all_to_test_space};
 use crate::commands::*;
-use crate::db::{init_pool, ReadPool};
+use crate::db::{ReadPool, init_pool};
 use crate::draft;
 use crate::hash;
 use crate::materializer::Materializer;
@@ -515,8 +515,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         .unwrap();
     let edit_seq = ops_pre_draft
         .iter()
-        .filter(|o| o.op_type == "edit_block")
-        .last()
+        .rfind(|o| o.op_type == "edit_block")
         .expect("edit_block op must exist after edit_block_inner")
         .seq;
 

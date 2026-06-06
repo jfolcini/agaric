@@ -75,7 +75,7 @@
 use std::time::Instant;
 
 use agaric_lib::db::init_pool;
-use agaric_lib::pagination::{list_children, PageRequest};
+use agaric_lib::pagination::{PageRequest, list_children};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -451,7 +451,9 @@ async fn shape_c(pool: &SqlitePool, block_ids: &[String]) -> std::time::Duration
     }
     let elapsed = start.elapsed();
     let per = elapsed / READ_PROPERTY_COUNT_U32;
-    println!("---- shape (C): SELECT … FROM block_properties WHERE block_id = ? AND key = ? × {READ_PROPERTY_COUNT} ----");
+    println!(
+        "---- shape (C): SELECT … FROM block_properties WHERE block_id = ? AND key = ? × {READ_PROPERTY_COUNT} ----"
+    );
     println!(
         "  total elapsed = {:.3}s   ({:>7.2} µs/read)",
         elapsed.as_secs_f64(),
