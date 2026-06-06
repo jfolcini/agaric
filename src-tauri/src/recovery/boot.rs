@@ -82,6 +82,7 @@ pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
+    registry: &crate::loro::registry::LoroEngineRegistry,
 ) -> Result<RecoveryReport, AppError> {
     // L-103: enforce the once-per-process contract. `compare_exchange`
     // atomically flips `false -> true` on the first call; subsequent
@@ -155,6 +156,31 @@ pub async fn recover_at_boot(
             }
         }
     };
+
+    // -----------------------------------------------------------------
+    // Step 1.6: #535 — replay leftover write-ahead Loro-sync inbox slots.
+    //
+    // `apply_remote` durably writes each inbound message's raw bytes to
+    // `loro_sync_inbox` before importing them, and clears the slot in the
+    // SAME tx as the SQL projection. A crash in that window leaves the
+    // engine (and the periodically-persisted snapshot) ahead of SQL, but
+    // `op_log` never carries remote Loro-only data — so the op-log replay
+    // above cannot reconstruct it. Re-running the import+project for each
+    // leftover slot reconciles SQL and clears the slot. Placed AFTER the
+    // op-log replay and BEFORE the draft loop.
+    //
+    // Failures are non-fatal: `replay_sync_inbox` logs + continues per row
+    // and a hard error here is swallowed so boot still completes (same
+    // "log + continue" philosophy as the op-log replay above).
+    // -----------------------------------------------------------------
+    let sync_inbox_replayed =
+        match super::sync_inbox::replay_sync_inbox(pool, registry, device_id).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "#535 sync-inbox replay failed — continuing boot");
+                0
+            }
+        };
 
     // -----------------------------------------------------------------
     // Step 2: Walk block_drafts and recover unflushed drafts
@@ -246,5 +272,6 @@ pub async fn recover_at_boot(
         ops_replayed: replay_report.ops_replayed,
         ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
         replay_errors: replay_report.replay_errors,
+        sync_inbox_replayed,
     })
 }

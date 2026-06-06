@@ -29,7 +29,11 @@ async fn recover_at_boot_test(
 ) -> Result<RecoveryReport, AppError> {
     super::boot::reset_recovery_guard();
     let materializer = Materializer::new(pool.clone());
-    let result = recover_at_boot(pool, device_id, &materializer).await;
+    // #535: recovery now replays the write-ahead sync inbox into a registry.
+    // A fresh empty registry is fine here — these fixtures don't seed the
+    // inbox, so the replay step is a no-op.
+    let registry = crate::loro::registry::LoroEngineRegistry::new();
+    let result = recover_at_boot(pool, device_id, &materializer, &registry).await;
     materializer.shutdown();
     result
 }
@@ -595,13 +599,14 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
     super::boot::reset_recovery_guard();
 
     let materializer = Materializer::new(pool.clone());
+    let registry = crate::loro::registry::LoroEngineRegistry::new();
 
     // First call: succeeds.
-    let r1 = recover_at_boot(&pool, device_id, &materializer).await;
+    let r1 = recover_at_boot(&pool, device_id, &materializer, &registry).await;
     assert!(r1.is_ok(), "first call must succeed; got {r1:?}");
 
     // Second call without reset: must return InvalidOperation.
-    let r2 = recover_at_boot(&pool, device_id, &materializer).await;
+    let r2 = recover_at_boot(&pool, device_id, &materializer, &registry).await;
     match r2 {
         Err(AppError::InvalidOperation(msg)) => {
             assert!(

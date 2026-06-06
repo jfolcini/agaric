@@ -355,7 +355,14 @@ async fn recovery_on_empty_database_is_noop() {
     // recovery integration tests can run together (matches
     // `recovery::tests::recover_at_boot_test`).
     crate::recovery::reset_recovery_guard();
-    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
+    let report = recovery::recover_at_boot(
+        &pool,
+        DEV,
+        &mat,
+        &crate::loro::registry::LoroEngineRegistry::new(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(report.pending_snapshots_deleted, 0, "no pending snapshots");
     assert!(report.drafts_recovered.is_empty(), "no drafts to recover");
@@ -399,7 +406,14 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
     // recovery integration tests can run together (matches
     // `recovery::tests::recover_at_boot_test`).
     crate::recovery::reset_recovery_guard();
-    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
+    let report = recovery::recover_at_boot(
+        &pool,
+        DEV,
+        &mat,
+        &crate::loro::registry::LoroEngineRegistry::new(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(
         report.drafts_recovered,
@@ -473,7 +487,14 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
     // recovery integration tests can run together (matches
     // `recovery::tests::recover_at_boot_test`).
     crate::recovery::reset_recovery_guard();
-    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
+    let report = recovery::recover_at_boot(
+        &pool,
+        DEV,
+        &mat,
+        &crate::loro::registry::LoroEngineRegistry::new(),
+    )
+    .await
+    .unwrap();
 
     assert!(report.drafts_recovered.is_empty(), "no new recovery needed");
     assert_eq!(
@@ -536,7 +557,14 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
     // recovery integration tests can run together (matches
     // `recovery::tests::recover_at_boot_test`).
     crate::recovery::reset_recovery_guard();
-    let report = recovery::recover_at_boot(&pool, DEV, &mat).await.unwrap();
+    let report = recovery::recover_at_boot(
+        &pool,
+        DEV,
+        &mat,
+        &crate::loro::registry::LoroEngineRegistry::new(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(report.drafts_recovered.len(), 1, "one draft recovered");
     assert_eq!(report.drafts_recovered[0], block.id);

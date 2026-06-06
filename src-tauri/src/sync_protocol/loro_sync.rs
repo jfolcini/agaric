@@ -213,11 +213,6 @@ pub async fn apply_remote(
     device_id: &str,
     message: LoroSyncMessage,
 ) -> Result<ApplyOutcome, AppError> {
-    use crate::loro::projection::{
-        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
-        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
-    };
-
     // Validate protocol version + extract bytes / space_id.  For
     // Update, also gate the import on the MAINT-228 reachability
     // check — if the peer's `from_vv` is unreachable from our local
@@ -270,10 +265,78 @@ pub async fn apply_remote(
         }
     };
 
+    // #535: write-ahead inbox. Durably persist the raw incoming bytes in
+    // their OWN committed tx BEFORE the engine import. If a crash strikes
+    // after the engine import + Loro persist but before the SQL projection
+    // commits (the data-loss window this issue closes), this row survives;
+    // boot recovery (`crate::recovery::replay_sync_inbox`) replays it. The
+    // matching DELETE lives inside the Phase-2 projection tx in
+    // `import_and_project`, so the slot is cleared atomically with the SQL
+    // projection. Re-import on replay is idempotent (Loro import is
+    // idempotent; SQL projections are upserts) and bypasses the
+    // reachability gate, so only `space_id` + raw bytes are stored.
+    //
+    // NOTE: a reachability miss above returns WITHOUT writing the inbox —
+    // no import is attempted there, so there is nothing to replay.
+    // `crate::db::now_ms()` — wall-clock epoch-ms, same helper the rest of
+    // the ms-timestamp schema uses (0079/0082).
+    let created_at = crate::db::now_ms();
+    let space_id_str = space_id.as_str();
+    let inbox_id: i64 = sqlx::query_scalar!(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+         VALUES (?, ?, ?) RETURNING id",
+        space_id_str,
+        bytes,
+        created_at,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let changed_blocks =
+        import_and_project(pool, registry, device_id, &space_id, &bytes, inbox_id).await?;
+
+    // #421: hand the changed-block set to the caller so it can drive a
+    // targeted FTS reindex (per-block `UpdateFtsBlock`) instead of a full
+    // O(vault) rebuild. The set is moved out here (last use).
+    Ok(ApplyOutcome::Imported {
+        space_id,
+        changed_blocks,
+    })
+}
+
+/// Import `bytes` into the per-space engine and project every changed
+/// block into the SQL `blocks` table (+ properties / tags / deleted_at),
+/// clearing the write-ahead inbox slot `inbox_id` atomically with the
+/// projection.
+///
+/// #535: this is the shared import+project core called by both
+/// [`apply_remote`] (after it has durably written the inbox slot) and
+/// boot recovery ([`crate::recovery::replay_sync_inbox`], via
+/// [`replay_inbox_row`]). The Phase-2 tx's `DELETE FROM loro_sync_inbox
+/// WHERE id = ?` makes "slot cleared" and "SQL projected" a single atomic
+/// fact — a crash either leaves the slot present (replay re-runs this) or
+/// gone (projection committed).
+///
+/// Idempotency contract: re-running this with the SAME bytes is safe —
+/// Loro import is idempotent and every SQL projection here is an upsert —
+/// which is exactly what makes boot replay (and a double replay) safe.
+pub(crate) async fn import_and_project(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &SpaceId,
+    bytes: &[u8],
+    inbox_id: i64,
+) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+    use crate::loro::projection::{
+        project_block_full_to_sql, reproject_block_deleted_at_from_engine,
+        reproject_block_properties_from_engine, reproject_block_tags_from_engine,
+    };
+
     // Phase 1 — import bytes into the engine, capture changed blocks.
     let changed_blocks: Vec<crate::ulid::BlockId> = {
-        let mut guard = registry.for_space(&space_id, device_id)?;
-        guard.engine_mut().import_with_changed_blocks(&bytes)?
+        let mut guard = registry.for_space(space_id, device_id)?;
+        guard.engine_mut().import_with_changed_blocks(bytes)?
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -287,7 +350,7 @@ pub async fn apply_remote(
     // Reads stay consistent (one atomic view of the engine); the three SQL
     // passes below still run A→B→C for the FK ordering documented on each.
     let block_states: Vec<_> = {
-        let mut guard = registry.for_space(&space_id, device_id)?;
+        let mut guard = registry.for_space(space_id, device_id)?;
         let engine = guard.engine_mut();
         let mut states = Vec::with_capacity(changed_blocks.len());
         for block_id in &changed_blocks {
@@ -317,7 +380,7 @@ pub async fn apply_remote(
             .map(|r| (r.key, r.value_type))
             .collect();
     for (block_id, (snapshot_opt, props, _, _)) in changed_blocks.iter().zip(&block_states) {
-        project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot_opt.as_ref()).await?;
+        project_block_full_to_sql(&mut tx, space_id, block_id, snapshot_opt.as_ref()).await?;
         // Re-project the block's properties (PEND-76 F1): mirrors remote
         // SetProperty / DeleteProperty changes into `block_properties`.
         reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
@@ -344,6 +407,17 @@ pub async fn apply_remote(
         reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
             .await?;
     }
+
+    // #535: clear the write-ahead inbox slot in the SAME tx as the SQL
+    // projection. This is the atomicity hinge — the slot disappears IFF the
+    // projection commits. On replay, the slot is either still present (this
+    // re-runs) or already gone (projection committed). The DELETE is a no-op
+    // if the row was already removed (e.g. a concurrent replay), which keeps
+    // double-replay safe.
+    sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+        .execute(&mut *tx)
+        .await?;
+
     tx.commit().await?;
 
     // Rebuild the derived `block_tag_inherited` cache (PEND-81 §2A).
@@ -358,13 +432,28 @@ pub async fn apply_remote(
         crate::tag_inheritance::rebuild_all(pool).await?;
     }
 
-    // #421: hand the changed-block set to the caller so it can drive a
-    // targeted FTS reindex (per-block `UpdateFtsBlock`) instead of a full
-    // O(vault) rebuild. The set is moved out here (last use).
-    Ok(ApplyOutcome::Imported {
-        space_id,
-        changed_blocks,
-    })
+    Ok(changed_blocks)
+}
+
+/// Boot-recovery entry point: re-run [`import_and_project`] for a single
+/// leftover write-ahead inbox row `(space_id, bytes, inbox_id)`.
+///
+/// #535: thin `pub(crate)` wrapper so the recovery module doesn't need to
+/// reconstruct a [`SpaceId`] or know the projection internals. Returns the
+/// changed-block set (discarded by the caller — boot recovery does its own
+/// FTS reconciliation). On success the inbox row is deleted (in-tx, by
+/// `import_and_project`); on error the row is left in place so a later boot
+/// can retry.
+pub(crate) async fn replay_inbox_row(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &str,
+    bytes: &[u8],
+    inbox_id: i64,
+) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+    let space = SpaceId::from_trusted(space_id);
+    import_and_project(pool, registry, device_id, &space, bytes, inbox_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1673,5 +1762,152 @@ mod tests {
             inherited.0, 1,
             "child must inherit the parent's tag after apply_remote (rebuild_all ran)"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // #535 — write-ahead inbox durability + boot replay.
+    // -----------------------------------------------------------------
+
+    /// Happy path: a normal `apply_remote` inserts an inbox slot then deletes
+    /// it in the projection tx, so the table is EMPTY after success.
+    #[tokio::test]
+    async fn apply_remote_leaves_inbox_empty_on_success() {
+        let (pool, _dir) = fresh_pool().await;
+
+        let registry_a = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create");
+        }
+        let msg = prepare_outgoing(&registry_a, &space, "device-A", None)
+            .await
+            .expect("prepare");
+
+        let registry_b = LoroEngineRegistry::new();
+        apply_remote(&pool, &registry_b, "device-B", msg)
+            .await
+            .expect("apply_remote");
+
+        let inbox_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(
+            inbox_rows, 0,
+            "inbox slot must be cleared atomically with the projection on success"
+        );
+    }
+
+    /// Crash recovery: simulate the data-loss window — an inbox row whose
+    /// projection never committed — then replay it and assert (a) the block
+    /// is now projected into SQL and (b) the inbox row is gone.
+    #[tokio::test]
+    async fn replay_sync_inbox_projects_leftover_slot_and_clears_it() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Produce valid snapshot bytes from an engine that has a block.
+        let snapshot_bytes: Vec<u8> = {
+            let mut e = LoroEngine::with_peer_id("device-A").expect("engine");
+            e.apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create");
+            e.export_snapshot().expect("export")
+        };
+
+        // Simulate the crash: insert the inbox row but DO NOT project.
+        let created_at = crate::db::now_ms();
+        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+            .bind(space.as_str())
+            .bind(&snapshot_bytes)
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .expect("seed inbox");
+
+        // Boot replay.
+        let registry = LoroEngineRegistry::new();
+        let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+            .await
+            .expect("replay_sync_inbox");
+        assert_eq!(replayed, 1, "exactly one slot must be replayed");
+
+        // (a) the block is now projected into SQL.
+        let content: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("block must be projected after replay");
+        assert_eq!(content.0, "from-A");
+
+        // (b) the inbox row is gone.
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the replayed slot must be cleared");
+    }
+
+    /// Idempotent replay: replaying the same payload twice does not error and
+    /// leaves SQL consistent (one `blocks` row, inbox empty).
+    #[tokio::test]
+    async fn replay_sync_inbox_is_idempotent_across_two_replays() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let snapshot_bytes: Vec<u8> = {
+            let mut e = LoroEngine::with_peer_id("device-A").expect("engine");
+            e.apply_create_block(BLOCK_A, "content", "from-A", None, 0)
+                .expect("create");
+            e.export_snapshot().expect("export")
+        };
+
+        let registry = LoroEngineRegistry::new();
+
+        // First replay cycle.
+        let created_at = crate::db::now_ms();
+        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+            .bind(space.as_str())
+            .bind(&snapshot_bytes)
+            .bind(created_at)
+            .execute(&pool)
+            .await
+            .expect("seed inbox 1");
+        let r1 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+            .await
+            .expect("replay 1");
+        assert_eq!(r1, 1);
+
+        // Second replay cycle with the SAME bytes (re-seeded as if a second
+        // crashed apply landed the identical snapshot). Re-import is idempotent.
+        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+            .bind(space.as_str())
+            .bind(&snapshot_bytes)
+            .bind(crate::db::now_ms())
+            .execute(&pool)
+            .await
+            .expect("seed inbox 2");
+        let r2 = crate::recovery::replay_sync_inbox(&pool, &registry, "device-B")
+            .await
+            .expect("replay 2 must not error");
+        assert_eq!(r2, 1);
+
+        // SQL is consistent: exactly one BLOCK_A row, inbox empty.
+        let block_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+        assert_eq!(
+            block_count, 1,
+            "idempotent replay must not duplicate the block"
+        );
+        let inbox_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(inbox_count, 0, "both slots must be cleared");
     }
 }
