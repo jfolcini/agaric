@@ -152,6 +152,7 @@ export const block: Record<string, string> = {
   'blockTree.repeatLimitedMessage': 'Repeat limited to {{count}} occurrences',
   'blockTree.setRepeatLimitFailed': 'Failed to set repeat limit',
   'blockTree.filePathReadFailed': 'Could not read file path \u2014 use drag & drop instead',
+  'blockTree.attachingFileMessage': 'Attaching "{{filename}}"…',
   'blockTree.attachedFileMessage': 'Attached "{{filename}}"',
   'blockTree.attachFileFailed': 'Failed to attach file',
   'blockTree.attachmentTypeNotAllowed':
