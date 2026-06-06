@@ -786,6 +786,18 @@ async fn delete_property_core(
             .bind(&key)
             .execute(&mut **tx)
             .await?;
+        // #533: clear the denormalized `blocks.space_id` for the whole
+        // owning-page group when a `space` property is removed — mirrors
+        // the replay path (`project_delete_property_to_sql`) and
+        // `set_property_in_tx`. Prevents stale space_id on the originating
+        // device and divergence from synced peers.
+        if key == "space" {
+            sqlx::query("UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?")
+                .bind(&block_id)
+                .bind(&block_id)
+                .execute(&mut **tx)
+                .await?;
+        }
     }
 
     // 5. Dispatch background cache tasks after commit (fire-and-forget).

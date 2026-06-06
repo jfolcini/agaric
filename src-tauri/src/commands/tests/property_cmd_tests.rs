@@ -407,6 +407,65 @@ async fn delete_property_removes_property() {
     );
 }
 
+/// #533 regression: deleting a `space` property via the COMMAND path must
+/// clear the denormalized `blocks.space_id` (parity with the replay path
+/// `project_delete_property_to_sql`). Without it the block keeps appearing
+/// in space-filtered reads and diverges from synced peers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_property_space_clears_space_id_533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "p".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        page.id.as_str().into(),
+        "space".into(),
+        None,
+        None,
+        None,
+        Some(TEST_SPACE_ID.into()),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let before: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(page.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        before.as_deref(),
+        Some(TEST_SPACE_ID),
+        "set_property('space') must stamp space_id"
+    );
+
+    delete_property_inner(&pool, DEV, &mat, page.id.as_str().into(), "space".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let after: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(page.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        after, None,
+        "command-path delete of 'space' must clear space_id"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_property_allows_builtin_key() {
     let (pool, _dir) = test_pool().await;

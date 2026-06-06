@@ -3112,6 +3112,21 @@ pub(crate) async fn delete_property_in_tx(
         )
         .execute(&mut **tx)
         .await?;
+        // #533: clear the denormalized `blocks.space_id` for the whole
+        // owning-page group when a `space` property is removed — mirrors
+        // the replay path (`project_delete_property_to_sql`) and the
+        // group-write in `set_property_in_tx`. Without this the command
+        // path leaves stale space_id (block keeps appearing in
+        // space-filtered reads) and diverges from synced peers.
+        if key == "space" {
+            sqlx::query!(
+                "UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?",
+                block_id,
+                block_id
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
     }
 
     Ok(op_record)
