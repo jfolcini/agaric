@@ -129,12 +129,20 @@ describe('StaticBlock', () => {
   })
 
   it('renders empty block placeholder when content is empty', () => {
-    render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
+    render(
+      <TooltipProvider>
+        <StaticBlock blockId="B1" content="" onFocus={vi.fn()} />
+      </TooltipProvider>,
+    )
     expect(screen.getByText('Type / for commands...')).toBeInTheDocument()
   })
 
   it('empty block has min-height class for visibility', () => {
-    const { container } = render(<StaticBlock blockId="B1" content="" onFocus={vi.fn()} />)
+    const { container } = render(
+      <TooltipProvider>
+        <StaticBlock blockId="B1" content="" onFocus={vi.fn()} />
+      </TooltipProvider>,
+    )
     const button = container.querySelector('.block-static')
     expect(button).not.toBeNull()
     expect(button?.classList.contains('min-h-[1.75rem]')).toBe(true)

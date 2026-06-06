@@ -8,6 +8,7 @@
  * with optional click-to-navigate (block links) and deleted decoration.
  */
 
+import { Paperclip } from 'lucide-react'
 import type React from 'react'
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -25,6 +26,7 @@ import { DEFAULT_IMAGE_ALIGNMENT, type ImageAlignment } from './ImageResizeToolb
 import { QueryResult } from './QueryResult'
 import { renderRichContent } from './RichContentRenderer'
 import { Spinner } from './ui/spinner'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 // Lazy-load PdfViewerDialog to avoid bundling pdfjs-dist on initial load
 const LazyPdfViewerDialog = lazy(() =>
@@ -333,6 +335,21 @@ function StaticBlockInner({
           <span className="block-placeholder text-muted-foreground italic">
             {t('block.emptyPlaceholder')}
           </span>
+        )}
+        {!content?.trim() && !hasAttachments && !attachmentsLoading && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none float-right ml-2 opacity-0 transition-opacity group-hover:opacity-40 group-focus-within:opacity-40 [@media(pointer:coarse)]:hidden"
+              >
+                <Paperclip className="h-3.5 w-3.5 text-muted-foreground" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              {t('block.attachHint')}
+            </TooltipContent>
+          </Tooltip>
         )}
       </div>
       {hasAttachments && (

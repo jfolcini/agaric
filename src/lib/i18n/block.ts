@@ -172,6 +172,8 @@ export const block: Record<string, string> = {
   'blockTree.setPropertyFailed': 'Failed to set property',
   'blockTree.loadingLabel': 'Loading blocks',
   'block.emptyPlaceholder': 'Type / for commands...',
+  'block.attachHint': 'Drop files here, or paste — images, text, PDF, JSON, ZIP (max 50 MB)',
+  'block.attachDropZoneCaption': 'Drop to attach — images, text, PDF, JSON, ZIP (max 50 MB)',
   'blockContext.selected': 'selected',
   'blockContext.clear': 'Clear',
   'blockContext.todoLabel': 'TODO',

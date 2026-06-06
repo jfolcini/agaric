@@ -304,6 +304,11 @@ function EditableBlockInner({
         <SelectionBubbleMenu editor={rovingEditor.editor} blockId={blockId} />
       )}
       <EditorContent editor={rovingEditor.editor} />
+      {isDragOver && (
+        <p className="px-3 pb-1 text-xs text-primary/70 select-none" aria-live="polite">
+          {t('block.attachDropZoneCaption')}
+        </p>
+      )}
     </section>
   )
 }
