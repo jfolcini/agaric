@@ -154,8 +154,9 @@ export const block: Record<string, string> = {
   'blockTree.filePathReadFailed': 'Could not read file path \u2014 use drag & drop instead',
   'blockTree.attachedFileMessage': 'Attached "{{filename}}"',
   'blockTree.attachFileFailed': 'Failed to attach file',
-  'blockTree.attachmentTypeNotAllowed': 'This file type cannot be attached',
-  'blockTree.attachmentTooLarge': 'File is too large (max 50 MB)',
+  'blockTree.attachmentTypeNotAllowed':
+    '{{type}} cannot be attached — allowed: images, text, PDF, JSON, ZIP, TAR',
+  'blockTree.attachmentTooLarge': 'File is {{size}} — max is 50 MB',
   'blockTree.cannotDeleteLastBlock': 'Cannot delete the last block on a page',
   'blockTree.mergeBlocksFailed': 'Failed to merge blocks',
   'blockTree.changesDiscarded': 'Changes discarded',

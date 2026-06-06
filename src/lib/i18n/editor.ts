@@ -10,6 +10,8 @@ export const editor: Record<string, string> = {
   'attachments.loading': 'Loading attachments…',
   'attachments.empty': 'No attachments yet.',
   'attachments.list': 'Attachments',
+  'attachments.summary_one': '{{count}} file · {{total}}',
+  'attachments.summary_other': '{{count}} files · {{total}}',
   'attachments.delete': 'Delete attachment {{name}}',
   'attachments.deleted': 'Deleted {{name}}',
   'attachments.confirmDelete': 'Delete "{{name}}"?',

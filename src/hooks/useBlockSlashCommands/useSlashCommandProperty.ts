@@ -197,7 +197,7 @@ function handleAttach(ctx: SlashCommandContext): void {
     const mimeType = file.type || guessMimeType(filename)
     const allowed = isAttachmentAllowed(mimeType, sizeBytes)
     if (!allowed.ok) {
-      notify.error(ctx.t(allowed.reason))
+      notify.error(ctx.t(allowed.reason, allowed.i18nContext))
       return
     }
     try {
