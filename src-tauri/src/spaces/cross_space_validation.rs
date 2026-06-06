@@ -75,8 +75,10 @@ async fn resolve_block_spaces_batch(
         // The block must itself be live (soft-deleted blocks never
         // participate in space resolution, AGENTS.md invariant #9).
         let sql = format!(
-            "SELECT b.id AS input_id, b.space_id AS space_id \
+            "SELECT b.id AS input_id, \
+                    COALESCE(b.space_id, p.space_id) AS space_id \
                FROM blocks b \
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL \
               WHERE b.deleted_at IS NULL \
                 AND b.id IN ({placeholders})"
         );

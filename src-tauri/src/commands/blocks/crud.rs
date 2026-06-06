@@ -1450,7 +1450,7 @@ pub async fn restore_block_inner(
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
          WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
-           AND block_type != 'page'",
+           AND block_type != 'page' AND page_id IS NOT NULL",
         block_id,
     )
     .execute(&mut **tx)

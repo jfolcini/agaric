@@ -194,11 +194,18 @@ async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // (excluding them also avoids any read-during-write ambiguity, since
     // the correlated subquery only reads page rows, which are never in the
     // update set). Orphans (NULL `page_id`) reset to NULL `space_id`.
+    // Only PROPAGATE to blocks that have an owning page (`page_id IS NOT
+    // NULL`). Pages are authoritative (excluded). Tags are top-level with
+    // `page_id = NULL` (migration 0027) but carry their OWN authoritative
+    // `space_id` (set directly by the `space` op) — they have no page to
+    // re-derive from, so they must NOT be touched here or the rebuild would
+    // null every tag's space (data loss). Orphan content (page purged →
+    // NULL page_id) likewise keeps its last value rather than being cleared.
     let result = sqlx::query!(
         "UPDATE blocks SET space_id = ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
-         WHERE block_type != 'page'"
+         WHERE block_type != 'page' AND page_id IS NOT NULL"
     )
     .execute(pool)
     .await?;
@@ -382,6 +389,38 @@ mod tests {
             page_id.as_deref(),
             Some("PAGE01"),
             "child block must inherit page_id from its ancestor page via parent chain"
+        );
+    }
+
+    /// #533 Phase 2 regression: `rebuild_space_ids` must NOT clobber a
+    /// top-level tag's own `space_id`. Tags carry `page_id = NULL` and own
+    /// their space directly; deriving from a (NULL) page would null it —
+    /// irreversible data loss.
+    #[tokio::test]
+    async fn rebuild_space_ids_preserves_top_level_tag_space_533() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
+             ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01', NULL), \
+             ('TAG0001', 'tag',  'proj',  NULL, 2, NULL,      'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed tag with own space_id");
+
+        super::rebuild_space_ids(&pool)
+            .await
+            .expect("rebuild_space_ids must succeed");
+
+        let tag_space: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'TAG0001'")
+                .fetch_one(&pool)
+                .await
+                .expect("space_id lookup");
+        assert_eq!(
+            tag_space.as_deref(),
+            Some("SPACE01"),
+            "a top-level tag's own space_id must survive the rebuild (page_id is NULL)"
         );
     }
 
