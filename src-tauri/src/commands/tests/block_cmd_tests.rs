@@ -2969,6 +2969,71 @@ async fn add_attachment_creates_row() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rename_attachment_updates_filename() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/photo.png"), vec![0u8; 16]).unwrap();
+
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "photo.png".into(),
+        "image/png".into(),
+        16,
+        "attachments/photo.png".into(),
+    )
+    .await
+    .unwrap();
+
+    // Happy path: rename succeeds and the new filename is persisted.
+    rename_attachment_inner(&pool, DEV, &mat, att.id.clone(), "diagram.png".into())
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    let renamed = sqlx::query_scalar!("SELECT filename FROM attachments WHERE id = ?", att.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(renamed, "diagram.png", "filename should be updated");
+
+    // The fs_path (on-disk location) must NOT change — only the display name.
+    let fs_path = sqlx::query_scalar!("SELECT fs_path FROM attachments WHERE id = ?", att.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs_path, "attachments/photo.png",
+        "rename must not move the underlying file"
+    );
+
+    // Error path: renaming a non-existent attachment returns an error, not a panic.
+    let missing = crate::ulid::AttachmentId::from_trusted("00000000000000000000000000");
+    let err = rename_attachment_inner(&pool, DEV, &mat, missing, "whatever.png".into()).await;
+    assert!(err.is_err(), "renaming a missing attachment should error");
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_attachment_removes_row() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

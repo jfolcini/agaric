@@ -2953,6 +2953,14 @@ export const HANDLERS: Record<string, Handler> = {
     return null
   },
 
+  rename_attachment: (args) => {
+    const a = args as Record<string, unknown>
+    const id = a['attachmentId'] as string
+    const row = attachments.get(id)
+    if (row) row['filename'] = a['newFilename'] as string
+    return null
+  },
+
   // ---------------------------------------------------------------------------
   // Projected agenda (repeating tasks)
   // ---------------------------------------------------------------------------

@@ -9,8 +9,8 @@ use crate::gcal_push::dirty_producer::{BlockDateSnapshot, compute_dirty_event, s
 use crate::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
-    PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload, SetPropertyPayload,
-    is_reserved_property_key,
+    PurgeBlockPayload, RemoveTagPayload, RenameAttachmentPayload, RestoreBlockPayload,
+    SetPropertyPayload, is_reserved_property_key,
 };
 use crate::op_log::OpRecord;
 use crate::tag_inheritance;
@@ -1001,7 +1001,8 @@ async fn maintain_pages_cache_counts_after_op(
         | OpType::SetProperty
         | OpType::DeleteProperty
         | OpType::AddAttachment
-        | OpType::DeleteAttachment => {}
+        | OpType::DeleteAttachment
+        | OpType::RenameAttachment => {}
     }
 
     if affected.is_empty() {
@@ -1437,6 +1438,10 @@ async fn apply_op_tx(
         OpType::DeleteAttachment => {
             let p: DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
             apply_delete_attachment_tx(conn, p).await?;
+        }
+        OpType::RenameAttachment => {
+            let p: RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
+            apply_rename_attachment_tx(conn, p).await?;
         }
     }
     // PEND-56b: maintain `pages_cache.{inbound_link_count,child_block_count}`.
@@ -2603,6 +2608,22 @@ async fn apply_delete_attachment_tx(
     sqlx::query!("DELETE FROM attachments WHERE id = ?", attachment_id_str)
         .execute(&mut *conn)
         .await?;
+    Ok(())
+}
+
+/// Per-variant body for [`OpType::RenameAttachment`].
+async fn apply_rename_attachment_tx(
+    conn: &mut sqlx::SqliteConnection,
+    p: RenameAttachmentPayload,
+) -> Result<(), AppError> {
+    let attachment_id_str = p.attachment_id.as_str();
+    sqlx::query!(
+        "UPDATE attachments SET filename = ? WHERE id = ?",
+        p.new_filename,
+        attachment_id_str
+    )
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }
 

@@ -2021,6 +2021,14 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
   unwrap(await commands.deleteAttachment(attachmentId))
 }
 
+/** Rename an attachment by ID. */
+export async function renameAttachment(params: {
+  attachmentId: string
+  newFilename: string
+}): Promise<void> {
+  unwrap(await commands.renameAttachment(params.attachmentId, params.newFilename))
+}
+
 // ---------------------------------------------------------------------------
 // Markdown import (#660)
 // ---------------------------------------------------------------------------

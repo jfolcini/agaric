@@ -63,6 +63,8 @@ export const editor: Record<string, string> = {
   'attachments.loadFailed': 'Failed to load attachments',
   'attachments.addFailed': 'Failed to add attachment',
   'attachments.deleteFailed': 'Failed to delete attachment',
+  'attachments.renameFailed': 'Failed to rename attachment',
+  'attachments.rename': 'Rename attachment {{name}}',
   'attachments.openFileDialogFailed': 'Could not open file picker',
   'pdfViewer.previousPageLabel': 'Previous page',
   'pdfViewer.nextPageLabel': 'Next page',

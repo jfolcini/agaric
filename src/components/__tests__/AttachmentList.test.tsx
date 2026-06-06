@@ -144,6 +144,56 @@ describe('AttachmentList', () => {
     )
   })
 
+  it('rename button opens an input that calls rename_attachment IPC on Enter', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'old-name.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('old-name.txt')).toBeInTheDocument()
+
+    // Enter rename mode via the pencil button.
+    await user.click(screen.getByRole('button', { name: /rename attachment old-name\.txt/i }))
+
+    const input = screen.getByRole('textbox', { name: /rename attachment old-name\.txt/i })
+    expect(input).toHaveValue('old-name.txt')
+
+    // rename_attachment resolves; the hook applies an optimistic local update
+    // (no list refetch).
+    mockedInvoke.mockResolvedValueOnce(undefined)
+
+    await user.clear(input)
+    await user.type(input, 'new-name.txt{Enter}')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('rename_attachment', {
+        attachmentId: 'a1',
+        newFilename: 'new-name.txt',
+      })
+    })
+  })
+
+  it('rename input cancels on Escape without calling IPC', async () => {
+    const user = userEvent.setup()
+
+    mockedInvoke.mockResolvedValueOnce([makeAttachment('a1', 'keep.txt')])
+
+    renderWithProvider(<AttachmentList blockId="block-1" />)
+
+    expect(await screen.findByText('keep.txt')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /rename attachment keep\.txt/i }))
+    const input = screen.getByRole('textbox', { name: /rename attachment keep\.txt/i })
+
+    await user.clear(input)
+    await user.type(input, 'discarded.txt{Escape}')
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith('rename_attachment', expect.anything())
+    // Back to the static filename label.
+    expect(screen.getByText('keep.txt')).toBeInTheDocument()
+  })
+
   it('resets pending delete state after timeout', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })

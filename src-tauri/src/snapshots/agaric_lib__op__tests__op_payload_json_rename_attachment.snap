@@ -1,0 +1,9 @@
+---
+source: src/op.rs
+assertion_line: 1240
+expression: json
+---
+attachment_id: A1
+new_filename: new.png
+old_filename: old.png
+op_type: rename_attachment

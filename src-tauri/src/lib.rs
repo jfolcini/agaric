@@ -201,6 +201,7 @@ macro_rules! agaric_commands {
             $crate::commands::attachments::add_attachment_with_bytes,
             $crate::commands::attachments::read_attachment,
             $crate::commands::attachments::delete_attachment,
+            $crate::commands::attachments::rename_attachment,
             $crate::commands::attachments::list_attachments,
             $crate::commands::attachments::list_attachments_batch,
             // Graph visualization (F-33)
