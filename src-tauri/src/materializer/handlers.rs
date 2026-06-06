@@ -1757,7 +1757,7 @@ async fn apply_set_property_via_loro(
         } else if let Some(v) = &p.value_date {
             PropertyValue::Str(v.clone())
         } else if let Some(v) = &p.value_ref {
-            PropertyValue::Str(v.clone())
+            PropertyValue::Str(v.as_str().to_owned())
         } else if let Some(b) = p.value_bool {
             PropertyValue::Bool(b)
         } else {

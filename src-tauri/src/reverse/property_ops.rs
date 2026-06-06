@@ -3,6 +3,7 @@
 use crate::error::AppError;
 use crate::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
 use crate::op_log::OpRecord;
+use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 
 struct PriorPropertyRow {
@@ -38,7 +39,7 @@ pub async fn reverse_set_property(
             value_text: p.value_text,
             value_num: p.value_num,
             value_date: p.value_date,
-            value_ref: p.value_ref,
+            value_ref: p.value_ref.map(BlockId::from),
             value_bool: p.value_bool,
         })),
         None => Ok(OpPayload::DeleteProperty(DeletePropertyPayload {
@@ -74,7 +75,7 @@ pub async fn reverse_delete_property(
         value_text: prior.value_text,
         value_num: prior.value_num,
         value_date: prior.value_date,
-        value_ref: prior.value_ref,
+        value_ref: prior.value_ref.map(BlockId::from),
         value_bool: prior.value_bool,
     }))
 }
@@ -136,7 +137,7 @@ async fn find_prior_property(
                 value_text: p.value_text,
                 value_num: p.value_num,
                 value_date: p.value_date,
-                value_ref: p.value_ref,
+                value_ref: p.value_ref.map(BlockId::into_string),
                 value_bool: p.value_bool,
             }))
         }

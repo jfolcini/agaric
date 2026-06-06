@@ -121,15 +121,15 @@ pub struct SyncOrchestrator {
     materializer: Materializer,
     pub(crate) state: SyncState,
     session: SyncSession,
-    /// Hash of the last local op handed to the remote in this session,
-    /// written to `peer_refs.last_sent_hash` at `SyncComplete`. `None`
-    /// when we sent nothing (typical for an initiator that already
-    /// shipped all its ops on a previous sync, or for the residual
-    /// edge case where the registry exists but is empty so the
-    /// orchestrator short-circuited to `SyncComplete` without
-    /// emitting any streaming-phase payload); the read site treats
-    /// `None` as the empty-string sentinel documented on
-    /// [`peer_refs::update_on_sync`].
+    /// Always `None` under the current loro-vv protocol (#490 M1).
+    ///
+    /// The field was intended to capture the hash of the last op shipped to
+    /// the remote, but the loro-vv send path (`head_exchange_outgoing_loro`)
+    /// never assigns it — `complete_sync_in_tx` therefore always writes
+    /// `peer_refs.last_sent_hash = ""`. The field is kept as a placeholder
+    /// for a future per-peer hash-tracking implementation; the empty-string
+    /// value is the correct sentinel that `peer_refs::update_on_sync`
+    /// expects when no op-hash-delta was tracked this session.
     last_sent_hash: Option<String>,
     /// Pending [`LoroSyncMessage`]s queued for streaming. Populated
     /// when entering [`SyncState::StreamingOps`] from
@@ -534,14 +534,11 @@ impl SyncOrchestrator {
                         }
                     },
                 };
-                // `last_sent_hash` was captured from the last
-                // streaming-phase op or left None (registry was empty
-                // for the session and the orchestrator short-circuited
-                // straight to `SyncComplete` without emitting any
-                // streaming-phase payload). `unwrap_or_default()`
-                // reproduces the empty-string sentinel that
-                // `peer_refs::update_on_sync` expects when no ops were
-                // sent this session.
+                // #490 M1: `last_sent_hash` is always None (never
+                // assigned by the loro-vv send path). `unwrap_or_default()`
+                // produces the empty-string sentinel that
+                // `peer_refs::update_on_sync` expects when no op-hash
+                // tracking was performed this session.
                 let last_sent_hash = self.last_sent_hash.clone().unwrap_or_default();
 
                 // PEND-24 M2: wrap the post-session bookkeeping pair

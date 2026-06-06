@@ -2787,7 +2787,7 @@ pub(crate) async fn set_property_in_tx(
         value_text: value_text.clone(),
         value_num,
         value_date: value_date.clone(),
-        value_ref: value_ref.clone(),
+        value_ref: value_ref.clone().map(BlockId::from),
         value_bool,
     };
     let is_clear = value_text.is_none()

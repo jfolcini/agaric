@@ -185,7 +185,7 @@ async fn apply_tag_to_block_in_tx(
                         value_text: None,
                         value_num: None,
                         value_date: None,
-                        value_ref: Some(space_ref.clone()),
+                        value_ref: Some(BlockId::from(space_ref.clone())),
                         value_bool: None,
                     });
                     op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())

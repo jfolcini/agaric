@@ -289,6 +289,16 @@ pub async fn apply_remote(
     // block (including the tag blocks themselves), so all `blocks` rows
     // referenced by `block_tags.tag_id` (FK to `blocks(id)`) exist before
     // Pass B's tag-edge inserts.
+    //
+    // Load property_definitions ONCE for the whole pass (hoisted out of
+    // the per-block loop to avoid an N+1 SELECT against a static table).
+    let value_types: std::collections::HashMap<String, String> =
+        sqlx::query!("SELECT key, value_type FROM property_definitions")
+            .fetch_all(&mut *tx)
+            .await?
+            .into_iter()
+            .map(|r| (r.key, r.value_type))
+            .collect();
     for block_id in &changed_blocks {
         // Read both the core snapshot and the full property set under the
         // guard, then drop it before the SQL writes — same
@@ -304,7 +314,7 @@ pub async fn apply_remote(
         project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot_opt.as_ref()).await?;
         // Re-project the block's properties (PEND-76 F1): mirrors remote
         // SetProperty / DeleteProperty changes into `block_properties`.
-        reproject_block_properties_from_engine(&mut tx, block_id, &props).await?;
+        reproject_block_properties_from_engine(&mut tx, block_id, &props, &value_types).await?;
     }
 
     // Pass B — tags (PEND-81 §2A).  Mirrors remote AddTag / RemoveTag

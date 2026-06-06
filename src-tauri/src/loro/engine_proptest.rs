@@ -279,7 +279,7 @@ fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate:
                 .clone()
                 .or_else(|| p.value_num.map(|n| n.to_string()))
                 .or_else(|| p.value_date.clone())
-                .or_else(|| p.value_ref.clone())
+                .or_else(|| p.value_ref.as_ref().map(|b| b.as_str().to_owned()))
                 .or_else(|| p.value_bool.map(|b| b.to_string()));
             engine.apply_set_property(p.block_id.as_str(), &p.key, value.as_deref())?;
         }
@@ -445,7 +445,7 @@ proptest! {
                         .clone()
                         .or_else(|| p.value_num.map(|n| n.to_string()))
                         .or_else(|| p.value_date.clone())
-                        .or_else(|| p.value_ref.clone())
+                        .or_else(|| p.value_ref.as_ref().map(|b| b.as_str().to_owned()))
                         .or_else(|| p.value_bool.map(|b| b.to_string()));
                     prop_assert_eq!(
                         stored,
