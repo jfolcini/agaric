@@ -123,7 +123,11 @@ describe('isAttachmentAllowed', () => {
   it('rejects disallowed MIME types with a reason', () => {
     const result = isAttachmentAllowed('application/octet-stream', 1024)
     expect(result.ok).toBe(false)
-    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTypeNotAllowed' })
+    expect(result).toEqual({
+      ok: false,
+      reason: 'blockTree.attachmentTypeNotAllowed',
+      i18nContext: { type: 'application/octet-stream' },
+    })
   })
 
   it('rejects other disallowed application subtypes', () => {
@@ -138,12 +142,17 @@ describe('isAttachmentAllowed', () => {
 
   it('rejects oversize files (over 50 MB) with a reason', () => {
     const result = isAttachmentAllowed('image/png', MAX_ATTACHMENT_BYTES + 1)
-    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTooLarge' })
+    expect(result).toMatchObject({ ok: false, reason: 'blockTree.attachmentTooLarge' })
+    if (!result.ok) expect(result.i18nContext['size']).toMatch(/MB$/)
   })
 
   it('checks MIME before size (disallowed + oversize reports type reason)', () => {
     const result = isAttachmentAllowed('video/mp4', MAX_ATTACHMENT_BYTES + 1)
-    expect(result).toEqual({ ok: false, reason: 'blockTree.attachmentTypeNotAllowed' })
+    expect(result).toEqual({
+      ok: false,
+      reason: 'blockTree.attachmentTypeNotAllowed',
+      i18nContext: { type: 'video/mp4' },
+    })
   })
 })
 

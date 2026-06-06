@@ -89,18 +89,28 @@ function isMimeAllowed(mimeType: string): boolean {
  * (PEND-76 F2). Returns a discriminated result so callers can surface the
  * `reason` directly in a toast.
  *
- * The `reason` strings are i18n keys (resolved by the caller via `t()`),
- * not user-facing English.
+ * The `reason` strings are i18n keys (resolved by the caller via `t()`).
+ * `i18nContext` carries interpolation values for the richer toast copy
+ * (filename, size, allowed types — see #218 item 2).
  */
 export function isAttachmentAllowed(
   mimeType: string,
   sizeBytes: number,
-): { ok: true } | { ok: false; reason: string } {
+): { ok: true } | { ok: false; reason: string; i18nContext: Record<string, string> } {
   if (!isMimeAllowed(mimeType)) {
-    return { ok: false, reason: 'blockTree.attachmentTypeNotAllowed' }
+    return {
+      ok: false,
+      reason: 'blockTree.attachmentTypeNotAllowed',
+      i18nContext: { type: mimeType },
+    }
   }
   if (sizeBytes > MAX_ATTACHMENT_BYTES) {
-    return { ok: false, reason: 'blockTree.attachmentTooLarge' }
+    const mb = (sizeBytes / 1_048_576).toFixed(1)
+    return {
+      ok: false,
+      reason: 'blockTree.attachmentTooLarge',
+      i18nContext: { size: `${mb} MB` },
+    }
   }
   return { ok: true }
 }

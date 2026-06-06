@@ -365,7 +365,9 @@ describe('useSlashCommandProperty — attach', () => {
       await el!.onchange?.(new Event('change'))
 
       expect(mockedInvoke).not.toHaveBeenCalledWith('add_attachment_with_bytes', expect.anything())
-      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.attachmentTypeNotAllowed')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        'blockTree.attachmentTypeNotAllowed:{"type":"application/x-msdownload"}',
+      )
     } finally {
       input.restore()
     }

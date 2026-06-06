@@ -61,7 +61,7 @@ async function processFileAttachments(files: File[], blockId: string, t: TFuncti
     const info = extractFileInfo(file)
     const allowed = isAttachmentAllowed(info.mimeType, info.sizeBytes)
     if (!allowed.ok) {
-      notify.error(t(allowed.reason))
+      notify.error(t(allowed.reason, allowed.i18nContext))
       continue
     }
     try {
