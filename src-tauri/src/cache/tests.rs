@@ -73,16 +73,34 @@ async fn add_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) {
 }
 
 /// Set a date property on a block.
+///
+/// When `value_date` is `Some`, the row carries exactly one non-NULL value
+/// column (`value_date`), satisfying migration-0062's `exactly_one_value`
+/// CHECK constraint.  When `value_date` is `None` the helper would otherwise
+/// insert an all-NULL value row that violates the same CHECK; in that case
+/// we store `value_text = 'placeholder'` as a sentinel so the row is still
+/// schema-valid (issue #547).
 async fn set_property(pool: &SqlitePool, block_id: &str, key: &str, value_date: Option<&str>) {
-    sqlx::query!(
-        "INSERT OR REPLACE INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
-        block_id,
-        key,
-        value_date,
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    if let Some(date) = value_date {
+        sqlx::query!(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_date) VALUES (?, ?, ?)",
+            block_id,
+            key,
+            date,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    } else {
+        sqlx::query!(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text) VALUES (?, ?, 'placeholder')",
+            block_id,
+            key,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
 }
 
 /// Count rows in a table (test-only convenience).

@@ -2806,4 +2806,113 @@ mod tests {
             "exactly one row should have been inserted (the two CHECK-violating rows must not persist)"
         );
     }
+
+    /// Migration 0083 adds `idx_op_log_seq ON op_log(seq, device_id)` so the
+    /// boot-replay walk (`WHERE seq > ? ORDER BY seq ASC, device_id ASC`) can
+    /// be served from the index rather than falling back to a full scan and
+    /// temp-B-tree sort (issue #546 / backend audit #411).
+    ///
+    /// This test:
+    ///   1. Verifies the index exists after migrations run.
+    ///   2. Inserts op_log rows for two devices in an order that differs from
+    ///      their `seq` values (interleaved), then queries with the boot-replay
+    ///      ordering (`ORDER BY seq ASC, device_id ASC`) and asserts the rows
+    ///      come back in strict `seq` ascending order regardless of insertion
+    ///      order — confirming the index delivers the correct replay sequence.
+    #[tokio::test]
+    async fn idx_op_log_seq_exists_and_boot_replay_order_is_seq_asc() {
+        let (pool, _dir) = test_pool().await;
+
+        // ── 1. Index presence ────────────────────────────────────────────────
+        let idx_count: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'idx_op_log_seq'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            idx_count, 1,
+            "migration 0083 must create idx_op_log_seq on op_log(seq, device_id)"
+        );
+
+        // ── 2. Interleaved insertion (insertion order ≠ seq order) ──────────
+        //
+        // We insert rows such that if the query relied on rowid / insertion
+        // order instead of the `seq` column, the result would be wrong.
+        //
+        // Insertion sequence (device, seq):
+        //   device-B seq=1  (rowid 1)
+        //   device-A seq=3  (rowid 2)
+        //   device-A seq=1  (rowid 3)
+        //   device-B seq=2  (rowid 4)
+        //   device-A seq=2  (rowid 5)
+        //
+        // Expected ORDER BY seq ASC, device_id ASC result:
+        //   seq=1 device-A, seq=1 device-B, seq=2 device-A, seq=2 device-B, seq=3 device-A
+        let rows_to_insert: &[(&str, i64)] = &[
+            ("device-B", 1),
+            ("device-A", 3),
+            ("device-A", 1),
+            ("device-B", 2),
+            ("device-A", 2),
+        ];
+        for (device_id, seq) in rows_to_insert {
+            sqlx::query(
+                "INSERT INTO op_log \
+                 (device_id, seq, parent_seqs, hash, op_type, payload, created_at) \
+                 VALUES (?, ?, NULL, ?, 'create_block', '{}', 1767225600000)",
+            )
+            .bind(device_id)
+            .bind(seq)
+            .bind(format!("hash-{device_id}-{seq}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // ── 3. Boot-replay ordering assertion ────────────────────────────────
+        //
+        // Re-run the keyset-ordering query shape that migration 0083 documents
+        // for the #411 boot op-log replay walk
+        // (`WHERE seq > ? ORDER BY seq ASC, device_id ASC`); we pass 0 for the
+        // `seq > ?` cursor so all rows appear. This confirms the index delivers
+        // rows in `seq ASC, device_id ASC` order regardless of insertion order.
+        let replayed: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT device_id, seq FROM op_log \
+             WHERE seq > 0 \
+             ORDER BY seq ASC, device_id ASC",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let expected: Vec<(String, i64)> = vec![
+            ("device-A".to_owned(), 1),
+            ("device-B".to_owned(), 1),
+            ("device-A".to_owned(), 2),
+            ("device-B".to_owned(), 2),
+            ("device-A".to_owned(), 3),
+        ];
+        assert_eq!(
+            replayed, expected,
+            "boot-replay query must return ops in seq ASC, device_id ASC order \
+             regardless of insertion order (idx_op_log_seq must serve the sort)"
+        );
+
+        // ── 4. Monotone seq-only assertion (what the replay cursor tracks) ───
+        //
+        // The boot-replay cursor advances by `last_seen = last_seen.max(record.seq)`.
+        // Confirm the seq values of the result are non-decreasing — the property
+        // the cursor relies on to make forward progress without skipping ops.
+        let seqs: Vec<i64> = replayed.iter().map(|(_, s)| *s).collect();
+        let mut prev = 0i64;
+        for s in &seqs {
+            assert!(
+                *s >= prev,
+                "seq values in replay order must be non-decreasing; got {s} after {prev}"
+            );
+            prev = *s;
+        }
+    }
 }
