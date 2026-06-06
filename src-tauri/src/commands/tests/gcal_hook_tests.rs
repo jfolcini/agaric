@@ -484,6 +484,100 @@ async fn restore_block_emits_new_only_dirty_event() {
 }
 
 // ---------------------------------------------------------------------------
+// delete_blocks_by_ids_inner (#470)
+// ---------------------------------------------------------------------------
+
+/// #470 — `delete_blocks_by_ids_inner` must emit one `DirtyEvent` per root
+/// block that has agenda-relevant dates, with `old_affected_dates` populated
+/// and `new_affected_dates` empty (mirrors the single-row
+/// `delete_block_emits_old_only_dirty_event` contract, scaled to the batch
+/// path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_blocks_by_ids_gcal_snapshot_emitted() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed two independent blocks, each with a `due_date` so the dirty
+    // producer has something to snapshot.
+    let b1 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task-1".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b1.id.as_str().into(),
+        "due_date".into(),
+        None,
+        None,
+        Some(today_plus(3)),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let b2 = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task-2".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        b2.id.as_str().into(),
+        "due_date".into(),
+        None,
+        None,
+        Some(today_plus(5)),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Wire the handle AFTER seeding so priming events don't interfere.
+    let mut rx = wire_up_handle(&mat);
+
+    delete_blocks_by_ids_inner(&pool, DEV, &mat, vec![b1.id.clone(), b2.id.clone()])
+        .await
+        .unwrap();
+
+    // Two roots → exactly two DirtyEvents.
+    let events = drain_events(&mut rx, 10).await;
+    assert_eq!(events.len(), 2, "one DirtyEvent per deleted root");
+
+    // Each event should carry the root's old dates and no new dates.
+    for ev in &events {
+        assert!(
+            !ev.old_affected_dates.is_empty(),
+            "old_affected_dates must be non-empty for a deleted block with a due_date"
+        );
+        assert!(
+            ev.new_affected_dates.is_empty(),
+            "new_affected_dates must be empty after deletion"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // No-handle-wired path (is_gcal_hook_active == false)
 // ---------------------------------------------------------------------------
 

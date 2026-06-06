@@ -89,23 +89,6 @@ pub(crate) async fn find_prev_edit_in_tx(
     Ok(row.map(|r| (r.device_id, r.seq)))
 }
 
-/// Create a new block.
-///
-/// Validates block type and optional parent, generates a ULID, appends a
-/// `CreateBlock` op, inserts the row into `blocks`, and dispatches
-/// background cache tasks.
-///
-/// # Errors
-///
-/// - [`AppError::Validation`] — unknown `block_type` or non-positive `position`
-/// - [`AppError::NotFound`] — `parent_id` does not refer to a live block
-///
-/// # Rate limiting (F07)
-///
-/// No server-side rate limiting is implemented. This is acceptable for a
-/// single-user desktop app where the caller is always the local UI. If the
-/// app ever gains a network-facing API, rate limiting should be added at the
-/// transport layer.
 /// Create a new block inside an existing transaction.
 ///
 /// This is the core implementation shared by [`create_block_inner`] (which
@@ -981,12 +964,37 @@ pub async fn delete_blocks_by_ids_inner(
     // can match `op_record.created_at` against `blocks.deleted_at`.
     let now = crate::db::now_ms();
 
+    // FEAT-5i — snapshot each root's pre-delete dates inside the tx so
+    // the post-commit notifier can emit per-root `DirtyEvent`s.
+    // Snapshots MUST be taken before the soft-delete UPDATE below;
+    // after the UPDATE the blocks still carry their property rows but
+    // the `deleted_at` guard in the dirty-producer would already see
+    // them as deleted.  Mirrors the pattern in
+    // `restore_blocks_by_ids_inner` and `purge_blocks_by_ids_inner`.
+    let gcal_hook_active = materializer.is_gcal_hook_active();
+    let mut gcal_snapshots: Vec<Option<crate::gcal_push::dirty_producer::BlockDateSnapshot>> =
+        Vec::with_capacity(live_roots.len());
+    for root in &live_roots {
+        if gcal_hook_active {
+            gcal_snapshots.push(Some(
+                crate::gcal_push::dirty_producer::snapshot_block(&mut tx, root).await?,
+            ));
+        } else {
+            gcal_snapshots.push(None);
+        }
+    }
+
     // Append one `DeleteBlock` op per root (NOT per descendant — the
     // cascade is captured by the recursive UPDATE below). This mirrors
     // the single-row path's op_log shape (one op, cascade rolls up via
     // the materialised state) so revert / undo replay against the same
     // rows behaves identically regardless of whether they were deleted
     // via the single or batch path.
+    //
+    // Each op_record is both enqueued for post-commit background
+    // dispatch AND retained (via Arc::clone) for the post-commit GCal
+    // notify loop.
+    let mut op_records: Vec<Arc<crate::op_log::OpRecord>> = Vec::new();
     for root in &live_roots {
         let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
             block_id: BlockId::from_trusted(root),
@@ -994,6 +1002,7 @@ pub async fn delete_blocks_by_ids_inner(
         let op_record = op_log::append_local_op_in_tx(&mut tx, device_id, payload, now).await?;
         let op_record = Arc::new(op_record);
         tx.enqueue_background(Arc::clone(&op_record));
+        op_records.push(op_record);
     }
 
     // One recursive CTE seeded from every root in `live_roots` (via
@@ -1060,6 +1069,16 @@ pub async fn delete_blocks_by_ids_inner(
     }
 
     tx.commit_and_dispatch(materializer).await?;
+
+    // FEAT-5i — notify GCal connector post-commit, one event per root.
+    // For a delete the snapshot carries only `old_affected_dates`;
+    // the dirty producer will produce `new_affected_dates = []`
+    // (block no longer exists / has no future dates).
+    for (op_record, snapshot) in op_records.iter().zip(gcal_snapshots.iter()) {
+        if let Some(snap) = snapshot {
+            materializer.notify_gcal_for_op(op_record, snap);
+        }
+    }
 
     // Return the number of blocks the cascade soft-deleted (roots +
     // descendants combined). Callers can compare against

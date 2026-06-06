@@ -839,10 +839,13 @@ async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
 ) -> Result<(), crate::error::AppError> {
     // Guard: skip if op_log is empty or missing.
+    //
+    // R4 (#347): propagate probe errors with `?` rather than masking them
+    // as `0` (which would wrongly skip recovery against an already-populated
+    // DB, or silently swallow a transient query failure at boot).
     let op_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
         .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        .await?;
 
     if op_count == 0 {
         return Ok(());
@@ -1116,10 +1119,11 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     let write_opts = base_connect_options(db_path);
     let write_pool = SqlitePoolOptions::new()
         .max_connections(2)
-        // #434 — fail fast on pool exhaustion. sqlx defaults acquire_timeout to
-        // 30s, but busy_timeout is 5s, so a saturated pool would freeze the UI
-        // for 30s instead of surfacing an error within the freeze budget. Align
-        // acquire_timeout with the busy_timeout-scale UX budget.
+        // #434 — cap pool-acquire wait at 10s. sqlx defaults acquire_timeout
+        // to 30s, but busy_timeout is 5s; a saturated pool would otherwise
+        // freeze the UI for 30s before surfacing an error. 10s gives the
+        // pool enough time to recover from a momentary write-heavy burst
+        // while still returning an error well within the UI response budget.
         .acquire_timeout(std::time::Duration::from_secs(10))
         .connect_with(write_opts)
         .await?;

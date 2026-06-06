@@ -62,8 +62,8 @@ pub async fn apply_reverse_in_tx(
         //   - tag ops (AddTag uses INSERT OR IGNORE, RemoveTag DELETEs)
         //   - property ops (SetProperty uses INSERT OR REPLACE, DeleteProperty
         //     DELETEs without a rows_affected check)
-        //   - attachment ops (AddAttachment uses INSERT OR REPLACE, DeleteAttachment
-        //     hard-DELETEs without a rows_affected check)
+        //   - attachment ops (AddAttachment uses INSERT OR REPLACE to recreate the
+        //     row; DeleteAttachment hard-DELETEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
             // Cascade soft-delete (same as delete_block_inner).
             //
@@ -337,7 +337,11 @@ pub async fn apply_reverse_in_tx(
                 .await?;
         }
         OpPayload::AddAttachment(p) => {
-            // Preserve original created_at from the existing (soft-deleted) attachment record
+            // Undo of AddAttachment: the forward delete was a hard-DELETE, so
+            // the row is gone and `original_created_at` is None in the normal
+            // case. `created_at` is regenerated via `now_ms()` then. A row
+            // may survive only via idempotency (e.g. double-undo replay), in
+            // which case we preserve its existing `created_at`.
             let attachment_id_str = p.attachment_id.as_str();
             let original_created_at: Option<i64> = sqlx::query_scalar!(
                 "SELECT created_at FROM attachments WHERE id = ?",
@@ -350,8 +354,8 @@ pub async fn apply_reverse_in_tx(
             let block_id_str = p.block_id.as_str();
 
             sqlx::query!(
-                "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+                "INSERT OR REPLACE INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
                 attachment_id_str,
                 block_id_str,
                 p.mime_type,

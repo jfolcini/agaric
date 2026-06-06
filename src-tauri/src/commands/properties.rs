@@ -253,21 +253,17 @@ pub async fn set_todo_state_inner(
         None
     };
 
-    // Fetch current block (inside tx so prev_state is read in the same
-    // serialized window as the writes below) to drive transition logic.
-    let existing: Option<BlockRow> = sqlx::query_as!(
-        BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+    // Fetch only `todo_state` — the full SELECT * is unnecessary here
+    // since `set_property_in_tx` (called below) issues its own SELECT.
+    // `set_property_in_tx` returns NotFound if the block is missing, so
+    // the redundant existence guard is dropped.
+    let prev_state: Option<String> = sqlx::query_scalar!(
+        "SELECT todo_state FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id_str
     )
     .fetch_optional(&mut **tx)
-    .await?;
-
-    let _ = existing.as_ref().ok_or_else(|| {
-        AppError::NotFound(format!("block '{block_id_str}' (not found or deleted)"))
-    })?;
-
-    let prev_state = existing.as_ref().and_then(|b| b.todo_state.clone());
+    .await?
+    .flatten();
     let new_state = state.clone();
 
     let block_id_owned = block_id.into_string();
@@ -459,6 +455,10 @@ pub async fn set_todo_state_batch_inner(
     let block_id_strings: Vec<String> =
         block_ids.iter().map(|id| id.as_str().to_string()).collect();
 
+    // One IMMEDIATE tx covers every per-block write (op_log + blocks
+    // column). Either every state change commits or none of them.
+    let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
+
     // SQL-review M-7: this batch path skips the timestamp + recurrence
     // side-effects that the single-row `set_todo_state_inner` performs.
     // If any block in the batch carries a `repeat` property, emit a
@@ -466,12 +466,17 @@ pub async fn set_todo_state_batch_inner(
     // notice that this is the batched path. The check is a single
     // SELECT that probes for `key = 'repeat'` across the batch's blocks
     // — cheaper than the per-block-read pre-commit shape.
+    //
+    // #473 L3: probe inside the IMMEDIATE tx (not on the pool) so the
+    // read is in the same serialized window as the writes below —
+    // avoiding a TOCTOU race where a repeat property is added/removed
+    // between this probe and the tx open.
     let repeat_carriers = sqlx::query_scalar::<_, String>(
         "SELECT block_id FROM block_properties \
          WHERE key = 'repeat' AND block_id IN (SELECT value FROM json_each(?))",
     )
     .bind(serde_json::to_string(&block_id_strings)?)
-    .fetch_all(pool)
+    .fetch_all(&mut **tx)
     .await?;
     if !repeat_carriers.is_empty() {
         tracing::warn!(
@@ -484,10 +489,6 @@ pub async fn set_todo_state_batch_inner(
             repeat_carriers.len(),
         );
     }
-
-    // One IMMEDIATE tx covers every per-block write (op_log + blocks
-    // column). Either every state change commits or none of them.
-    let mut tx = CommandTx::begin_immediate(pool, "set_todo_state_batch").await?;
 
     // BUG-20 / MAINT-147 (e) fallback validation — mirrors
     // `set_todo_state_inner`. Read once for the whole batch (single

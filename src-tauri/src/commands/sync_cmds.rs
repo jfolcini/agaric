@@ -221,12 +221,7 @@ pub async fn confirm_pairing_inner(
     };
     verify_device_exchange(&msg, None, Some(&expected_passphrase))?;
 
-    // Construct a session object for API symmetry with the initiator
-    // path; immediately discard it. The pairing exchange's
-    // confidentiality and authenticity come from the mTLS + TOFU-cert-pin
-    // layer in `crate::sync_net::connection`, not from any application-
-    // layer derived key — see the `pairing` module-level doc.
-    let _session = PairingSession::from_passphrase(&passphrase, device_id, &remote_device_id);
+    // No session state persisted at confirm time.
 
     // PEND-76 F3: the FE has no remote device_id at confirm time — the QR
     // carries only the passphrase, and mDNS + TOFU establish the real peer on

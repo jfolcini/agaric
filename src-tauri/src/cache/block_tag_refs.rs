@@ -291,6 +291,11 @@ const DELETE_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 ///
 /// Streams `(id, content)` rows (M-19a) so the peak working set is
 /// `O(actual ref count + tag-id set)` rather than `O(total content bytes)`.
+///
+/// Note: the cross-space exclusion (#375) requires a `space_of` map that
+/// holds **one entry per non-deleted block**, so the true peak working set
+/// is `O(N-blocks + actual ref count + tag-id set)`. The streaming only
+/// avoids materialising the full content strings, not the block-id set.
 async fn compute_desired_pairs(
     conn: &mut sqlx::SqliteConnection,
 ) -> Result<Vec<(String, String)>, AppError> {
