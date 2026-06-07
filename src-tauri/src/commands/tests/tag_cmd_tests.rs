@@ -599,15 +599,14 @@ async fn add_tag_adopts_orphan_tag_into_source_space() {
     .unwrap();
     assert!(tagged.is_some(), "block_tags row must be written");
 
-    // The tag was adopted into the source block's space.
-    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind("F4_TAG")
-    .fetch_optional(&pool)
-    .await
-    .unwrap()
-    .flatten();
+    // #533 Phase 2: the tag was adopted into the source block's space via
+    // the `blocks.space_id` column (the sole source of truth).
+    let space_ref: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind("F4_TAG")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         space_ref.as_deref(),
         Some(TEST_SPACE_ID),

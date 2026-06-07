@@ -5425,15 +5425,14 @@ async fn move_blocks_to_space_rejects_non_space_target() {
         "non-space target must be rejected, got {result:?}"
     );
 
-    // Nothing was written by the aborted batch.
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind("MBS7_BLK")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(count, 0, "aborted batch must write no space property rows");
+    // #533 Phase 2: nothing was written by the aborted batch — the block's
+    // `space_id` column stays NULL.
+    let space_id: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind("MBS7_BLK")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(space_id, None, "aborted batch must not set space_id");
 }
 
 // ======================================================================
