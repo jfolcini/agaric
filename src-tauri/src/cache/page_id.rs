@@ -222,10 +222,15 @@ pub async fn set_block_space_id_from_parent(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(), AppError> {
+    // Only inherit when the block HAS a parent. A parentless (top-level)
+    // block has no parent to inherit from and owns its `space_id` directly
+    // (set by the `space` op / explicit scope); the `parent_id IS NOT NULL`
+    // guard stops this incremental path from nulling that authoritative
+    // value — the same hazard the `rebuild_space_ids` page-guard avoids.
     sqlx::query!(
         "UPDATE blocks \
          SET space_id = (SELECT b2.space_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
-         WHERE id = ?",
+         WHERE id = ? AND parent_id IS NOT NULL",
         block_id
     )
     .execute(pool)
