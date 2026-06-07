@@ -701,3 +701,36 @@ export function addMockAttachment(
   attachments.set(row.id, row)
   return row
 }
+
+/**
+ * #548: bulk-insert `count` agenda items so the virtualized AgendaResults list
+ * is long enough to actually recycle rows under a real browser (jsdom can't
+ * scroll, so this path is only exercisable in Playwright). Each block is a
+ * `TODO` child of the given page (default Projects) with a staggered due date,
+ * so they all pass the agenda's default `todo_state IN (TODO, DOING)` filter.
+ * Call from an e2e test AFTER `waitForBoot` (the global reset re-seeds the
+ * canonical fixture first). Returns the ids it created, in order.
+ */
+export function addMockAgendaItems(
+  count: number,
+  parentPageId: string = SEED_IDS.PAGE_PROJECTS,
+): string[] {
+  const ids: string[] = []
+  const basePosition = blocks.size + 1
+  for (let i = 0; i < count; i++) {
+    const id = fakeId()
+    const block = makeBlock(
+      id,
+      'block',
+      `Agenda load item ${i + 1}`,
+      parentPageId,
+      basePosition + i,
+    )
+    block['page_id'] = parentPageId
+    block['todo_state'] = 'TODO'
+    block['due_date'] = offsetDate(i)
+    blocks.set(id, block)
+    ids.push(id)
+  }
+  return ids
+}

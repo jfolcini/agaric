@@ -15,7 +15,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
 import { dispatch } from './handlers'
 import { clearMockErrors, getInjectedError, hasInjectedError, injectMockError } from './injection'
-import { addMockAttachment, seedBlocks } from './seed'
+import { addMockAgendaItems, addMockAttachment, seedBlocks } from './seed'
 
 // ---------------------------------------------------------------------------
 // Public re-exports
@@ -75,6 +75,9 @@ export function setupMock(): void {
 
   // Expose attachment seeding to E2E tests
   w['__addMockAttachment'] = addMockAttachment
+
+  // Expose bulk agenda-item seeding to E2E tests (#548 virtualization spec).
+  w['__addMockAgendaItems'] = addMockAgendaItems
 
   // Expose the full reset hook to E2E tests (TEST-1a). Wired into a global
   // beforeEach in `e2e/helpers.ts` so every spec starts from seed state.
