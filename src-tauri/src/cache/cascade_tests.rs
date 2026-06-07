@@ -149,7 +149,7 @@ async fn cascade_block_properties_value_ref_on_hard_delete() {
     sqlx::query!(
         "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)",
         "BLK04",
-        "space",
+        "note",
         "REF04"
     )
     .execute(&pool)
@@ -164,7 +164,7 @@ async fn cascade_block_properties_value_ref_on_hard_delete() {
         count_where(
             &pool,
             "block_properties",
-            "block_id = 'BLK04' AND key = 'space'",
+            "block_id = 'BLK04' AND key = 'note'",
         )
         .await,
         0,
@@ -468,7 +468,7 @@ async fn hard_delete_block_cascades_to_all_child_tables() {
     sqlx::query!(
         "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)",
         "OTHERX",
-        "space",
+        "note",
         "OWNERX"
     )
     .execute(&pool)
@@ -561,7 +561,7 @@ async fn hard_delete_block_cascades_to_all_child_tables() {
         count_where(
             &pool,
             "block_properties",
-            "block_id = 'OTHERX' AND key = 'space'",
+            "block_id = 'OTHERX' AND key = 'note'",
         )
         .await,
         0,

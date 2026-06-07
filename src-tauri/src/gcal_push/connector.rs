@@ -1387,15 +1387,9 @@ mod tests {
         .await
         .unwrap();
 
-        sqlx::query(
-            "INSERT OR REPLACE INTO block_properties \
-             (block_id, key, value_date) VALUES (?, 'due_date', ?)",
-        )
-        .bind(&block_id)
-        .bind(date)
-        .execute(pool)
-        .await
-        .unwrap();
+        // #534: `due_date` is column-backed on `blocks` (set above) and is the
+        // single source of truth; a redundant `block_properties('due_date')`
+        // row is now CHECK-forbidden, so it is intentionally not seeded here.
 
         (page_id, block_id)
     }

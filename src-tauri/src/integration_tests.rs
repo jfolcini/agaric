@@ -715,7 +715,7 @@ async fn purge_removes_block_tags_properties_and_attachments() {
 
     sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
         .bind(&bid)
-        .bind("priority")
+        .bind("effort")
         .bind("high")
         .execute(&pool)
         .await

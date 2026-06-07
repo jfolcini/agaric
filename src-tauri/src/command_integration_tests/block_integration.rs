@@ -1064,7 +1064,7 @@ async fn purge_block_removes_tags_properties_attachments_links() {
     .unwrap();
     sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
         .bind("PURGE_REL")
-        .bind("priority")
+        .bind("effort")
         .bind("high")
         .execute(&pool)
         .await
