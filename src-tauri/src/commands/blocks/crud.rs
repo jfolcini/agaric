@@ -248,13 +248,20 @@ pub(crate) async fn create_block_in_tx(
     // 5. Insert into blocks table within same transaction
     let block_id_str = block_id.as_str();
     sqlx::query!(
-        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, ?, ?, ?, ?, ?)",
+        // #533: stamp `space_id` synchronously from the owning page so a
+        // committed block is never transiently space-less (the background
+        // SetBlockPageId task remains belt-and-suspenders). A child inherits
+        // its page's space via `page_id`; a brand-new top-level page has no
+        // `page_id` row yet → resolves NULL, then set immediately after by
+        // the `set_property(space)` op in `create_page_in_space_inner`.
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, ?, ?, ?, ?, ?, (SELECT space_id FROM blocks WHERE id = ?))",
         block_id_str,
         block_type,
         content,
         parent_id,
         effective_position,
+        page_id,
         page_id,
     )
     .execute(&mut **tx)

@@ -808,6 +808,93 @@ async fn property_every_page_has_space_after_bootstrap_under_mixed_create_paths(
     );
 }
 
+/// #533: the universal "every block maps to a space" invariant — NO
+/// non-deleted block may have a NULL `space_id`, the sole legitimate
+/// exception being a space block itself (`is_space = 'true'`). Covers all
+/// block types, not just pages.
+async fn assert_every_block_maps_to_a_space(pool: &SqlitePool) {
+    let orphans: Vec<(String, String)> = sqlx::query_as(
+        "SELECT b.id, b.block_type FROM blocks b \
+         WHERE b.deleted_at IS NULL \
+           AND b.space_id IS NULL \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM block_properties p \
+               WHERE p.block_id = b.id AND p.key = 'is_space' AND p.value_text = 'true' \
+           )",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert!(
+        orphans.is_empty(),
+        "#533 invariant violated: {} block(s) have no space (and aren't space blocks): {orphans:?}",
+        orphans.len()
+    );
+}
+
+/// #533: drive a realistic workflow (bootstrap → page in a space → nested
+/// content children → an adopted tag) and assert EVERY resulting block
+/// maps to a space. Guards against any creation path leaving a block
+/// space-less (which would make it vanish from every space-filtered read).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn every_block_maps_to_a_space_after_realistic_workflow_533() {
+    use crate::commands::{add_tag_inner, create_block_inner, create_page_in_space_inner};
+    use crate::materializer::Materializer;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    bootstrap_spaces(&pool, DEV).await.unwrap();
+
+    // Page in Personal + nested content children (create path).
+    let page = create_page_in_space_inner(
+        &pool,
+        DEV,
+        &mat,
+        None,
+        "Workflow page".into(),
+        SPACE_PERSONAL_ULID.to_owned(),
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(page.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let _grandchild = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grandchild".into(),
+        Some(child.id.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // A tag, adopted into the block's space via add_tag (orphan→space).
+    let tag = create_block_inner(&pool, DEV, &mat, "tag".into(), "proj".into(), None, None)
+        .await
+        .unwrap();
+    add_tag_inner(&pool, DEV, &mat, child.id.clone(), tag.id.clone())
+        .await
+        .unwrap();
+
+    mat.flush_background().await.unwrap();
+
+    // The invariant: every non-deleted, non-space block has a space_id.
+    assert_every_block_maps_to_a_space(&pool).await;
+    mat.shutdown();
+}
+
 /// TEST-14 — `list_blocks_inner` (the IPC consumer path the frontend
 /// hits via the `list_blocks` Tauri command) must enforce space
 /// isolation end-to-end: given pages seeded across both spaces via
