@@ -66,6 +66,16 @@ Rationale: range scans on staleness windows are direct integer comparisons (`WHE
 
 Precedent: `loro_doc_state.updated_at` (migration 0052) and `app_settings.updated_at` (migration 0053) already follow this shape. The legacy TEXT columns (`blocks.deleted_at`, `op_log.created_at`, `materializer_retry_queue.created_at`, etc.) keep `crate::now_rfc3339` until Phase 2 of #109 migrates each one in turn.
 
+### Calendar dates are TEXT `YYYY-MM-DD` — and stay that way (#588)
+
+The INTEGER-ms rule above is for **instants** (a precise moment in time). It does **not** apply to **calendar dates** — `blocks.due_date`, `blocks.scheduled_date`, and `block_properties.value_date`. These are intentionally `TEXT` in `'YYYY-MM-DD'` form and must NOT be migrated to epoch-ms:
+
+- A due/scheduled date is "June 15", not an instant. Encoding it as epoch-ms would invent a spurious time-of-day and timezone.
+- `'YYYY-MM-DD'` is lexicographically sortable, so the agenda's range queries (`WHERE due_date BETWEEN ? AND ?`) work directly, and SQLite's `date()` / `strftime()` operate on it natively.
+- SQLite has no native `DATE` type anyway (storage classes are NULL/INTEGER/REAL/TEXT/BLOB; under `STRICT` only INT/INTEGER/REAL/TEXT/BLOB/ANY are accepted), so `TEXT` is the idiomatic encoding for a date-without-time.
+
+A future "finish the #109 timestamp → INTEGER migration" sweep must skip these three columns.
+
 ## Op log: never write to it from a migration
 
 The op log (`op_log`) is the event-sourcing root. Migrations that change schema MUST NOT backfill op log rows for the new schema — that would inject synthetic ops into the user's history. Backfill should happen lazily through normal command paths, OR through a one-time materializer task triggered after the schema is in place.
