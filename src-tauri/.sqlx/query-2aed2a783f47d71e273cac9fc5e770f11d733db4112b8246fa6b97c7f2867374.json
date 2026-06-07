@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id AS \"id: crate::ulid::BlockId\", block_type, content, parent_id AS \"parent_id: crate::ulid::BlockId\", position, deleted_at, todo_state, priority, due_date, scheduled_date FROM blocks",
+  "query": "SELECT id AS \"id: crate::ulid::BlockId\", block_type, content, parent_id AS \"parent_id: crate::ulid::BlockId\", position, deleted_at, todo_state, priority, due_date, scheduled_date, space_id AS \"space_id: crate::ulid::BlockId\" FROM blocks",
   "describe": {
     "columns": [
       {
@@ -112,6 +112,17 @@
             "name": "scheduled_date"
           }
         }
+      },
+      {
+        "name": "space_id: crate::ulid::BlockId",
+        "ordinal": 10,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -127,8 +138,9 @@
       true,
       true,
       true,
+      true,
       true
     ]
   },
-  "hash": "1ccf2b1294621f04b8a1db0e0f8b3f145de325e073ea84b1c4ebd831a25f3708"
+  "hash": "2aed2a783f47d71e273cac9fc5e770f11d733db4112b8246fa6b97c7f2867374"
 }

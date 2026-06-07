@@ -648,22 +648,12 @@ mod tests {
         );
     }
 
-    /// Helper: assign a `space` property to a tag block (mirrors
-    /// `block_properties` rows the materializer would normally write).
+    /// Helper: assign a tag block to a space via the denormalized
+    /// `blocks.space_id` column (mirrors what the materializer writes).
     async fn assign_tag_to_space(pool: &SqlitePool, tag_id: &str, space_id: &str) {
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) \
-             VALUES (?, 'space', ?)",
-        )
-        .bind(tag_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
         // Phase 2 (#533): space membership is keyed on `blocks.space_id`, the
-        // sole source of truth — reads no longer consult the `block_properties`
-        // row above. Set the column so `list_all_tags_in_space` (which filters
-        // on `block_type = 'tag' AND space_id = ?`) sees the tag.
+        // sole source of truth. Set the column so `list_all_tags_in_space`
+        // (which filters on `block_type = 'tag' AND space_id = ?`) sees the tag.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(space_id)
             .bind(tag_id)
@@ -673,8 +663,8 @@ mod tests {
             .unwrap();
     }
 
-    /// Seed the space block so the FK on `block_properties.value_ref →
-    /// blocks(id)` is satisfied.  Idempotent.
+    /// Seed the space block so the FK on `blocks.space_id → blocks(id)`
+    /// is satisfied.  Idempotent.
     async fn ensure_space_block(pool: &SqlitePool, space_id: &str) {
         sqlx::query(
             "INSERT OR IGNORE INTO blocks (id, block_type, content) \

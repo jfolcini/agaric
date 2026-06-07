@@ -4153,18 +4153,11 @@ async fn insert_space_block(pool: &SqlitePool, id: &str, name: &str) {
     .unwrap();
 }
 
-/// Assign a block to a space by writing the materialised
-/// `block_properties(key = 'space', value_ref = <space_id>)` row directly.
-/// Bypasses `set_property_in_tx` intentionally — these tests target the
-/// filter SQL, not the command layer.
+/// Assign a block to a space by stamping the denormalized `blocks.space_id`
+/// column directly. Bypasses `set_property_in_tx` intentionally — these
+/// tests target the filter SQL, not the command layer.
 async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-    // #533: mirror the denormalized `blocks.space_id` column — every block
+    // #533: stamp the denormalized `blocks.space_id` column — every block
     // whose owning page is `block_id` (pages carry `page_id = id`) is in
     // this space. Equivalent to the old `b.page_id IN (...)` filter.
     sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")

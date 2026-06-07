@@ -3202,8 +3202,8 @@ mod restore_cascade_tests {
     /// Build a tree: page (PAGE_ID) → child (CHILD_1) → grandchild
     /// (CHILD_2) → great-grandchild (CHILD_3). Each block gets
     /// `deleted_at = DELETED_AT` so the restore CTE will sweep all four.
-    /// The page also gets a `space` block_property so
-    /// `resolve_block_space` returns SPACE.
+    /// The page also gets `blocks.space_id = SPACE` so space membership
+    /// resolves to SPACE.
     async fn seed_deleted_subtree(pool: &SqlitePool) {
         // Space block (referenced by `block_properties.value_ref` →
         // FK → `blocks(id)`).  Spaces are stored as 'tag' blocks today
@@ -3230,15 +3230,6 @@ mod restore_cascade_tests {
         .execute(pool)
         .await
         .unwrap();
-        // Space property on the page so resolve_block_space succeeds.
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(PAGE_ID)
-        .bind(SPACE)
-        .execute(pool)
-        .await
-        .unwrap();
         // Three nested children.
         for (id, parent, pos) in [
             (CHILD_1, PAGE_ID, 0_i64),
@@ -3259,9 +3250,8 @@ mod restore_cascade_tests {
             .await
             .unwrap();
         }
-        // Phase 2 (#533): space membership is read from `blocks.space_id`,
-        // not the `block_properties` `key='space'` row above. Set the
-        // denormalized column on the page and every block paged to it.
+        // Phase 2 (#533): space membership is read from `blocks.space_id`.
+        // Set the denormalized column on the page and every block paged to it.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(SPACE)
             .bind(PAGE_ID)
@@ -3471,8 +3461,8 @@ mod delete_cascade_tests {
     /// Build a tree: page (PAGE_ID) -> child (CHILD_1) -> grandchild
     /// (CHILD_2).  All ALIVE (deleted_at NULL) so the
     /// `descendants_cte_active!()` filter in `apply_delete_block_tx`
-    /// matches all three.  The page also gets a `space` block_property
-    /// so `resolve_block_space` returns SPACE.
+    /// matches all three.  The page also gets `blocks.space_id = SPACE`
+    /// so space membership resolves to SPACE.
     async fn seed_alive_subtree(pool: &SqlitePool) {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
@@ -3491,14 +3481,6 @@ mod delete_cascade_tests {
         .execute(pool)
         .await
         .expect("seed page");
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(PAGE_ID)
-        .bind(SPACE)
-        .execute(pool)
-        .await
-        .expect("seed space property");
         for (id, parent, pos) in [(CHILD_1, PAGE_ID, 0_i64), (CHILD_2, CHILD_1, 0)] {
             sqlx::query(
                 "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
@@ -3512,9 +3494,8 @@ mod delete_cascade_tests {
             .await
             .expect("seed child");
         }
-        // Phase 2 (#533): space membership is read from `blocks.space_id`,
-        // not the `block_properties` `key='space'` row above. Set the
-        // denormalized column on the page and every block paged to it.
+        // Phase 2 (#533): space membership is read from `blocks.space_id`.
+        // Set the denormalized column on the page and every block paged to it.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(SPACE)
             .bind(PAGE_ID)
@@ -3720,7 +3701,7 @@ mod engine_path_tests {
         let db_path = dir.path().join("engine_path.db");
         let pool = init_pool(&db_path).await.expect("init_pool");
 
-        // Seed a page with a `space` property so that
+        // Seed a page with `blocks.space_id = SPACE_ID` so that
         // resolve_block_space succeeds for CreateBlock with parent
         // = PAGE_ID.
         sqlx::query(
@@ -3740,17 +3721,8 @@ mod engine_path_tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(PAGE_ID)
-        .bind(SPACE_ID)
-        .execute(&pool)
-        .await
-        .unwrap();
-        // Phase 2 (#533): space membership is read from `blocks.space_id`,
-        // not the `block_properties` `key='space'` row above. Set the
-        // denormalized column on the page and every block paged to it.
+        // Phase 2 (#533): space membership is read from `blocks.space_id`.
+        // Set the denormalized column on the page and every block paged to it.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(SPACE_ID)
             .bind(PAGE_ID)

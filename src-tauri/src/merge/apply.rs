@@ -547,8 +547,8 @@ mod dispatch_for_record_regression {
     ///     `block_properties.value_ref` is satisfied)
     ///   * a `blocks` row for the target block (so the
     ///     `JOIN blocks tgt` in `resolve_block_space` returns a hit)
-    ///   * a `block_properties (key='space', value_ref=SPACE)` row on
-    ///     the target block (so the property lookup itself succeeds).
+    ///   * `blocks.space_id = SPACE` on the target block (the sole source
+    ///     of truth for space membership since migration 0087).
     async fn seed_space_membership(pool: &SqlitePool) {
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position) \
@@ -567,18 +567,10 @@ mod dispatch_for_record_regression {
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(BLOCK_ULID)
-        .bind(SPACE_ULID)
-        .execute(pool)
-        .await
-        .unwrap();
         // Phase 2 (#533): `blocks.space_id` is the sole source of truth for
-        // space membership — reads no longer consult the `block_properties`
-        // `key='space'` row above. Set the denormalized column so
-        // column-based filters resolve the block to `SPACE_ULID`.
+        // space membership — reads no longer consult any `block_properties`
+        // `key='space'` row. Set the denormalized column so column-based
+        // filters resolve the block to `SPACE_ULID`.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(SPACE_ULID)
             .bind(BLOCK_ULID)

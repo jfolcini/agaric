@@ -108,19 +108,13 @@ pub async fn mark_block_as_space(pool: &SqlitePool, space_id: &str) {
     .unwrap();
 }
 
-/// Assign a block to [`TEST_SPACE_ID`] by writing the materialised
-/// `block_properties(key='space', value_ref=TEST_SPACE_ID)` row directly.
-/// Bypasses `set_property_in_tx` intentionally — the FEAT-3 Phase 7 query
-/// layer reads `block_properties` regardless of how the row got there.
+/// Assign a block to [`TEST_SPACE_ID`] by stamping the denormalized
+/// `blocks.space_id` column directly. Bypasses `set_property_in_tx`
+/// intentionally — the query layer reads `blocks.space_id` regardless of
+/// how it got set.
 pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
     ensure_test_space(pool).await;
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(TEST_SPACE_ID)
-        .execute(pool)
-        .await
-        .unwrap();
-    // #533: mirror the denormalized `blocks.space_id` column the way the
+    // #533: stamp the denormalized `blocks.space_id` column the way the
     // materializer would. Space membership covers the block itself
     // (`id = ?`, e.g. a top-level content block whose `page_id` is NULL)
     // AND every block whose owning page is `block_id` (`page_id = ?`,
@@ -156,15 +150,9 @@ pub async fn ensure_test_space_b(pool: &SqlitePool) {
 /// cross-space tests so the same helper drives both the A and B
 /// branches. Caller must seed the space block separately
 /// (`ensure_test_space` / `ensure_test_space_b`) so the FK on
-/// `block_properties.value_ref → blocks(id)` is satisfied.
+/// `blocks.space_id → blocks(id)` is satisfied.
 pub async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-    // #533: keep the denormalized `blocks.space_id` column in step (see
+    // #533: stamp the denormalized `blocks.space_id` column (see
     // `assign_to_test_space`) — cover the block itself AND its page
     // descendants via the `id = ? OR page_id = ?` grouping.
     sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")

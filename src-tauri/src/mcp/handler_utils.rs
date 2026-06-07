@@ -124,10 +124,14 @@ pub(crate) async fn validate_block_in_space(
     // `blocks.id` for both the input lookup and the page self-join),
     // no scan.
     let row: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT pg.space_id \
+        // #533: prefer the block's own `space_id`, falling back to its
+        // (live) owning page — mirrors `resolve_block_space` exactly,
+        // including the `pg.deleted_at IS NULL` guard so a soft-deleted
+        // owning page doesn't authorize a write via its retained space.
+        "SELECT COALESCE(b.space_id, pg.space_id) \
          FROM blocks b \
          LEFT JOIN blocks pg \
-           ON pg.id = b.page_id \
+           ON pg.id = b.page_id AND pg.deleted_at IS NULL \
          WHERE b.id = ?",
     )
     .bind(block_id)

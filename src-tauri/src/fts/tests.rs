@@ -3464,8 +3464,8 @@ const FTS_SPACE_A_ID: &str = "FTS_SPC_A";
 const FTS_SPACE_B_ID: &str = "FTS_SPC_B";
 
 /// Insert a space block (a page carrying `is_space = 'true'`). Required
-/// so the FK on `block_properties.value_ref` validates when the tests
-/// assign a page to the space.
+/// so the FK on `blocks.space_id` validates when the tests assign a page
+/// to the space.
 async fn insert_space_block_for_fts(pool: &SqlitePool, id: &str, name: &str) {
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
@@ -3486,18 +3486,12 @@ async fn insert_space_block_for_fts(pool: &SqlitePool, id: &str, name: &str) {
     .unwrap();
 }
 
-/// Assign a block to a space via a direct `block_properties` insert —
-/// bypasses the command layer because the test targets the FTS filter
-/// SQL, not op-log semantics.
+/// Assign a block to a space by stamping the denormalized `blocks.space_id`
+/// column directly — bypasses the command layer because the test targets
+/// the FTS filter SQL, not op-log semantics.
 async fn assign_to_space_for_fts(pool: &SqlitePool, block_id: &str, space_id: &str) {
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-    // #533: mirror the denormalized `blocks.space_id` column the FTS filter
-    // now reads (every block whose owning page is `block_id`).
+    // #533: stamp the denormalized `blocks.space_id` column the FTS filter
+    // reads (every block whose owning page is `block_id`).
     sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
         .bind(space_id)
         .bind(block_id)

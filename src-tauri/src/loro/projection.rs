@@ -560,20 +560,39 @@ pub async fn project_block_full_to_sql(
     match snapshot {
         Some(snap) => {
             let parent_id = snap.parent_id.as_deref();
+            // #533: space membership is the `blocks.space_id` column (never a
+            // `block_properties` row). Every block carried in space S's
+            // per-space Loro doc belongs to S, so stamp `space_id` from the
+            // doc's space on both insert and conflict-update — this is how a
+            // synced block gets its space (the per-op `space` projection only
+            // fires for the page that holds the `SetProperty(space)` op; the
+            // engine-reproject path must set it for EVERY block or synced
+            // blocks land NULL and vanish from space-filtered reads).
+            //
+            // Stamp conditionally via a subquery so it can never violate the
+            // `space_id REFERENCES blocks(id)` FK: if the space block row
+            // isn't present yet (cross-doc sync ordering — the space block
+            // lives outside this space's own doc), resolve to NULL rather
+            // than abort the inbound tx; a later import / rebuild reconciles
+            // once the space block arrives. `?6`/`?7` both bind the space id.
+            let space_id_str = space_id.as_str();
             sqlx::query!(
                 "INSERT INTO blocks \
-                     (id, block_type, content, parent_id, position) \
-                 VALUES (?, ?, ?, ?, ?) \
+                     (id, block_type, content, parent_id, position, space_id) \
+                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM blocks WHERE id = ?)) \
                  ON CONFLICT(id) DO UPDATE SET \
                      block_type = excluded.block_type, \
                      content = excluded.content, \
                      parent_id = excluded.parent_id, \
-                     position = excluded.position",
+                     position = excluded.position, \
+                     space_id = (SELECT id FROM blocks WHERE id = ?)",
                 snap.block_id,
                 snap.block_type,
                 snap.content,
                 parent_id,
                 snap.position,
+                space_id_str,
+                space_id_str,
             )
             .execute(&mut *conn)
             .await?;
@@ -677,9 +696,14 @@ pub async fn reproject_block_properties_from_engine(
     .await?;
 
     for (key, value) in props {
-        if is_reserved_property_key(key) {
+        if is_reserved_property_key(key) || key == "space" {
             // Reserved keys map to dedicated `blocks` columns, never
-            // `block_properties`.  Handled by the reserved-key pass below.
+            // `block_properties` (handled by the reserved-key pass below).
+            // #533: `space` is likewise column-backed (`blocks.space_id`,
+            // stamped from the per-space doc in `project_block_full_to_sql`)
+            // — it must NEVER be written back as a `block_properties` row
+            // here, or inbound sync would resurrect the rows migration 0087
+            // removed.
             continue;
         }
 
@@ -2065,6 +2089,70 @@ mod tests {
         .await
         .expect("fetch due");
         assert_eq!(due, (Some("2026-01-01".into()), None));
+    }
+
+    /// #533 regression: the inbound-sync projection routes space membership
+    /// to the `blocks.space_id` COLUMN and never writes a
+    /// `block_properties(key='space')` row. Before this fix,
+    /// `project_block_full_to_sql` left `space_id` NULL (synced blocks
+    /// vanished from space-filtered reads) and
+    /// `reproject_block_properties_from_engine` resurrected the property row
+    /// that migration 0087 removed.
+    #[tokio::test]
+    async fn sync_projection_routes_space_to_column_not_property_533() {
+        let (pool, _dir) = fresh_pool().await;
+        const SPACE: &str = "01HZ00000000000000000000S1";
+        // The space block must exist for the `space_id` FK to resolve.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'page', 'Space', NULL, 0)",
+        )
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let space = crate::space::SpaceId::from_trusted(SPACE);
+        let bid = BlockId::from_trusted(BLOCK_A);
+
+        // A — full-block projection stamps space_id from the doc's space.
+        let snap = snapshot(BLOCK_A, "content", "synced", None, 0);
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_block_full_to_sql(&mut conn, &space, &bid, Some(&snap))
+            .await
+            .expect("project full");
+
+        // B — property reproject with a `space` entry must NOT write a row.
+        let props = vec![("space".to_string(), pv(SPACE))];
+        let value_types = load_value_types(&pool).await;
+        reproject_block_properties_from_engine(&mut conn, &bid, &props, &value_types)
+            .await
+            .expect("reproject");
+        drop(conn);
+
+        let space_id: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch space_id");
+        assert_eq!(
+            space_id.as_deref(),
+            Some(SPACE),
+            "synced block must get space_id from the doc's space (column)"
+        );
+
+        let space_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("count space rows");
+        assert_eq!(
+            space_rows, 0,
+            "sync must NOT resurrect a block_properties(key='space') row"
+        );
     }
 
     #[tokio::test]
