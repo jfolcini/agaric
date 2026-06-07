@@ -234,6 +234,20 @@ pub async fn project_set_property_to_sql(
                 )));
             }
         }
+    } else if payload.key == "space" {
+        // #533 Phase 2: `space` is column-backed ONLY — project the logged
+        // `SetProperty(space)` op to the denormalized `blocks.space_id` for
+        // the whole owning-page group; no block_properties row. Keeps old
+        // op-log entries replaying correctly. Parity with `set_property_in_tx`.
+        let block_id = payload.block_id.as_str();
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
+            payload.value_ref,
+            block_id,
+            block_id
+        )
+        .execute(&mut *conn)
+        .await?;
     } else {
         let value_bool_int: Option<i64> = payload.value_bool.map(|b| b as i64);
         let block_id = payload.block_id.as_str();
@@ -251,22 +265,6 @@ pub async fn project_set_property_to_sql(
         )
         .execute(&mut *conn)
         .await?;
-        // #533: `space` remains a property row (source of truth) but also
-        // drives the denormalized `blocks.space_id` query column. Space is
-        // a page-level property: stamp the page's own row AND every block
-        // whose owning page is this one (`page_id = block_id`) so a space
-        // re-assignment of a populated page moves its descendants too. Keeps
-        // parity with the command path (`set_property_in_tx`).
-        if payload.key == "space" {
-            sqlx::query!(
-                "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-                payload.value_ref,
-                block_id,
-                block_id
-            )
-            .execute(&mut *conn)
-            .await?;
-        }
     }
     Ok(())
 }
@@ -449,6 +447,17 @@ pub async fn project_delete_property_to_sql(
                 )));
             }
         }
+    } else if key == "space" {
+        // #533 Phase 2: `space` is column-backed only — project the logged
+        // `DeleteProperty(space)` op to clear `blocks.space_id` for the whole
+        // owning-page group; no block_properties row. Parity with the set path.
+        sqlx::query!(
+            "UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?",
+            block_id,
+            block_id
+        )
+        .execute(&mut *conn)
+        .await?;
     } else {
         sqlx::query!(
             "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
@@ -457,18 +466,6 @@ pub async fn project_delete_property_to_sql(
         )
         .execute(&mut *conn)
         .await?;
-        // #533: keep the denormalized space_id column in step when a
-        // `space` property row is removed — clear the page and its whole
-        // owning-page group (parity with the set path).
-        if key == "space" {
-            sqlx::query!(
-                "UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?",
-                block_id,
-                block_id
-            )
-            .execute(&mut *conn)
-            .await?;
-        }
     }
     Ok(())
 }

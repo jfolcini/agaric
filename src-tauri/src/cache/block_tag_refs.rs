@@ -142,12 +142,8 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
              WHERE EXISTS \
                  (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT bp.value_ref FROM block_properties bp \
-                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
-                   WHERE bp.block_id = COALESCE( \
-                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
-                           je.value) \
-                     AND bp.key = 'space' \
+                   SELECT space_id FROM blocks \
+                   WHERE id = je.value AND deleted_at IS NULL \
                    LIMIT 1))",
             block_id,
             insert_json,
@@ -257,12 +253,8 @@ pub async fn reindex_block_tag_refs_split(
              WHERE EXISTS \
                  (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT bp.value_ref FROM block_properties bp \
-                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
-                   WHERE bp.block_id = COALESCE( \
-                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
-                           je.value) \
-                     AND bp.key = 'space' \
+                   SELECT space_id FROM blocks \
+                   WHERE id = je.value AND deleted_at IS NULL \
                    LIMIT 1))",
             block_id,
             insert_json,
@@ -315,12 +307,7 @@ async fn compute_desired_pairs(
     // per-block subquery is `space::resolve_block_space`'s SQL (page_id-aware,
     // both soft-delete guards). A NULL space means "unscoped".
     let space_of: std::collections::HashMap<String, Option<String>> = sqlx::query!(
-        r#"SELECT b.id AS "id!", (
-               SELECT bp.value_ref FROM block_properties bp
-               JOIN blocks h ON h.id = bp.block_id AND h.deleted_at IS NULL
-               WHERE bp.block_id = COALESCE(b.page_id, b.id) AND bp.key = 'space'
-               LIMIT 1
-           ) AS "space?"
+        r#"SELECT b.id AS "id!", b.space_id AS "space?"
            FROM blocks b
            WHERE b.deleted_at IS NULL"#
     )

@@ -242,10 +242,8 @@ async fn audit_a1(
     let rows = sqlx::query!(
         r#"WITH cs AS (
               SELECT bl.source_id AS source_id, bl.target_id AS target_id,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS source_space,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(bt.page_id, bt.id) AND bp.key = 'space') AS target_space
+                bs.space_id AS source_space,
+                bt.space_id AS target_space
               FROM block_links bl
               JOIN blocks bs ON bs.id = bl.source_id AND bs.deleted_at IS NULL
               JOIN blocks bt ON bt.id = bl.target_id AND bt.deleted_at IS NULL
@@ -284,10 +282,8 @@ async fn audit_a2(
     let rows = sqlx::query!(
         r#"WITH cs AS (
               SELECT bt.block_id AS block_id, bt.tag_id AS tag_id,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(bb.page_id, bb.id) AND bp.key = 'space') AS source_space,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS target_space
+                bb.space_id AS source_space,
+                tg.space_id AS target_space
               FROM block_tags bt
               JOIN blocks bb ON bb.id = bt.block_id AND bb.deleted_at IS NULL
               JOIN blocks tg ON tg.id = bt.tag_id AND tg.deleted_at IS NULL
@@ -326,10 +322,8 @@ async fn audit_a3(
     let rows = sqlx::query!(
         r#"WITH cs AS (
               SELECT btr.source_id AS source_id, btr.tag_id AS tag_id,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(bs.page_id, bs.id) AND bp.key = 'space') AS source_space,
-                (SELECT bp.value_ref FROM block_properties bp
-                 WHERE bp.block_id = COALESCE(tg.page_id, tg.id) AND bp.key = 'space') AS target_space
+                bs.space_id AS source_space,
+                tg.space_id AS target_space
               FROM block_tag_refs btr
               JOIN blocks bs ON bs.id = btr.source_id AND bs.deleted_at IS NULL
               JOIN blocks tg ON tg.id = btr.tag_id AND tg.deleted_at IS NULL
@@ -373,8 +367,7 @@ async fn audit_a4(
     // 1. Build block_id → resolved_space map (non-deleted).
     let space_rows = sqlx::query!(
         r#"SELECT b.id AS "id!",
-              (SELECT bp.value_ref FROM block_properties bp
-               WHERE bp.block_id = b.page_id AND bp.key = 'space') AS "space?"
+              b.space_id AS "space?"
            FROM blocks b
            WHERE b.deleted_at IS NULL"#
     )
@@ -471,10 +464,8 @@ async fn audit_a5(
     let rows = sqlx::query(
         r#"WITH cs AS (
               SELECT bp.block_id AS source_id, bp.key AS key, bp.value_ref AS target_id,
-                (SELECT s.value_ref FROM block_properties s
-                 WHERE s.block_id = COALESCE(bs.page_id, bs.id) AND s.key = 'space') AS source_space,
-                (SELECT s.value_ref FROM block_properties s
-                 WHERE s.block_id = COALESCE(bt.page_id, bt.id) AND s.key = 'space') AS target_space
+                bs.space_id AS source_space,
+                bt.space_id AS target_space
               FROM block_properties bp
               JOIN blocks bs ON bs.id = bp.block_id AND bs.deleted_at IS NULL
               JOIN blocks bt ON bt.id = bp.value_ref AND bt.deleted_at IS NULL
@@ -689,25 +680,27 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(page_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(space_id)
+            .bind(page_id)
+            .bind(page_id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
-    /// Insert a content block under `page_id`. The block inherits its
-    /// space transitively via `COALESCE(page_id, id)` → page → space.
+    /// Insert a content block under `page_id`. Phase 2: `blocks.space_id`
+    /// is the sole source of truth, so the block carries the same space_id
+    /// as its owning page directly (no transitive page→`space` property
+    /// lookup). The page is always seeded first, so its space_id is set.
     async fn insert_content_block(pool: &SqlitePool, block_id: &str, page_id: &str, content: &str) {
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'content', ?, ?, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', ?, ?, 1, ?, (SELECT space_id FROM blocks WHERE id = ?))",
         )
         .bind(block_id)
         .bind(content)
+        .bind(page_id)
         .bind(page_id)
         .bind(page_id)
         .execute(pool)
@@ -729,14 +722,13 @@ mod tests {
         .await
         .unwrap();
         if let Some(sid) = space_id {
-            sqlx::query(
-                "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-            )
-            .bind(tag_id)
-            .bind(sid)
-            .execute(pool)
-            .await
-            .unwrap();
+            sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+                .bind(sid)
+                .bind(tag_id)
+                .bind(tag_id)
+                .execute(pool)
+                .await
+                .unwrap();
         }
     }
 
@@ -936,9 +928,10 @@ mod tests {
         const ORPHAN: &str = "01ORPHANTARGET0000000000Z1";
         insert_content_block(&pool, ORPHAN, ORPHAN, "orphan").await;
         set_ref("project", BLOCK_WORK, ORPHAN).await;
-        // The `space` key is exempt even though it crosses (Work block whose
-        // space property points at the Personal space block).
-        set_ref("space", BLOCK_WORK, PERSONAL).await;
+        // Phase 2 (#533): `block_properties(key='space')` rows no longer exist
+        // (space lives in `blocks.space_id`), so the former `space`-key
+        // exemption case is unrepresentable and has been dropped. The audit
+        // still guards `bp.key <> 'space'` defensively.
 
         let report = run_audit(&pool, 10).await.unwrap();
         assert_eq!(
@@ -990,12 +983,14 @@ mod tests {
         insert_page(&pool, PAGE_PERSONAL, PERSONAL, "P").await;
         insert_page(&pool, PAGE_WORK, WORK, "W").await;
 
-        // BLOCK_PERSONAL is soft-deleted.
+        // BLOCK_PERSONAL is soft-deleted. Phase 2: space_id is carried on the
+        // block itself, copied from the owning page (seeded above).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, deleted_at) \
-             VALUES (?, 'content', 'x', ?, 1, ?, 1735689600000)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id, deleted_at) \
+             VALUES (?, 'content', 'x', ?, 1, ?, (SELECT space_id FROM blocks WHERE id = ?), 1735689600000)",
         )
         .bind(BLOCK_PERSONAL)
+        .bind(PAGE_PERSONAL)
         .bind(PAGE_PERSONAL)
         .bind(PAGE_PERSONAL)
         .execute(&pool)
@@ -1004,10 +999,11 @@ mod tests {
 
         // BLOCK_WORK is a live block in the other space.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'content', 'y', ?, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', 'y', ?, 1, ?, (SELECT space_id FROM blocks WHERE id = ?))",
         )
         .bind(BLOCK_WORK)
+        .bind(PAGE_WORK)
         .bind(PAGE_WORK)
         .bind(PAGE_WORK)
         .execute(&pool)

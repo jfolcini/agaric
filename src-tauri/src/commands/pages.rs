@@ -990,8 +990,8 @@ pub async fn list_page_links_inner_split(
     let links = sqlx::query_as!(
         PageLink,
         r#"WITH space_members AS MATERIALIZED (
-             SELECT block_id FROM block_properties
-             WHERE key = 'space' AND value_ref = ?1
+             SELECT id AS block_id FROM blocks
+             WHERE space_id = ?1
          )
          SELECT
             plc.source_page_id AS "source_id!: crate::ulid::ActiveBlockId",
@@ -1176,8 +1176,8 @@ pub async fn get_page_inner(
     // `Validation` keeps the error category consistent with other
     // policy-violation rejections (e.g. wrong block_type above).
     let space_match = sqlx::query_scalar!(
-        r#"SELECT 1 AS "ok!: i32" FROM block_properties
-           WHERE block_id = ? AND key = 'space' AND value_ref = ?"#,
+        r#"SELECT 1 AS "ok!: i32" FROM blocks
+           WHERE id = ? AND space_id = ?"#,
         page_id,
         space_id,
     )
@@ -1308,14 +1308,14 @@ pub async fn get_page_unscoped_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageSubtreeResponse, AppError> {
-    // Look up the page's own `space` property. The `block_properties`
-    // table is keyed `(block_id, key)` so a single query is enough; we
-    // intentionally do not join `blocks` because the next branch wants
-    // to distinguish "no row" (page may not exist) from "row with
-    // null value_ref" (defensive — should not occur for `space`).
+    // Look up the page's own space via `blocks.space_id` (Phase 2 — the
+    // column is the sole source of truth for membership). `fetch_optional`
+    // distinguishes "no row" (page may not exist) from "row with NULL
+    // space_id" (defensive — every block carries a space, so this should
+    // not occur); both fall through to the unscoped branch below.
     let space_id: Option<String> = sqlx::query_scalar!(
-        r#"SELECT value_ref FROM block_properties
-           WHERE block_id = ? AND key = 'space'"#,
+        r#"SELECT space_id FROM blocks
+           WHERE id = ?"#,
         page_id,
     )
     .fetch_optional(pool)
@@ -1646,8 +1646,8 @@ pub async fn load_page_subtree_inner(
     // page does not carry `space = ?space_id` is rejected with
     // `Validation`, matching `get_page_inner`.
     let space_match = sqlx::query_scalar!(
-        r#"SELECT 1 AS "ok!: i32" FROM block_properties
-           WHERE block_id = ? AND key = 'space' AND value_ref = ?"#,
+        r#"SELECT 1 AS "ok!: i32" FROM blocks
+           WHERE id = ? AND space_id = ?"#,
         root_block_id,
         space_id,
     )

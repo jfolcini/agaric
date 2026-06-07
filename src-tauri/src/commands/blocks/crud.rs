@@ -642,15 +642,13 @@ pub async fn delete_block_inner(
     .await?
     .is_some();
     if is_space_block {
+        // #533 Phase 2: pages in this space carry `blocks.space_id = ?`
+        // (the old `block_properties(key='space')` rows are gone).
         let child_count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
              WHERE b.deleted_at IS NULL \
-             AND EXISTS ( \
-                 SELECT 1 FROM block_properties p \
-                 WHERE p.block_id = b.id \
-                 AND p.key = 'space' \
-                 AND p.value_ref = ? \
-             )",
+             AND b.block_type = 'page' \
+             AND b.space_id = ?",
             block_id,
         )
         .fetch_one(&mut **tx)
@@ -939,15 +937,12 @@ pub async fn delete_blocks_by_ids_inner(
         .await?
         .is_some();
         if is_space_block {
+            // #533 Phase 2: pages in this space carry `blocks.space_id`.
             let child_count: i64 = sqlx::query_scalar!(
                 "SELECT COUNT(*) AS \"n!: i64\" FROM blocks b \
                  WHERE b.deleted_at IS NULL \
-                 AND EXISTS ( \
-                     SELECT 1 FROM block_properties p \
-                     WHERE p.block_id = b.id \
-                     AND p.key = 'space' \
-                     AND p.value_ref = ? \
-                 )",
+                 AND b.block_type = 'page' \
+                 AND b.space_id = ?",
                 root,
             )
             .fetch_one(&mut **tx)
@@ -1452,11 +1447,10 @@ pub async fn restore_block_inner(
              WHERE b.deleted_at IS NULL AND d.depth < 100 \
          ) \
          UPDATE blocks SET space_id = ( \
-             SELECT bp.value_ref FROM block_properties bp \
-             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
+             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
          WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
-           AND block_type != 'page'",
+           AND block_type != 'page' AND page_id IS NOT NULL",
         block_id,
     )
     .execute(&mut **tx)
@@ -2942,6 +2936,22 @@ pub(crate) async fn set_property_in_tx(
                 "is_reserved_property_key('{key}') returned true for an unrecognised key"
             ),
         }
+    } else if key == "space" {
+        // #533 Phase 2: `space` is column-backed ONLY — no block_properties
+        // row. Stamp the denormalized `blocks.space_id` for the page's own
+        // row AND every block whose owning page is this one
+        // (`page_id = block_id`), so a re-assignment (move-to-space) of a
+        // populated page moves its descendants too (a space change enqueues
+        // no page_id/space_id rebuild). Parity with the sync/replay path
+        // (`project_set_property_to_sql`).
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
+            value_ref,
+            block_id,
+            block_id
+        )
+        .execute(&mut **tx)
+        .await?;
     } else {
         // PEND-14: persist `value_bool` as INTEGER (0/1) — SQLite has no
         // native boolean type; the column CHECK constraint set in
@@ -2960,25 +2970,6 @@ pub(crate) async fn set_property_in_tx(
         )
         .execute(&mut **tx)
         .await?;
-        // #533: `space` stays a property row (source of truth) but also
-        // drives the denormalized `blocks.space_id` query column. Space is
-        // a page-level property: stamp the page's own row AND every block
-        // whose owning page is this one (`page_id = block_id`) so the
-        // denormalized column matches the old `b.page_id IN (...)` filter
-        // for the whole page — a re-assignment (move-to-space) of a
-        // populated page must move its descendants too, and a space change
-        // does not enqueue a page_id/space_id rebuild. Keeps parity with
-        // the sync/replay path (`project_set_property_to_sql`).
-        if key == "space" {
-            sqlx::query!(
-                "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-                value_ref,
-                block_id,
-                block_id
-            )
-            .execute(&mut **tx)
-            .await?;
-        }
     }
 
     // Return block + op record; caller is responsible for commit + dispatch.
@@ -3104,6 +3095,18 @@ pub(crate) async fn delete_property_in_tx(
                 )));
             }
         }
+    } else if key == "space" {
+        // #533 Phase 2: `space` is column-backed only — clear the
+        // denormalized `blocks.space_id` for the whole owning-page group;
+        // there is no block_properties row to delete. Parity with the
+        // replay path (`project_delete_property_to_sql`).
+        sqlx::query!(
+            "UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?",
+            block_id,
+            block_id
+        )
+        .execute(&mut **tx)
+        .await?;
     } else {
         sqlx::query!(
             "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
@@ -3112,21 +3115,6 @@ pub(crate) async fn delete_property_in_tx(
         )
         .execute(&mut **tx)
         .await?;
-        // #533: clear the denormalized `blocks.space_id` for the whole
-        // owning-page group when a `space` property is removed — mirrors
-        // the replay path (`project_delete_property_to_sql`) and the
-        // group-write in `set_property_in_tx`. Without this the command
-        // path leaves stale space_id (block keeps appearing in
-        // space-filtered reads) and diverges from synced peers.
-        if key == "space" {
-            sqlx::query!(
-                "UPDATE blocks SET space_id = NULL WHERE id = ? OR page_id = ?",
-                block_id,
-                block_id
-            )
-            .execute(&mut **tx)
-            .await?;
-        }
     }
 
     Ok(op_record)

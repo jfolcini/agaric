@@ -215,15 +215,13 @@ impl SpaceScope {
 /// - `Ok(Some(space_id))` — block has an owning space (a `space`
 ///   ref property on its owning page, found via `COALESCE(page_id,
 ///   id)` resolution).
-/// - `Ok(None)` — block has no owning space. This is the case for
-///   (a) tag blocks (top-level, no `page_id`, no `space` property
-///   pre-Path-A), (b) space blocks themselves (they ARE the space;
-///   they don't carry a `space` ref pointing at themselves), (c)
-///   pre-FEAT-3 blocks that haven't been migrated to a space yet
-///   (rare; bootstrap fast-path normally covers this), (d) blocks
-///   whose `page_id` points at a deleted/conflict page (the
-///   COALESCE step won't find a live page; falls through to the
-///   block's own id which has no `space` property).
+/// - `Ok(None)` — block has a NULL `space_id` (no owning space) or is
+///   itself soft-deleted. This is the case for (a) tag blocks not yet
+///   assigned to a space, (b) space blocks themselves (they ARE the
+///   space; their `space_id` is NULL — they don't point at themselves),
+///   (c) pre-FEAT-3 blocks that haven't been migrated to a space yet
+///   (rare; bootstrap fast-path normally covers this), (d) the block
+///   being soft-deleted (`deleted_at IS NOT NULL`).
 /// - `Err(AppError::Database)` — DB error (rare; would propagate
 ///   from the same `query!` macros every other helper uses).
 ///
@@ -238,22 +236,18 @@ impl SpaceScope {
 ///
 /// # SQL
 ///
-/// The helper executes ONE query (via `query!`). SQLite's
-/// correlated subquery in `COALESCE` short-circuits when the
-/// inner `page_id` lookup yields a row.
+/// Phase 2 (#533): the helper reads the block's own `blocks.space_id`
+/// column directly — every block carries its space (a content block
+/// inherits its owning page's space; a page/tag/space block carries
+/// its own). The pre-Phase-2 `COALESCE(page_id, id)` indirection into
+/// `block_properties(key='space')` is gone, along with the property
+/// rows themselves (migration 0087).
 ///
-/// Both ends of the COALESCE chain are soft-delete filtered to
-/// mirror AGENTS.md invariant #9 — tombstones must never participate
-/// in space resolution:
-///
-/// * Inner subquery — the **input** block must be live for its
-///   `page_id` to flow through the COALESCE.
-/// * Outer `JOIN blocks tgt ON tgt.id = bp.block_id` — the block
-///   that *holds* the `space` property (the page, after the
-///   COALESCE resolves) must be live too. This is what catches
-///   case (d) above: an input block whose `page_id` references a
-///   soft-deleted page falls through to its own id, which has no
-///   `space` property, and the resolver returns `None`.
+/// The **input** block must be live (`deleted_at IS NULL`) to mirror
+/// AGENTS.md invariant #9 — tombstones must never participate in space
+/// resolution. A soft-deleted block resolves to `None`, matching the
+/// pre-Phase-2 behaviour where a deleted block fell through the
+/// COALESCE to an id with no `space` property.
 ///
 /// # Lifetime
 ///
@@ -270,17 +264,19 @@ where
     E: sqlx::SqliteExecutor<'e>,
 {
     let block_id_str = block_id.as_str();
+    // #533 Phase 2: a block's space lives in `blocks.space_id`. Prefer the
+    // block's own column, but fall back to its owning page's `space_id`
+    // (`blocks.page_id` → that page) when the block's own value is not yet
+    // materialised — e.g. a freshly-created block inside the same tx, whose
+    // `page_id` is already stamped but whose `space_id` is set by the
+    // post-commit propagation task. Without the fallback, in-tx cross-space
+    // ref validation on create would resolve NULL and silently pass.
     let row = sqlx::query!(
-        r#"SELECT bp.value_ref AS "space_id?"
-             FROM block_properties bp
-             JOIN blocks tgt ON tgt.id = bp.block_id
-                            AND tgt.deleted_at IS NULL
-            WHERE bp.block_id = COALESCE(
-                    (SELECT page_id FROM blocks
-                      WHERE id = ?1
-                        AND deleted_at IS NULL),
-                    ?1)
-              AND bp.key = 'space'
+        r#"SELECT COALESCE(b.space_id, p.space_id) AS "space_id?"
+             FROM blocks b
+             LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
+            WHERE b.id = ?1
+              AND b.deleted_at IS NULL
             LIMIT 1"#,
         block_id_str,
     )
@@ -496,19 +492,12 @@ mod tests {
     async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str, deleted_at: Option<i64>) {
         sqlx::query(
             "INSERT INTO blocks \
-                 (id, block_type, content, parent_id, position, page_id, deleted_at) \
-             VALUES (?, 'page', 'Page', NULL, 1, ?, ?)",
+                 (id, block_type, content, parent_id, position, page_id, deleted_at, space_id) \
+             VALUES (?, 'page', 'Page', NULL, 1, ?, ?, ?)",
         )
         .bind(page_id)
         .bind(page_id)
         .bind(deleted_at)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(page_id)
         .bind(space_id)
         .execute(pool)
         .await
@@ -518,11 +507,17 @@ mod tests {
     /// Insert a content block under `page_id`. Inherits its space
     /// transitively via the `COALESCE(page_id, id)` resolution path.
     async fn seed_content_block(pool: &SqlitePool, block_id: &str, page_id: &str) {
+        // A content block inherits its owning page's space. Post-Phase-2
+        // every block carries `space_id` on its own row, so copy the
+        // page's column onto the content block (NULL if the page is
+        // soft-deleted / unscoped, mirroring production materialization).
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
-             VALUES (?, 'content', 'Content', ?, 1, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+             SELECT ?, 'content', 'Content', ?, 1, ?, \
+                    (SELECT space_id FROM blocks WHERE id = ? AND deleted_at IS NULL)",
         )
         .bind(block_id)
+        .bind(page_id)
         .bind(page_id)
         .bind(page_id)
         .execute(pool)

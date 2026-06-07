@@ -190,14 +190,17 @@ async fn apply_tag_to_block_in_tx(
                     });
                     op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
                         .await?;
-                    // Materialise the property row inside the same tx so the
-                    // downstream dup-check / projection see the adopted space.
+                    // #533 Phase 2: materialise the adopted space into the
+                    // `blocks.space_id` column (the sole source of truth) —
+                    // NOT a block_properties row (those are gone). A tag is
+                    // top-level so the `OR page_id` arm is a no-op; the `id`
+                    // arm sets the tag's own space. Mirrors the boot-time
+                    // twin `migrate_orphan_tags_to_space`.
                     sqlx::query!(
-                        "INSERT OR REPLACE INTO block_properties \
-                         (block_id, key, value_text, value_num, value_date, value_ref) \
-                         VALUES (?, 'space', NULL, NULL, NULL, ?)",
-                        tag_id,
+                        "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
                         space_ref,
+                        tag_id,
+                        tag_id,
                     )
                     .execute(&mut ***tx)
                     .await?;

@@ -2018,10 +2018,14 @@ async fn compute_page_id_via_cte(pool: &SqlitePool, block_id: &str) -> Option<St
 }
 
 /// Resolves a block's space by following the stored `page_id` to the
-/// owning page, then reading its `space` ref-property. Returns
-/// `None` if the block has no `page_id`, or if the owning page has no
-/// `space` property (e.g. the owning page IS itself a space block —
-/// spaces have `is_space='true'` and never carry a `space` row).
+/// owning page, then reading its `space_id` column. Returns `None` if
+/// the block has no `page_id`, or if the owning page has no `space_id`
+/// (e.g. the owning page IS itself a space block — spaces have
+/// `is_space='true'` and never carry their own `space_id`).
+///
+/// Phase 2 (#533): `blocks.space_id` is the sole source of truth for
+/// space membership; the `block_properties(key='space')` row was retired
+/// in migration 0087 and is no longer consulted by reads.
 async fn resolve_space_via_page_id(pool: &SqlitePool, block_id: &str) -> Option<String> {
     let page_id: Option<String> = sqlx::query_scalar!(
         r#"SELECT page_id AS "page_id?: String" FROM blocks WHERE id = ?"#,
@@ -2035,9 +2039,7 @@ async fn resolve_space_via_page_id(pool: &SqlitePool, block_id: &str) -> Option<
     let page_id = page_id?;
 
     sqlx::query_scalar!(
-        r#"SELECT value_ref AS "value_ref?: String"
-           FROM block_properties
-           WHERE block_id = ? AND key = 'space'"#,
+        r#"SELECT space_id AS "space_id?: String" FROM blocks WHERE id = ?"#,
         page_id
     )
     .fetch_optional(pool)
@@ -2047,29 +2049,32 @@ async fn resolve_space_via_page_id(pool: &SqlitePool, block_id: &str) -> Option<
 }
 
 /// Resolves a block's space by walking its `parent_id` chain: the
-/// nearest ancestor (including self at depth 0) carrying a
-/// `space` property returns that property's `value_ref`; otherwise the
-/// nearest ancestor flagged `is_space='true'` returns its own id (i.e.
-/// the block lives inside a space block directly with no intermediate
+/// nearest ancestor (including self at depth 0) carrying a non-null
+/// `space_id` column returns that `space_id`; otherwise the nearest
+/// ancestor flagged `is_space='true'` returns its own id (i.e. the
+/// block lives inside a space block directly with no intermediate
 /// non-space page). Returns `None` only for blocks completely
 /// disconnected from any space.
+///
+/// Phase 2 (#533): the per-block `blocks.space_id` column is the source
+/// of truth; the `block_properties(key='space')` row was retired in
+/// migration 0087.
 async fn resolve_space_via_ancestor_chain(pool: &SqlitePool, block_id: &str) -> Option<String> {
     sqlx::query_scalar!(
-        r#"WITH RECURSIVE ancestors(cur_id, depth) AS (
-              SELECT b.id, 0 FROM blocks b
+        r#"WITH RECURSIVE ancestors(cur_id, cur_space_id, depth) AS (
+              SELECT b.id, b.space_id, 0 FROM blocks b
               WHERE b.id = ?
               UNION ALL
-              SELECT parent.id, a.depth + 1
+              SELECT parent.id, parent.space_id, a.depth + 1
               FROM ancestors a
               JOIN blocks child ON child.id = a.cur_id
               JOIN blocks parent ON parent.id = child.parent_id
               WHERE a.depth < 100
            )
            SELECT COALESCE(
-               (SELECT bp.value_ref
+               (SELECT a.cur_space_id
                 FROM ancestors a
-                JOIN block_properties bp ON bp.block_id = a.cur_id
-                WHERE bp.key = 'space'
+                WHERE a.cur_space_id IS NOT NULL
                 ORDER BY a.depth ASC
                 LIMIT 1),
                (SELECT a.cur_id
@@ -2110,9 +2115,11 @@ async fn run_drift_audit(pool: &SqlitePool, label: &str) {
             "[{label}] block {id} ({btype}): page_id mismatch — stored={stored_page_id:?} computed={computed:?}"
         );
 
-        // B: space property existence (pages only). Spaces have
-        // `is_space='true'` and zero `space` rows; non-space pages
-        // have exactly one `space` row.
+        // B: space membership (pages only). Spaces have
+        // `is_space='true'` and a NULL `space_id` (they ARE the space);
+        // non-space pages carry exactly one non-null `blocks.space_id`.
+        // Phase 2 (#533): `blocks.space_id` replaces the retired
+        // `block_properties(key='space')` row as the source of truth.
         if btype == "page" {
             let is_space: Option<String> = sqlx::query_scalar!(
                 r#"SELECT value_text AS "value_text?: String"
@@ -2124,22 +2131,22 @@ async fn run_drift_audit(pool: &SqlitePool, label: &str) {
             .await
             .unwrap()
             .flatten();
-            let space_count: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
+            let space_id: Option<String> = sqlx::query_scalar!(
+                r#"SELECT space_id AS "space_id?: String" FROM blocks WHERE id = ?"#,
                 id
             )
             .fetch_one(pool)
             .await
             .unwrap();
             if is_space.as_deref() == Some("true") {
-                assert_eq!(
-                    space_count, 0,
-                    "[{label}] space block {id} must NOT have a 'space' property"
+                assert!(
+                    space_id.is_none(),
+                    "[{label}] space block {id} must NOT carry its own space_id"
                 );
             } else {
-                assert_eq!(
-                    space_count, 1,
-                    "[{label}] non-space page {id} must have exactly one 'space' property"
+                assert!(
+                    space_id.is_some(),
+                    "[{label}] non-space page {id} must carry a non-null space_id"
                 );
             }
         }
@@ -2380,11 +2387,12 @@ async fn page_id_space_drift_audit_after_lifecycle_ops() {
     settle_bg_tasks(&mat).await;
     run_drift_audit(&pool, "after_set_property_space").await;
 
-    // Spot-check: the work page's space property is now Personal.
+    // Spot-check: the work page's space_id is now Personal. Phase 2
+    // (#533): membership lives in `blocks.space_id`, not the retired
+    // `block_properties(key='space')` row.
     let w1_id = w1.as_str().to_owned();
     let w1_space: Option<String> = sqlx::query_scalar!(
-        r#"SELECT value_ref AS "value_ref?: String"
-           FROM block_properties WHERE block_id = ? AND key = 'space'"#,
+        r#"SELECT space_id AS "space_id?: String" FROM blocks WHERE id = ?"#,
         w1_id
     )
     .fetch_optional(&pool)

@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT ol.device_id, ol.seq, ol.op_type, ol.payload, ol.created_at FROM op_log ol WHERE (?1 IS NULL OR ol.op_type = ?1) AND (?2 IS NULL OR ( ol.created_at < ?3 OR (ol.created_at = ?3 AND ol.seq < ?4) OR (ol.created_at = ?3 AND ol.seq = ?4 AND ol.device_id < ?6))) AND (?7 IS NULL OR ol.block_id IN ( SELECT id FROM blocks WHERE space_id = ?7)) ORDER BY ol.created_at DESC, ol.seq DESC, ol.device_id DESC LIMIT ?5",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "op_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "2e87201e1600c88fdf3d6745eb7a95a31f0a52a15746f6abd197b0249a599046"
+}

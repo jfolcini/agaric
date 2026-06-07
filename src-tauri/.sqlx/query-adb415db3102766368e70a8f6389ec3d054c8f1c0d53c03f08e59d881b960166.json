@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id AS \"space_id?: String\" FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id?: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "adb415db3102766368e70a8f6389ec3d054c8f1c0d53c03f08e59d881b960166"
+}

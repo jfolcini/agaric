@@ -119,12 +119,8 @@ pub async fn reindex_block_links(pool: &SqlitePool, block_id: &str) -> Result<()
              SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT bp.value_ref FROM block_properties bp \
-                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
-                   WHERE bp.block_id = COALESCE( \
-                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
-                           je.value) \
-                     AND bp.key = 'space' \
+                   SELECT space_id FROM blocks \
+                   WHERE id = je.value AND deleted_at IS NULL \
                    LIMIT 1))",
         )
         .bind(block_id)
@@ -249,12 +245,8 @@ pub async fn reindex_block_links_split(
              SELECT ?1, je.value FROM json_each(?2) je \
              WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND deleted_at IS NULL) \
                AND (?3 IS NULL OR ?3 = ( \
-                   SELECT bp.value_ref FROM block_properties bp \
-                   JOIN blocks tgt ON tgt.id = bp.block_id AND tgt.deleted_at IS NULL \
-                   WHERE bp.block_id = COALESCE( \
-                           (SELECT page_id FROM blocks WHERE id = je.value AND deleted_at IS NULL), \
-                           je.value) \
-                     AND bp.key = 'space' \
+                   SELECT space_id FROM blocks \
+                   WHERE id = je.value AND deleted_at IS NULL \
                    LIMIT 1))",
         )
         .bind(block_id)

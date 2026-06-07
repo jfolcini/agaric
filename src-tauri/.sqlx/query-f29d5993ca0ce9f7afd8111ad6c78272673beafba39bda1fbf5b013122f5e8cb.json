@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(b.space_id, p.space_id) AS \"space_id?\"\n             FROM blocks b\n             LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL\n            WHERE b.id = ?1\n              AND b.deleted_at IS NULL\n            LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id?",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "f29d5993ca0ce9f7afd8111ad6c78272673beafba39bda1fbf5b013122f5e8cb"
+}

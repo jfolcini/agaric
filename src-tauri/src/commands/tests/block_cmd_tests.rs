@@ -593,19 +593,20 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         "both appended ops must reference the new page id"
     );
 
-    // The space property is materialized inline by `set_property_in_tx`.
-    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind(&block.id)
-    .fetch_optional(&pool)
-    .await
-    .unwrap()
-    .flatten();
+    // Phase 2 (#533): space membership is materialized inline onto
+    // `blocks.space_id` by `set_property_in_tx` (the sole source of truth;
+    // the `block_properties(key='space')` row was retired in migration 0087).
+    let space_ref: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&block.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .flatten();
     assert_eq!(
         space_ref.as_deref(),
         Some(crate::spaces::bootstrap::SPACE_PERSONAL_ULID),
-        "space property must point at the Personal space"
+        "space_id must point at the Personal space"
     );
 
     // The page must surface from `list_blocks(blockType='page', spaceId=Personal)` —
@@ -5151,18 +5152,20 @@ async fn move_blocks_to_space_moves_all_in_one_tx() {
     );
 
     for id in &ids {
-        let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-        )
-        .bind(id)
-        .fetch_optional(&pool)
-        .await
-        .unwrap()
-        .flatten();
+        // Phase 2 (#533): space membership lives in `blocks.space_id` (the
+        // sole source of truth; the `block_properties(key='space')` row was
+        // retired in migration 0087).
+        let space_ref: Option<String> =
+            sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .flatten();
         assert_eq!(
             space_ref.as_deref(),
             Some("MBS_SPACE"),
-            "block {id} must carry the target space ref"
+            "block {id} must carry the target space_id"
         );
     }
 }
@@ -5190,16 +5193,17 @@ async fn move_blocks_to_space_rehomes_existing_member() {
     .unwrap();
     assert_eq!(moved, 1);
 
-    // Exactly one `space` row, pointing at B.
-    let rows: Vec<Option<String>> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind("MBS2_BLK")
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert_eq!(rows.len(), 1, "INSERT OR REPLACE keeps a single space row");
-    assert_eq!(rows[0].as_deref(), Some("MBS2_SPACE_B"));
+    // Phase 2 (#533): the single `blocks.space_id` column is rehomed to B
+    // (the sole source of truth; the `block_properties(key='space')` row was
+    // retired in migration 0087). A column UPDATE is inherently single-valued,
+    // so "exactly one space pointing at B" maps to the column equalling B.
+    let space_id: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind("MBS2_BLK")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(space_id.as_deref(), Some("MBS2_SPACE_B"));
 }
 
 /// #533 regression: moving a *populated* page to another space must
@@ -5327,14 +5331,14 @@ async fn move_blocks_to_space_skips_missing_and_deleted() {
     .unwrap();
     assert_eq!(moved, 1, "only the live block is moved");
 
-    let space_ref: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value_ref FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind(&live.id)
-    .fetch_optional(&pool)
-    .await
-    .unwrap()
-    .flatten();
+    // Phase 2 (#533): assert membership via `blocks.space_id`.
+    let space_ref: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(&live.id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+            .flatten();
     assert_eq!(space_ref.as_deref(), Some("MBS3_SPACE"));
 }
 
@@ -5421,15 +5425,14 @@ async fn move_blocks_to_space_rejects_non_space_target() {
         "non-space target must be rejected, got {result:?}"
     );
 
-    // Nothing was written by the aborted batch.
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
-    )
-    .bind("MBS7_BLK")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(count, 0, "aborted batch must write no space property rows");
+    // #533 Phase 2: nothing was written by the aborted batch — the block's
+    // `space_id` column stays NULL.
+    let space_id: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind("MBS7_BLK")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(space_id, None, "aborted batch must not set space_id");
 }
 
 // ======================================================================

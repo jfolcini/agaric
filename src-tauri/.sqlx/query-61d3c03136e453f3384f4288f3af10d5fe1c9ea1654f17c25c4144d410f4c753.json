@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT b.id AS \"id!\", b.space_id AS \"space?\"\n           FROM blocks b\n           WHERE b.deleted_at IS NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "space?",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "61d3c03136e453f3384f4288f3af10d5fe1c9ea1654f17c25c4144d410f4c753"
+}

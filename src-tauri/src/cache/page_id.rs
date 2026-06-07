@@ -186,11 +186,26 @@ pub async fn rebuild_space_ids(pool: &SqlitePool) -> Result<(), AppError> {
 }
 
 async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    // #533 Phase 2: `space_id` is the source of truth. A page's own
+    // `space_id` (set by the `space` op via the command/replay paths) is
+    // authoritative; this rebuild only PROPAGATES it to the page's
+    // descendants. Non-page blocks inherit their owning page's column
+    // (`blocks.page_id` → that page's `space_id`); pages are left untouched
+    // (excluding them also avoids any read-during-write ambiguity, since
+    // the correlated subquery only reads page rows, which are never in the
+    // update set). Orphans (NULL `page_id`) reset to NULL `space_id`.
+    // Only PROPAGATE to blocks that have an owning page (`page_id IS NOT
+    // NULL`). Pages are authoritative (excluded). Tags are top-level with
+    // `page_id = NULL` (migration 0027) but carry their OWN authoritative
+    // `space_id` (set directly by the `space` op) — they have no page to
+    // re-derive from, so they must NOT be touched here or the rebuild would
+    // null every tag's space (data loss). Orphan content (page purged →
+    // NULL page_id) likewise keeps its last value rather than being cleared.
     let result = sqlx::query!(
         "UPDATE blocks SET space_id = ( \
-             SELECT bp.value_ref FROM block_properties bp \
-             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
-         )"
+             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+         ) \
+         WHERE block_type != 'page' AND page_id IS NOT NULL"
     )
     .execute(pool)
     .await?;
@@ -207,10 +222,15 @@ pub async fn set_block_space_id_from_parent(
     pool: &SqlitePool,
     block_id: &str,
 ) -> Result<(), AppError> {
+    // Only inherit when the block HAS a parent. A parentless (top-level)
+    // block has no parent to inherit from and owns its `space_id` directly
+    // (set by the `space` op / explicit scope); the `parent_id IS NOT NULL`
+    // guard stops this incremental path from nulling that authoritative
+    // value — the same hazard the `rebuild_space_ids` page-guard avoids.
     sqlx::query!(
         "UPDATE blocks \
          SET space_id = (SELECT b2.space_id FROM blocks b2 WHERE b2.id = blocks.parent_id) \
-         WHERE id = ?",
+         WHERE id = ? AND parent_id IS NOT NULL",
         block_id
     )
     .execute(pool)
@@ -377,34 +397,60 @@ mod tests {
         );
     }
 
-    /// #533: `rebuild_space_ids` derives `space_id` for every block from
-    /// the `space` property attached to its owning page (the page being
-    /// `blocks.page_id`, which equals the page's own id). Children inherit
-    /// their page's space; a block whose page has no space property gets
-    /// NULL.
+    /// #533 Phase 2 regression: `rebuild_space_ids` must NOT clobber a
+    /// top-level tag's own `space_id`. Tags carry `page_id = NULL` and own
+    /// their space directly; deriving from a (NULL) page would null it —
+    /// irreversible data loss.
+    #[tokio::test]
+    async fn rebuild_space_ids_preserves_top_level_tag_space_533() {
+        let (pool, _dir) = test_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
+             ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01', NULL), \
+             ('TAG0001', 'tag',  'proj',  NULL, 2, NULL,      'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed tag with own space_id");
+
+        super::rebuild_space_ids(&pool)
+            .await
+            .expect("rebuild_space_ids must succeed");
+
+        let tag_space: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'TAG0001'")
+                .fetch_one(&pool)
+                .await
+                .expect("space_id lookup");
+        assert_eq!(
+            tag_space.as_deref(),
+            Some("SPACE01"),
+            "a top-level tag's own space_id must survive the rebuild (page_id is NULL)"
+        );
+    }
+
+    /// #533 Phase 2: `rebuild_space_ids` PROPAGATES the owning page's
+    /// authoritative `blocks.space_id` to its descendants. A page's own
+    /// `space_id` (column, set by the `space` op) is left untouched;
+    /// children inherit it; a child whose page has NULL space_id (or an
+    /// orphan) gets NULL.
     #[tokio::test]
     async fn rebuild_space_ids_derives_from_page_space_property_533() {
         let (pool, _dir) = test_pool().await;
 
-        // A space block, a page assigned to it, and a child under the page.
+        // A page authoritatively in SPACE01 (its own space_id column set),
+        // a child whose space_id is stale/NULL, and an orphan-page child.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
-             ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01'), \
-             ('PAGE01',  'page', 'p',     NULL, 2, 'PAGE01'), \
-             ('CHILD01', 'content', 'c',  'PAGE01', 1, 'PAGE01')",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
+             ('SPACE01', 'page',    'space', NULL,     1, 'SPACE01', NULL), \
+             ('PAGE01',  'page',    'p',     NULL,     2, 'PAGE01',  'SPACE01'), \
+             ('CHILD01', 'content', 'c',     'PAGE01', 1, 'PAGE01',  NULL), \
+             ('PAGE02',  'page',    'q',     NULL,     3, 'PAGE02',  NULL), \
+             ('CHILD02', 'content', 'd',     'PAGE02', 1, 'PAGE02',  'SPACE01')",
         )
         .execute(&pool)
         .await
         .expect("seed blocks");
-
-        // PAGE01 belongs to SPACE01 via the `space` property (on the page).
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) \
-             VALUES ('PAGE01', 'space', 'SPACE01')",
-        )
-        .execute(&pool)
-        .await
-        .expect("seed space property");
 
         super::rebuild_space_ids(&pool)
             .await
@@ -425,7 +471,7 @@ mod tests {
         assert_eq!(
             space_of("PAGE01").await.as_deref(),
             Some("SPACE01"),
-            "the page carries its own space_id"
+            "the page's own authoritative space_id is left untouched"
         );
         assert_eq!(
             space_of("CHILD01").await.as_deref(),
@@ -433,9 +479,14 @@ mod tests {
             "a child inherits its page's space_id"
         );
         assert_eq!(
+            space_of("CHILD02").await,
+            None,
+            "a child whose page has NULL space_id is reset to NULL (stale value cleared)"
+        );
+        assert_eq!(
             space_of("SPACE01").await,
             None,
-            "a block whose page has no space property gets NULL space_id"
+            "a page with no space stays NULL (pages are not propagated to)"
         );
     }
 

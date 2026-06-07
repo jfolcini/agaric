@@ -68,23 +68,19 @@ async fn resolve_block_spaces_batch(
         let placeholders = std::iter::repeat_n("?", chunk.len())
             .collect::<Vec<_>>()
             .join(",");
-        // Per input block `b`, resolve its owning page via
-        // `COALESCE(page_id, id)` (both soft-delete filtered) then read
-        // that page's `space` property. A block with no `space` row
-        // yields a NULL `space_id` and is dropped below.
+        // Per input block `b`, read its own `space_id` column (Phase 2:
+        // every block carries its space directly — the page indirection
+        // and the `block_properties(key='space')` join are gone). A live
+        // block with no space yields NULL `space_id` and is dropped below.
+        // The block must itself be live (soft-deleted blocks never
+        // participate in space resolution, AGENTS.md invariant #9).
         let sql = format!(
-            "SELECT b.id AS input_id, bp.value_ref AS space_id \
+            "SELECT b.id AS input_id, \
+                    COALESCE(b.space_id, p.space_id) AS space_id \
                FROM blocks b \
-               LEFT JOIN block_properties bp \
-                 ON bp.block_id = COALESCE( \
-                      (SELECT page_id FROM blocks \
-                        WHERE id = b.id AND deleted_at IS NULL), \
-                      b.id) \
-                AND bp.key = 'space' \
-                AND EXISTS (SELECT 1 FROM blocks tgt \
-                             WHERE tgt.id = bp.block_id \
-                               AND tgt.deleted_at IS NULL) \
-              WHERE b.id IN ({placeholders})"
+               LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL \
+              WHERE b.deleted_at IS NULL \
+                AND b.id IN ({placeholders})"
         );
         // Only placeholder `?` and a literal column list are interpolated
         // (chunk len), never any caller value — every id is a bound param.
@@ -233,21 +229,19 @@ mod tests {
 
     async fn seed_page(pool: &SqlitePool, page_id: &str, space_id: &str) {
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)              VALUES (?, 'page', 'Test', NULL, 1, ?)",
-            page_id, page_id,
-        )
-        .execute(pool).await.unwrap();
-        sqlx::query!(
-            "INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref)              VALUES (?, 'space', NULL, NULL, NULL, ?)",
-            page_id, space_id,
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id)              VALUES (?, 'page', 'Test', NULL, 1, ?, ?)",
+            page_id, page_id, space_id,
         )
         .execute(pool).await.unwrap();
     }
 
     async fn seed_content(pool: &SqlitePool, block_id: &str, page_id: &str, content: &str) {
+        // Content inherits its owning page's space (Phase 2: every block
+        // carries `space_id` on its own row). Copy the page's column; NULL
+        // when the page is itself unscoped (orphan-source/target tests).
         sqlx::query!(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)              VALUES (?, 'content', ?, ?, 1, ?)",
-            block_id, content, page_id, page_id,
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id)              SELECT ?, 'content', ?, ?, 1, ?, (SELECT space_id FROM blocks WHERE id = ?)",
+            block_id, content, page_id, page_id, page_id,
         )
         .execute(pool).await.unwrap();
     }
@@ -360,9 +354,7 @@ mod tests {
         let tag = BlockId::new().to_string();
         seed_page(&pool, &page, SPACE_PERSONAL_ULID).await;
         seed_content(&pool, &blk, &page, "").await;
-        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL)", tag)
-            .execute(&pool).await.unwrap();
-        sqlx::query!("INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref)                       VALUES (?, 'space', NULL, NULL, NULL, ?)", tag, SPACE_PERSONAL_ULID)
+        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL, ?)", tag, SPACE_PERSONAL_ULID)
             .execute(&pool).await.unwrap();
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
@@ -386,9 +378,7 @@ mod tests {
         let tag = BlockId::new().to_string();
         seed_page(&pool, &page, SPACE_PERSONAL_ULID).await;
         seed_content(&pool, &blk, &page, "").await;
-        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL)", tag)
-            .execute(&pool).await.unwrap();
-        sqlx::query!("INSERT INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref)                       VALUES (?, 'space', NULL, NULL, NULL, ?)", tag, SPACE_WORK_ULID)
+        sqlx::query!("INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id)                       VALUES (?, 'tag', 't', NULL, 1, NULL, ?)", tag, SPACE_WORK_ULID)
             .execute(&pool).await.unwrap();
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();

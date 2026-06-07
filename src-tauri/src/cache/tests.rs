@@ -4394,6 +4394,16 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
         .execute(pool)
         .await
         .unwrap();
+        // Phase 2 (#533): space membership is now read from `blocks.space_id`,
+        // not the `block_properties` `key='space'` row above. Set the
+        // denormalized column on the block and any block paged to it.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(space_id)
+            .bind(block_id)
+            .bind(block_id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     let space1 = "01SPACE0000000000000000001";
@@ -4422,11 +4432,15 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
 
     // Source content block under src_page links to all three targets.
     let src_block = "01SRCBLOK000000000000000EE";
-    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+    // Phase 2 (#533): `resolve_block_space` reads the SOURCE block's own
+    // `blocks.space_id`, so set it directly here (production sets the
+    // denormalized column on content blocks in a space).
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) VALUES (?, 'content', ?, ?, ?, ?)")
         .bind(src_block)
         .bind(format!("[[{tgt_same}]] [[{tgt_cross}]] [[{tgt_deleted_holder}]]"))
         .bind(src_page)
         .bind(src_page)
+        .bind(space1)
         .execute(&pool)
         .await
         .unwrap();
@@ -4466,6 +4480,16 @@ async fn cs375_set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
         .execute(pool)
         .await
         .unwrap();
+    // Phase 2 (#533): space membership is now read from `blocks.space_id`,
+    // not the `block_properties` `key='space'` row above. Set the
+    // denormalized column on the block and any block paged to it.
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+        .bind(space_id)
+        .bind(block_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// #375: the production `reindex_block_links_split` path (read_pool present)
@@ -4491,11 +4515,14 @@ async fn reindex_block_links_split_excludes_cross_space_375() {
     cs375_set_space(&pool, tgt_cross, space2).await;
 
     let src_block = "01SRCBLOK000000000000000EE";
-    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+    // Phase 2 (#533): `resolve_block_space` reads the SOURCE block's own
+    // `blocks.space_id`, so set it directly here.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) VALUES (?, 'content', ?, ?, ?, ?)")
         .bind(src_block)
         .bind(format!("[[{tgt_same}]] [[{tgt_cross}]]"))
         .bind(src_page)
         .bind(src_page)
+        .bind(space1)
         .execute(&pool)
         .await
         .unwrap();
@@ -4546,11 +4573,14 @@ async fn reindex_block_tag_refs_split_excludes_cross_space_and_deleted_tag_375()
     soft_delete_block(&pool, tag_deleted).await;
 
     let src_block = "01SRCBLOK000000000000000E2";
-    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+    // Phase 2 (#533): `resolve_block_space` reads the SOURCE block's own
+    // `blocks.space_id`, so set it directly here.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) VALUES (?, 'content', ?, ?, ?, ?)")
         .bind(src_block)
         .bind(format!("{} {} {}", inline(tag_same), inline(tag_cross), inline(tag_deleted)))
         .bind(src_page)
         .bind(src_page)
+        .bind(space1)
         .execute(&pool)
         .await
         .unwrap();
@@ -4597,11 +4627,14 @@ async fn rebuild_block_tag_refs_cache_excludes_cross_space_375() {
     cs375_set_space(&pool, tag_cross, space2).await;
 
     let src_block = "01SRCBLOK000000000000000E3";
-    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id) VALUES (?, 'content', ?, ?, ?)")
+    // Phase 2 (#533): the full rebuild reads each block's own
+    // `blocks.space_id`, so set the SOURCE block's column directly here.
+    sqlx::query("INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) VALUES (?, 'content', ?, ?, ?, ?)")
         .bind(src_block)
         .bind(format!("{} {}", inline(tag_same), inline(tag_cross)))
         .bind(src_page)
         .bind(src_page)
+        .bind(space1)
         .execute(&pool)
         .await
         .unwrap();

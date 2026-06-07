@@ -152,12 +152,7 @@ async fn resolve_or_create_journal_page(
              -- planner can serve this as an index seek (audit #427). `date` is
              -- format-validated above, so this never changes the result.
              AND b.content LIKE '____-__-__'
-             AND EXISTS (
-                 SELECT 1 FROM block_properties bp
-                 WHERE bp.block_id = b.id
-                   AND bp.key = 'space'
-                   AND bp.value_ref = ?
-             )
+             AND b.space_id = ?
            LIMIT 1"#,
         date,
         space_id,
@@ -353,12 +348,7 @@ pub async fn get_journal_page_by_date_inner(
              -- planner can serve this as an index seek (audit #427). `date` is
              -- format-validated above, so this never changes the result.
              AND b.content LIKE '____-__-__'
-             AND EXISTS (
-                 SELECT 1 FROM block_properties bp
-                 WHERE bp.block_id = b.id
-                   AND bp.key = 'space'
-                   AND bp.value_ref = ?
-             )
+             AND b.space_id = ?
            LIMIT 1"#,
         date,
         space_id,
@@ -432,12 +422,7 @@ pub async fn list_journal_pages_in_range_inner(
              AND b.content GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
              AND b.content >= ?
              AND b.content <= ?
-             AND EXISTS (
-                 SELECT 1 FROM block_properties bp
-                 WHERE bp.block_id = b.id
-                   AND bp.key = 'space'
-                   AND bp.value_ref = ?
-             )
+             AND b.space_id = ?
            ORDER BY b.content ASC"#,
         start_date,
         end_date,
@@ -520,12 +505,7 @@ mod tests {
                WHERE b.block_type = 'page'
                  AND b.content = ?
                  AND b.deleted_at IS NULL
-                 AND EXISTS (
-                     SELECT 1 FROM block_properties bp
-                     WHERE bp.block_id = b.id
-                       AND bp.key = 'space'
-                       AND bp.value_ref = ?
-                 )"#,
+                 AND b.space_id = ?"#,
             date,
             space_id,
         )
@@ -608,15 +588,12 @@ mod tests {
 
         // FEAT-3p5: the new page must carry a `space` ref property
         // pointing at the requested space.
-        let space_prop = sqlx::query_scalar!(
-            r#"SELECT value_ref FROM block_properties
-               WHERE block_id = ? AND key = 'space'"#,
-            first.id,
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap()
-        .flatten();
+        let space_prop =
+            sqlx::query_scalar!(r#"SELECT space_id FROM blocks WHERE id = ?"#, first.id,)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .flatten();
         assert_eq!(
             space_prop.as_deref(),
             Some(space.as_str()),
@@ -806,15 +783,12 @@ mod tests {
         assert_eq!(page_b.content.as_deref(), Some(TEST_DATE));
 
         // The new page's space property points at space_b.
-        let space_prop = sqlx::query_scalar!(
-            r#"SELECT value_ref FROM block_properties
-               WHERE block_id = ? AND key = 'space'"#,
-            page_b.id,
-        )
-        .fetch_optional(&pool)
-        .await
-        .unwrap()
-        .flatten();
+        let space_prop =
+            sqlx::query_scalar!(r#"SELECT space_id FROM blocks WHERE id = ?"#, page_b.id,)
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .flatten();
         assert_eq!(
             space_prop.as_deref(),
             Some(space_b.as_str()),

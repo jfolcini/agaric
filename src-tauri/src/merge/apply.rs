@@ -575,6 +575,17 @@ mod dispatch_for_record_regression {
         .execute(pool)
         .await
         .unwrap();
+        // Phase 2 (#533): `blocks.space_id` is the sole source of truth for
+        // space membership — reads no longer consult the `block_properties`
+        // `key='space'` row above. Set the denormalized column so
+        // column-based filters resolve the block to `SPACE_ULID`.
+        sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+            .bind(SPACE_ULID)
+            .bind(BLOCK_ULID)
+            .bind(BLOCK_ULID)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     /// Read the engine snapshot for `BLOCK_ULID` in `SPACE_ULID`.
