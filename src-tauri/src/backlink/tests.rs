@@ -398,11 +398,11 @@ async fn filter_property_text_contains_pushed_into_sql() {
 async fn filter_property_num_eq() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(2.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(2.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Eq,
         value: 1.0,
     };
@@ -421,11 +421,11 @@ async fn filter_property_num_eq() {
 async fn filter_property_num_gt() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(5.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(5.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Gt,
         value: 3.0,
     };
@@ -438,11 +438,11 @@ async fn filter_property_num_gt() {
 async fn filter_property_num_lt() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(5.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(5.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Lt,
         value: 3.0,
     };
@@ -455,10 +455,10 @@ async fn filter_property_num_lt() {
 async fn filter_property_num_no_match() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Eq,
         value: 999.0,
     };
@@ -470,11 +470,11 @@ async fn filter_property_num_no_match() {
 async fn filter_property_num_neq() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(2.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(2.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Neq,
         value: 1.0,
     };
@@ -487,11 +487,11 @@ async fn filter_property_num_neq() {
 async fn filter_property_num_lte() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(3.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(5.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(3.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(5.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Lte,
         value: 3.0,
     };
@@ -504,11 +504,11 @@ async fn filter_property_num_lte() {
 async fn filter_property_num_gte() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(3.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(5.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(3.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(5.0), None).await;
 
     let filter = BacklinkFilter::PropertyNum {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Gte,
         value: 5.0,
     };
@@ -1020,8 +1020,8 @@ async fn filter_and_compound() {
     setup_backlinks(&pool).await;
     insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
     insert_property(&pool, "SRC_B", "status", Some("done"), None, None).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(1.0), None).await;
 
     let filter = BacklinkFilter::And {
         filters: vec![
@@ -1031,7 +1031,7 @@ async fn filter_and_compound() {
                 value: "active".into(),
             },
             BacklinkFilter::PropertyNum {
-                key: "priority".into(),
+                key: "effort".into(),
                 op: CompareOp::Eq,
                 value: 1.0,
             },
@@ -1266,9 +1266,9 @@ async fn sort_property_text() {
 async fn sort_property_num() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(3.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_C", "priority", None, Some(2.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(3.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_C", "effort", None, Some(2.0), None).await;
     let page = default_page();
 
     let resp = eval_backlink_query(
@@ -1276,7 +1276,7 @@ async fn sort_property_num() {
         "TARGET",
         None,
         Some(BacklinkSort::PropertyNum {
-            key: "priority".into(),
+            key: "effort".into(),
             dir: SortDir::Asc,
         }),
         &page,
@@ -1834,14 +1834,14 @@ async fn list_property_keys_returns_distinct_sorted() {
     insert_block(&pool, "BLK_A", "content", "a").await;
     insert_block(&pool, "BLK_B", "content", "b").await;
     insert_property(&pool, "BLK_A", "status", Some("active"), None, None).await;
-    insert_property(&pool, "BLK_A", "priority", None, Some(1.0), None).await;
+    insert_property(&pool, "BLK_A", "effort", None, Some(1.0), None).await;
     insert_property(&pool, "BLK_B", "status", Some("done"), None, None).await;
     insert_property(&pool, "BLK_B", "due", None, None, Some("2025-01-01")).await;
 
     let keys = list_property_keys(&pool).await.unwrap();
     assert_eq!(
         keys,
-        vec!["due", "priority", "status"],
+        vec!["due", "effort", "status"],
         "should return distinct sorted keys"
     );
 }
@@ -1932,8 +1932,8 @@ async fn eval_with_multiple_filters_and_semantics() {
     setup_backlinks(&pool).await;
     insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
     insert_property(&pool, "SRC_B", "status", Some("active"), None, None).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(5.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(5.0), None).await;
     let page = default_page();
 
     // Both filters must match (AND semantics at top level)
@@ -1944,7 +1944,7 @@ async fn eval_with_multiple_filters_and_semantics() {
             value: "active".into(),
         },
         BacklinkFilter::PropertyNum {
-            key: "priority".into(),
+            key: "effort".into(),
             op: CompareOp::Lt,
             value: 3.0,
         },
@@ -2253,7 +2253,7 @@ async fn filter_not_and_compound() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
     insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
-    insert_property(&pool, "SRC_A", "priority", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_A", "effort", None, Some(1.0), None).await;
     insert_property(&pool, "SRC_B", "status", Some("active"), None, None).await;
     // SRC_B has status=active but no priority
 
@@ -2267,7 +2267,7 @@ async fn filter_not_and_compound() {
                     value: "active".into(),
                 },
                 BacklinkFilter::PropertyIsSet {
-                    key: "priority".into(),
+                    key: "effort".into(),
                 },
             ],
         }),
@@ -2289,7 +2289,7 @@ async fn filter_not_or_compound() {
     let (pool, _dir) = test_pool().await;
     setup_backlinks(&pool).await;
     insert_property(&pool, "SRC_A", "status", Some("active"), None, None).await;
-    insert_property(&pool, "SRC_B", "priority", None, Some(1.0), None).await;
+    insert_property(&pool, "SRC_B", "effort", None, Some(1.0), None).await;
     // SRC_C has neither property
 
     // Not(Or(status=active, priority set)) — excludes SRC_A and SRC_B, includes SRC_C
@@ -2302,7 +2302,7 @@ async fn filter_not_or_compound() {
                     value: "active".into(),
                 },
                 BacklinkFilter::PropertyIsSet {
-                    key: "priority".into(),
+                    key: "effort".into(),
                 },
             ],
         }),
@@ -4904,9 +4904,9 @@ async fn property_is_empty_scoped_to_candidate_set() {
     insert_block(&pool, "BLK_C", "content", "Block C").await;
     insert_block(&pool, "BLK_D", "content", "Block D").await;
 
-    // BLK_A and BLK_C have the "priority" property set.
-    insert_property(&pool, "BLK_A", "priority", Some("high"), None, None).await;
-    insert_property(&pool, "BLK_C", "priority", Some("low"), None, None).await;
+    // BLK_A and BLK_C have the "effort" property set.
+    insert_property(&pool, "BLK_A", "effort", Some("high"), None, None).await;
+    insert_property(&pool, "BLK_C", "effort", Some("low"), None, None).await;
 
     // Candidate set includes BLK_A (has prop), BLK_B (no prop), BLK_D (no prop).
     // BLK_C is NOT in the candidate set even though it has the property.
@@ -4916,7 +4916,7 @@ async fn property_is_empty_scoped_to_candidate_set() {
         .collect();
 
     let filter = BacklinkFilter::PropertyIsEmpty {
-        key: "priority".into(),
+        key: "effort".into(),
     };
     let set = resolve_filter_with_candidates(&pool, &filter, 0, Some(&candidates))
         .await
@@ -5011,9 +5011,9 @@ async fn setup_unlinked_refs_for_filters(pool: &SqlitePool) {
     insert_fts(pool, "BLK_B4", "Project Alpha summary plan").await;
 
     // Properties
-    insert_property(pool, "BLK_B1", "priority", Some("high"), None, None).await;
-    insert_property(pool, "BLK_B2", "priority", Some("low"), None, None).await;
-    insert_property(pool, "BLK_B3", "priority", Some("high"), None, None).await;
+    insert_property(pool, "BLK_B1", "effort", Some("high"), None, None).await;
+    insert_property(pool, "BLK_B2", "effort", Some("low"), None, None).await;
+    insert_property(pool, "BLK_B3", "effort", Some("high"), None, None).await;
     // BLK_B4 intentionally has no priority
 
     // Tags — tag rows must exist as 'tag' blocks before tags_cache + block_tags FKs resolve.
@@ -5090,7 +5090,7 @@ async fn eval_unlinked_refs_property_filter_matches_exact_value() {
     setup_unlinked_refs_for_filters(&pool).await;
 
     let filters = vec![BacklinkFilter::PropertyText {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Eq,
         value: "high".into(),
     }];
@@ -5176,7 +5176,7 @@ async fn eval_unlinked_refs_sort_created_asc_vs_desc() {
 
 #[tokio::test]
 async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
-    // PropertyText sort on "priority": blocks with the property sort first
+    // PropertyText sort on "effort": blocks with the property sort first
     // (by value asc: high, high, low), blocks without it go last (BLK_B4).
     let (pool, _dir) = test_pool().await;
     setup_unlinked_refs_for_filters(&pool).await;
@@ -5187,7 +5187,7 @@ async fn eval_unlinked_refs_sort_property_text_orders_by_value() {
         "TARGET",
         None,
         Some(BacklinkSort::PropertyText {
-            key: "priority".into(),
+            key: "effort".into(),
             dir: SortDir::Asc,
         }),
         &page,
@@ -5241,7 +5241,7 @@ async fn eval_unlinked_refs_total_count_reflects_pre_filter() {
 
     // Narrow to priority=high (2 blocks).
     let filters = vec![BacklinkFilter::PropertyText {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Eq,
         value: "high".into(),
     }];
@@ -5319,7 +5319,7 @@ async fn seed_unlinked_blocks_for_total_count(pool: &SqlitePool) {
         )
         .await;
         insert_fts(pool, blk_id, content).await;
-        insert_property(pool, blk_id, "priority", Some(priority), None, None).await;
+        insert_property(pool, blk_id, "effort", Some(priority), None, None).await;
     }
 }
 
@@ -5358,7 +5358,7 @@ async fn eval_unlinked_refs_total_count_holds_when_filter_drops_half() {
     seed_unlinked_blocks_for_total_count(&pool).await;
 
     let filters = vec![BacklinkFilter::PropertyText {
-        key: "priority".into(),
+        key: "effort".into(),
         op: CompareOp::Eq,
         value: "high".into(),
     }];

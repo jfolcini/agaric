@@ -5266,12 +5266,6 @@ async fn space_filter_pre_and_post_section_5_3_match() {
     .unwrap();
 
     insert_block(&pool, PAGE_IN_X, "page", "In X", None, Some(2)).await;
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(PAGE_IN_X)
-        .bind(SPACE_X)
-        .execute(&pool)
-        .await
-        .unwrap();
 
     insert_block(&pool, PAGE_NO_SPACE, "page", "Orphan", None, Some(3)).await;
 
@@ -5297,12 +5291,22 @@ async fn space_filter_pre_and_post_section_5_3_match() {
     .await
     .unwrap();
 
+    // #534: `space` is column-backed (`blocks.space_id`), the single source of
+    // truth — a `block_properties` row for it is CHECK-forbidden. Assign the
+    // page and its descendants to the space directly on the column, mirroring
+    // the live `space` projection (`WHERE id = ? OR page_id = ?`).
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
+        .bind(SPACE_X)
+        .bind(PAGE_IN_X)
+        .bind(PAGE_IN_X)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     let post: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM blocks b \
          WHERE deleted_at IS NULL \
-           AND b.page_id IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?1) \
+           AND b.space_id = ?1 \
          ORDER BY id ASC",
     )
     .bind(SPACE_X)
@@ -5310,12 +5314,14 @@ async fn space_filter_pre_and_post_section_5_3_match() {
     .await
     .unwrap();
 
+    // Pre-migration phrasing routed space membership through the owning page's
+    // `block_properties(key='space')` row; post-§5.3 / #534 it reads the
+    // denormalised `blocks.space_id` column. Both must yield the same id set.
     let pre: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM blocks b \
          WHERE deleted_at IS NULL \
            AND COALESCE(b.page_id, b.id) IN ( \
-                SELECT bp.block_id FROM block_properties bp \
-                WHERE bp.key = 'space' AND bp.value_ref = ?1) \
+                SELECT p.id FROM blocks p WHERE p.space_id = ?1) \
          ORDER BY id ASC",
     )
     .bind(SPACE_X)
@@ -5325,8 +5331,8 @@ async fn space_filter_pre_and_post_section_5_3_match() {
 
     assert_eq!(
         post, pre,
-        "post-§5.3 `b.page_id IN (...)` must match the pre-migration \
-         `COALESCE(b.page_id, b.id) IN (...)` id set (correctness guard)."
+        "post-§5.3 `b.space_id = ?` must match the pre-migration \
+         `COALESCE(b.page_id, b.id) IN (space pages)` id set (correctness guard)."
     );
     assert!(post.iter().any(|id| id == PAGE_IN_X));
     assert!(post.iter().any(|id| id == CHILD_IN_X));

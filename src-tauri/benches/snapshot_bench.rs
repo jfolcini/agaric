@@ -175,15 +175,21 @@ fn bench_apply_snapshot(c: &mut Criterion) {
 fn synthetic_snapshot(n: usize) -> SnapshotData {
     let mut blocks = Vec::with_capacity(n);
     let mut block_properties = Vec::with_capacity(n);
+    // Space membership is column-backed since #533 (`blocks.space_id`); seed one
+    // shared space so the codec measures the populated column. A generic
+    // (non-reserved) property row per block keeps `block_properties`
+    // serialization in the measured workload — reserved keys (#534) can no
+    // longer live in that table.
+    let space_id = BlockId::new();
     for i in 0..n {
         let id = BlockId::new();
         block_properties.push(BlockPropertySnapshot {
             block_id: id.clone(),
-            key: "space".to_string(),
-            value_text: None,
+            key: "effort".to_string(),
+            value_text: Some("medium".to_string()),
             value_num: None,
             value_date: None,
-            value_ref: Some("01HSPACEAAAAAAAAAAAAAAAAAA".to_string()),
+            value_ref: None,
             value_bool: None,
         });
         blocks.push(BlockSnapshot {
@@ -199,6 +205,7 @@ fn synthetic_snapshot(n: usize) -> SnapshotData {
             priority: None,
             due_date: None,
             scheduled_date: None,
+            space_id: Some(space_id.clone()),
         });
     }
     SnapshotData {

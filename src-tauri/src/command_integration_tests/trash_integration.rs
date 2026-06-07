@@ -312,7 +312,7 @@ async fn purge_all_deleted_cleans_dependent_tables() {
         .unwrap();
     sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
         .bind("PA_REL")
-        .bind("priority")
+        .bind("effort")
         .bind("high")
         .execute(&pool)
         .await

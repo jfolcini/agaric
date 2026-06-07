@@ -831,10 +831,27 @@ async fn recover_blocks_from_op_log(
     Ok(())
 }
 
+/// Map a reserved property key to the `blocks` column that is its single
+/// source of truth (#534 / migration 0088). Returns `None` for non-reserved
+/// keys, which live in `block_properties`. The returned name is a fixed
+/// internal literal — never user input — so it is safe to interpolate into
+/// the recovery `UPDATE` statements.
+fn reserved_key_blocks_column(key: &str) -> Option<&'static str> {
+    match key {
+        "todo_state" => Some("todo_state"),
+        "priority" => Some("priority"),
+        "due_date" => Some("due_date"),
+        "scheduled_date" => Some("scheduled_date"),
+        "space" => Some("space_id"),
+        _ => None,
+    }
+}
+
 /// After migrations run, recover dependent tables (block_properties,
 /// block_tags) from `op_log` if they are empty but the op log contains
-/// the corresponding ops.  Also backfills the denormalised columns on
-/// `blocks` (todo_state, priority, due_date, scheduled_date).
+/// the corresponding ops.  Reserved-key properties (todo_state, priority,
+/// due_date, scheduled_date, space) are replayed directly onto their
+/// denormalised `blocks` columns (#534), not into `block_properties`.
 async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
 ) -> Result<(), crate::error::AppError> {
@@ -948,11 +965,77 @@ async fn recover_derived_state_from_op_log(
                     + i32::from(value_ref.is_some())
                     + i32::from(value_bool.is_some());
                 if value_count == 0 {
+                    // #534: reserved keys are column-backed on `blocks` (the
+                    // single source of truth); a clear is replayed as nulling
+                    // the column, never a `block_properties` DELETE (which is
+                    // now CHECK-forbidden for these keys anyway).
+                    if let Some(col) = reserved_key_blocks_column(key) {
+                        // `col` is a fixed internal literal from the allowlist
+                        // in `reserved_key_blocks_column`, never user input.
+                        // `space` fans out to the whole owning-page group, like
+                        // `project_delete_property_to_sql`; the others are 1:1.
+                        let q = if col == "space_id" {
+                            sqlx::query(sqlx::AssertSqlSafe(format!(
+                                "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
+                            )))
+                            .bind(block_id)
+                            .bind(block_id)
+                        } else {
+                            sqlx::query(sqlx::AssertSqlSafe(format!(
+                                "UPDATE blocks SET {col} = NULL WHERE id = ?"
+                            )))
+                            .bind(block_id)
+                        };
+                        q.execute(&mut *tx).await?;
+                        continue;
+                    }
                     sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
                         .bind(block_id)
                         .bind(key)
                         .execute(&mut *tx)
                         .await?;
+                    continue;
+                }
+
+                // #534: reserved keys (`todo_state` / `priority` / `due_date` /
+                // `scheduled_date` / `space`) are column-backed on `blocks` and
+                // are FORBIDDEN in `block_properties` by the migration-0088
+                // CHECK constraint. Route the set to the dedicated `blocks` column,
+                // mirroring `project_set_property_to_sql`, instead of inserting
+                // a (now-rejected) property row. Skip if the owning block is
+                // absent (purged / never reached this device) to avoid clobber.
+                if let Some(col) = reserved_key_blocks_column(key) {
+                    // `space` is value_ref-typed; the date/text keys carry their
+                    // value in value_date / value_text respectively. Pick the
+                    // payload field that matches the column's storage.
+                    let col_value: Option<&str> = match key {
+                        "due_date" | "scheduled_date" => value_date,
+                        "space" => value_ref,
+                        _ => value_text,
+                    };
+                    if key == "space" {
+                        // `space` fans out to the whole owning-page group, like
+                        // the live projection (`blocks.space_id`).
+                        // `col` is a fixed internal literal from the allowlist
+                        // in `reserved_key_blocks_column`, never user input.
+                        let sql =
+                            format!("UPDATE blocks SET {col} = ? WHERE id = ? OR page_id = ?");
+                        sqlx::query(sqlx::AssertSqlSafe(sql))
+                            .bind(col_value)
+                            .bind(block_id)
+                            .bind(block_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    } else {
+                        // `col` is a fixed internal literal from the allowlist
+                        // in `reserved_key_blocks_column`, never user input.
+                        let sql = format!("UPDATE blocks SET {col} = ? WHERE id = ?");
+                        sqlx::query(sqlx::AssertSqlSafe(sql))
+                            .bind(col_value)
+                            .bind(block_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
                     continue;
                 }
 
@@ -990,11 +1073,34 @@ async fn recover_derived_state_from_op_log(
                 let block_id = payload["block_id"].as_str().unwrap_or("");
                 let key = payload["key"].as_str().unwrap_or("");
 
-                sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
-                    .bind(block_id)
-                    .bind(key)
-                    .execute(&mut *tx)
-                    .await?;
+                // #534: reserved keys clear the dedicated `blocks` column
+                // (single source of truth); non-reserved keys delete the
+                // `block_properties` row. Mirrors `project_delete_property_to_sql`.
+                if let Some(col) = reserved_key_blocks_column(key) {
+                    // `col` is a fixed internal literal from the allowlist in
+                    // `reserved_key_blocks_column`, never user input. `space`
+                    // fans out to the whole owning-page group, like
+                    // `project_delete_property_to_sql`; the others are 1:1.
+                    let q = if col == "space_id" {
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "UPDATE blocks SET {col} = NULL WHERE id = ? OR page_id = ?"
+                        )))
+                        .bind(block_id)
+                        .bind(block_id)
+                    } else {
+                        sqlx::query(sqlx::AssertSqlSafe(format!(
+                            "UPDATE blocks SET {col} = NULL WHERE id = ?"
+                        )))
+                        .bind(block_id)
+                    };
+                    q.execute(&mut *tx).await?;
+                } else {
+                    sqlx::query("DELETE FROM block_properties WHERE block_id = ? AND key = ?")
+                        .bind(block_id)
+                        .bind(key)
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
             "add_tag" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -1073,34 +1179,11 @@ async fn recover_derived_state_from_op_log(
         }
     }
 
-    // Backfill denormalised columns on blocks from block_properties.
-    sqlx::query(
-        "UPDATE blocks SET todo_state = (SELECT value_text FROM block_properties \
-         WHERE block_id = blocks.id AND key = 'todo_state')",
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        "UPDATE blocks SET priority = (SELECT value_text FROM block_properties \
-         WHERE block_id = blocks.id AND key = 'priority')",
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        "UPDATE blocks SET due_date = (SELECT value_date FROM block_properties \
-         WHERE block_id = blocks.id AND key = 'due_date')",
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        "UPDATE blocks SET scheduled_date = (SELECT value_date FROM block_properties \
-         WHERE block_id = blocks.id AND key = 'scheduled_date')",
-    )
-    .execute(&mut *tx)
-    .await?;
+    // #534: the denormalised reserved-key columns (`todo_state` / `priority`
+    // / `due_date` / `scheduled_date` / `space_id`) are written directly in
+    // the replay loop above — they are the single source of truth and no
+    // longer have backing `block_properties` rows (migration-0088 forbids
+    // them), so there is nothing to backfill from `block_properties` here.
 
     tx.commit().await?;
     Ok(())
@@ -1246,6 +1329,59 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let pools = init_pools(&db_path).await.unwrap();
         (pools, dir)
+    }
+
+    /// #534 / migration 0088: the reserved property keys
+    /// (`todo_state` / `priority` / `due_date` / `scheduled_date` / `space`)
+    /// are column-backed on `blocks` (the single source of truth). A direct
+    /// INSERT of such a key into `block_properties` must be rejected by the
+    /// migration-0088 `key_not_reserved` CHECK constraint, proving the guard
+    /// fires even when a caller bypasses the projection routing.
+    #[tokio::test]
+    async fn block_properties_rejects_reserved_key_534() {
+        let (pool, _dir) = test_pool().await;
+
+        // A normal block to own the (would-be) property row.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('GUARD1','content','guarded',NULL,1,'GUARD1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Each reserved key must be rejected by the guard.
+        for key in [
+            "todo_state",
+            "priority",
+            "due_date",
+            "scheduled_date",
+            "space",
+        ] {
+            let res = sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
+            )
+            .bind("GUARD1")
+            .bind(key)
+            .bind("X")
+            .execute(&pool)
+            .await;
+            assert!(
+                res.is_err(),
+                "INSERT of reserved key '{key}' into block_properties must be aborted by the \
+                 migration-0088 guard (it is column-backed on blocks)"
+            );
+        }
+
+        // Sanity: a non-reserved key still inserts fine, so the trigger is
+        // narrowly scoped to the reserved set and not blocking everything.
+        sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)")
+            .bind("GUARD1")
+            .bind("effort")
+            .bind("high")
+            .execute(&pool)
+            .await
+            .expect("a non-reserved key must still be allowed in block_properties");
     }
 
     /// Issue #109 Phase 1 — `now_ms()` returns a plausible wall-clock
@@ -2261,7 +2397,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO block_properties (block_id, key, value_text) \
-             VALUES ('CHILD1','priority','high')",
+             VALUES ('CHILD1','effort','high')",
         )
         .execute(&pool)
         .await
@@ -2362,14 +2498,20 @@ mod tests {
             "page_id should be computed from parent chain"
         );
 
-        // Verify dependent tables were restored post-migration.
+        // Verify dependent tables were restored post-migration. #534:
+        // `due_date` is a reserved key — column-backed on `blocks`, NEVER a
+        // `block_properties` row — so recovery must leave block_properties
+        // empty for it (the value lands on blocks.due_date, asserted below).
         let prop_count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM block_properties WHERE block_id = 'RECOV1' AND key = 'due_date'"
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(prop_count, 1, "property should be recovered");
+        assert_eq!(
+            prop_count, 0,
+            "reserved key 'due_date' must NOT be recovered into block_properties (#534)"
+        );
 
         let tag_count: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM block_tags WHERE block_id = 'RECOV1' AND tag_id = 'PAGE1'"
@@ -2389,6 +2531,121 @@ mod tests {
             due,
             Some("2026-06-15".to_string()),
             "due_date should be backfilled from properties"
+        );
+    }
+
+    /// Seed a fully-migrated pool with a space page, a content page, and a child
+    /// of that page (all `space_id` NULL), plus the given op_log rows, then run
+    /// `recover_derived_state_from_op_log` directly. The derived-recovery gate
+    /// (op_log non-empty AND block_properties + block_tags empty) is satisfied,
+    /// so this exercises the real production replay path against a real schema —
+    /// without the temp-table BUG-73 path that `DROP TABLE blocks` would trigger.
+    #[cfg(test)]
+    async fn seed_space_recovery_pool(ops: &[(i64, &str, &str)]) -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+        for (id, ptype, page_id) in [("SPACE1", "page", "SPACE1"), ("PAGE1", "page", "PAGE1")] {
+            sqlx::query(
+                "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+                 VALUES (?, ?, 'x', NULL, 1, ?)",
+            )
+            .bind(id)
+            .bind(ptype)
+            .bind(page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('CHILD1','content','c','PAGE1',1,'PAGE1')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ts = chrono::Utc::now().timestamp_millis();
+        for (seq, op, payload) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(*op)
+            .bind(*payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        recover_derived_state_from_op_log(&pool).await.unwrap();
+        (pool, dir)
+    }
+
+    #[cfg(test)]
+    async fn space_id_of(pool: &SqlitePool, id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #534 regression: op-log recovery of a `set_property(space)` op must fan
+    /// the `blocks.space_id` column out to the whole owning-page group
+    /// (`WHERE id = ? OR page_id = ?`), exactly like the live
+    /// `project_set_property_to_sql` — not just the page's own row.
+    #[tokio::test]
+    async fn recovery_set_space_fans_out_to_page_group_534() {
+        let (pool, _dir) = seed_space_recovery_pool(&[(
+            1,
+            "set_property",
+            r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1","value_text":null,"value_num":null,"value_date":null}"#,
+        )])
+        .await;
+
+        assert_eq!(space_id_of(&pool, "PAGE1").await.as_deref(), Some("SPACE1"));
+        assert_eq!(
+            space_id_of(&pool, "CHILD1").await.as_deref(),
+            Some("SPACE1"),
+            "child must inherit the page's space_id via recovery fan-out (#534)"
+        );
+        let prop: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM block_properties")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            prop, 0,
+            "space must not be recovered as a block_properties row"
+        );
+    }
+
+    /// #534 regression: op-log recovery of a `delete_property(space)` must null
+    /// `blocks.space_id` for the whole owning-page group, not just the page row
+    /// — otherwise descendants are stranded with a stale space_id after a
+    /// recovery (the bug the adversarial review caught: clear used
+    /// `WHERE id = ?` only, while the live clear paths fan out).
+    #[tokio::test]
+    async fn recovery_clear_space_fans_out_to_page_group_534() {
+        let (pool, _dir) = seed_space_recovery_pool(&[
+            (
+                1,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1","value_text":null,"value_num":null,"value_date":null}"#,
+            ),
+            (2, "delete_property", r#"{"block_id":"PAGE1","key":"space"}"#),
+        ])
+        .await;
+
+        assert_eq!(
+            space_id_of(&pool, "PAGE1").await,
+            None,
+            "page space_id cleared"
+        );
+        assert_eq!(
+            space_id_of(&pool, "CHILD1").await,
+            None,
+            "child space_id must ALSO clear via recovery fan-out, not be stranded (#534)"
         );
     }
 
@@ -2577,13 +2834,13 @@ mod tests {
             (
                 3,
                 "set_property",
-                "{\"block_id\":\"CHILD1\",\"key\":\"priority\",\"value_text\":\"high\"}",
+                "{\"block_id\":\"CHILD1\",\"key\":\"effort\",\"value_text\":\"high\"}",
             ),
             // Dangling block_id (GHOST_BLOCK never created) — must be skipped.
             (
                 4,
                 "set_property",
-                "{\"block_id\":\"GHOST_BLOCK\",\"key\":\"priority\",\"value_text\":\"low\"}",
+                "{\"block_id\":\"GHOST_BLOCK\",\"key\":\"effort\",\"value_text\":\"low\"}",
             ),
             // Dangling value_ref (sole value points at missing block) — skip whole row.
             (
@@ -2639,7 +2896,7 @@ mod tests {
 
         // Valid property recovered.
         let prio: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'CHILD1' AND key = 'priority'",
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'CHILD1' AND key = 'effort'",
         )
         .fetch_one(&pool)
         .await
@@ -2718,22 +2975,25 @@ mod tests {
                 "create_block",
                 "{\"block_id\":\"B1\",\"block_type\":\"content\",\"content\":\"b\",\"parent_id\":\"PAGE1\",\"position\":2}",
             ),
-            // Set todo_state, then CLEAR it (the all-NULL op that crashed boot).
+            // Set a generic property, then CLEAR it (the all-NULL op that
+            // crashed boot). A non-reserved key keeps this exercising the
+            // generic block_properties clear→DELETE path the regression guards
+            // (reserved keys are column-backed, covered separately by #534).
             (
                 3,
                 "set_property",
-                "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":\"DOING\"}",
+                "{\"block_id\":\"B1\",\"key\":\"status\",\"value_text\":\"DOING\"}",
             ),
             (
                 4,
                 "set_property",
-                "{\"block_id\":\"B1\",\"key\":\"todo_state\",\"value_text\":null,\"value_num\":null,\"value_date\":null,\"value_ref\":null,\"value_bool\":null}",
+                "{\"block_id\":\"B1\",\"key\":\"status\",\"value_text\":null,\"value_num\":null,\"value_date\":null,\"value_ref\":null,\"value_bool\":null}",
             ),
             // An unrelated property that stays set — must survive the recovery.
             (
                 5,
                 "set_property",
-                "{\"block_id\":\"B1\",\"key\":\"priority\",\"value_text\":\"high\"}",
+                "{\"block_id\":\"B1\",\"key\":\"effort\",\"value_text\":\"high\"}",
             ),
         ];
         for (seq, op_type, payload) in ops {
@@ -2765,7 +3025,7 @@ mod tests {
 
         // Cleared property is row-absent.
         let todo: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'todo_state'",
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'status'",
         )
         .fetch_one(&pool)
         .await
@@ -2774,7 +3034,7 @@ mod tests {
 
         // The still-set property survives.
         let prio: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'priority'",
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = 'B1' AND key = 'effort'",
         )
         .fetch_one(&pool)
         .await

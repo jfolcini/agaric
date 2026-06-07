@@ -1082,8 +1082,11 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
         .execute(&pool)
         .await
         .unwrap();
-    // Internal keys (must NOT leak into frontmatter).
-    seed("space", "value_text", "SPACEVAL").await;
+    // Internal keys (must NOT leak into frontmatter). #534: `space` is
+    // column-backed on `blocks` (the single source of truth) and is now
+    // CHECK-forbidden as a `block_properties` row, so it can never reach
+    // the frontmatter query — the `space:` / `SPACEVAL` absence assertions
+    // below therefore hold by construction; no seed row is inserted for it.
     seed("is_space", "value_text", "true").await;
     seed("template", "value_text", "weekly").await;
     seed("created_at", "value_text", "2020-01-01").await;
