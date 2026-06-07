@@ -740,20 +740,11 @@ mod tests {
         .unwrap();
     }
 
-    /// Assign a block to a space by writing the `block_properties(key='space',
-    /// value_ref=<space_id>)` row directly. Bypasses the command layer.
+    /// Assign a block to a space by stamping the denormalized
+    /// `blocks.space_id` column directly. Bypasses the command layer.
     async fn assign_to_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-        // #533: mirror the denormalized `blocks.space_id` column these
-        // queries now filter on (every block whose owning page is
-        // `block_id`).
+        // #533: `blocks.space_id` is the sole source of truth these queries
+        // filter on (every block whose owning page is `block_id`).
         sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
             .bind(space_id)
             .bind(block_id)

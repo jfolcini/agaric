@@ -244,6 +244,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
             "id", "block_type", "content", "parent_id", "position",
             "deleted_at",
             "todo_state", "priority", "due_date", "scheduled_date",
+            "space_id",
         ],
         rows: data.tables.blocks,
         bind: |q, b| {
@@ -257,6 +258,10 @@ pub async fn apply_snapshot<R: std::io::Read>(
                 .bind(&b.priority)
                 .bind(&b.due_date)
                 .bind(&b.scheduled_date)
+                // #533: round-trip space membership (FK-safe under
+                // `defer_foreign_keys = ON` — the space block is in this
+                // same blocks batch, validated at commit).
+                .bind(&b.space_id)
         },
     );
 

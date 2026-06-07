@@ -82,19 +82,12 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
     .unwrap();
 }
 
-/// Assign a block to [`TEST_SPACE_ID`] by writing the materialised
-/// `block_properties(key='space', value_ref=TEST_SPACE_ID)` row directly.
-/// Bypasses `set_property_in_tx` — the FEAT-3 Phase 7 query layer reads
-/// `block_properties` regardless of how the row got there.
+/// Assign a block to [`TEST_SPACE_ID`] by stamping the denormalized
+/// `blocks.space_id` column directly. Bypasses `set_property_in_tx` — the
+/// query layer reads `blocks.space_id` regardless of how it got set.
 pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
     ensure_test_space(pool).await;
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(TEST_SPACE_ID)
-        .execute(pool)
-        .await
-        .unwrap();
-    // #533: mirror the denormalized `blocks.space_id` column — every block
+    // #533: `blocks.space_id` is the sole source of truth — every block
     // whose owning page is `block_id` (pages carry `page_id = id`) belongs
     // to this space. Equivalent to the old `b.page_id IN (...)` filter.
     sqlx::query("UPDATE blocks SET space_id = ? WHERE page_id = ?")
@@ -106,45 +99,44 @@ pub async fn assign_to_test_space(pool: &SqlitePool, block_id: &str) {
 }
 
 /// FEAT-3p4 — bulk-assign every block currently in the DB (excluding the
-/// space block itself and any block that already carries a `space`
-/// property) to [`TEST_SPACE_ID`]. Use this at the end of a test's seed
+/// space block itself and any block whose owning page already carries a
+/// `space_id`) to [`TEST_SPACE_ID`]. Use this at the end of a test's seed
 /// phase so the FEAT-3p4 hard-filter paths (`list_blocks_inner`,
 /// `search_blocks_inner`) return everything the test set up. Idempotent —
-/// the `NOT EXISTS` guard skips blocks that are already assigned to any
-/// space (so cross-space tests still work).
+/// the page-`space_id` guard skips blocks already assigned to any space
+/// (so cross-space tests still work).
 pub async fn assign_all_to_test_space(pool: &SqlitePool) {
     ensure_test_space(pool).await;
     // SQL-review §5.3 — stamp page_id on any block that's still NULL,
-    // so the post-migration `b.page_id IN (...)` filter resolves the
-    // direct space-property writes below.
+    // so the `space_id` derivation below resolves to the owning page.
     sqlx::query("UPDATE blocks SET page_id = id WHERE page_id IS NULL")
         .execute(pool)
         .await
         .unwrap();
+    // #533: `blocks.space_id` is the sole source of truth. Derive each
+    // block's membership from its owning page (pages carry `page_id = id`),
+    // in two stable steps that mirror the previous "seed `space` property →
+    // derive column from the page's property":
+    //   1. Default any page block still missing a `space_id` to
+    //      TEST_SPACE_ID (preserves cross-space seeds that already set one).
+    //   2. Propagate each page's `space_id` to every block paged to it.
+    // Excludes the space block itself.
     sqlx::query(
-        "INSERT INTO block_properties (block_id, key, value_ref) \
-         SELECT b.id, 'space', ? FROM blocks b \
-         WHERE b.id <> ? \
-           AND NOT EXISTS ( \
-                SELECT 1 FROM block_properties bp \
-                WHERE bp.block_id = b.id AND bp.key = 'space' \
-           )",
+        "UPDATE blocks SET space_id = ? \
+         WHERE id <> ? AND id = page_id AND space_id IS NULL",
     )
     .bind(TEST_SPACE_ID)
     .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();
-    // #533: derive the denormalized `blocks.space_id` column from the
-    // freshly seeded `space` properties — identical to `rebuild_space_ids`
-    // / migration 0086. Runs last so it observes every block's `page_id`
-    // (stamped above) and every `space` property.
     sqlx::query(
         "UPDATE blocks SET space_id = ( \
-             SELECT bp.value_ref FROM block_properties bp \
-             WHERE bp.key = 'space' AND bp.block_id = blocks.page_id \
-         )",
+             SELECT pg.space_id FROM blocks pg WHERE pg.id = blocks.page_id \
+         ) \
+         WHERE id <> ? AND id <> page_id",
     )
+    .bind(TEST_SPACE_ID)
     .execute(pool)
     .await
     .unwrap();

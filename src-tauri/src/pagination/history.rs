@@ -91,8 +91,9 @@ pub async fn list_block_history(
 ///
 /// FEAT-3 Phase 8 — when `page_id == "__all__"` and `space_id` is `Some`,
 /// the global query is additionally filtered to only ops whose
-/// `payload.block_id` resolves (via `block_properties.key = 'space'`) to
-/// the requested space. When `space_id` is `None`, behaviour is identical
+/// `payload.block_id` belongs to the requested space (via the
+/// `blocks.space_id` column — #533). When `space_id` is `None`, behaviour
+/// is identical
 /// to before — every op in `op_log` is returned. When `page_id` is a real
 /// ULID (per-page mode), `space_id` is ignored: a page is itself
 /// space-bound, so the existing recursive CTE already scopes correctly.

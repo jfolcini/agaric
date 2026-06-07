@@ -1771,6 +1771,7 @@ mod tests {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             });
         }
         let mut up_to_seqs = BTreeMap::new();

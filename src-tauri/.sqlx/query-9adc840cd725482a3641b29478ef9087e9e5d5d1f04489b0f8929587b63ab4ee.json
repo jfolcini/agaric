@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id) VALUES (?, ?, ?, ?, ?, (SELECT id FROM blocks WHERE id = ?)) ON CONFLICT(id) DO UPDATE SET block_type = excluded.block_type, content = excluded.content, parent_id = excluded.parent_id, position = excluded.position, space_id = (SELECT id FROM blocks WHERE id = ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "9adc840cd725482a3641b29478ef9087e9e5d5d1f04489b0f8929587b63ab4ee"
+}

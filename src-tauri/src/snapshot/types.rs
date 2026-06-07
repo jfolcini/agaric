@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 // Older blobs still deserialise as long as every dropped field carries
 // `#[serde(default)]` on intermediate versions; values for retired
 // columns are simply discarded on restore.
-pub(crate) const SCHEMA_VERSION: u32 = 4;
+pub(crate) const SCHEMA_VERSION: u32 = 5;
 
 // ---------------------------------------------------------------------------
 // Row types (CBOR + DB round-trip)
@@ -34,6 +34,14 @@ pub struct BlockSnapshot {
     pub due_date: Option<String>,
     #[serde(default)]
     pub scheduled_date: Option<String>,
+    /// #533: native space membership (`blocks.space_id`, migration 0086).
+    /// Captured + restored so a snapshot RESET preserves space membership —
+    /// without it every restored block lands NULL and vanishes from
+    /// space-filtered reads (the `block_properties(key='space')` rows are
+    /// gone and the op_log is wiped on restore, so it can't be re-derived).
+    /// `#[serde(default)]` keeps pre-v5 snapshots decodable (→ None).
+    #[serde(default)]
+    pub space_id: Option<crate::ulid::BlockId>,
 }
 
 /// A block–tag association captured in a snapshot.

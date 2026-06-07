@@ -49,6 +49,7 @@ fn sample_snapshot_data() -> SnapshotData {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![BlockTagSnapshot {
                 block_id: BlockId::test_id("BLOCK-1"),
@@ -640,6 +641,7 @@ async fn apply_snapshot_empty_db() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -891,6 +893,7 @@ fn cbor_round_trip_option_f64() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![
@@ -1244,6 +1247,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         priority: Option<&'a str>,
         due_date: Option<&'a str>,
         scheduled_date: Option<&'a str>,
+        space_id: Option<&'a str>,
     }
     #[derive(Serialize)]
     struct NullableTables<'a> {
@@ -1281,6 +1285,7 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -1332,6 +1337,7 @@ async fn apply_snapshot_rejects_invalid_block_type() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -1434,6 +1440,7 @@ async fn apply_snapshot_rejects_malformed_ulid_block_id() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -1484,6 +1491,7 @@ async fn apply_snapshot_full_all_5_tables() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
                 BlockSnapshot {
                     id: BlockId::test_id("BLK-CHILD"),
@@ -1496,6 +1504,7 @@ async fn apply_snapshot_full_all_5_tables() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
                 // Tag block — needed for FK on block_tags.tag_id
                 BlockSnapshot {
@@ -1509,6 +1518,7 @@ async fn apply_snapshot_full_all_5_tables() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
             ],
             block_tags: vec![BlockTagSnapshot {
@@ -1856,6 +1866,7 @@ fn large_text_field_round_trip() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![BlockPropertySnapshot {
@@ -1931,6 +1942,7 @@ fn all_nullable_fields_null_round_trip() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![BlockPropertySnapshot {
@@ -2495,6 +2507,7 @@ fn snapshot_v2_round_trips_new_fields() {
                 priority: Some("2".to_string()),
                 due_date: Some("2026-04-15".to_string()),
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -2740,6 +2753,7 @@ async fn apply_snapshot_rebuilds_caches() {
                     priority: None,
                     due_date: Some("2025-06-01".to_string()),
                     scheduled_date: None,
+                    space_id: None,
                 },
                 BlockSnapshot {
                     id: BlockId::test_id("TAG-WORK"),
@@ -2752,6 +2766,7 @@ async fn apply_snapshot_rebuilds_caches() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
                 BlockSnapshot {
                     id: BlockId::test_id("BLK-CHILD"),
@@ -2764,6 +2779,7 @@ async fn apply_snapshot_rebuilds_caches() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
             ],
             block_tags: vec![BlockTagSnapshot {
@@ -2966,6 +2982,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
                 BlockSnapshot {
                     id: BlockId::test_id("TPL-CHILD"),
@@ -2978,6 +2995,7 @@ async fn apply_snapshot_excludes_template_page_blocks_from_agenda() {
                     priority: None,
                     due_date: Some("2025-06-15".to_string()),
                     scheduled_date: None,
+                    space_id: None,
                 },
             ],
             block_tags: vec![],
@@ -3104,6 +3122,7 @@ async fn apply_snapshot_uses_awaiting_enqueue_background() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -3191,6 +3210,7 @@ async fn apply_snapshot_rejects_traversal_attachment_fs_path() {
                 priority: None,
                 due_date: None,
                 scheduled_date: None,
+                space_id: None,
             }],
             block_tags: vec![],
             block_properties: vec![],
@@ -3488,6 +3508,7 @@ mod proptest_tests {
                     priority,
                     due_date,
                     scheduled_date,
+                    space_id: None,
                 },
             )
     }
@@ -3656,6 +3677,7 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
                 BlockSnapshot {
                     id: BlockId::test_id(blk_id),
@@ -3668,6 +3690,7 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
                     priority: None,
                     due_date: None,
                     scheduled_date: None,
+                    space_id: None,
                 },
             ],
             block_tags: vec![],
@@ -3746,6 +3769,89 @@ async fn apply_snapshot_rebuilds_block_tag_refs_cache() {
 }
 
 // =======================================================================
+// #533: snapshot must round-trip blocks.space_id (sole source of truth)
+// =======================================================================
+
+/// A snapshot RESET must preserve space membership. `blocks.space_id` is
+/// the sole source of truth (migration 0087 removed the
+/// `block_properties(key='space')` rows and apply_snapshot wipes the
+/// op_log), so if the snapshot didn't carry `space_id` every restored
+/// block would land NULL and vanish from every space-filtered read with
+/// no recovery path. This test captures blocks with `space_id`, restores,
+/// and asserts the column survives.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_round_trips_space_id_533() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Space block S (a plain block is enough to satisfy the space_id FK),
+    // a member block A in S, and a member block B in S.
+    let space = "01HQ533SPACEAAAAAAAAAAAAAA";
+    let blk_a = "01HQ533MEMBERAAAAAAAAAAAAA";
+    let blk_b = "01HQ533MEMBERBBBBBBBBBBBBB";
+    let mk = |id: &str, space_id: Option<&str>| BlockSnapshot {
+        id: BlockId::test_id(id),
+        block_type: "content".to_string(),
+        content: Some("c".to_string()),
+        parent_id: None,
+        position: Some(1),
+        deleted_at: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
+        scheduled_date: None,
+        space_id: space_id.map(BlockId::test_id),
+    };
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-533".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "space-533".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                mk(space, None),
+                mk(blk_a, Some(space)),
+                mk(blk_b, Some(space)),
+            ],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    for id in [blk_a, blk_b] {
+        let sid: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            sid.as_deref(),
+            Some(space),
+            "restored block {id} must keep its space_id (snapshot round-trip)"
+        );
+    }
+    // And no space property rows were resurrected.
+    let prop_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE key = 'space'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        prop_rows, 0,
+        "restore must not create block_properties space rows"
+    );
+
+    mat.shutdown();
+}
+
+// =======================================================================
 // L-111: apply_snapshot must roll back chunk-1 inserts when chunk-2 fails
 // =======================================================================
 //
@@ -3795,6 +3901,7 @@ async fn apply_snapshot_rolls_back_chunk1_when_chunk2_fails() {
         priority: None,
         due_date: None,
         scheduled_date: None,
+        space_id: None,
     }];
 
     // Build chunk-1: exactly CHUNK rows with unique keys. All valid.

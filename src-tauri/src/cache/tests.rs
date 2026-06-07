@@ -4386,17 +4386,8 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
         .unwrap();
     }
     async fn set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
-        sqlx::query(
-            "INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)",
-        )
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-        // Phase 2 (#533): space membership is now read from `blocks.space_id`,
-        // not the `block_properties` `key='space'` row above. Set the
-        // denormalized column on the block and any block paged to it.
+        // Phase 2 (#533): space membership is read from `blocks.space_id`.
+        // Set the denormalized column on the block and any block paged to it.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
             .bind(space_id)
             .bind(block_id)
@@ -4462,8 +4453,8 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
     );
 }
 
-/// #375 helpers: a space-marker page (its own `page_id`) and a `space`
-/// property on a block.
+/// #375 helpers: a space-marker page (its own `page_id`) and a
+/// `blocks.space_id` stamp on a block.
 async fn cs375_insert_page(pool: &SqlitePool, id: &str) {
     sqlx::query("INSERT INTO blocks (id, block_type, content, page_id) VALUES (?, 'page', ?, ?)")
         .bind(id)
@@ -4474,15 +4465,8 @@ async fn cs375_insert_page(pool: &SqlitePool, id: &str) {
         .unwrap();
 }
 async fn cs375_set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
-    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, 'space', ?)")
-        .bind(block_id)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .unwrap();
-    // Phase 2 (#533): space membership is now read from `blocks.space_id`,
-    // not the `block_properties` `key='space'` row above. Set the
-    // denormalized column on the block and any block paged to it.
+    // Phase 2 (#533): space membership is read from `blocks.space_id`.
+    // Set the denormalized column on the block and any block paged to it.
     sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
         .bind(space_id)
         .bind(block_id)
