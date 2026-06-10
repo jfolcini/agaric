@@ -3620,8 +3620,8 @@ async fn pump_full_session_602(
 /// #602: make ONE local edit on a device through the real local-edit
 /// pipeline: op_log append (`append_local_op_at`, the only legitimate
 /// op_log writer) → materializer SQL projection (`dispatch_op`) →
-/// engine dispatch (`merge::engine_apply` — the same call
-/// `dispatch_for_record` makes in production, invoked here against
+/// engine dispatch (`merge::engine_apply` — the same dispatcher the
+/// production in-tx via-loro apply mirrors, invoked here against
 /// THIS device's registry because the process-global `OnceLock`
 /// registry cannot represent two devices in one test process).
 ///
