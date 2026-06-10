@@ -28,6 +28,14 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per PR (issue #814): every push to an open PR otherwise
+# stacks the 3-job language matrix in parallel with the stale run. Scoped to
+# pull_request events only — push/schedule/dispatch runs get a unique group
+# (run_id) so a scan of a commit on main is never superseded or cancelled.
+concurrency:
+  group: codeql-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze ${{ matrix.language }}
