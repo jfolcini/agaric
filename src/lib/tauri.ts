@@ -2216,6 +2216,10 @@ export interface LogFileEntry {
 /**
  * Gather app version, OS/arch, device ID and a tail of recent error/warn
  * lines from today's log for pre-filling a bug report.
+ *
+ * #609: `recent_errors` arrives ALREADY redacted — the backend runs the
+ * tail through the same pipeline as the redacted ZIP export, because the
+ * lines are embedded in the prefilled public GitHub issue body.
  */
 export async function collectBugReportMetadata(): Promise<BugReport> {
   return unwrap(await commands.collectBugReportMetadata())

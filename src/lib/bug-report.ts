@@ -60,6 +60,24 @@ export function buildGitHubIssueUrl(params: BuildIssueUrlParams): string {
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/new?${query.toString()}`
 }
 
+/** #609: number of leading device-ID characters kept in the issue body.
+ *  The full device ID is a stable per-device identifier that the backend's
+ *  redaction pipeline scrubs to `[REDACTED_DEVICE_ID]` in the ZIP export —
+ *  printing it in cleartext in a PUBLIC GitHub issue was internally
+ *  inconsistent. Eight characters (the first UUID segment) are enough to
+ *  disambiguate the reporter's devices within one issue thread without
+ *  exposing the full identifier. */
+const DEVICE_ID_PREFIX_CHARS = 8
+
+/** #609: truncate a device ID for inclusion in a public issue body. IDs at
+ *  or under [`DEVICE_ID_PREFIX_CHARS`] chars pass through unchanged (they
+ *  already reveal no more than the truncated form would). */
+export function truncateDeviceId(deviceId: string): string {
+  return deviceId.length <= DEVICE_ID_PREFIX_CHARS
+    ? deviceId
+    : `${deviceId.slice(0, DEVICE_ID_PREFIX_CHARS)}…`
+}
+
 /** Input to [`formatReportBody`]. */
 export interface FormatReportBodyParams {
   metadata: BugReport
@@ -77,8 +95,10 @@ export interface FormatReportBodyParams {
  *
  *  Output layout (stable, snapshot-tested):
  *    1. User description (or a placeholder line).
- *    2. Environment block (app version, OS, arch, device ID).
- *    3. Recent errors list (if any).
+ *    2. Environment block (app version, OS, arch, truncated device ID).
+ *    3. Recent errors list (if any) — already redacted by the backend
+ *       (#609: `collect_bug_report_metadata` runs the tail through the
+ *       same pipeline as the ZIP export before it ever reaches the UI).
  *    4. Attachment reminder (if `zipFileName` supplied).
  */
 export function formatReportBody(params: FormatReportBodyParams): string {
@@ -94,7 +114,9 @@ export function formatReportBody(params: FormatReportBodyParams): string {
     `- **App version:** \`${metadata.app_version}\``,
     `- **OS:** \`${metadata.os}\``,
     `- **Arch:** \`${metadata.arch}\``,
-    `- **Device ID:** \`${metadata.device_id}\``,
+    // #609: never embed the full device ID in a public issue — the same
+    // identifier is scrubbed to [REDACTED_DEVICE_ID] in the ZIP export.
+    `- **Device ID:** \`${truncateDeviceId(metadata.device_id)}\` _(truncated)_`,
   ]
   sections.push(envLines.join('\n'))
 

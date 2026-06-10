@@ -4,15 +4,20 @@
 //!
 //! - `collect_bug_report_metadata` — gathers app version, OS, arch, device ID,
 //!   and the last [`RECENT_ERRORS_CAP`] error/warn lines from today's log file.
+//!   #609: the recent-error lines are ALWAYS redacted (same pipeline as the
+//!   ZIP path) because the frontend embeds them into the prefilled public
+//!   GitHub issue body.
 //! - `read_logs_for_report` — enumerates rolled log files, capping per-file
 //!   size, skipping anything older than [`MAX_ROLLED_AGE_DAYS`] days, and
 //!   optionally redacting home paths + device IDs.
 //!
 //! The frontend composes these with the user-entered title/description,
 //! optionally writes a ZIP to disk via `downloadBlob`, and opens a prefilled
-//! GitHub issue URL. Logs NEVER leave the device as part of the URL itself
-//! — the feature's privacy story rests on the explicit user-visible preview
-//! + confirmation checkbox + ZIP-on-disk flow (FEAT-5).
+//! GitHub issue URL. Full log FILES never leave the device as part of the
+//! URL itself (only the redacted recent-error tail is embedded in the body)
+//! — the feature's privacy story rests on unconditional redaction of that
+//! tail plus the explicit user-visible preview + confirmation checkbox +
+//! ZIP-on-disk flow (FEAT-5).
 
 use std::fs;
 use std::io::Read;
@@ -315,6 +320,12 @@ pub struct BugReport {
     pub device_id: String,
     /// Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
     /// `agaric.log`, newest last.
+    ///
+    /// #609: ALWAYS redacted through the same pipeline as the ZIP export
+    /// ([`redact_line_with_redactor`]) — the frontend embeds these lines
+    /// verbatim into the prefilled PUBLIC GitHub issue body
+    /// (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
+    /// path there is no user-facing redact toggle on the issue-body path.
     pub recent_errors: Vec<String>,
 }
 
@@ -494,12 +505,39 @@ fn read_errors_from_path(path: &Path) -> Vec<String> {
 /// branches here. `app_version` stays sourced from `CARGO_PKG_VERSION`:
 /// that is the *application* version, not the OS version, and the plugin
 /// has no equivalent for it.
+///
+/// #609: `home` / `gcal_email` / `peer_device_ids` are the same redaction
+/// inputs `read_logs_for_report_inner` consumes. The recent-error tail is
+/// run through the SAME per-line pipeline as the ZIP export
+/// ([`redact_line_with_redactor`]) — unconditionally, because the frontend
+/// embeds these lines into the prefilled PUBLIC GitHub issue body and that
+/// path has no redact toggle. All inputs are "absent → noop" per
+/// [`RedactionContext`]; pass `None` / `&[]` when unknown and the deny-list
+/// JSON pipeline + generic email scrub still apply.
 pub fn collect_bug_report_metadata_inner(
     app_data_dir: &Path,
     device_id: String,
+    home: Option<&str>,
+    gcal_email: Option<&str>,
+    peer_device_ids: &[String],
 ) -> Result<BugReport, AppError> {
     let log_dir = log_dir_for_app_data(app_data_dir);
-    let recent_errors = recent_errors_from_log_dir(&log_dir);
+    let raw_recent_errors = recent_errors_from_log_dir(&log_dir);
+
+    // #609: same redaction pipeline as `read_logs_for_report_inner` —
+    // build the Aho-Corasick matcher once, then redact line-by-line
+    // exactly like `redact_log` does for the ZIP bundle.
+    let ctx = RedactionContext {
+        home,
+        device_id: Some(device_id.as_str()),
+        gcal_email,
+        peer_device_ids,
+    };
+    let redactor = Redactor::new(&ctx);
+    let recent_errors = raw_recent_errors
+        .iter()
+        .map(|line| redact_line_with_redactor(line, &redactor))
+        .collect();
 
     Ok(BugReport {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -513,19 +551,33 @@ pub fn collect_bug_report_metadata_inner(
 /// Tauri command: gather bug-report metadata (app version, OS, arch,
 /// device id, recent ERROR/WARN log lines). Delegates to
 /// [`collect_bug_report_metadata_inner`].
+///
+/// #609: redaction inputs (home dir, GCal email, peer device ids) are
+/// resolved here — same sources as [`read_logs_for_report`] — so the
+/// recent-error tail embedded in the prefilled public GitHub issue body
+/// goes through the same redaction pipeline as the ZIP export.
 #[cfg(not(tarpaulin_include))]
 #[tauri::command]
 #[specta::specta]
 pub async fn collect_bug_report_metadata(
     app: tauri::AppHandle,
+    pool: tauri::State<'_, crate::db::ReadPool>,
     device_id: tauri::State<'_, crate::device::DeviceId>,
 ) -> Result<BugReport, AppError> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    collect_bug_report_metadata_inner(&data_dir, device_id.as_str().to_string())
-        .map_err(super::sanitize_internal_error)
+    let home = home_dir_string();
+    let (gcal_email, peer_device_ids) = fetch_redaction_extras(&pool.inner().0).await;
+    collect_bug_report_metadata_inner(
+        &data_dir,
+        device_id.as_str().to_string(),
+        home.as_deref(),
+        gcal_email.as_deref(),
+        &peer_device_ids,
+    )
+    .map_err(super::sanitize_internal_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -1288,7 +1340,8 @@ mod tests {
         )
         .unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, None, &[]).unwrap();
 
         assert_eq!(md.device_id, DEV);
         assert_eq!(md.app_version, env!("CARGO_PKG_VERSION"));
@@ -1301,7 +1354,8 @@ mod tests {
     fn collect_metadata_empty_log_dir_returns_empty_recent_errors() {
         let dir = TempDir::new().unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, None, &[]).unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
         assert_eq!(md.device_id, DEV);
@@ -1312,7 +1366,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         fs::create_dir_all(log_dir_for_app_data(dir.path())).unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, None, &[]).unwrap();
 
         assert_eq!(md.recent_errors.len(), 0);
     }
@@ -1352,7 +1407,8 @@ mod tests {
         contents.push_str("2025-01-01 ERROR [agaric] M31_TAIL_MARKER\n");
         fs::write(log_dir.join("agaric.log"), &contents).unwrap();
 
-        let md = collect_bug_report_metadata_inner(dir.path(), DEV.into()).unwrap();
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, None, &[]).unwrap();
 
         // Tail marker survives the cap-truncate-from-head path.
         assert!(
@@ -1370,6 +1426,227 @@ mod tests {
                 .any(|l| l.contains("M31_HEAD_MARKER")),
             "head ERROR marker must be dropped by the read cap, got recent_errors: {:?}",
             md.recent_errors
+        );
+    }
+
+    // -- #609: recent_errors redaction (issue-body path) ------------------
+
+    /// #609 — the recent-error tail is embedded verbatim into the
+    /// prefilled PUBLIC GitHub issue body by `formatReportBody`
+    /// (`src/lib/bug-report.ts`), so it must go through the SAME
+    /// redaction pipeline as the ZIP export. Happy path: `$HOME`, the
+    /// local device_id, the GCal account email, a peer device id, and a
+    /// stray email inside ERROR/WARN lines must all be scrubbed with
+    /// their canonical markers before the lines leave the backend.
+    #[test]
+    fn collect_metadata_redacts_recent_errors_for_issue_body() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        let gcal = "alice@example.com";
+        let peer = "peer-device-789";
+        fs::write(
+            log_dir.join("agaric.log"),
+            format!(
+                "2025-01-01 ERROR [agaric] open failed path={HOME}/notes.db\n\
+                 2025-01-01 ERROR [agaric] device={DEV} sync failed with {peer}\n\
+                 2025-01-01 WARN [agaric] gcal push rejected for {gcal}, cc stray@example.org\n"
+            ),
+        )
+        .unwrap();
+
+        let md = collect_bug_report_metadata_inner(
+            dir.path(),
+            DEV.into(),
+            Some(HOME),
+            Some(gcal),
+            &[peer.to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(md.recent_errors.len(), 3);
+        let joined = md.recent_errors.join("\n");
+        assert!(
+            !joined.contains(HOME),
+            "home path must be redacted, got: {joined}"
+        );
+        assert!(
+            joined.contains("~/notes.db"),
+            "home must become ~, got: {joined}"
+        );
+        assert!(
+            !joined.contains(DEV),
+            "device id must be redacted, got: {joined}"
+        );
+        assert!(
+            joined.contains("[REDACTED_DEVICE_ID]"),
+            "device-id marker must be present, got: {joined}"
+        );
+        assert!(
+            !joined.contains(gcal),
+            "GCal email must be redacted, got: {joined}"
+        );
+        assert!(
+            joined.contains("[REDACTED:GCAL_EMAIL]"),
+            "GCal-email marker must be present, got: {joined}"
+        );
+        assert!(
+            !joined.contains(peer),
+            "peer device id must be redacted, got: {joined}"
+        );
+        assert!(
+            joined.contains("[REDACTED:PEER_DEVICE_ID]"),
+            "peer-device-id marker must be present, got: {joined}"
+        );
+        assert!(
+            !joined.contains("stray@example.org"),
+            "stray email must be redacted, got: {joined}"
+        );
+        assert!(
+            joined.contains("[EMAIL]"),
+            "generic email marker must be present, got: {joined}"
+        );
+    }
+
+    /// #609 — redaction must be applied even when the optional redaction
+    /// inputs are unknown (`None` / `&[]`): JSON-format lines still take
+    /// the H-9b deny-list path, so free-text PII the needle list never
+    /// knew about (a name, an arbitrary path) collapses to `[REDACTED]`
+    /// while safe tokens (timestamp, level, target) survive.
+    #[test]
+    fn collect_metadata_recent_errors_json_lines_take_deny_list_path() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(
+            log_dir.join("agaric.log"),
+            concat!(
+                r#"{"timestamp":"2026-04-28T10:23:45.123456Z","level":"ERROR","fields":{"message":"failed for user Bob Smith at /home/bob/secret"},"target":"agaric::gcal_push"}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), DEV.into(), None, None, &[]).unwrap();
+
+        assert_eq!(md.recent_errors.len(), 1);
+        let line = &md.recent_errors[0];
+        assert!(
+            !line.contains("Bob Smith") && !line.contains("/home/bob/secret"),
+            "free-text PII must be deny-listed, got: {line}"
+        );
+        assert!(
+            line.contains("[REDACTED]"),
+            "deny-list marker must be present, got: {line}"
+        );
+        assert!(
+            line.contains("2026-04-28T10:23:45.123456Z") && line.contains("agaric::gcal_push"),
+            "safe tokens (timestamp, target) must survive, got: {line}"
+        );
+    }
+
+    /// #609 evasion probe — the device id embedded INSIDE a JSON string
+    /// value. JSON lines short-circuit before [`apply_allow_list`], so the
+    /// Aho-Corasick needle pass (which carries the device-id needle) never
+    /// runs on them — the deny-list alone must catch it. Two shapes:
+    ///
+    /// 1. The UUID inside a larger message string — the composite string
+    ///    matches no safe-token pattern, so the whole value collapses to
+    ///    `[REDACTED]`.
+    /// 2. The UUID as a standalone leaf value — a hyphenated UUID matches
+    ///    none of [`SAFE_TOKEN_PATTERNS`] (the hex-digest patterns are
+    ///    dash-free exact lengths; the ULID pattern is 26-char Crockford),
+    ///    so it is redacted too. This would NOT hold for a dash-stripped
+    ///    32-hex rendering — the codebase never logs `Uuid::simple()`, and
+    ///    this test pins the hyphenated invariant.
+    #[test]
+    fn collect_metadata_json_embedded_device_id_is_redacted() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        // Hyphenated UUID v4 — the on-disk device-id format
+        // (`uuid::Uuid::new_v4().to_string()`, see `src/device.rs`).
+        let device_id = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d";
+        fs::write(
+            log_dir.join("agaric.log"),
+            format!(
+                concat!(
+                    r#"{{"timestamp":"2026-04-28T10:23:45Z","level":"ERROR","#,
+                    r#""fields":{{"message":"sync failed for device {id}","peer":"{id}"}},"#,
+                    r#""target":"agaric::sync"}}"#,
+                    "\n",
+                ),
+                id = device_id
+            ),
+        )
+        .unwrap();
+
+        let md =
+            collect_bug_report_metadata_inner(dir.path(), device_id.to_string(), None, None, &[])
+                .unwrap();
+
+        assert_eq!(md.recent_errors.len(), 1);
+        let line = &md.recent_errors[0];
+        assert!(
+            !line.contains(device_id),
+            "device id must not survive inside JSON string values, got: {line}"
+        );
+        assert!(
+            line.contains("[REDACTED]"),
+            "deny-list marker must be present, got: {line}"
+        );
+    }
+
+    /// #609 edge — an EXISTING but empty `agaric.log` must yield an empty
+    /// `recent_errors` (no panic, no synthetic lines) even with the full
+    /// redaction input set supplied.
+    #[test]
+    fn collect_metadata_redaction_with_empty_log_file_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(log_dir.join("agaric.log"), "").unwrap();
+
+        let md = collect_bug_report_metadata_inner(
+            dir.path(),
+            DEV.into(),
+            Some(HOME),
+            Some("alice@example.com"),
+            &["peer-device-789".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(md.recent_errors.len(), 0);
+        assert_eq!(md.device_id, DEV);
+    }
+
+    /// #609 edge — already-redacted input must round-trip unchanged
+    /// (idempotence): markers like `[REDACTED_DEVICE_ID]`, `~`, and
+    /// `[EMAIL]` contain no needle and don't match the email shape, so a
+    /// second pass through the pipeline is a no-op.
+    #[test]
+    fn collect_metadata_already_redacted_lines_are_stable() {
+        let dir = TempDir::new().unwrap();
+        let log_dir = log_dir_for_app_data(dir.path());
+        fs::create_dir_all(&log_dir).unwrap();
+        let already_redacted =
+            "2025-01-01 ERROR [agaric] device=[REDACTED_DEVICE_ID] path=~/notes.db mail=[EMAIL]";
+        fs::write(log_dir.join("agaric.log"), format!("{already_redacted}\n")).unwrap();
+
+        let md = collect_bug_report_metadata_inner(
+            dir.path(),
+            DEV.into(),
+            Some(HOME),
+            Some("alice@example.com"),
+            &["peer-device-789".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(md.recent_errors.len(), 1);
+        assert_eq!(
+            md.recent_errors[0], already_redacted,
+            "already-redacted line must pass through unchanged"
         );
     }
 
