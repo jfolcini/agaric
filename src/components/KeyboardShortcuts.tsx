@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/sheet'
 import { useNavigationStore } from '@/stores/navigation'
 
-import { getCurrentShortcuts } from '../lib/keyboard-config'
+import { getCurrentShortcuts, matchesShortcutBinding } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { loadQuickCaptureShortcut } from '../lib/quick-capture-shortcut'
 import { renderKeys } from '../lib/render-keyboard-shortcut'
@@ -186,10 +186,13 @@ export function KeyboardShortcuts({
     [isControlled, onOpenChange],
   )
 
-  // Global `?` key listener — opens the sheet when no input is focused
+  // Global `showShortcuts` listener (default `?`) — opens the sheet when no
+  // input is focused. Routed through `matchesShortcutBinding` (#724) so a
+  // Settings rebind is honoured and stray modifiers (e.g. Ctrl+Shift+/) no
+  // longer trigger the default binding.
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key !== '?') return
+      if (!matchesShortcutBinding(e, 'showShortcuts')) return
 
       const target = e.target as HTMLElement | null
       if (!target) return

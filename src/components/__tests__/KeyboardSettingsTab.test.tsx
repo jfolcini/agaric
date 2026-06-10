@@ -69,6 +69,17 @@ const MOCK_SHORTCUTS: (ShortcutBinding & { isCustom: boolean })[] = [
     description: 'keyboard.indentBlock',
     isCustom: true,
   },
+  {
+    // #724 — documentation-only entry: hardcoded at the consumption site,
+    // so the tab must NOT offer an edit affordance for it.
+    id: 'tagPicker',
+    keys: '@',
+    category: 'keyboard.category.pickers',
+    description: 'keyboard.tagPicker',
+    condition: 'keyboard.condition.inEditor',
+    rebindable: false,
+    isCustom: false,
+  },
 ]
 
 beforeEach(() => {
@@ -363,6 +374,28 @@ describe('KeyboardSettingsTab', () => {
     const hint = screen.getByText('Format: Ctrl + Shift + E')
     expect(hint).toBeInTheDocument()
     expect(hint).toHaveClass('text-muted-foreground')
+  })
+
+  it('#724: rebindable entries get an edit button, documentation-only entries do not', () => {
+    render(<KeyboardSettingsTab />)
+
+    // Rebindable entries (no `rebindable: false`) keep the pencil.
+    expect(
+      screen.getByRole('button', {
+        name: t('keyboard.settings.editShortcutFor', {
+          action: t('keyboard.moveToPreviousBlock'),
+        }),
+      }),
+    ).toBeInTheDocument()
+
+    // The documentation-only entry is still LISTED (discoverability)…
+    expect(screen.getByText(t('keyboard.tagPicker'))).toBeInTheDocument()
+    // …but offers no edit affordance: a saved override would never be honoured.
+    expect(
+      screen.queryByRole('button', {
+        name: t('keyboard.settings.editShortcutFor', { action: t('keyboard.tagPicker') }),
+      }),
+    ).not.toBeInTheDocument()
   })
 
   it('shows "Customized" badge for custom shortcuts', () => {

@@ -13,10 +13,12 @@ import {
   getCustomOverrides,
   getShortcutKeys,
   matchesShortcutBinding,
+  normalizeBinding,
   resetAllShortcuts,
   resetShortcut,
   setCustomShortcut,
   toAriaKeyshortcuts,
+  validateBindingInput,
 } from '../keyboard-config'
 
 vi.mock('../logger', () => ({
@@ -1120,6 +1122,307 @@ describe('keyboard-config', () => {
           'focusSearch',
         ),
       ).toBe(true)
+    })
+  })
+
+  // ── #723 — validator/matcher tokenizer unification ──────────────────────
+
+  describe('#723 — user-typed override formats are normalised and honoured', () => {
+    function ev(
+      key: string,
+      opts: Partial<{
+        ctrlKey: boolean
+        metaKey: boolean
+        shiftKey: boolean
+        altKey: boolean
+      }> = {},
+    ): Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> {
+      return {
+        key,
+        ctrlKey: opts.ctrlKey ?? false,
+        metaKey: opts.metaKey ?? false,
+        shiftKey: opts.shiftKey ?? false,
+        altKey: opts.altKey ?? false,
+      }
+    }
+
+    it('setCustomShortcut normalises unspaced "Ctrl+E" to canonical form and the matcher honours it', () => {
+      setCustomShortcut('focusSearch', 'Ctrl+E')
+      expect(getCustomOverrides()['focusSearch']).toBe('Ctrl + E')
+      expect(matchesShortcutBinding(ev('e', { ctrlKey: true }), 'focusSearch')).toBe(true)
+      // The old default must no longer fire.
+      expect(
+        matchesShortcutBinding(ev('f', { ctrlKey: true, shiftKey: true }), 'focusSearch'),
+      ).toBe(false)
+    })
+
+    it('setting the default chord in a non-canonical format removes the override', () => {
+      // inlineCode default is `Ctrl + E`; typing it as `Ctrl+E` must be
+      // recognised as the default, not stored as a phantom customisation.
+      setCustomShortcut('inlineCode', 'Ctrl+E')
+      expect(getCustomOverrides()['inlineCode']).toBeUndefined()
+      expect(matchesShortcutBinding(ev('e', { ctrlKey: true }), 'inlineCode')).toBe(true)
+    })
+
+    it.each([
+      ['Cmd + K', 'Ctrl + K', 'k'],
+      ['Command + K', 'Ctrl + K', 'k'],
+      ['Control + E', 'Ctrl + E', 'e'],
+      ['Mod + K', 'Ctrl + K', 'k'],
+    ])('modifier alias %s normalises to %s and fires', (typed, stored, key) => {
+      setCustomShortcut('focusSearch', typed)
+      expect(getCustomOverrides()['focusSearch']).toBe(stored)
+      expect(matchesShortcutBinding(ev(key, { ctrlKey: true }), 'focusSearch')).toBe(true)
+      expect(matchesShortcutBinding(ev(key, { metaKey: true }), 'focusSearch')).toBe(true)
+    })
+
+    it('"Meta + K" requires the modifier — plain K must NOT fire (inverted semantics fixed)', () => {
+      setCustomShortcut('focusSearch', 'Meta + K')
+      expect(getCustomOverrides()['focusSearch']).toBe('Ctrl + K')
+      expect(matchesShortcutBinding(ev('k'), 'focusSearch')).toBe(false)
+      expect(matchesShortcutBinding(ev('k', { metaKey: true }), 'focusSearch')).toBe(true)
+      expect(matchesShortcutBinding(ev('k', { ctrlKey: true }), 'focusSearch')).toBe(true)
+    })
+
+    it('separator variants "Ctrl-Shift-E" and "Ctrl Shift E" normalise identically', () => {
+      setCustomShortcut('focusSearch', 'Ctrl-Shift-E')
+      expect(getCustomOverrides()['focusSearch']).toBe('Ctrl + Shift + E')
+      setCustomShortcut('focusSearch', 'Ctrl Shift E')
+      expect(getCustomOverrides()['focusSearch']).toBe('Ctrl + Shift + E')
+      expect(
+        matchesShortcutBinding(ev('E', { ctrlKey: true, shiftKey: true }), 'focusSearch'),
+      ).toBe(true)
+    })
+
+    it('legacy non-canonical overrides already saved in localStorage are honoured', () => {
+      // Saved by a pre-#723 build: the validator accepted these formats but
+      // the old matcher could not parse them (dead bindings). The unified
+      // parser must bring them back to life without a migration.
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ focusSearch: 'Ctrl+G', paletteOpen: 'Cmd + L' }),
+      )
+      expect(matchesShortcutBinding(ev('g', { ctrlKey: true }), 'focusSearch')).toBe(true)
+      expect(matchesShortcutBinding(ev('l', { metaKey: true }), 'paletteOpen')).toBe(true)
+    })
+
+    it('a key that is literally `+` or `-` still round-trips', () => {
+      setCustomShortcut('graphZoomIn', 'Ctrl + +')
+      expect(getCustomOverrides()['graphZoomIn']).toBe('Ctrl + +')
+      expect(
+        matchesShortcutBinding(ev('+', { ctrlKey: true, shiftKey: true }), 'graphZoomIn'),
+      ).toBe(true)
+      setCustomShortcut('graphZoomOut', 'Ctrl--')
+      expect(getCustomOverrides()['graphZoomOut']).toBe('Ctrl + -')
+      expect(matchesShortcutBinding(ev('-', { ctrlKey: true }), 'graphZoomOut')).toBe(true)
+    })
+
+    it.each([
+      // The exact glyph set `formatChordTokens` renders (⌃⇧⌘⌥) — users copy
+      // these back into the Settings input, so every one must parse as a
+      // modifier instead of being silently saved as a dead key token.
+      ['⌘ + K', 'Ctrl + K', 'k', { ctrlKey: true }],
+      ['⌘K', 'Ctrl + K', 'k', { metaKey: true }],
+      ['⌃ + B', 'Ctrl + B', 'b', { ctrlKey: true }],
+      ['⌥ + E', 'Alt + E', 'e', { altKey: true }],
+      ['⇧ + F3', 'Shift + F3', 'F3', { shiftKey: true }],
+      ['⇧⌘K', 'Ctrl + Shift + K', 'k', { ctrlKey: true, shiftKey: true }],
+    ] as const)('mac modifier glyph %s normalises to %s and fires', (typed, stored, key, mods) => {
+      setCustomShortcut('focusSearch', typed)
+      expect(getCustomOverrides()['focusSearch']).toBe(stored)
+      expect(matchesShortcutBinding(ev(key, mods), 'focusSearch')).toBe(true)
+    })
+
+    it('a bare modifier glyph is rejected as modifier-only, not saved as a key', () => {
+      expect(validateBindingInput('⇧')).toBe('modifierOnly')
+      expect(validateBindingInput('⌘ + ')).toBe('modifierOnly')
+    })
+
+    it('normalisation is a no-op for every catalog default (no phantom overrides)', () => {
+      for (const s of DEFAULT_SHORTCUTS) {
+        setCustomShortcut(s.id, s.keys)
+        expect(
+          getCustomOverrides()[s.id],
+          `default keys for "${s.id}" must round-trip without creating an override`,
+        ).toBeUndefined()
+      }
+    })
+
+    it('normalizeBinding preserves ` / ` alternatives', () => {
+      expect(normalizeBinding('Ctrl+F / Cmd + Shift + F')).toBe('Ctrl + F / Ctrl + Shift + F')
+    })
+
+    describe('validateBindingInput (shared with the Settings tab)', () => {
+      it('rejects empty input', () => {
+        expect(validateBindingInput('')).toBe('empty')
+        expect(validateBindingInput('   ')).toBe('empty')
+      })
+
+      it('rejects modifier-only input in any accepted format', () => {
+        expect(validateBindingInput('Ctrl + Shift')).toBe('modifierOnly')
+        expect(validateBindingInput('Ctrl+Shift')).toBe('modifierOnly')
+        expect(validateBindingInput('Ctrl')).toBe('modifierOnly')
+        expect(validateBindingInput('Cmd')).toBe('modifierOnly')
+        expect(validateBindingInput('Ctrl +')).toBe('modifierOnly')
+      })
+
+      it('accepts everything the matcher can honour', () => {
+        expect(validateBindingInput('Ctrl + E')).toBeNull()
+        expect(validateBindingInput('Ctrl+E')).toBeNull()
+        expect(validateBindingInput('Mod + K')).toBeNull()
+        expect(validateBindingInput('?')).toBeNull()
+        expect(validateBindingInput('j / k')).toBeNull()
+        expect(validateBindingInput('Ctrl + Shift + Arrow Up')).toBeNull()
+      })
+
+      it('rejects a modifier-only alternative inside a ` / ` list', () => {
+        expect(validateBindingInput('Ctrl + E / Shift')).toBe('modifierOnly')
+      })
+    })
+  })
+
+  // ── #724 — formerly hardcoded listeners now consume the config ──────────
+
+  describe('#724 — rebinding is honoured for formerly hardcoded shortcuts', () => {
+    function ev(
+      key: string,
+      opts: Partial<{
+        ctrlKey: boolean
+        metaKey: boolean
+        shiftKey: boolean
+        altKey: boolean
+      }> = {},
+    ): Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'> {
+      return {
+        key,
+        ctrlKey: opts.ctrlKey ?? false,
+        metaKey: opts.metaKey ?? false,
+        shiftKey: opts.shiftKey ?? false,
+        altKey: opts.altKey ?? false,
+      }
+    }
+
+    it('showShortcuts: default `?` matches regardless of shift, but not with Ctrl/Alt', () => {
+      expect(matchesShortcutBinding(ev('?', { shiftKey: true }), 'showShortcuts')).toBe(true)
+      expect(matchesShortcutBinding(ev('?'), 'showShortcuts')).toBe(true)
+      // Ctrl+Shift+/ produces `?` on US layouts — must NOT fire the default.
+      expect(
+        matchesShortcutBinding(ev('?', { ctrlKey: true, shiftKey: true }), 'showShortcuts'),
+      ).toBe(false)
+      expect(matchesShortcutBinding(ev('?', { altKey: true }), 'showShortcuts')).toBe(false)
+    })
+
+    it('showShortcuts: rebind fires on the new chord and not on `?`', () => {
+      setCustomShortcut('showShortcuts', 'Ctrl + /')
+      expect(matchesShortcutBinding(ev('/', { ctrlKey: true }), 'showShortcuts')).toBe(true)
+      expect(matchesShortcutBinding(ev('?', { shiftKey: true }), 'showShortcuts')).toBe(false)
+    })
+
+    it('toggleSidebar: default Ctrl+B / Cmd+B matches, plain b does not', () => {
+      expect(matchesShortcutBinding(ev('b', { ctrlKey: true }), 'toggleSidebar')).toBe(true)
+      expect(matchesShortcutBinding(ev('b', { metaKey: true }), 'toggleSidebar')).toBe(true)
+      expect(matchesShortcutBinding(ev('b'), 'toggleSidebar')).toBe(false)
+    })
+
+    it('toggleSidebar: rebind fires on the new chord and not on Ctrl+B', () => {
+      setCustomShortcut('toggleSidebar', 'Ctrl + Shift + L')
+      expect(
+        matchesShortcutBinding(ev('l', { ctrlKey: true, shiftKey: true }), 'toggleSidebar'),
+      ).toBe(true)
+      expect(matchesShortcutBinding(ev('b', { ctrlKey: true }), 'toggleSidebar')).toBe(false)
+    })
+
+    it('undoLastPageOp: Ctrl+Z fires, Ctrl+Shift+Z does not (redo chord)', () => {
+      expect(matchesShortcutBinding(ev('z', { ctrlKey: true }), 'undoLastPageOp')).toBe(true)
+      expect(
+        matchesShortcutBinding(ev('z', { ctrlKey: true, shiftKey: true }), 'undoLastPageOp'),
+      ).toBe(false)
+    })
+
+    it('redoLastUndoneOp: both default alternatives fire (Ctrl+Y, Ctrl+Shift+Z)', () => {
+      expect(matchesShortcutBinding(ev('y', { ctrlKey: true }), 'redoLastUndoneOp')).toBe(true)
+      expect(
+        matchesShortcutBinding(ev('z', { ctrlKey: true, shiftKey: true }), 'redoLastUndoneOp'),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(ev('Z', { ctrlKey: true, shiftKey: true }), 'redoLastUndoneOp'),
+      ).toBe(true)
+    })
+
+    it('undo/redo rebinds fire on the new chord and not on the defaults', () => {
+      setCustomShortcut('undoLastPageOp', 'Ctrl + Alt + Z')
+      expect(
+        matchesShortcutBinding(ev('z', { ctrlKey: true, altKey: true }), 'undoLastPageOp'),
+      ).toBe(true)
+      expect(matchesShortcutBinding(ev('z', { ctrlKey: true }), 'undoLastPageOp')).toBe(false)
+
+      setCustomShortcut('redoLastUndoneOp', 'Ctrl + Alt + Y')
+      expect(
+        matchesShortcutBinding(ev('y', { ctrlKey: true, altKey: true }), 'redoLastUndoneOp'),
+      ).toBe(true)
+      expect(matchesShortcutBinding(ev('y', { ctrlKey: true }), 'redoLastUndoneOp')).toBe(false)
+    })
+
+    it('findInPageNext / findInPagePrev: F3 and Shift+F3 are disjoint', () => {
+      expect(matchesShortcutBinding(ev('F3'), 'findInPageNext')).toBe(true)
+      expect(matchesShortcutBinding(ev('F3', { shiftKey: true }), 'findInPageNext')).toBe(false)
+      expect(matchesShortcutBinding(ev('F3', { shiftKey: true }), 'findInPagePrev')).toBe(true)
+      expect(matchesShortcutBinding(ev('F3'), 'findInPagePrev')).toBe(false)
+    })
+
+    it('findInPageNext: rebind fires on the new chord and not on F3', () => {
+      setCustomShortcut('findInPageNext', 'Ctrl + G')
+      expect(matchesShortcutBinding(ev('g', { ctrlKey: true }), 'findInPageNext')).toBe(true)
+      expect(matchesShortcutBinding(ev('F3'), 'findInPageNext')).toBe(false)
+    })
+
+    it('selectAllBlocks / clearSelection: defaults fire, rebinds are honoured', () => {
+      expect(matchesShortcutBinding(ev('a', { ctrlKey: true }), 'selectAllBlocks')).toBe(true)
+      expect(matchesShortcutBinding(ev('Escape'), 'clearSelection')).toBe(true)
+      expect(matchesShortcutBinding(ev('Escape', { ctrlKey: true }), 'clearSelection')).toBe(false)
+
+      setCustomShortcut('selectAllBlocks', 'Ctrl + Shift + A')
+      expect(
+        matchesShortcutBinding(ev('a', { ctrlKey: true, shiftKey: true }), 'selectAllBlocks'),
+      ).toBe(true)
+      expect(matchesShortcutBinding(ev('a', { ctrlKey: true }), 'selectAllBlocks')).toBe(false)
+    })
+
+    it('cycleTaskState / collapseExpand: defaults fire, rebinds are honoured', () => {
+      expect(matchesShortcutBinding(ev('Enter', { ctrlKey: true }), 'cycleTaskState')).toBe(true)
+      expect(matchesShortcutBinding(ev('.', { metaKey: true }), 'collapseExpand')).toBe(true)
+
+      setCustomShortcut('cycleTaskState', 'Alt + Enter')
+      expect(matchesShortcutBinding(ev('Enter', { altKey: true }), 'cycleTaskState')).toBe(true)
+      expect(matchesShortcutBinding(ev('Enter', { ctrlKey: true }), 'cycleTaskState')).toBe(false)
+    })
+
+    it('moveBlockUp / indentBlock: spelled-out `Arrow Up` key names match real ArrowUp events', () => {
+      // The catalog stores `Ctrl + Shift + Arrow Up` — `normalizeKey` must
+      // collapse the internal space so it equals `KeyboardEvent.key === 'ArrowUp'`.
+      expect(
+        matchesShortcutBinding(ev('ArrowUp', { ctrlKey: true, shiftKey: true }), 'moveBlockUp'),
+      ).toBe(true)
+      expect(
+        matchesShortcutBinding(ev('ArrowRight', { ctrlKey: true, shiftKey: true }), 'indentBlock'),
+      ).toBe(true)
+      // Without the modifiers, no match.
+      expect(matchesShortcutBinding(ev('ArrowUp'), 'moveBlockUp')).toBe(false)
+    })
+
+    it('moveBlockUp: rebind fires on the new chord and not on the default', () => {
+      setCustomShortcut('moveBlockUp', 'Alt + Arrow Up')
+      expect(matchesShortcutBinding(ev('ArrowUp', { altKey: true }), 'moveBlockUp')).toBe(true)
+      expect(
+        matchesShortcutBinding(ev('ArrowUp', { ctrlKey: true, shiftKey: true }), 'moveBlockUp'),
+      ).toBe(false)
+    })
+
+    it('histRevertSelected: Enter fires by default; rebind is honoured', () => {
+      expect(matchesShortcutBinding(ev('Enter'), 'histRevertSelected')).toBe(true)
+      setCustomShortcut('histRevertSelected', 'r')
+      expect(matchesShortcutBinding(ev('r'), 'histRevertSelected')).toBe(true)
+      expect(matchesShortcutBinding(ev('Enter'), 'histRevertSelected')).toBe(false)
     })
   })
 })

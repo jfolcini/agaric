@@ -6,6 +6,7 @@
 
 import { logger } from '../logger'
 import { DEFAULT_SHORTCUTS, type ShortcutBinding } from './catalog'
+import { normalizeBinding } from './parse'
 
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
@@ -72,11 +73,15 @@ export function getCurrentShortcuts(): (ShortcutBinding & { isCustom: boolean })
 
 export function setCustomShortcut(id: string, keys: string): void {
   const overrides = getCustomOverrides()
+  // #723 — normalise user-typed formats (`Ctrl+E`, `Cmd + K`, `Mod-K`…)
+  // to the canonical `'Ctrl + Shift + E'` form before persisting, so the
+  // saved binding is always something the matcher honours.
+  const normalized = normalizeBinding(keys)
   const def = DEFAULT_SHORTCUTS.find((s) => s.id === id)
-  if (def && def.keys === keys) {
+  if (def && normalizeBinding(def.keys) === normalized) {
     delete overrides[id]
   } else {
-    overrides[id] = keys
+    overrides[id] = normalized
   }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))

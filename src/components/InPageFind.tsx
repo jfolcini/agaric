@@ -51,6 +51,7 @@ import { useShallow } from 'zustand/react/shallow'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { cn } from '@/lib/utils'
 
 import {
@@ -275,15 +276,23 @@ export function InPageFind({
     }
   }, [])
 
-  // ── F3 / Shift+F3 — global next/prev while the toolbar is open. Bound
-  // at window so the user doesn't have to focus the input first.
+  // ── findInPageNext / findInPagePrev (F3 / Shift+F3 by default) — global
+  // next/prev while the toolbar is open. Bound at window so the user
+  // doesn't have to focus the input first. Routed through
+  // `matchesShortcutBinding` (#724) so Settings rebinds are honoured;
+  // the more-specific Shift chord is checked first.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key !== 'F3') return
-      e.preventDefault()
-      if (e.shiftKey) prevMatch()
-      else nextMatch()
+      if (matchesShortcutBinding(e, 'findInPagePrev')) {
+        e.preventDefault()
+        prevMatch()
+        return
+      }
+      if (matchesShortcutBinding(e, 'findInPageNext')) {
+        e.preventDefault()
+        nextMatch()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

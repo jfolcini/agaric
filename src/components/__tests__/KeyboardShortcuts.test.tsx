@@ -230,6 +230,30 @@ describe('KeyboardShortcuts', () => {
     expect(onOpenChange).not.toHaveBeenCalled()
   })
 
+  it('#724: stray modifiers do not trigger the default ? binding (Ctrl+Shift+/)', () => {
+    const onOpenChange = vi.fn()
+    render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
+
+    // On US layouts Ctrl+Shift+/ produces `key: '?'` — the old hardcoded
+    // listener ignored modifiers and opened the sheet anyway.
+    fireEvent.keyDown(document, { key: '?', ctrlKey: true, shiftKey: true })
+    fireEvent.keyDown(document, { key: '?', altKey: true })
+
+    expect(onOpenChange).not.toHaveBeenCalled()
+  })
+
+  it('#724: honours a Settings rebind — new chord opens, default ? is dead', () => {
+    setCustomShortcut('showShortcuts', 'Ctrl + /')
+    const onOpenChange = vi.fn()
+    render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
+
+    fireEvent.keyDown(document, { key: '?' })
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(document, { key: '/', ctrlKey: true })
+    expect(onOpenChange).toHaveBeenCalledWith(true)
+  })
+
   it('has no a11y violations when open', async () => {
     const { container } = render(<KeyboardShortcuts open={true} onOpenChange={vi.fn()} />)
 
