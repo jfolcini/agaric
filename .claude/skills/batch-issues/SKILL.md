@@ -116,9 +116,20 @@ oversight; don't exceed 5.
 independent git state, or for the second concurrent issue. Skip for non-overlapping files,
 sequential work, single-file edits, or review-only subagents.
 
-**Subagent verification scope:** build subagents verify only their own work via the
-relevant tests. Do NOT run clippy/fmt/biome/prek inside subagents — prek runs via the
-pre-commit/pre-push hooks at commit and push time.
+**Subagent verification scope:** build subagents run only TARGETED tests for their own
+work (a nextest/vitest filter over the touched modules) — the orchestrator (or the
+reviewer, who re-runs anyway) owns exactly ONE full-suite run per item before commit.
+Builders running the full suite triples the wall-clock for zero signal (2026-06-10: the
+full Rust suite ran ~3× per backend item). Do NOT run clippy/fmt/biome/prek inside
+subagents — prek runs via the pre-commit/pre-push hooks at commit and push time.
+
+**Background-execution ban (the #1 wall-clock killer, 2026-06-10 — 4 builder deaths):**
+a subagent that backgrounds its verification and ends its turn "waiting for the result"
+is DEAD — its report never arrives and a continuation agent must be relaunched (~15-25
+min lost each time). Every subagent prompt MUST carry the wording that proved effective:
+"NEVER use background execution or monitors — run every command in the foreground, read
+the test output before your final message, and do not end your run while anything is
+still pending."
 
 ### Subagent prompt template
 
@@ -130,8 +141,12 @@ pre-commit/pre-push hooks at commit and push time.
 - `path/to/file.ext` — [what to do]
 **Do NOT modify:** AGENTS.md (root); files outside this subagent's scope.
 **Do NOT run any git command** (stash/reset/checkout/add/commit) — only edit files.
-**Verification:** Rust `cd src-tauri && cargo nextest run`; Frontend `npx vitest run`.
-**Success criteria:** all tests pass; follows AGENTS.md patterns; no new warnings.
+**NEVER use background execution or monitors** — run every command in the foreground,
+read the test output before your final message, and do not end your run while anything
+is still pending.
+**Verification (targeted only):** Rust `cd src-tauri && cargo nextest run -E '<filter>'`;
+Frontend `npx vitest run <paths>`. The full suite is run once later by the reviewer.
+**Success criteria:** targeted tests pass; follows AGENTS.md patterns; no new warnings.
 ```
 
 ### Optional: Workflow-tool orchestration (pilot)
@@ -160,7 +175,20 @@ Every new or changed code path needs tests — non-negotiable, no code ships wit
 **Don't wait for all builds.** As each build subagent completes, launch its review
 subagent while remaining builds continue (build + review can run simultaneously, up to 6
 total active). **No self-reviews** — the reviewer must be a different subagent than the
-builder. If a reviewer makes fixes, it must run the relevant tests to verify.
+builder. If a reviewer makes fixes, it must run the relevant tests to verify. The
+reviewer also owns the single full-suite run for the item (see §2 verification scope).
+
+**Adversarial review depth is earning its cost — do not streamline it away.** On
+2026-06-10 it found real defects in 3 of 7 items (5 silent-divergence guards in #714,
+an event-dispatch defect in #716 that would have made the feature eat every input, plus
+killed false sub-claims elsewhere). Reviewers must re-read cited sources, re-run tests
+themselves, and verify load-bearing claims against the actual dependency source (vendored
+crates / node_modules) rather than trusting the builder's report.
+
+**Continuation-as-review (proven 2026-06-10, #605/#608):** when a builder dies
+mid-verification, relaunch ONE agent prompted to "review the inherited uncommitted diff
+critically, fix what's wrong, then verify in the foreground" — it doubles as the review
+pass, so no separate reviewer is needed for that item.
 
 Launch two review dimensions in parallel when a change has both code and user-facing impact:
 
