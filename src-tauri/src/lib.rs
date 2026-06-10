@@ -1548,9 +1548,52 @@ pub fn run() {
                             target: "gcal",
                             error = %e,
                             "FEAT-3p9 M1: per-space keyring unavailable; \
-                             migration will reuse the legacy noop shim",
+                             migration keychain step will fail-and-retry next boot",
                         );
-                        gcal_token_store.clone()
+                        // #608: do NOT fall back to the legacy store
+                        // handle here. Pre-fix, that made the migration
+                        // "copy" the legacy entry onto itself and then
+                        // clear it — deleting the only credential
+                        // production reads. Even post-fix (the clear is
+                        // gone), a self-copy would "succeed" and set the
+                        // migration flag without ever writing the real
+                        // per-space entry. Instead hand the migration a
+                        // store whose `store()` fails: per its
+                        // documented failure model it copies the DB row,
+                        // leaves the flag unset, and retries the
+                        // keychain step on the next boot. The legacy
+                        // entry is never touched either way.
+                        struct UnavailablePerSpaceStore;
+                        #[async_trait::async_trait]
+                        impl TokenStore for UnavailablePerSpaceStore {
+                            async fn load(
+                                &self,
+                            ) -> Result<
+                                Option<gcal_push::oauth::Token>,
+                                error::AppError,
+                            > {
+                                Err(error::AppError::Validation(
+                                    "keyring.unavailable: per-space entry not constructible"
+                                        .to_owned(),
+                                ))
+                            }
+                            async fn store(
+                                &self,
+                                _t: &gcal_push::oauth::Token,
+                            ) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "keyring.unavailable: per-space entry not constructible"
+                                        .to_owned(),
+                                ))
+                            }
+                            async fn clear(&self) -> Result<(), error::AppError> {
+                                Err(error::AppError::Validation(
+                                    "keyring.unavailable: per-space entry not constructible"
+                                        .to_owned(),
+                                ))
+                            }
+                        }
+                        std::sync::Arc::new(UnavailablePerSpaceStore)
                     }
                 };
             if let Err(e) = tauri::async_runtime::block_on(
