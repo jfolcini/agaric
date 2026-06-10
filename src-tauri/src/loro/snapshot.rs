@@ -193,7 +193,11 @@ pub async fn rehydrate_registry(
     let mut ok = 0usize;
     for (space_id_str, bytes) in rows {
         let space_id = SpaceId::from_trusted(&space_id_str);
-        let mut engine = match LoroEngine::with_peer_id(device_id) {
+        // #792: derive the engine's PeerID from the registry's current
+        // peer-id epoch (installed at boot from `app_settings`, refreshed
+        // by `reload_registry_from_db` after a RESET) so rehydrated
+        // engines and lazily-created ones agree on the device's peer id.
+        let mut engine = match LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch()) {
             Ok(e) => e,
             Err(e) => {
                 tracing::warn!(
@@ -249,6 +253,25 @@ pub async fn reload_registry_from_db(
     registry: &LoroEngineRegistry,
     device_id: &str,
 ) -> usize {
+    // #792: re-read the persisted peer-id epoch BEFORE dropping the
+    // engines. `apply_snapshot` bumps it inside the RESET transaction, so
+    // after a successful RESET this installs the NEW epoch and every
+    // post-reset engine (lazy or rehydrated) mints ops under a fresh
+    // PeerID — counters can restart at 0 without forking the
+    // (peer, counter) space against pre-reset ops still held by peers.
+    // On the failed-apply restore path the tx rolled back, the load
+    // returns the unchanged epoch, and the engines reload onto their
+    // original peer id — exactly matching the restored loro_doc_state.
+    let epoch = crate::loro::peer_epoch::load_peer_epoch(pool).await;
+    if epoch != registry.peer_epoch() {
+        tracing::info!(
+            old_epoch = registry.peer_epoch(),
+            new_epoch = epoch,
+            "loro: peer-id epoch changed across registry reload (#792); \
+             post-reload engines will mint ops under a fresh PeerID"
+        );
+        registry.set_peer_epoch(epoch);
+    }
     registry.clear();
     rehydrate_registry(pool, registry, device_id).await
 }
@@ -636,6 +659,54 @@ mod tests {
             rows, 0,
             "loro_doc_state must stay empty after the simulated exit-save"
         );
+    }
+
+    /// #792 — `reload_registry_from_db` re-reads the persisted peer-id
+    /// epoch before rehydrating, so the post-RESET registry (a) reports
+    /// the bumped epoch and (b) lazily creates engines under the fresh
+    /// salted PeerID instead of the retired pre-reset one.
+    #[tokio::test]
+    async fn reload_registry_from_db_picks_up_bumped_peer_epoch_792() {
+        use crate::loro::engine::{peer_id_for_epoch, peer_id_from_device_id};
+
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Pre-reset: epoch 0, legacy peer id.
+        {
+            let mut g = registry.for_space(&space, "device-792").expect("pre");
+            assert_eq!(
+                g.engine_mut().peer_id(),
+                peer_id_from_device_id("device-792")
+            );
+        }
+
+        // Simulate the RESET tx having bumped the persisted epoch
+        // (apply_snapshot does this atomically with the loro_doc_state
+        // wipe; here the table is already empty).
+        let mut tx = pool.begin().await.expect("begin");
+        let bumped = crate::loro::peer_epoch::bump_peer_epoch(&mut tx)
+            .await
+            .expect("bump");
+        tx.commit().await.expect("commit");
+        assert_eq!(bumped, 1);
+
+        let n = reload_registry_from_db(&pool, &registry, "device-792").await;
+        assert_eq!(n, 0, "loro_doc_state is empty after a RESET");
+        assert_eq!(
+            registry.peer_epoch(),
+            1,
+            "reload must install the new epoch"
+        );
+
+        // Post-reset engines mint under the fresh peer id.
+        {
+            let mut g = registry.for_space(&space, "device-792").expect("post");
+            let got = g.engine_mut().peer_id();
+            assert_eq!(got, peer_id_for_epoch("device-792", 1));
+            assert_ne!(got, peer_id_from_device_id("device-792"));
+        }
     }
 
     #[tokio::test]

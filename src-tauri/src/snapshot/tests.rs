@@ -4692,3 +4692,180 @@ async fn apply_snapshot_then_exit_save_and_rehydrate_has_no_pre_reset_state_779(
 
     materializer.shutdown();
 }
+
+// ===========================================================================
+// #792 — RESET must retire the deterministic Loro peer id (epoch bump)
+// ===========================================================================
+
+/// #792 — `apply_snapshot` bumps the persisted peer-id epoch atomically
+/// with the CRDT-sidecar wipe, every time. Pre-fix, nothing changed the
+/// device→PeerID mapping across a RESET, so the reloaded EMPTY engines
+/// re-minted op counters from 0 under the SAME peer id — forking the
+/// (peer, counter) space against this device's pre-reset ops still held
+/// by peers.
+#[tokio::test]
+async fn apply_snapshot_bumps_peer_epoch_792() {
+    use crate::loro::peer_epoch::load_peer_epoch;
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = test_materializer(&pool);
+    assert_eq!(
+        load_peer_epoch(&pool).await,
+        0,
+        "a never-reset vault sits on the legacy epoch 0"
+    );
+
+    let mut data = sample_snapshot_data();
+    data.tables.block_tags.clear();
+    data.tables.block_properties.clear();
+    data.tables.block_links.clear();
+    data.tables.attachments.clear();
+    let compressed = encode_snapshot(&data).unwrap();
+
+    apply_snapshot(&pool, &materializer, &compressed[..])
+        .await
+        .expect("apply 1");
+    assert_eq!(
+        load_peer_epoch(&pool).await,
+        1,
+        "#792: the first RESET must bump the peer-id epoch to 1"
+    );
+
+    apply_snapshot(&pool, &materializer, &compressed[..])
+        .await
+        .expect("apply 2");
+    assert_eq!(
+        load_peer_epoch(&pool).await,
+        2,
+        "#792: every RESET must retire the previous peer id again"
+    );
+
+    materializer.shutdown();
+}
+
+/// #792 end-to-end regression — the exact fork scenario from the issue,
+/// through the production primitives: device A syncs blocks to peer B,
+/// A goes through a snapshot RESET (`apply_snapshot` +
+/// `reload_registry_from_db`), A mints a new block, and B applies A's
+/// next outbound message. Pre-fix, B's import returned `Ok` but the
+/// post-reset block was SILENTLY DROPPED (B's version vector already
+/// covered the re-minted (peer, counter) ids). Post-fix the RESET bumps
+/// the peer-id epoch, the reloaded engines mint under a fresh PeerID,
+/// and the block arrives.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
+    use crate::loro::engine::peer_id_from_device_id;
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::loro::snapshot::reload_registry_from_db;
+    use crate::space::SpaceId;
+    use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing};
+
+    const DEVICE_A: &str = "device-792-A";
+    const DEVICE_B: &str = "device-792-B";
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const PRE_1: &str = "01HZ0000000000000000792PR1";
+    const PRE_2: &str = "01HZ0000000000000000792PR2";
+    const POST: &str = "01HZ0000000000000000792PST";
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = test_materializer(&pool_a);
+    let space = SpaceId::from_trusted(SPACE);
+
+    // Device A mints two blocks pre-reset; peer B imports A's history.
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, DEVICE_A).expect("a");
+        let e = g.engine_mut();
+        e.apply_create_block(PRE_1, "content", "pre one", None, 0)
+            .expect("pre 1");
+        e.apply_create_block(PRE_2, "content", "pre two", None, 1)
+            .expect("pre 2");
+    }
+    let registry_b = LoroEngineRegistry::new();
+    let seed = prepare_outgoing(&registry_a, &space, DEVICE_A, None)
+        .await
+        .expect("seed message");
+    let outcome = apply_remote(&pool_b, &registry_b, DEVICE_B, seed)
+        .await
+        .expect("seed apply");
+    assert!(matches!(outcome, ApplyOutcome::Imported { .. }));
+
+    // A goes through a snapshot RESET (empty incoming vault) and the
+    // mandatory in-process engine reload.
+    let empty = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: DEVICE_B.to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "hash-792".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+    let encoded = encode_snapshot(&empty).unwrap();
+    apply_snapshot(&pool_a, &mat_a, &encoded[..])
+        .await
+        .expect("RESET");
+    reload_registry_from_db(&pool_a, &registry_a, DEVICE_A).await;
+    assert_eq!(
+        registry_a.peer_epoch(),
+        1,
+        "#792: the reload must install the bumped epoch"
+    );
+
+    // A mints a block AFTER the reset — the issue's danger window.
+    {
+        let mut g = registry_a.for_space(&space, DEVICE_A).expect("a post");
+        assert_ne!(
+            g.engine_mut().peer_id(),
+            peer_id_from_device_id(DEVICE_A),
+            "#792: the post-reset engine must NOT reuse the retired peer id"
+        );
+        g.engine_mut()
+            .apply_create_block(POST, "content", "post reset", None, 0)
+            .expect("post");
+    }
+
+    // B applies A's next outbound message (delta since B's current vv —
+    // the production incremental shape).
+    let b_vv: Vec<u8> = {
+        let mut g = registry_b.for_space(&space, DEVICE_B).expect("b");
+        g.engine_mut().version_vector()
+    };
+    let update = prepare_outgoing(&registry_a, &space, DEVICE_A, Some(&b_vv))
+        .await
+        .expect("update message");
+    let outcome = apply_remote(&pool_b, &registry_b, DEVICE_B, update)
+        .await
+        .expect("update apply");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "post-reset update must import, got {outcome:?}"
+    );
+
+    // THE regression assertion: pre-#792 this block was silently absent.
+    {
+        let mut g = registry_b.for_space(&space, DEVICE_B).expect("b post");
+        let snap = g
+            .engine_mut()
+            .read_block(POST)
+            .expect("read")
+            .expect("#792: the post-reset block must NOT be silently dropped at the peer");
+        assert_eq!(snap.content, "post reset");
+    }
+    // And it projected to B's SQL.
+    let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(POST)
+        .fetch_one(&pool_b)
+        .await
+        .expect("projected row");
+    assert_eq!(content, "post reset");
+
+    mat_a.shutdown();
+}

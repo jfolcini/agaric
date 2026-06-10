@@ -104,6 +104,58 @@ pub fn peer_id_from_device_id(device_id: &str) -> PeerID {
     xxhash_rust::xxh3::xxh3_64(device_id.as_bytes())
 }
 
+/// Map `(device_id, peer_id_epoch)` into a `loro::PeerID` (#792).
+///
+/// ## Why an epoch exists
+///
+/// A snapshot RESET (#607, `crate::snapshot::restore::apply_snapshot`)
+/// wipes `loro_doc_state` and reloads the per-space engines EMPTY. A
+/// fresh doc restarts Loro op counters at 0 — if it kept the same
+/// deterministic `PeerID`, every post-reset op would mint `(peer,
+/// counter)` ids that *collide* with this device's pre-reset ops still
+/// held by peers. The fork is catastrophic in both directions:
+/// outbound, peers silently drop the new ops (their version vector
+/// already covers those ids); inbound, importing the peer's history
+/// into the forked doc corrupts loro-internal's causal state (panic in
+/// `loro-internal-1.12.0/src/container/richtext/richtext_state.rs`
+/// `insert_elem_at_entity_index` under debug assertions; silent state
+/// corruption in release). The RESET therefore bumps a persisted
+/// `app_settings` epoch (`crate::loro::peer_epoch`) in the same
+/// transaction that wipes the CRDT sidecar, and every engine built
+/// after the reset derives its `PeerID` from this salted mapping —
+/// a brand-new peer identity whose counters can safely restart at 0.
+///
+/// ## Stability contract — same rules as [`peer_id_from_device_id`]
+///
+/// - `epoch == 0` (the lifetime value for any vault that never went
+///   through a snapshot RESET) MUST return exactly
+///   `peer_id_from_device_id(device_id)` — existing vaults keep their
+///   wire-visible `PeerID` with no migration.
+/// - For `epoch > 0` the salted byte layout below
+///   (`device_id ‖ 0x00 ‖ "loro-peer-epoch" ‖ 0x00 ‖ epoch_le_u64`)
+///   is a pinned wire-format contract: a device that re-derives its
+///   post-reset `PeerID` on every boot must land on the same value
+///   forever. The `peer_id_for_epoch_is_stable_against_known_values`
+///   test pins the mapping; changing it requires the same coordinated
+///   migration as changing `peer_id_from_device_id`.
+///
+/// The NUL separators make the encoding injective for any `device_id`
+/// (production device ids are UUID strings and never contain NUL), so
+/// distinct `(device_id, epoch)` pairs hash distinct byte strings; the
+/// collision math in [`peer_id_from_device_id`] applies unchanged.
+pub fn peer_id_for_epoch(device_id: &str, epoch: u64) -> PeerID {
+    if epoch == 0 {
+        return peer_id_from_device_id(device_id);
+    }
+    let mut buf = Vec::with_capacity(device_id.len() + 25);
+    buf.extend_from_slice(device_id.as_bytes());
+    buf.push(0);
+    buf.extend_from_slice(b"loro-peer-epoch");
+    buf.push(0);
+    buf.extend_from_slice(&epoch.to_le_bytes());
+    xxhash_rust::xxh3::xxh3_64(&buf)
+}
+
 /// **Legacy** top-level LoroMap key holding the per-block sub-maps from
 /// the pre-PEND-80-Phase-3 flat-map engine model (`loro_doc.getMap("blocks")`
 /// -> `LoroMap<block_id, BlockData>`, where `BlockData` carried the
@@ -344,8 +396,22 @@ impl LoroEngine {
     /// validation error rather than panic so any call-site fault is
     /// reportable cleanly.
     pub fn with_peer_id(device_id: &str) -> Result<Self, AppError> {
+        Self::with_peer_id_epoch(device_id, 0)
+    }
+
+    /// [`Self::with_peer_id`] with an explicit peer-id epoch (#792).
+    ///
+    /// `epoch == 0` is byte-for-byte the legacy [`Self::with_peer_id`]
+    /// mapping; `epoch > 0` derives a fresh `PeerID` via
+    /// [`peer_id_for_epoch`] so a post-snapshot-RESET engine never
+    /// re-mints `(peer, counter)` ids that collide with the device's
+    /// pre-reset op history still held by peers. Production callers
+    /// (`LoroEngineRegistry::for_space`, `rehydrate_registry`) pass the
+    /// registry's current epoch, loaded from `app_settings` at boot and
+    /// bumped inside the RESET transaction.
+    pub fn with_peer_id_epoch(device_id: &str, epoch: u64) -> Result<Self, AppError> {
         let doc = LoroDoc::new();
-        let peer = peer_id_from_device_id(device_id);
+        let peer = peer_id_for_epoch(device_id, epoch);
         doc.set_peer_id(peer).map_err(|e| {
             AppError::Validation(format!(
                 "loro: set_peer_id from device_id {device_id} failed: {e}"
@@ -2119,6 +2185,81 @@ impl LoroEngine {
             .export(ExportMode::updates(&vv))
             .map_err(|e| AppError::Validation(format!("loro: export_update_since: {e}")))
     }
+
+    /// Detect a `(peer, counter)` fork of OUR OWN peer id in an inbound
+    /// blob, BEFORE importing it (#792).
+    ///
+    /// ## What a fork is
+    ///
+    /// Returns `Some(reason)` iff the blob carries ops credited to this
+    /// engine's own `PeerID` at counters *beyond* what this doc holds,
+    /// while this doc has already minted at least one op under that
+    /// `PeerID`. That combination means two divergent op histories share
+    /// our peer id — the signature of a pre-#792 snapshot RESET that
+    /// reused the deterministic peer id (the peer still holds our
+    /// pre-reset ops; we re-minted unrelated ops at the same low
+    /// counters). Importing such a blob makes loro skip the overlapping
+    /// counter range (its vv already "covers" them) and then apply the
+    /// peer's higher-counter ops against the WRONG causal prefix —
+    /// panicking inside loro-internal 1.12's richtext state under debug
+    /// assertions, silently corrupting it in release. Callers must treat
+    /// `Some` as "do not import; request a snapshot catch-up"
+    /// (the RESET path now bumps the peer-id epoch, so the catch-up
+    /// permanently heals the fork).
+    ///
+    /// ## What is NOT a fork
+    ///
+    /// * `local own-counter == 0` — this doc never minted an op under
+    ///   its peer id, so there is nothing to collide with. A peer
+    ///   re-sending our own pre-reset history into a freshly reset
+    ///   (empty) doc is the *clean* resync path: loro imports it and
+    ///   local counters continue from the imported vv.
+    /// * `blob end_vv[own] <= local own-counter` — the blob carries
+    ///   nothing of ours beyond what we hold (the normal echo /
+    ///   idempotent re-import shape).
+    ///
+    /// The inverse fork shape — we re-minted MORE post-reset ops than
+    /// the peer holds pre-reset ones — is indistinguishable from a
+    /// benign echo at the version-vector level and is NOT detected
+    /// here; see #792 for why vv metadata is the practical limit.
+    ///
+    /// Decode failures are deliberately tolerated (`None` + a warn):
+    /// the guard must never block an import the real
+    /// [`Self::import_with_changed_blocks`] would have accepted, and a
+    /// genuinely malformed blob will surface a proper error there.
+    pub fn own_peer_fork_in_blob(&self, bytes: &[u8]) -> Option<String> {
+        // Cheap precondition first: a doc that never minted an op under
+        // its own peer id has nothing to fork, so skip the blob-meta
+        // decode entirely (it rebuilds the blob's full change store —
+        // non-trivial for snapshot blobs, and this empty-doc shape is
+        // exactly the post-reset resync window where snapshots arrive).
+        let own = self.doc.peer_id();
+        let local_counter = self.doc.oplog_vv().get(&own).copied().unwrap_or(0);
+        if local_counter == 0 {
+            return None;
+        }
+        let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro: own_peer_fork_in_blob: blob meta decode failed; \
+                     skipping the fork guard (import will surface the real error)"
+                );
+                return None;
+            }
+        };
+        let blob_counter = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
+        if blob_counter > local_counter {
+            return Some(format!(
+                "(peer,counter) fork detected for own peer id {own} (#792): inbound blob \
+                 carries our ops through counter {blob_counter} but this doc only holds \
+                 {local_counter} — a pre-epoch snapshot RESET reused the deterministic \
+                 peer id; importing would corrupt causal state. Snapshot catch-up required."
+            ));
+        }
+        None
+    }
 }
 
 impl Default for LoroEngine {
@@ -2403,6 +2544,289 @@ mod tests {
         assert_eq!(
             peer_id_from_device_id("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
             0x11e7_9683_b730_ff1f_u64,
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // #792 — peer-id epoch: a snapshot RESET retires the deterministic
+    // peer id instead of forking the (peer, counter) space.
+    // -----------------------------------------------------------------
+
+    /// Epoch 0 IS the legacy mapping — existing vaults (which have no
+    /// epoch row) keep their wire-visible PeerID with no migration.
+    #[test]
+    fn peer_id_for_epoch_zero_matches_legacy_mapping_792() {
+        use super::peer_id_for_epoch;
+        for dev in ["DEV-A", "01ARZ3NDEKTSV4RRFFQ69G5FAV", ""] {
+            assert_eq!(
+                peer_id_for_epoch(dev, 0),
+                peer_id_from_device_id(dev),
+                "epoch 0 must reproduce the legacy mapping for {dev:?}"
+            );
+        }
+    }
+
+    /// Distinct epochs yield distinct peer ids for the same device —
+    /// the property the post-RESET fork fix rests on.
+    #[test]
+    fn peer_id_for_epoch_distinct_across_epochs_792() {
+        use super::peer_id_for_epoch;
+        let dev = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+        let ids = [
+            peer_id_for_epoch(dev, 0),
+            peer_id_for_epoch(dev, 1),
+            peer_id_for_epoch(dev, 2),
+        ];
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        assert_ne!(ids[0], ids[2]);
+        // Determinism: re-derivation lands on the same value.
+        assert_eq!(peer_id_for_epoch(dev, 1), ids[1]);
+    }
+
+    /// Pins the epoch-salted bytes-in / u64-out mapping for fixed
+    /// inputs — same coordinated-migration rules as
+    /// `peer_id_from_device_id_is_stable_against_known_values`: a
+    /// device that went through a RESET re-derives its post-reset
+    /// PeerID from `(device_id, epoch)` on every boot, so this mapping
+    /// is wire-format. Do NOT update these values without a team
+    /// review and a migration plan.
+    #[test]
+    fn peer_id_for_epoch_is_stable_against_known_values_792() {
+        use super::peer_id_for_epoch;
+        assert_eq!(
+            peer_id_for_epoch("01ARZ3NDEKTSV4RRFFQ69G5FAV", 1),
+            0xd95d_315c_0529_08ad_u64,
+        );
+        assert_eq!(
+            peer_id_for_epoch("01ARZ3NDEKTSV4RRFFQ69G5FAV", 2),
+            0x1799_4df7_4030_7445_u64,
+        );
+    }
+
+    /// #792 reproduction — the OUTBOUND silent-drop direction of the
+    /// fork, exactly as the issue probed it. This test documents the
+    /// pre-#792 RESET behaviour (fresh engine, SAME deterministic peer
+    /// id): the peer's import returns `Ok` but the post-reset block is
+    /// silently dropped, because the peer's version vector already
+    /// covers the re-minted (peer, counter) ids. The companion test
+    /// below proves the epoch bump fixes it.
+    #[test]
+    fn reset_reusing_same_peer_id_silently_drops_post_reset_ops_at_peer_792() {
+        use super::LoroEngine;
+
+        // Device A mints three blocks; peer B imports A's history.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("PRE-1", "content", "one", None, 0)
+            .expect("pre-1");
+        a.apply_create_block("PRE-2", "content", "two", None, 1)
+            .expect("pre-2");
+        a.apply_create_block("PRE-3", "content", "three", None, 2)
+            .expect("pre-3");
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&a.export_snapshot().expect("snap"))
+            .expect("seed B");
+
+        // A goes through a pre-#792 snapshot RESET: engines reload
+        // EMPTY under the SAME deterministic peer id (epoch 0) and op
+        // counters restart at 0 — forking the (peer, counter) space.
+        let mut a_reset = LoroEngine::with_peer_id("DEV-A").expect("A reset");
+        assert_eq!(a_reset.peer_id(), a.peer_id(), "pre-#792: same peer id");
+        a_reset
+            .apply_create_block("POST-1", "content", "after reset", None, 0)
+            .expect("post-1");
+
+        // Outbound: B's import returns Ok…
+        b.import(&a_reset.export_snapshot().expect("snap2"))
+            .expect("import of the forked doc reports Ok — that's the trap");
+        // …but the post-reset block was silently dropped (B's vv already
+        // covers those (peer, counter) ids from the PRE blocks).
+        assert!(
+            b.read_block("POST-1").expect("read").is_none(),
+            "documents the #792 bug shape: with the peer id reused, the \
+             post-reset block must be silently dropped at the peer — if \
+             this ever starts importing, loro's import semantics changed \
+             and the #792 design needs re-review"
+        );
+    }
+
+    /// #792 fix — the same RESET scenario with the bumped peer-id
+    /// epoch: the post-reset engine mints ops under a FRESH PeerID, so
+    /// the peer imports them instead of silently dropping them.
+    #[test]
+    fn reset_with_bumped_epoch_delivers_post_reset_ops_to_peer_792() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("PRE-1", "content", "one", None, 0)
+            .expect("pre-1");
+        a.apply_create_block("PRE-2", "content", "two", None, 1)
+            .expect("pre-2");
+        a.apply_create_block("PRE-3", "content", "three", None, 2)
+            .expect("pre-3");
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&a.export_snapshot().expect("snap"))
+            .expect("seed B");
+
+        // The RESET now bumps the persisted epoch; the reloaded engine
+        // derives a fresh peer id and counters can restart at 0 safely.
+        let mut a_reset = LoroEngine::with_peer_id_epoch("DEV-A", 1).expect("A reset");
+        assert_ne!(
+            a_reset.peer_id(),
+            a.peer_id(),
+            "the epoch bump must retire the pre-reset peer id"
+        );
+        a_reset
+            .apply_create_block("POST-1", "content", "after reset", None, 0)
+            .expect("post-1");
+
+        b.import(&a_reset.export_snapshot().expect("snap2"))
+            .expect("import");
+        let snap = b
+            .read_block("POST-1")
+            .expect("read")
+            .expect("#792 regression: the post-reset block must reach the peer");
+        assert_eq!(snap.content, "after reset");
+    }
+
+    /// #792 guard — a blob carrying our own peer id at counters beyond
+    /// what we hold, while we already minted ops under that id, is the
+    /// fork signature (a pre-epoch RESET reused the peer id). Importing
+    /// it would corrupt loro-internal's causal state (the inbound
+    /// SIGABRT direction of the issue — not reproducible in-suite
+    /// because the failure is a destructor panic → abort), so the guard
+    /// must flag it BEFORE any import.
+    #[test]
+    fn own_peer_fork_in_blob_detects_peer_held_pre_reset_history_792() {
+        use super::LoroEngine;
+
+        // The peer's copy of our pre-reset history (3 blocks of ops).
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("PRE-1", "content", "one", None, 0)
+            .expect("pre-1");
+        a.apply_create_block("PRE-2", "content", "two", None, 1)
+            .expect("pre-2");
+        a.apply_create_block("PRE-3", "content", "three", None, 2)
+            .expect("pre-3");
+        let peer_held_history = a.export_snapshot().expect("snap");
+
+        // Our forked post-reset doc: same peer id, one re-minted block.
+        let mut forked = LoroEngine::with_peer_id("DEV-A").expect("forked");
+        forked
+            .apply_create_block("POST-1", "content", "after reset", None, 0)
+            .expect("post-1");
+
+        let reason = forked
+            .own_peer_fork_in_blob(&peer_held_history)
+            .expect("the fork guard must flag the peer-held pre-reset history");
+        assert!(
+            reason.contains("fork") && reason.contains("#792"),
+            "reason should be self-diagnosing, got: {reason}"
+        );
+    }
+
+    /// #792 guard control — the CLEAN post-reset resync (no local ops
+    /// minted before the first inbound import) must pass the guard and
+    /// import cleanly, with counters continuing from the imported vv.
+    /// This is the issue's "control" probe and the path the snapshot
+    /// catch-up heal relies on.
+    #[test]
+    fn own_peer_fork_in_blob_allows_clean_post_reset_resync_792() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("PRE-1", "content", "one", None, 0)
+            .expect("pre-1");
+        let peer_held_history = a.export_snapshot().expect("snap");
+
+        // Freshly reset doc, SAME peer id, ZERO local ops.
+        let mut fresh = LoroEngine::with_peer_id("DEV-A").expect("fresh");
+        assert!(
+            fresh.own_peer_fork_in_blob(&peer_held_history).is_none(),
+            "a doc with no own ops has nothing to fork — resync must pass"
+        );
+        fresh.import(&peer_held_history).expect("clean resync");
+        assert!(fresh.read_block("PRE-1").expect("read").is_some());
+
+        // Counters continue from the imported vv: a new local op must
+        // reach a peer that holds the full pre-reset history.
+        fresh
+            .apply_create_block("POST-1", "content", "continued", None, 1)
+            .expect("post-1");
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&peer_held_history).expect("seed B");
+        b.import(&fresh.export_snapshot().expect("snap2"))
+            .expect("import");
+        assert!(
+            b.read_block("POST-1").expect("read").is_some(),
+            "continued counters must deliver new ops to the peer"
+        );
+    }
+
+    /// #792 guard control — ordinary traffic never trips the guard:
+    /// (a) a peer's update carrying only the PEER's ops, and (b) an
+    /// idempotent echo of our own full history (blob end_vv == local).
+    #[test]
+    fn own_peer_fork_in_blob_allows_normal_updates_and_echo_792() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("A-1", "content", "from A", None, 0)
+            .expect("a-1");
+
+        // (a) B receives A's state, mints its own block, sends A the
+        // delta since A's vv — the blob carries only B's ops.
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import(&a.export_snapshot().expect("snap"))
+            .expect("seed B");
+        b.apply_create_block("B-1", "content", "from B", None, 1)
+            .expect("b-1");
+        let delta = b.export_update_since(&a.version_vector()).expect("delta");
+        assert!(
+            a.own_peer_fork_in_blob(&delta).is_none(),
+            "a peer-only update must not trip the fork guard"
+        );
+
+        // (b) An echo of our own history: blob end_vv[us] == local.
+        let echo = a.export_snapshot().expect("echo");
+        assert!(
+            a.own_peer_fork_in_blob(&echo).is_none(),
+            "an idempotent echo of our own ops must not trip the fork guard"
+        );
+    }
+
+    /// #792 guard robustness — sync input is untrusted bytes. The guard
+    /// runs BEFORE the real import, so a malformed / truncated / hostile
+    /// blob must degrade to `None` (warn + let the import surface the
+    /// real error), never panic. Exercised against a doc that HAS local
+    /// ops, so the decode path is actually reached.
+    #[test]
+    fn own_peer_fork_in_blob_tolerates_malformed_bytes_792() {
+        use super::LoroEngine;
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        a.apply_create_block("A-1", "content", "from A", None, 0)
+            .expect("a-1");
+
+        // Arbitrary garbage, empty input, and a truncated-but-prefixed
+        // real blob (valid magic header, corrupt body/checksum).
+        assert!(a.own_peer_fork_in_blob(b"not a loro blob").is_none());
+        assert!(a.own_peer_fork_in_blob(&[]).is_none());
+        let real = a.export_snapshot().expect("snap");
+        for len in [4usize, 16, real.len() / 2, real.len() - 1] {
+            assert!(
+                a.own_peer_fork_in_blob(&real[..len.min(real.len())])
+                    .is_none(),
+                "truncated blob (len {len}) must not trip or panic the guard"
+            );
+        }
+        let mut flipped = real.clone();
+        if let Some(last) = flipped.last_mut() {
+            *last ^= 0xFF;
+        }
+        assert!(
+            a.own_peer_fork_in_blob(&flipped).is_none(),
+            "checksum-corrupt blob must not trip or panic the guard"
         );
     }
 }

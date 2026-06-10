@@ -265,6 +265,33 @@ pub async fn apply_remote(
         }
     };
 
+    // #792: own-peer fork guard — runs for BOTH Snapshot and Update,
+    // BEFORE the write-ahead inbox insert (a forked blob must never be
+    // persisted for boot replay) and BEFORE the engine import. A vault
+    // that went through a pre-epoch snapshot RESET re-minted ops under
+    // its old deterministic PeerID; the peer still holds the pre-reset
+    // ops under the same id, so an inbound blob can carry "our" ops at
+    // counters beyond what our doc holds. Importing it makes loro skip
+    // the overlapping counter range and apply the rest against the
+    // wrong causal prefix — panicking inside loro-internal 1.12 (debug
+    // assertions) or silently corrupting state (release). Short-circuit
+    // into the snapshot-fallback path instead: the daemon-level
+    // catch-up applies the peer's SQL snapshot, and `apply_snapshot`
+    // now bumps the peer-id epoch, permanently healing the fork.
+    let fork = {
+        let mut guard = registry.for_space(&space_id, device_id)?;
+        guard.engine_mut().own_peer_fork_in_blob(&bytes)
+    };
+    if let Some(reason) = fork {
+        tracing::warn!(
+            space_id = %space_id,
+            reason = %reason,
+            "loro_sync: inbound blob forks our own (peer,counter) space (#792); \
+             requesting snapshot fallback instead of importing"
+        );
+        return Ok(ApplyOutcome::SnapshotFallbackRequested { space_id, reason });
+    }
+
     // #535: write-ahead inbox. Durably persist the raw incoming bytes in
     // their OWN committed tx BEFORE the engine import. If a crash strikes
     // after the engine import + Loro persist but before the SQL projection
@@ -453,6 +480,36 @@ pub(crate) async fn replay_inbox_row(
     inbox_id: i64,
 ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
     let space = SpaceId::from_trusted(space_id);
+
+    // #792: mirror `apply_remote`'s own-peer fork guard. `apply_remote`
+    // refuses to even write a forked blob into the inbox, but a slot
+    // persisted by a pre-#792 build (or a blob that only became forked
+    // relative to the engine after a crazy crash interleave) would
+    // otherwise be imported at every boot — corrupting loro-internal's
+    // causal state (debug panic → SIGABRT → boot crash loop). Replaying
+    // it can never succeed, so drop the slot (its own tiny commit, like
+    // the in-tx DELETE on the success path) and skip: the next sync
+    // session re-detects the fork in `apply_remote` and routes into the
+    // snapshot catch-up that heals it.
+    let fork = {
+        let mut guard = registry.for_space(&space, device_id)?;
+        guard.engine_mut().own_peer_fork_in_blob(bytes)
+    };
+    if let Some(reason) = fork {
+        tracing::warn!(
+            space_id,
+            inbox_id,
+            reason = %reason,
+            "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
+             space (#792); dropping the slot — the next sync session will \
+             fall back to snapshot catch-up"
+        );
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
+            .execute(pool)
+            .await?;
+        return Ok(Vec::new());
+    }
+
     import_and_project(pool, registry, device_id, &space, bytes, inbox_id).await
 }
 
@@ -1089,6 +1146,196 @@ mod tests {
                 );
             }
             other => panic!("expected AppError::Validation, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // #792 — own-peer (peer,counter) fork guard
+    // -----------------------------------------------------------------
+
+    /// #792 — an inbound Snapshot carrying OUR peer id at counters
+    /// beyond what our doc holds, while we already minted ops under
+    /// that id (the post-RESET fork a pre-epoch build created), must
+    /// short-circuit into `SnapshotFallbackRequested` WITHOUT touching
+    /// the engine, the inbox, or SQL. Importing it would corrupt
+    /// loro-internal's causal state (the issue's inbound SIGABRT — not
+    /// reproducible in-suite because the failure is a destructor panic
+    /// → process abort, which is exactly why the guard must fire first).
+    #[tokio::test]
+    async fn apply_remote_snapshot_into_forked_doc_requests_fallback_792() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // The peer's copy of device-F's pre-reset history (3 blocks).
+        let registry_pre = LoroEngineRegistry::new();
+        {
+            let mut g = registry_pre.for_space(&space, "device-F").expect("pre");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "pre 1", None, 0)
+                .expect("a");
+            e.apply_create_block(BLOCK_B, "content", "pre 2", None, 1)
+                .expect("b");
+            e.apply_create_block(BLOCK_C, "content", "pre 3", None, 2)
+                .expect("c");
+        }
+        let msg = prepare_outgoing(&registry_pre, &space, "device-F", None)
+            .await
+            .expect("peer-held history");
+
+        // device-F after a pre-#792 RESET: fresh registry, SAME device
+        // id (epoch 0 ⇒ same peer id), one re-minted block — the fork.
+        let registry_forked = LoroEngineRegistry::new();
+        {
+            let mut g = registry_forked
+                .for_space(&space, "device-F")
+                .expect("forked");
+            g.engine_mut()
+                .apply_create_block(BLOCK_D, "content", "post reset", None, 0)
+                .expect("post");
+        }
+
+        let outcome = apply_remote(&pool, &registry_forked, "device-F", msg)
+            .await
+            .expect("the guard returns a typed fallback, not an error");
+        match outcome {
+            ApplyOutcome::SnapshotFallbackRequested { space_id, reason } => {
+                assert_eq!(space_id, space);
+                assert!(
+                    reason.contains("#792") && reason.contains("fork"),
+                    "reason must be self-diagnosing, got: {reason}"
+                );
+            }
+            ApplyOutcome::Imported { .. } => {
+                panic!("a forked blob must NEVER be imported (#792)")
+            }
+        }
+
+        // Side-effect-free: no engine import (BLOCK_A absent), no SQL
+        // projection, and — critically — no write-ahead inbox slot that
+        // boot replay would re-import into a crash loop.
+        {
+            let mut g = registry_forked
+                .for_space(&space, "device-F")
+                .expect("forked");
+            assert!(g.engine_mut().read_block(BLOCK_A).unwrap().is_none());
+        }
+        let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+        assert_eq!(blocks, 0, "no SQL projection on a fork miss");
+        let inbox: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(inbox, 0, "a forked blob must not be persisted for replay");
+    }
+
+    /// #792 control — the CLEAN post-reset shape: the locally reset doc
+    /// has NO own ops, so the peer's snapshot (which contains our
+    /// pre-reset ops) imports cleanly and projects to SQL. The guard
+    /// must not block the very resync that heals a reset.
+    #[tokio::test]
+    async fn apply_remote_snapshot_into_empty_post_reset_doc_imports_792() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let registry_pre = LoroEngineRegistry::new();
+        {
+            let mut g = registry_pre.for_space(&space, "device-F").expect("pre");
+            g.engine_mut()
+                .apply_create_block(BLOCK_A, "content", "pre", None, 0)
+                .expect("a");
+        }
+        let msg = prepare_outgoing(&registry_pre, &space, "device-F", None)
+            .await
+            .expect("peer-held history");
+
+        // Post-reset, zero local ops minted (the safe window).
+        let registry_fresh = LoroEngineRegistry::new();
+        let outcome = apply_remote(&pool, &registry_fresh, "device-F", msg)
+            .await
+            .expect("clean resync");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "an op-free post-reset doc must accept its own history back, got {outcome:?}"
+        );
+        let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(BLOCK_A)
+            .fetch_one(&pool)
+            .await
+            .expect("projected row");
+        assert_eq!(content, "pre");
+    }
+
+    /// #792 — `replay_inbox_row` (boot recovery) must DROP a forked
+    /// write-ahead slot instead of importing it: a slot persisted by a
+    /// pre-#792 build would otherwise SIGABRT the app at every boot
+    /// (crash loop). The slot is deleted so the next session's
+    /// `apply_remote` guard can route into snapshot catch-up.
+    #[tokio::test]
+    async fn replay_inbox_row_drops_forked_slot_792() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Peer-held pre-reset history bytes.
+        let registry_pre = LoroEngineRegistry::new();
+        let history_bytes = {
+            let mut g = registry_pre.for_space(&space, "device-F").expect("pre");
+            let e = g.engine_mut();
+            e.apply_create_block(BLOCK_A, "content", "pre 1", None, 0)
+                .expect("a");
+            e.apply_create_block(BLOCK_B, "content", "pre 2", None, 1)
+                .expect("b");
+            e.export_snapshot().expect("snap")
+        };
+
+        // A leftover inbox slot holding those bytes (as a pre-#792
+        // build would have persisted before crashing mid-projection).
+        let inbox_id: i64 = sqlx::query_scalar(
+            "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+             VALUES (?, ?, 0) RETURNING id",
+        )
+        .bind(space.as_str())
+        .bind(&history_bytes)
+        .fetch_one(&pool)
+        .await
+        .expect("seed slot");
+
+        // The forked engine (same device id, re-minted op).
+        let registry_forked = LoroEngineRegistry::new();
+        {
+            let mut g = registry_forked
+                .for_space(&space, "device-F")
+                .expect("forked");
+            g.engine_mut()
+                .apply_create_block(BLOCK_D, "content", "post reset", None, 0)
+                .expect("post");
+        }
+
+        let changed = replay_inbox_row(
+            &pool,
+            &registry_forked,
+            "device-F",
+            space.as_str(),
+            &history_bytes,
+            inbox_id,
+        )
+        .await
+        .expect("replay must not error — it drops the slot and skips");
+        assert!(changed.is_empty(), "nothing imported from a forked slot");
+
+        // The slot is gone (no boot crash loop) and the engine untouched.
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "the forked slot must be deleted");
+        {
+            let mut g = registry_forked
+                .for_space(&space, "device-F")
+                .expect("forked");
+            assert!(g.engine_mut().read_block(BLOCK_A).unwrap().is_none());
         }
     }
 
