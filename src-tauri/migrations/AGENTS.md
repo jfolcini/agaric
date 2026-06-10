@@ -120,7 +120,13 @@ DROP TABLE _keep_page_aliases;
 DROP TABLE _keep_block_drafts;
 ```
 
-For `blocks`, the authoritative children are exactly `page_aliases` and `block_drafts` (everything else recovers from the op log — but re-check this list against the FK graph when writing the rebuild). Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for both table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db.rs`) seeds both tables immediately before every post-0085 rebuild and asserts the rows reach head.
+For `blocks`, the authoritative children were exactly `page_aliases` and `block_drafts` through migration 0088; **as of 0089 the preserve set also includes `spaces`** — wiping `spaces` is doubly destructive because `blocks.space_id … ON DELETE SET NULL` then silently clears every space membership. 0089 sidesteps this by keeping `spaces` EMPTY until after the rename (snapshot to `_spaces_backfill` first, populate last); copy that choreography in any future rebuild, and re-check the full list against the FK graph when writing one. Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for the satellite table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db.rs`) seeds the satellites immediately before every post-0085 rebuild and asserts the rows reach head.
+
+`PRAGMA defer_foreign_keys = ON` (first statement of the migration) defers FK *violation checks* to COMMIT — useful for circular FKs like `spaces(id) ↔ blocks.space_id` (0089) — but does **not** defer cascade/SET NULL actions.
+
+### Trigger bodies: never rely on `INSERT OR IGNORE` for idempotency
+
+SQLite replaces the conflict policy of statements **inside a trigger body** with the policy of the **outer statement** that fired the trigger ([lang_createtrigger](https://sqlite.org/lang_createtrigger.html)). An outer `INSERT OR REPLACE` (the `set_property` UPSERT shape) turns a body-level `OR IGNORE` into `OR REPLACE` — and a REPLACE on a PK deletes + re-inserts the row, firing any `ON DELETE` actions hanging off it. Put the idempotency guard in the trigger's `WHEN` clause (`NOT EXISTS (…)`) so the body statement can never hit a conflict (in-repo model: 0089 `spaces_register_is_space`).
 
 ## Renaming + dropping tables
 

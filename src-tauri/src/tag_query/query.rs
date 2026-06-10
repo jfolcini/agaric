@@ -674,6 +674,13 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        // #708: register in the `spaces` table — `blocks.space_id`
+        // REFERENCES spaces(id) since migration 0089.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(space_id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -2477,6 +2477,13 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
     .execute(&pool)
     .await
     .unwrap();
+    // #708: `blocks.space_id` REFERENCES spaces(id) since migration 0089 —
+    // register the space before stamping memberships.
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
          VALUES (?, 'page', 'P', NULL, 0, ?, ?)",

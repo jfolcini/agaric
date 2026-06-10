@@ -89,6 +89,15 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+    // #708: register in the `spaces` table — `blocks.space_id` now
+    // REFERENCES spaces(id) (migration 0089), so the assign helpers below
+    // would otherwise fail FK 787. Production registers via the
+    // `is_space = 'true'` property write → 0089 trigger.
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(TEST_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// PEND-35 — stamp `is_space = 'true'` on `space_id` so the block
@@ -144,6 +153,12 @@ pub async fn ensure_test_space_b(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+    // #708: register in the `spaces` table — see `ensure_test_space`.
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(TEST_SPACE_B_ID)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// FEAT-3p4 — assign `block_id` to an arbitrary space ULID. Used by

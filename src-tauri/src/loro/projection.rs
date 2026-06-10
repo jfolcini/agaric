@@ -241,7 +241,35 @@ pub async fn project_set_property_to_sql(
         // `SetProperty(space)` op to the denormalized `blocks.space_id` for
         // the whole owning-page group; no block_properties row. Keeps old
         // op-log entries replaying correctly. Parity with `set_property_in_tx`.
+        //
+        // #708: `blocks.space_id` now REFERENCES `spaces(id)` (migration
+        // 0089). A remote / replayed op whose target is not a registered
+        // space (purged, never synced, or historically mis-stamped — the
+        // #612 class) would trip FK 787 and wedge the sync apply / undo
+        // replay; skip it instead, mirroring the recovery path's #605
+        // degrade contract. Legitimate targets are registered before they
+        // are referenced (the `is_space` property INSERT fires the 0089
+        // registration trigger, and create-space emits it before any
+        // membership op).
         let block_id = payload.block_id.as_str();
+        if let Some(target) = &payload.value_ref {
+            let target_str = target.as_str();
+            let registered: i64 = sqlx::query_scalar!(
+                r#"SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?) AS "e!: i64""#,
+                target_str
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+            if registered == 0 {
+                tracing::warn!(
+                    block_id,
+                    space_id = target_str,
+                    "project_set_property(space): target is not a registered space — \
+                     skipping (dangling or mis-stamped value_ref, #708)"
+                );
+                return Ok(());
+            }
+        }
         sqlx::query!(
             "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
             payload.value_ref,
@@ -572,22 +600,24 @@ pub async fn project_block_full_to_sql(
             // blocks land NULL and vanish from space-filtered reads).
             //
             // Stamp conditionally via a subquery so it can never violate the
-            // `space_id REFERENCES blocks(id)` FK: if the space block row
-            // isn't present yet (cross-doc sync ordering — the space block
-            // lives outside this space's own doc), resolve to NULL rather
-            // than abort the inbound tx; a later import / rebuild reconciles
-            // once the space block arrives. `?6`/`?7` both bind the space id.
+            // `space_id REFERENCES spaces(id)` FK (#708, migration 0089): if
+            // the space isn't registered yet (cross-doc sync ordering — the
+            // space block and its `is_space` flag live outside this space's
+            // own doc), resolve to NULL rather than abort the inbound tx; a
+            // later import / rebuild reconciles once the space block (and
+            // its registering `is_space` property) arrives. `?6`/`?7` both
+            // bind the space id.
             let space_id_str = space_id.as_str();
             sqlx::query!(
                 "INSERT INTO blocks \
                      (id, block_type, content, parent_id, position, space_id) \
-                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM blocks WHERE id = ?)) \
+                 VALUES (?, ?, ?, ?, ?, (SELECT id FROM spaces WHERE id = ?)) \
                  ON CONFLICT(id) DO UPDATE SET \
                      block_type = excluded.block_type, \
                      content = excluded.content, \
                      parent_id = excluded.parent_id, \
                      position = excluded.position, \
-                     space_id = (SELECT id FROM blocks WHERE id = ?)",
+                     space_id = (SELECT id FROM spaces WHERE id = ?)",
                 snap.block_id,
                 snap.block_type,
                 snap.content,
@@ -2113,6 +2143,13 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // #708: register in the `spaces` table — the full-block projection
+        // resolves `space_id` against the registry since migration 0089.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(SPACE)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let space = crate::space::SpaceId::from_trusted(SPACE);
         let bid = BlockId::from_trusted(BLOCK_A);

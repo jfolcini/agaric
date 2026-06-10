@@ -639,11 +639,11 @@ pub async fn delete_block_inner(
     // space soft-deleted with orphan pages whose `space` ref now dangles.
     // The check runs INSIDE this BEGIN IMMEDIATE tx so no concurrent
     // CreateBlock-with-space-property can sneak in between the count and
-    // the cascade. Spaces are page blocks carrying `is_space = "true"`;
-    // child membership is a `space` ref property on each page.
+    // the cascade. #708: "is a space" is now schema-defined — a row in the
+    // `spaces` registry (kept in lockstep with the `is_space = 'true'`
+    // property by the 0089 `spaces_register_is_space` trigger).
     let is_space_block = sqlx::query_scalar!(
-        "SELECT 1 AS \"flag!: i64\" FROM block_properties \
-         WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+        "SELECT 1 AS \"flag!: i64\" FROM spaces WHERE id = ?",
         block_id,
     )
     .fetch_optional(&mut **tx)
@@ -936,14 +936,13 @@ pub async fn delete_blocks_by_ids_inner(
     // surface the FIRST offending space + its child count so the
     // operator sees actionable detail.
     for root in &live_roots {
-        let is_space_block = sqlx::query_scalar!(
-            "SELECT 1 AS \"flag!: i64\" FROM block_properties \
-             WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
-            root,
-        )
-        .fetch_optional(&mut **tx)
-        .await?
-        .is_some();
+        // #708: registry-backed "is a space" check — see the single-row
+        // path above.
+        let is_space_block =
+            sqlx::query_scalar!("SELECT 1 AS \"flag!: i64\" FROM spaces WHERE id = ?", root,)
+                .fetch_optional(&mut **tx)
+                .await?
+                .is_some();
         if is_space_block {
             // #533 Phase 2: pages in this space carry `blocks.space_id`.
             let child_count: i64 = sqlx::query_scalar!(
@@ -2952,6 +2951,35 @@ pub(crate) async fn set_property_in_tx(
         // populated page moves its descendants too (a space change enqueues
         // no page_id/space_id rebuild). Parity with the sync/replay path
         // (`project_set_property_to_sql`).
+        //
+        // #612/#708: the generic `set_property` boundary (IPC + MCP RW)
+        // reaches this arm unvalidated, so enforce the space contract HERE
+        // rather than per caller: the value must be a ref (a text/num/date
+        // shape would otherwise NULL `space_id` across the whole page
+        // group), and the target must be a live, registered space. The
+        // dedicated paths (`move_blocks_to_space_inner`,
+        // `create_page_in_space_inner`, journal/pages helpers) pre-validate
+        // the same predicate; this is the TOCTOU-safe backstop. The 0089 FK
+        // (`blocks.space_id REFERENCES spaces(id)`) would reject a
+        // mis-stamp anyway — this turns it into a clean Validation error.
+        let Some(target) = value_ref.as_deref() else {
+            return Err(AppError::Validation(
+                "property 'space' requires a value_ref pointing at a space block".into(),
+            ));
+        };
+        let space_ok = sqlx::query_scalar!(
+            r#"SELECT 1 AS "ok: i32" FROM spaces s
+               JOIN blocks b ON b.id = s.id
+               WHERE s.id = ? AND b.deleted_at IS NULL"#,
+            target,
+        )
+        .fetch_optional(&mut **tx)
+        .await?;
+        if space_ok.is_none() {
+            return Err(AppError::Validation(format!(
+                "space_id '{target}' does not refer to a live, registered space block"
+            )));
+        }
         sqlx::query!(
             "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
             value_ref,

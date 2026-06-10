@@ -338,6 +338,31 @@ pub async fn apply_snapshot<R: std::io::Read>(
         },
     );
 
+    // #708: the `block_properties` batch above re-populated the `spaces`
+    // registry via the 0089 `spaces_register_is_space` trigger (the wipe's
+    // `DELETE FROM blocks` cascade emptied it). A snapshot produced by an
+    // older build — or one carrying a historically mis-stamped membership
+    // (the #612 class) — can still hold `blocks.space_id` values that point
+    // at a block with no `is_space` flag; under the 0089 FK
+    // (`space_id REFERENCES spaces(id)`, checked at COMMIT because of the
+    // F02 `defer_foreign_keys` above) those rows would abort the whole
+    // restore. NULL them instead — the every-boot `pages_without_space`
+    // backfill (BUG-1/L-133) reassigns the affected pages to Personal.
+    let repaired = sqlx::query!(
+        "UPDATE blocks SET space_id = NULL \
+         WHERE space_id IS NOT NULL \
+           AND space_id NOT IN (SELECT id FROM spaces)"
+    )
+    .execute(&mut *tx)
+    .await?;
+    if repaired.rows_affected() > 0 {
+        tracing::warn!(
+            rows = repaired.rows_affected(),
+            "apply_snapshot: NULLed space_id values pointing at unregistered \
+             spaces (#708); the boot backfill will reassign them"
+        );
+    }
+
     batch_insert_snapshot_rows!(
         table: "block_links",
         columns: ["source_id", "target_id"],

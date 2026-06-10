@@ -915,9 +915,59 @@ mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
+            // #708: flag the seeded blocks as spaces, exactly as the
+            // production bootstrap does. The `is_space` INSERT fires the
+            // 0089 `spaces_register_is_space` trigger, registering them in
+            // the `spaces` table — required by the rebuilt
+            // `blocks.space_id REFERENCES spaces(id)` FK that the
+            // migrators below stamp.
+            sqlx::query!(
+                "INSERT OR IGNORE INTO block_properties (block_id, key, value_text) \
+                 VALUES (?, 'is_space', 'true')",
+                id,
+            )
+            .execute(&mut *tx)
+            .await
+            .unwrap();
         }
         tx.commit().await.unwrap();
         (pool, tmp)
+    }
+
+    /// #708: a from-scratch bootstrap must leave both seeded spaces
+    /// registered in the `spaces` table — the `ensure_is_space_property`
+    /// writes fire the 0089 `spaces_register_is_space` trigger — so the
+    /// page/tag migrators' `space_id` stamps satisfy the rebuilt
+    /// `blocks.space_id REFERENCES spaces(id)` FK in the same tx.
+    #[tokio::test]
+    async fn bootstrap_registers_seeded_spaces_in_registry_708() {
+        let tmp = TempDir::new().unwrap();
+        let db_path: PathBuf = tmp.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+
+        let registered: Vec<String> =
+            sqlx::query_scalar!(r#"SELECT id as "id!: String" FROM spaces ORDER BY id"#)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            registered,
+            vec![SPACE_PERSONAL_ULID.to_string(), SPACE_WORK_ULID.to_string()],
+            "bootstrap must register both seeded spaces in `spaces` (#708)"
+        );
+
+        // Idempotent across a second boot.
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+        let count: i64 = sqlx::query_scalar!(r#"SELECT COUNT(*) as "n!: i64" FROM spaces"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "re-running bootstrap must not duplicate registry rows"
+        );
     }
 
     #[tokio::test]

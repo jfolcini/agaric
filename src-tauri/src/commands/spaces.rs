@@ -1017,6 +1017,45 @@ mod tests_p6 {
         .map(|r| (r.block_type, r.content))
     }
 
+    /// #708: `create_space` must leave the new block registered in the
+    /// `spaces` table (the `is_space` property write fires the 0089
+    /// `spaces_register_is_space` trigger in the same tx), so the new
+    /// space is immediately a valid `blocks.space_id` FK target.
+    #[tokio::test]
+    async fn create_space_registers_registry_row_708() {
+        let (pool, _dir) = test_pool().await;
+        let materializer = Materializer::new(pool.clone());
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let new_id = create_space_inner(&pool, DEV, &materializer, "Reg".into(), None)
+            .await
+            .unwrap()
+            .into_string();
+        materializer.shutdown();
+
+        let registered: i64 = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "n!: i64" FROM spaces WHERE id = ?"#,
+            new_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            registered, 1,
+            "create_space must register the new space in `spaces` within the same tx (#708)"
+        );
+
+        // And it is immediately usable as a membership target.
+        sqlx::query!(
+            "UPDATE blocks SET space_id = ? WHERE id = ?",
+            new_id,
+            new_id
+        )
+        .execute(&pool)
+        .await
+        .expect("freshly created space must satisfy the blocks.space_id FK (#708)");
+    }
+
     #[tokio::test]
     async fn create_space_with_accent_color_writes_all_three_properties() {
         let (pool, _dir) = test_pool().await;

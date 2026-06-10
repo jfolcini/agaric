@@ -405,8 +405,19 @@ mod tests {
     async fn rebuild_space_ids_preserves_top_level_tag_space_533() {
         let (pool, _dir) = test_pool().await;
         sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed space block");
+        // #708: register SPACE01 (blocks.space_id REFERENCES spaces(id)).
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPACE01')")
+            .execute(&pool)
+            .await
+            .expect("register space (#708)");
+        sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
-             ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01', NULL), \
              ('TAG0001', 'tag',  'proj',  NULL, 2, NULL,      'SPACE01')",
         )
         .execute(&pool)
@@ -441,8 +452,19 @@ mod tests {
         // A page authoritatively in SPACE01 (its own space_id column set),
         // a child whose space_id is stale/NULL, and an orphan-page child.
         sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed space block");
+        // #708: register SPACE01 (blocks.space_id REFERENCES spaces(id)).
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPACE01')")
+            .execute(&pool)
+            .await
+            .expect("register space (#708)");
+        sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
-             ('SPACE01', 'page',    'space', NULL,     1, 'SPACE01', NULL), \
              ('PAGE01',  'page',    'p',     NULL,     2, 'PAGE01',  'SPACE01'), \
              ('CHILD01', 'content', 'c',     'PAGE01', 1, 'PAGE01',  NULL), \
              ('PAGE02',  'page',    'q',     NULL,     3, 'PAGE02',  NULL), \
@@ -498,8 +520,19 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('SPACE01', 'page', 'space', NULL, 1, 'SPACE01')",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed space block");
+        // #708: register SPACE01 (blocks.space_id REFERENCES spaces(id)).
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPACE01')")
+            .execute(&pool)
+            .await
+            .expect("register space (#708)");
+        sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) VALUES \
-             ('SPACE01', 'page',    's', NULL,     1, 'SPACE01', NULL), \
              ('PAGE01',  'page',    'p', NULL,     2, 'PAGE01', 'SPACE01'), \
              ('PARENT1', 'content', 'a', 'PAGE01', 1, 'PAGE01', 'SPACE01')",
         )

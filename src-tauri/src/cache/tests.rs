@@ -4386,6 +4386,12 @@ async fn reindex_block_links_cross_space_pushdown_preserves_soft_delete_p6() {
         .unwrap();
     }
     async fn set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+        // #708: register the space (blocks.space_id REFERENCES spaces(id)).
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(space_id)
+            .execute(pool)
+            .await
+            .unwrap();
         // Phase 2 (#533): space membership is read from `blocks.space_id`.
         // Set the denormalized column on the block and any block paged to it.
         sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")
@@ -4465,6 +4471,12 @@ async fn cs375_insert_page(pool: &SqlitePool, id: &str) {
         .unwrap();
 }
 async fn cs375_set_space(pool: &SqlitePool, block_id: &str, space_id: &str) {
+    // #708: register the space (blocks.space_id REFERENCES spaces(id)).
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .unwrap();
     // Phase 2 (#533): space membership is read from `blocks.space_id`.
     // Set the denormalized column on the block and any block paged to it.
     sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?")

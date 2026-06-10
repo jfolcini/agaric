@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET space_id = NULL WHERE space_id IS NOT NULL AND space_id NOT IN (SELECT id FROM spaces)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "810be72d74b5e398e1ee67c516dd4e5caaa36d0b3d52b86b99aac3cdb6a121b0"
+}
