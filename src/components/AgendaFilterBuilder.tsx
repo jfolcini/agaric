@@ -60,6 +60,39 @@ export interface AgendaFilter {
   values: string[] // e.g. ['TODO','DOING'] for status, ['1','2'] for priority
 }
 
+/**
+ * Filter augmented with a frontend-only `_addId` React key (#757).
+ *
+ * Two `property` filters are a supported state (`property` is exempt from
+ * the dimension dedup in AddFilterPopover), so `key={filter.dimension}`
+ * produced duplicate React keys and index-based edit/remove could target
+ * the wrong chip after a re-render. Same pattern as `FilterPillRow`'s
+ * `_addId` stamp (MAINT-190): the marker rides along on the filter object
+ * and is ignored everywhere else (agenda-filters reads dimension/values).
+ */
+export type AgendaFilterWithKey = AgendaFilter & { _addId: number }
+
+let nextFilterAddId = 0
+const filterAddIdFallback = new WeakMap<object, number>()
+
+/**
+ * Return the filter with a stable `_addId` stamp. Filters added through
+ * `handleAdd` are stamped at creation; filters that arrive from props
+ * without one (e.g. the default status filter in AgendaView, or test
+ * fixtures) get a lazily assigned id via the WeakMap, which keeps the id
+ * stable across renders for the same object identity.
+ */
+function ensureAddId(filter: AgendaFilter): AgendaFilterWithKey {
+  const candidate = filter as Partial<AgendaFilterWithKey>
+  if (typeof candidate._addId === 'number') return filter as AgendaFilterWithKey
+  let id = filterAddIdFallback.get(filter)
+  if (id === undefined) {
+    id = ++nextFilterAddId
+    filterAddIdFallback.set(filter, id)
+  }
+  return { ...filter, _addId: id }
+}
+
 export interface AgendaFilterBuilderProps {
   filters: AgendaFilter[]
   onFiltersChange: (filters: AgendaFilter[]) => void
@@ -296,7 +329,12 @@ export function AgendaFilterBuilder({
 
   const handleAdd = useCallback(
     (filter: AgendaFilter) => {
-      onFiltersChange([...filters, filter])
+      // Stamp a per-add monotonic React key (#757) so the chip list's
+      // `key={filter._addId}` is collision-free even when two `property`
+      // filters coexist. `_addId` is frontend-only; agenda-filters reads
+      // dimension/values and ignores the extra field.
+      const stamped: AgendaFilterWithKey = { ...filter, _addId: ++nextFilterAddId }
+      onFiltersChange([...filters, stamped])
     },
     [filters, onFiltersChange],
   )
@@ -310,7 +348,13 @@ export function AgendaFilterBuilder({
 
   const handleUpdate = useCallback(
     (index: number, values: string[]) => {
-      const next = filters.map((f, i) => (i === index ? { ...f, values } : f))
+      // #757 — stamp via ensureAddId BEFORE spreading: a prop-sourced filter
+      // without `_addId` (e.g. AgendaView's default status filter) would
+      // otherwise be replaced by a fresh object, miss the WeakMap, get a new
+      // key, and remount the chip — closing the edit popover after every
+      // value toggle. ensureAddId reuses the WeakMap id the render assigned,
+      // so the key survives the edit.
+      const next = filters.map((f, i) => (i === index ? { ...ensureAddId(f), values } : f))
       onFiltersChange(next)
     },
     [filters, onFiltersChange],
@@ -335,14 +379,18 @@ export function AgendaFilterBuilder({
 
         {filters.length > 0 && (
           <ul aria-label={t('agendaFilter.appliedFilters')} className="contents list-none m-0 p-0">
-            {filters.map((filter, idx) => {
+            {filters.map((rawFilter, idx) => {
+              // #757 — key by the stamped `_addId`, not `filter.dimension`:
+              // two `property` filters are a supported state, and duplicate
+              // keys made React recycle the wrong chip after edit/remove.
+              const filter = ensureAddId(rawFilter)
               const isProperty = filter.dimension === 'property'
               const pillLabel = isProperty
                 ? formatPropertyPill(filter.values)
                 : `${dimensionLabel(filter.dimension)}: ${filter.values.join(', ')}`
 
               return (
-                <li key={filter.dimension} className="contents">
+                <li key={filter._addId} className="contents">
                   {/* UX review Tier 1 item 7 — chip visual chrome aligned
                       with the shared `FilterPill` primitive by adopting
                       `Badge variant="secondary"`. The two-button structure

@@ -508,7 +508,11 @@ export function useDuePanelData({
       })
       .catch((err) => {
         logger.warn('useDuePanelData', 'projected agenda fetch failed', undefined, err)
-        if (!stale) setProjectedEntries([])
+        // #757 (FE-M-2 follow-up): the toast was outside the `!stale`
+        // guard, firing after unmount. Skip state + toast once stale —
+        // same contract as the nested handler above.
+        if (stale) return
+        setProjectedEntries([])
         notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
       })
       .finally(() => {

@@ -5,6 +5,7 @@ import {
   formatCompactDate,
   formatDate,
   getDateRangeForFilter,
+  getMaxJournalDate,
   getTodayString,
   getWeekOptions,
   isDateFormattedPage,
@@ -192,6 +193,35 @@ describe('getTodayString', () => {
   it('returns today formatted as YYYY-MM-DD', () => {
     vi.setSystemTime(new Date(2026, 3, 10))
     expect(getTodayString()).toBe('2026-04-10')
+  })
+})
+
+describe('getMaxJournalDate (#757)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('returns 12 months from today', () => {
+    vi.setSystemTime(new Date(2026, 3, 10)) // April 10, 2026
+    expect(formatDate(getMaxJournalDate())).toBe('2027-04-10')
+  })
+
+  it('tracks the wall clock instead of freezing at module load', () => {
+    // The pre-#757 `MAX_JOURNAL_DATE` const was computed once at import
+    // time, so the navigable horizon silently shrank in long sessions.
+    vi.setSystemTime(new Date(2026, 3, 10))
+    const first = getMaxJournalDate()
+
+    // 30 days later in the same session the horizon must have advanced.
+    vi.setSystemTime(new Date(2026, 4, 10))
+    const second = getMaxJournalDate()
+
+    expect(formatDate(first)).toBe('2027-04-10')
+    expect(formatDate(second)).toBe('2027-05-10')
   })
 })
 

@@ -162,6 +162,37 @@ describe('groupByDate', () => {
     expect(groups[1]?.label).toBe('Today')
   })
 
+  // #757 — concrete date headers are formatted via the runtime locale
+  // (`toLocaleDateString(undefined, …)`, the formatDateDisplay convention)
+  // instead of hardcoded English weekday/month tables. Compute the
+  // expected labels with the same Intl options so these assertions hold
+  // under any system locale. Weekday is always included; the year only
+  // when it differs from the (fake-timer-pinned 2025) current year.
+  function expectedHeader(dateStr: string): string {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return new Date(y as number, (m as number) - 1, d).toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      ...(y === new Date().getFullYear() ? {} : { year: 'numeric' }),
+    })
+  }
+
+  // #757 — pin the locale-awareness contract itself: the same Intl option
+  // set produces language-correct weekday/month names per locale (Node
+  // ships full ICU), which the removed WEEKDAYS/MONTH_SHORT tables never
+  // could.
+  it('date group headers use locale-aware weekday/month names (#757)', () => {
+    const blocks = [makeBlock({ id: 'mon', due_date: '2026-06-15', todo_state: 'TODO' })]
+    const groups = groupByDate(blocks)
+    expect(groups.map((g) => g.label)).toEqual([expectedHeader('2026-06-15')])
+
+    const date = new Date(2026, 5, 15)
+    const opts = { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' } as const
+    expect(date.toLocaleDateString('en-US', opts)).toBe('Mon, Jun 15, 2026')
+    expect(date.toLocaleDateString('fr-FR', opts)).toBe('lun. 15 juin 2026')
+  })
+
   // #719 — date groups beyond Tomorrow were ordered alphabetically by
   // their formatted label ("Fri, Jun 19" < "Mon, Jun 15"), not
   // chronologically. These tests pin the relative order of concrete
@@ -176,7 +207,10 @@ describe('groupByDate', () => {
         makeBlock({ id: 'mon', due_date: '2026-06-15', todo_state: 'TODO' }),
       ]
       const groups = groupByDate(blocks)
-      expect(groups.map((g) => g.label)).toEqual(['Mon, Jun 15, 2026', 'Fri, Jun 19, 2026'])
+      expect(groups.map((g) => g.label)).toEqual([
+        expectedHeader('2026-06-15'),
+        expectedHeader('2026-06-19'),
+      ])
       expect(groups[0]?.blocks[0]?.id).toBe('mon')
       expect(groups[1]?.blocks[0]?.id).toBe('fri')
     })
@@ -189,7 +223,10 @@ describe('groupByDate', () => {
         makeBlock({ id: 'jul', due_date: '2025-07-28', todo_state: 'TODO' }),
       ]
       const groups = groupByDate(blocks)
-      expect(groups.map((g) => g.label)).toEqual(['Mon, Jul 28', 'Fri, Aug 1'])
+      expect(groups.map((g) => g.label)).toEqual([
+        expectedHeader('2025-07-28'),
+        expectedHeader('2025-08-01'),
+      ])
     })
 
     it('orders groups correctly across a year boundary', () => {
@@ -200,7 +237,10 @@ describe('groupByDate', () => {
         makeBlock({ id: 'dec', due_date: '2025-12-31', todo_state: 'TODO' }),
       ]
       const groups = groupByDate(blocks)
-      expect(groups.map((g) => g.label)).toEqual(['Wed, Dec 31', 'Fri, Jan 2, 2026'])
+      expect(groups.map((g) => g.label)).toEqual([
+        expectedHeader('2025-12-31'),
+        expectedHeader('2026-01-02'),
+      ])
     })
 
     it('keeps special groups around chronological date groups', () => {
@@ -217,8 +257,8 @@ describe('groupByDate', () => {
         'Overdue',
         'Today',
         'Tomorrow',
-        'Mon, Feb 3',
-        'Fri, Jun 20',
+        expectedHeader('2025-02-03'),
+        expectedHeader('2025-06-20'),
         'No date',
       ])
     })

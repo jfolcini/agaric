@@ -28,6 +28,15 @@ import { LoadingSkeleton } from '../LoadingSkeleton'
 const STORAGE_KEY = 'unfinishedTasks.collapsed'
 const GROUP_STORAGE_KEY = 'agaric:unfinishedTasks.groupCollapsed'
 
+/**
+ * Runaway guard for the cursor-drain loop (#757). Each page is capped at
+ * 200 rows by `PageRequest::new`'s MAX_PAGE_SIZE, so 25 pages bounds the
+ * section at 5000 tasks — far past any workspace where a flat "Older"
+ * list is still useful, while keeping a hard stop if the backend ever
+ * returned a non-advancing cursor.
+ */
+const MAX_UNFINISHED_PAGES = 25
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 interface AgeGroup {
@@ -209,20 +218,33 @@ export function UnfinishedTasks({
     async function fetchUnfinished() {
       setLoading(true)
       try {
-        // Query unfinished tasks directly from the backend
-        const resp = await listUnfinishedTasks({
-          beforeDate: todayStr,
-          todoStates: ['TODO', 'DOING'],
-          limit: paginationLimit(200),
-          spaceId: currentSpaceId,
-        })
+        // Query unfinished tasks directly from the backend. #757 — the
+        // response is cursor-paginated and capped at 200 rows per page;
+        // ignoring `has_more`/`next_cursor` silently undercounted the
+        // badge and the "Older" group. Drain the cursor chain so the
+        // section reflects the full set.
+        const items: BlockRow[] = []
+        let cursor: string | undefined
+        for (let page = 0; page < MAX_UNFINISHED_PAGES; page++) {
+          const resp = await listUnfinishedTasks({
+            beforeDate: todayStr,
+            todoStates: ['TODO', 'DOING'],
+            ...(cursor != null && { cursor }),
+            limit: paginationLimit(200),
+            spaceId: currentSpaceId,
+          })
 
-        if (stale) return
+          if (stale) return
 
-        setBlocks(resp.items)
+          items.push(...resp.items)
+          if (!resp.has_more || resp.next_cursor == null) break
+          cursor = resp.next_cursor
+        }
+
+        setBlocks(items)
 
         // Resolve page titles for breadcrumbs (non-critical on failure)
-        const parentIds = [...new Set(resp.items.map((b) => b.page_id).filter(Boolean))] as string[]
+        const parentIds = [...new Set(items.map((b) => b.page_id).filter(Boolean))] as string[]
         if (parentIds.length > 0) {
           const titles = await resolvePageTitles(parentIds)
           if (!stale) {

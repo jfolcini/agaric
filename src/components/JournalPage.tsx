@@ -43,7 +43,7 @@ import { SpaceManageDialog } from './SpaceManageDialog'
 
 export type { DayEntry } from '../lib/date-utils'
 // Re-export for backward compatibility
-export { MAX_JOURNAL_DATE, MIN_JOURNAL_DATE } from '../lib/date-utils'
+export { getMaxJournalDate, MIN_JOURNAL_DATE } from '../lib/date-utils'
 // MAINT-119 — Re-export sibling components so existing imports
 // (`import { GlobalDateControls, JournalControls } from '../JournalPage'`)
 // continue to work.
