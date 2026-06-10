@@ -21,7 +21,6 @@ import { useRichContentCallbacks, useTagClickHandler } from '../useRichContentCa
 beforeEach(() => {
   useResolveStore.setState({
     cache: new Map(),
-    pagesList: [],
     version: 0,
     _preloaded: false,
   })

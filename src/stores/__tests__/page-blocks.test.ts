@@ -124,6 +124,64 @@ describe('PageBlockStore', () => {
       )
     })
 
+    it('#753 — overlapping loads of the same page: the latest-started load wins', async () => {
+      const resolvers: Array<(v: unknown) => void> = []
+      mockedInvoke.mockImplementation(async () => new Promise((resolve) => resolvers.push(resolve)))
+
+      // Two loads for the SAME page overlap (e.g. a sync:complete reload
+      // racing a mount load). `rootParentId` is identical for both, so
+      // the old guard could never discard either.
+      const load1 = store.getState().load()
+      await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+      const load2 = store.getState().load()
+      await vi.waitFor(() => expect(resolvers).toHaveLength(2))
+
+      // The NEWER load's snapshot arrives first and commits.
+      resolvers[1]?.([makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })])
+      await load2
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['FRESH'])
+      expect(store.getState().loading).toBe(false)
+
+      // The STALE snapshot resolves last — last-resolve-wins would
+      // clobber FRESH with STALE here. The generation guard discards it.
+      resolvers[0]?.([makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })])
+      await load1
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['FRESH'])
+      expect(store.getState().blocksById.has('STALE')).toBe(false)
+      expect(store.getState().loading).toBe(false)
+    })
+
+    it('#753 — a stale FAILED load neither resets the newer load’s loading flag nor toasts', async () => {
+      let rejectStale!: (e: unknown) => void
+      const resolvers: Array<(v: unknown) => void> = []
+      mockedInvoke
+        .mockImplementationOnce(
+          async () =>
+            new Promise((_resolve, reject) => {
+              rejectStale = reject
+            }),
+        )
+        .mockImplementationOnce(async () => new Promise((resolve) => resolvers.push(resolve)))
+
+      const load1 = store.getState().load()
+      await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledTimes(1))
+      const load2 = store.getState().load()
+      await vi.waitFor(() => expect(mockedInvoke).toHaveBeenCalledTimes(2))
+
+      // The stale load fails while the newer one is still in flight —
+      // it must not flip `loading` back to false (the newer load owns
+      // the flag) and must not surface an error toast for a snapshot
+      // nobody wants.
+      rejectStale(new Error('stale failure'))
+      await load1
+      expect(store.getState().loading).toBe(true)
+      expect(toast.error).not.toHaveBeenCalled()
+
+      resolvers[0]?.([])
+      await load2
+      expect(store.getState().loading).toBe(false)
+    })
+
     it('preserves focused block content during sync reload', async () => {
       // Pre-populate store with blocks (simulating user editing block A)
       const blockA = makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'user is typing here' })
@@ -449,6 +507,54 @@ describe('PageBlockStore', () => {
       expect(ok).toBe(true)
       expect(store.getState().blocks[0]?.content).toBe('new')
       expect(mockedInvoke).toHaveBeenCalledWith('edit_block', { blockId: 'A', toText: 'new' })
+    })
+
+    it('#753 — adopts the backend-normalized content echo on success', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      // The backend echoes a NORMALIZED version of the text we sent.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'raw text (normalized)',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
+
+      const ok = await store.getState().edit('A', 'raw text')
+
+      expect(ok).toBe(true)
+      // Store mirrors the canonical backend row, not the raw optimistic text.
+      expect(store.getState().blocks[0]?.content).toBe('raw text (normalized)')
+      expect(store.getState().blocksById.get('A')?.content).toBe('raw text (normalized)')
+    })
+
+    it('#753 — a newer in-flight local edit wins over a stale echo', async () => {
+      store.setState({
+        blocks: [makeBlock({ id: 'A', content: 'old' })],
+      })
+      mockedInvoke.mockImplementationOnce(async () => {
+        // A newer optimistic edit lands while the first IPC is in flight.
+        store.setState({ blocks: [makeBlock({ id: 'A', content: 'newer typed text' })] })
+        return {
+          id: 'A',
+          block_type: 'text',
+          content: 'first (normalized)',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+        }
+      })
+
+      const ok = await store.getState().edit('A', 'first')
+
+      expect(ok).toBe(true)
+      // The echo belongs to the SUPERSEDED edit — adopting it would
+      // clobber what the user typed afterwards.
+      expect(store.getState().blocks[0]?.content).toBe('newer typed text')
+      expect(store.getState().blocksById.get('A')?.content).toBe('newer typed text')
     })
 
     it('rolls back optimistic content and resolves false on backend error', async () => {
@@ -2290,6 +2396,51 @@ describe('PageBlockStore', () => {
 
       b.unmount()
       expect(pageBlockRegistry.has(pageId)).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #753 — undo state cleared on provider unmount
+  // ---------------------------------------------------------------------------
+  describe('undo clearPage on provider unmount (#753)', () => {
+    // PageBlockStoreProvider declares `children` as required; cast keeps the
+    // props object simple (same pattern as the registry-guard tests above).
+    const Provider = PageBlockStoreProvider as unknown as (props: {
+      pageId: string
+      children?: ReactNode
+    }) => ReactElement
+
+    it('clears the page undo state when the provider unmounts', () => {
+      const pageId = 'JOURNAL_DAY_PAGE'
+      pageBlockRegistry.delete(pageId)
+
+      // Journal day pages mount one provider per DaySection and have no
+      // PageEditor-style clear path — the provider unmount is the only
+      // place their session undo state can be released.
+      const view = render(createElement(Provider, { pageId }, 'x'))
+      expect(mockClearPage).not.toHaveBeenCalled()
+
+      view.unmount()
+      expect(mockClearPage).toHaveBeenCalledTimes(1)
+      expect(mockClearPage).toHaveBeenCalledWith(pageId)
+    })
+
+    it('a stale unmount does not clear a newer mount’s undo state', () => {
+      const pageId = 'GUARD_PAGE_UNDO'
+      pageBlockRegistry.delete(pageId)
+
+      const a = render(createElement(Provider, { pageId }, 'a'))
+      const b = render(createElement(Provider, { pageId }, 'b'))
+      mockClearPage.mockClear()
+
+      // Provider A's cleanup sees B's registration in the slot — it must
+      // neither delete the registry entry NOR wipe B's live undo state.
+      a.unmount()
+      expect(mockClearPage).not.toHaveBeenCalled()
+
+      b.unmount()
+      expect(mockClearPage).toHaveBeenCalledTimes(1)
+      expect(mockClearPage).toHaveBeenCalledWith(pageId)
     })
   })
 

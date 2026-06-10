@@ -238,6 +238,18 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
   /** Guard: block IDs currently being split. Prevents re-entrant splitBlock calls. */
   const splitInProgress = new Set<string>()
 
+  /**
+   * #753 — load generation counter. `rootParentId` is immutable for the
+   * lifetime of a per-page store, so the old "discard if rootParentId
+   * changed" guard never fired for the real race: two overlapping
+   * `load()` calls for the SAME page (sync:complete reload racing a
+   * mount load) resolved last-write-wins, letting the staler snapshot
+   * clobber the fresher one. Each `load()` claims a generation at start;
+   * after every await it checks it is still the newest claimant and
+   * discards its result otherwise (latest-started load wins).
+   */
+  let loadGeneration = 0
+
   const store = createStore<PageBlockState>((set, get) => ({
     blocks: [],
     blocksById: new Map(),
@@ -260,6 +272,8 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       if (spaceId == null) return
       const rootParentId = get().rootParentId
       if (rootParentId == null) return
+      // #753 — claim a generation (see `loadGeneration` doc above).
+      const generation = ++loadGeneration
       set({ loading: true })
       try {
         const start = performance.now()
@@ -278,6 +292,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         const allBlocks = await loadPageSubtree(rootParentId, spaceId)
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)
         if (get().rootParentId !== rootParentId) return
+        // #753 — a newer load() started while this snapshot was in
+        // flight; discard the stale result and let the newer load own
+        // the store (including its `loading` flag).
+        if (generation !== loadGeneration) return
         let newBlocks = buildFlatTree(allBlocks, rootParentId)
 
         // Preserve focused block's content during sync reload to prevent
@@ -320,6 +338,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         })
       } catch (err) {
         if (get().rootParentId !== rootParentId) return
+        // #753 — a stale failed load must not stomp the newer load's
+        // `loading: true` (or double-toast for a snapshot nobody wants).
+        if (generation !== loadGeneration) return
         set({ loading: false })
         logger.error(
           'page-blocks',
@@ -442,7 +463,24 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [edited]) }
       })
       try {
-        await editBlock(blockId, content)
+        const resp = await editBlock(blockId, content)
+        // #753 — adopt the backend echo instead of discarding it. The
+        // optimistic update above wrote the raw text we SENT; the backend
+        // may normalize it (`edit_block` echoes the canonical BlockRow),
+        // and dropping the echo left store and backend diverged until the
+        // next full load(). Mirrors reorder's resp handling: recompute
+        // inside the functional updater at commit time, and only adopt
+        // when the block still holds the content this call wrote — a
+        // newer in-flight edit must win over this echo.
+        if (typeof resp?.content === 'string' && resp.content !== content) {
+          set((state) => {
+            const cur = state.blocksById.get(blockId)
+            if (!cur || cur.content !== content) return {}
+            const normalized = { ...cur, content: resp.content }
+            const blocks = state.blocks.map((b) => (b.id === blockId ? normalized : b))
+            return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [normalized]) }
+          })
+        }
         notifyUndoNewAction(rootParentId)
         return true
       } catch (err) {
@@ -1092,7 +1130,17 @@ export function PageBlockStoreProvider({
     return () => {
       // Guard (FE-L-3): only delete if the slot still points to OUR store, so a
       // stale unmount cannot clobber a newer registration for the same pageId.
-      if (pageBlockRegistry.get(pageId) === store) pageBlockRegistry.delete(pageId)
+      if (pageBlockRegistry.get(pageId) === store) {
+        pageBlockRegistry.delete(pageId)
+        // #753 — drop the page's session undo state alongside the
+        // registry slot. PageEditor already clears on navigation away,
+        // but journal day pages (DaySection mounts one provider per
+        // day) had NO clear path — every visited day accumulated up to
+        // MAX_REDO_STACK OpRefs in the undo store for the whole
+        // session. Same guard as the registry delete: a stale unmount
+        // must not wipe a newer mount's live undo state.
+        useUndoStore.getState().clearPage(pageId)
+      }
     }
   }, [pageId, store])
 

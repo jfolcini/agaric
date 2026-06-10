@@ -30,7 +30,6 @@ beforeEach(async () => {
   await new Promise<void>((r) => queueMicrotask(r))
   useResolveStore.setState({
     cache: new Map(),
-    pagesList: [],
     version: 0,
     _preloaded: false,
   })
@@ -92,11 +91,6 @@ describe('preload', () => {
       title: 'tag-one',
       deleted: false,
     })
-    expect(state.pagesList).toHaveLength(2)
-    expect(state.pagesList).toEqual([
-      { id: 'PAGE_1', title: 'Page One' },
-      { id: 'PAGE_2', title: 'Page Two' },
-    ])
     expect(state._preloaded).toBe(true)
     // Should have called list_blocks twice (pagination)
     const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
@@ -240,7 +234,7 @@ describe('preload', () => {
     })
   })
 
-  it('preserves pages created via set() during preload in pagesList (#534)', async () => {
+  it('preserves pages created via set() during preload in the cache (#534)', async () => {
     // Simulate a page created via set() before preload completes
     useResolveStore.getState().set('CREATED_DURING', 'New Page', false)
 
@@ -255,10 +249,16 @@ describe('preload', () => {
     await useResolveStore.getState().preload(TEST_SPACE_ID)
 
     const state = useResolveStore.getState()
-    // pagesList should contain both fetched pages AND the page created during preload
-    expect(state.pagesList).toHaveLength(2)
-    expect(state.pagesList.find((p) => p.id === 'PAGE_1')).toBeTruthy()
-    expect(state.pagesList.find((p) => p.id === 'CREATED_DURING')).toBeTruthy()
+    // The cache contains both the fetched page AND the page created
+    // during preload (the merge never drops non-fetched entries).
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'Page One',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'CREATED_DURING'))).toEqual({
+      title: 'New Page',
+      deleted: false,
+    })
   })
 
   it('preload with forceRefresh=true overwrites stale cache entries (B-7)', async () => {
@@ -357,6 +357,122 @@ describe('preload', () => {
 })
 
 // ---------------------------------------------------------------------------
+// preload — in-flight coalescing (#753)
+// ---------------------------------------------------------------------------
+describe('preload in-flight coalescing (#753)', () => {
+  /** Build a list_blocks page response with a single page row. */
+  function pageSnapshot(title: string) {
+    return {
+      items: [{ id: 'PAGE_1', content: title, deleted_at: null }],
+      next_cursor: null,
+      has_more: false,
+    }
+  }
+
+  it('coalesces concurrent preloads of the same space into one scan', async () => {
+    let listBlocksCalls = 0
+    const deferred: Array<(v: unknown) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        listBlocksCalls++
+        return new Promise((resolve) => deferred.push(resolve))
+      }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    // Boot-style double fire: two plain preloads in the same tick.
+    const p1 = useResolveStore.getState().preload(TEST_SPACE_ID)
+    const p2 = useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    await vi.waitFor(() => expect(deferred).toHaveLength(1))
+    deferred[0]?.(pageSnapshot('One'))
+    await Promise.all([p1, p2])
+
+    // ONE full scan served both callers.
+    expect(listBlocksCalls).toBe(1)
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'One',
+      deleted: false,
+    })
+    expect(useResolveStore.getState()._preloaded).toBe(true)
+  })
+
+  it('forceRefresh callers arriving mid-scan collapse into ONE trailing re-scan', async () => {
+    let listBlocksCalls = 0
+    const deferred: Array<(v: unknown) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        listBlocksCalls++
+        return new Promise((resolve) => deferred.push(resolve))
+      }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    const p1 = useResolveStore.getState().preload(TEST_SPACE_ID)
+    // Two sync:complete-style force refreshes land while scan 1 is in
+    // flight — the in-flight snapshot may predate their data, so ONE
+    // trailing re-scan must run (not zero, not two).
+    const p2 = useResolveStore.getState().preload(TEST_SPACE_ID, true)
+    const p3 = useResolveStore.getState().preload(TEST_SPACE_ID, true)
+
+    await vi.waitFor(() => expect(deferred).toHaveLength(1))
+    deferred[0]?.(pageSnapshot('Stale'))
+
+    // The trailing re-scan starts after scan 1 settles.
+    await vi.waitFor(() => expect(deferred).toHaveLength(2))
+    deferred[1]?.(pageSnapshot('Fresh'))
+    await Promise.all([p1, p2, p3])
+
+    expect(listBlocksCalls).toBe(2)
+    // The trailing scan's data wins.
+    expect(useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'PAGE_1'))).toEqual({
+      title: 'Fresh',
+      deleted: false,
+    })
+  })
+
+  it('a preload after the previous one settled starts a fresh scan', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+    await useResolveStore.getState().preload(TEST_SPACE_ID)
+
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(2)
+  })
+
+  it('concurrent preloads of DIFFERENT spaces are not coalesced', async () => {
+    const deferred: Array<(v: unknown) => void> = []
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') {
+        return new Promise((resolve) => deferred.push(resolve))
+      }
+      if (cmd === 'list_tags_by_prefix') return []
+      return null
+    })
+
+    const p1 = useResolveStore.getState().preload(TEST_SPACE_ID)
+    const p2 = useResolveStore.getState().preload(OTHER_SPACE_ID)
+
+    // Two independent scans, one per space.
+    await vi.waitFor(() => expect(deferred).toHaveLength(2))
+    deferred[0]?.({ items: [], next_cursor: null, has_more: false })
+    deferred[1]?.({ items: [], next_cursor: null, has_more: false })
+    await Promise.all([p1, p2])
+
+    const listBlocksCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_blocks')
+    expect(listBlocksCalls).toHaveLength(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // set
 // ---------------------------------------------------------------------------
 describe('set', () => {
@@ -380,22 +496,6 @@ describe('set', () => {
 
     const entry = useResolveStore.getState().cache.get(keyFor(TEST_SPACE_ID, 'ID_1'))
     expect(entry).toEqual({ title: 'Updated Title', deleted: true })
-  })
-
-  it('appends new entry to pagesList', () => {
-    useResolveStore.getState().set('ID_1', 'Page A', false)
-
-    const pagesList = useResolveStore.getState().pagesList
-    expect(pagesList).toHaveLength(1)
-    expect(pagesList[0]).toEqual({ id: 'ID_1', title: 'Page A' })
-  })
-
-  it('does not duplicate in pagesList', () => {
-    useResolveStore.getState().set('ID_1', 'Page A', false)
-    useResolveStore.getState().set('ID_1', 'Page A Updated', false)
-
-    const pagesList = useResolveStore.getState().pagesList
-    expect(pagesList).toHaveLength(1)
   })
 
   it('set and batchSet both bump version inline (FE-H-21 symmetric contract)', () => {
@@ -452,6 +552,67 @@ describe('batchSet', () => {
 
     expect(useResolveStore.getState().version).toBe(versionBefore + 1)
   })
+
+  // #753 — batchSet fires per picker keystroke with mostly already-cached
+  // rows; a no-change call must NOT clone the Map or bump `version`
+  // (every version-subscribed block row re-renders on a bump).
+  it('skips the version bump AND the Map clone when nothing changed (#753)', () => {
+    useResolveStore.getState().batchSet([
+      { id: 'A', title: 'Alpha', deleted: false },
+      { id: 'B', title: 'Beta', deleted: true },
+    ])
+    const versionBefore = useResolveStore.getState().version
+    const cacheBefore = useResolveStore.getState().cache
+
+    // Same ids, same titles, same deleted flags — a pure echo.
+    useResolveStore.getState().batchSet([
+      { id: 'A', title: 'Alpha', deleted: false },
+      { id: 'B', title: 'Beta', deleted: true },
+    ])
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore)
+    // Reference equality — no clone happened at all.
+    expect(state.cache).toBe(cacheBefore)
+  })
+
+  it('bumps version when at least one entry changed (#753)', () => {
+    useResolveStore.getState().batchSet([
+      { id: 'A', title: 'Alpha', deleted: false },
+      { id: 'B', title: 'Beta', deleted: false },
+    ])
+    const versionBefore = useResolveStore.getState().version
+
+    // One unchanged echo + one title change + one deleted-flag change.
+    useResolveStore.getState().batchSet([
+      { id: 'A', title: 'Alpha', deleted: false },
+      { id: 'B', title: 'Beta Renamed', deleted: false },
+      { id: 'C', title: 'Charlie', deleted: true },
+    ])
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: false })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'B'))).toEqual({
+      title: 'Beta Renamed',
+      deleted: false,
+    })
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'C'))).toEqual({
+      title: 'Charlie',
+      deleted: true,
+    })
+  })
+
+  it('a deleted-flag-only change is detected as a change (#753)', () => {
+    useResolveStore.getState().batchSet([{ id: 'A', title: 'Alpha', deleted: false }])
+    const versionBefore = useResolveStore.getState().version
+
+    useResolveStore.getState().batchSet([{ id: 'A', title: 'Alpha', deleted: true }])
+
+    const state = useResolveStore.getState()
+    expect(state.version).toBe(versionBefore + 1)
+    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'A'))).toEqual({ title: 'Alpha', deleted: true })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -495,46 +656,6 @@ describe('resolveStatus', () => {
   it('returns "active" for unknown id', () => {
     const status = useResolveStore.getState().resolveStatus('NONEXISTENT')
     expect(status).toBe('active')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// clearPagesList (FEAT-3 Phase 2)
-// ---------------------------------------------------------------------------
-describe('clearPagesList', () => {
-  it('empties the pagesList array but preserves the cache map', () => {
-    // Pre-seed both `pagesList` (the short-query search list) and
-    // `cache` (the ULID → title resolver map) so we can verify the
-    // asymmetric invalidation contract.
-    const cache = new Map<string, { title: string; deleted: boolean }>([
-      [keyFor(TEST_SPACE_ID, 'PAGE_IN_OTHER_SPACE'), { title: 'Cross-space chip', deleted: false }],
-      [keyFor(TEST_SPACE_ID, 'TAG_GLOBAL'), { title: 'tag-global', deleted: false }],
-    ])
-    const pagesList = [
-      { id: 'PAGE_A1', title: 'Page A1' },
-      { id: 'PAGE_B1', title: 'Page B1' },
-    ]
-    useResolveStore.setState({ cache, pagesList, version: 7 })
-
-    const versionBefore = useResolveStore.getState().version
-    const cacheSizeBefore = useResolveStore.getState().cache.size
-
-    useResolveStore.getState().clearPagesList()
-
-    const state = useResolveStore.getState()
-    expect(state.pagesList).toHaveLength(0)
-    expect(state.cache.size).toBe(cacheSizeBefore)
-    // FEAT-3p7 — clearPagesList no longer touches the composite cache.
-    // Cache flushing on space switch is `clearAllForSpace`'s job.
-    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'PAGE_IN_OTHER_SPACE'))).toEqual({
-      title: 'Cross-space chip',
-      deleted: false,
-    })
-    expect(state.cache.get(keyFor(TEST_SPACE_ID, 'TAG_GLOBAL'))).toEqual({
-      title: 'tag-global',
-      deleted: false,
-    })
-    expect(state.version).toBe(versionBefore + 1)
   })
 })
 
@@ -726,27 +847,5 @@ describe('cache eviction', () => {
       expect(state.cache.has(keyFor(TEST_SPACE_ID, `set-${i}`))).toBe(true)
       expect(state.cache.has(keyFor(TEST_SPACE_ID, `batch-${i}`))).toBe(true)
     }
-  })
-
-  it('set() evicts oldest pagesList entries at MAX_PAGES_LIST_SIZE', () => {
-    // Pre-fill pagesList to 5,000 entries
-    const pagesList = Array.from({ length: 5_000 }, (_, i) => ({
-      id: `page-${i}`,
-      title: `Page ${i}`,
-    }))
-    useResolveStore.setState({ pagesList })
-
-    // Add one more page — should trigger eviction via slice(-5000)
-    useResolveStore.getState().set('new-page', 'New Page', false)
-
-    const state = useResolveStore.getState()
-    expect(state.pagesList.length).toBe(5_000)
-    // The first page should have been evicted
-    expect(state.pagesList.find((p) => p.id === 'page-0')).toBeUndefined()
-    // The new page should be at the end
-    expect(state.pagesList[state.pagesList.length - 1]).toEqual({
-      id: 'new-page',
-      title: 'New Page',
-    })
   })
 })

@@ -91,7 +91,6 @@ beforeEach(async () => {
   await new Promise<void>((r) => queueMicrotask(r))
   useResolveStore.setState({
     cache: new Map(),
-    pagesList: [],
     version: 0,
     _preloaded: false,
   })

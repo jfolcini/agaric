@@ -71,7 +71,7 @@ function mockListAndResolve(items: ReturnType<typeof makeBlock>[], hasMore = fal
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // FEAT-3p7 — `useResolveStore.set` keys entries by `${currentSpaceId}::${ulid}`.
   // Pin a deterministic test space so the `cache.get` assertions below
   // can compose the same prefix.

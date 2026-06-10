@@ -146,7 +146,7 @@ beforeEach(() => {
   // oxlint-disable-next-line typescript/no-explicit-any -- React test env global
   ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   vi.clearAllMocks()
-  useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // FEAT-3p7 — pin a deterministic active space so `useResolveStore.set`
   // composes its key with a known prefix.
   useSpaceStore.setState({

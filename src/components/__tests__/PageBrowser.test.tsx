@@ -4224,7 +4224,7 @@ describe('PageBrowser', () => {
       localStorage.setItem('pageBrowser.densityV1', 'true')
       // Reset the global resolve cache so E5's tag-name fixture doesn't
       // leak across tests.
-      useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+      useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
     })
     afterEach(() => {
       localStorage.removeItem('pageBrowser.densityV1')

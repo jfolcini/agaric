@@ -302,12 +302,14 @@ export const useTabsStore = create<TabsStore>()(
         // already batches. Item #11 closed as "no fix needed; subscribers
         // already batch" in `pending/design-system-perf-review-2026-05-09.md`.
 
-        // FEAT-9: record every navigateToPage call as a recent-visit. The
-        // store dedups by pageId, so repeated visits stay MRU-correct. Note
-        // that we record the visit BEFORE the date-routed branch short-
-        // circuits into Journal — date-titled pages (YYYY-MM-DD) are page
-        // visits too.
-        useRecentPagesStore.getState().recordVisit({ pageId, title })
+        // FEAT-9: record every COMPLETED navigateToPage call as a
+        // recent-visit (the store dedups by pageId, so repeated visits
+        // stay MRU-correct). #753 — the visit is recorded on each branch
+        // AFTER its bail-outs: previously it fired unconditionally at the
+        // top, so a navigation aborted by the `!activeTab` guard below
+        // still polluted the recents list with a page that was never
+        // opened. Date-titled pages (YYYY-MM-DD) are page visits too —
+        // the journal branch records before routing into Journal.
 
         // UX-242: date-titled pages (YYYY-MM-DD) belong to the Journal → Daily
         // view, not the generic page-editor. Route them through the journal
@@ -318,6 +320,7 @@ export const useTabsStore = create<TabsStore>()(
         // below so the user can still reach the page.
         const parsedDate = parseDateTitleToLocalDate(title)
         if (parsedDate !== null) {
+          useRecentPagesStore.getState().recordVisit({ pageId, title })
           useJournalStore.getState().navigateToDate(parsedDate, 'daily')
           // Journal view does not use pageStack at all, so we never push
           // onto it here. Tabs / activeTabIndex are preserved (UX-251).
@@ -332,7 +335,10 @@ export const useTabsStore = create<TabsStore>()(
         const state = get()
         const { tabs, activeTabIndex } = readActiveSlice(state)
         const activeTab = tabs[activeTabIndex]
+        // #753 — aborted navigation: no tab to push onto, so the page is
+        // never opened. Bail BEFORE recording the visit.
         if (!activeTab) return
+        useRecentPagesStore.getState().recordVisit({ pageId, title })
 
         const pageStack = activeTab.pageStack
         const top = pageStack[pageStack.length - 1]
