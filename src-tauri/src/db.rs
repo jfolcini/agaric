@@ -568,6 +568,14 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
 
     // Temporary blocks table: no STRICT, no FK constraints, no CHECK.
     // Migration 73 will rebuild it with the proper constraints.
+    //
+    // #605: `space_id` must be present here — on a DB whose `_sqlx_migrations`
+    // already records 0086, no later migration re-runs to add the column, so
+    // this temp schema is what `recover_derived_state_from_op_log` replays
+    // `set_property(space)` / `delete_property(space)` ops against. Without
+    // the column those arms fail with "no such column: space_id" and turn
+    // recovery into a permanent boot failure (it refires and re-fails on
+    // every startup).
     sqlx::query(
         "CREATE TABLE blocks (
             id             TEXT NOT NULL PRIMARY KEY,
@@ -580,7 +588,8 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
             priority       TEXT,
             due_date       TEXT,
             scheduled_date TEXT,
-            page_id        TEXT
+            page_id        TEXT,
+            space_id       TEXT
         )",
     )
     .execute(&mut *tx)
@@ -1027,6 +1036,37 @@ async fn recover_derived_state_from_op_log(
                         _ => value_text,
                     };
                     if key == crate::op::SPACE_PROPERTY_KEY {
+                        // #605: `blocks.space_id` is `TEXT REFERENCES blocks(id)`
+                        // (migration 0086) and recovery runs with
+                        // `foreign_keys=ON`, so an op whose target space block
+                        // is absent (purged locally, or created on another
+                        // device and never present in the local op_log) would
+                        // trip FK 787 — and because recovery re-runs on every
+                        // boot until it succeeds, that single dangling ref
+                        // becomes a PERMANENT boot failure. Skip the op
+                        // instead, exactly like the generic value_ref branch
+                        // below: a dead ref means the assignment is dead.
+                        // The block keeps its prior (NULL/unchanged) space_id;
+                        // a later import / rebuild reconciles once the space
+                        // block exists (same degrade contract as
+                        // `project_block_full_to_sql`'s subquery stamp).
+                        if let Some(target) = col_value {
+                            let target_exists: i64 = sqlx::query_scalar(
+                                "SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)",
+                            )
+                            .bind(target)
+                            .fetch_one(&mut *tx)
+                            .await?;
+                            if target_exists == 0 {
+                                tracing::warn!(
+                                    block_id,
+                                    space_id = target,
+                                    "recovery: set_property(space) references a missing \
+                                     space block — skipping (dangling value_ref, #605)"
+                                );
+                                continue;
+                            }
+                        }
                         // `space` fans out to the whole owning-page group, like
                         // the live projection (`blocks.space_id`).
                         // `col` is a fixed internal literal from the allowlist
@@ -2741,6 +2781,163 @@ mod tests {
             None,
             "child space_id must ALSO clear via recovery fan-out, not be stranded (#534)"
         );
+    }
+
+    /// #605 regression: op-log recovery of a `set_property(space)` op whose
+    /// target space block is absent (purged, or never present in the local
+    /// op_log) must be SKIPPED — `blocks.space_id` is `REFERENCES blocks(id)`
+    /// and binding the dangling ref straight in trips FK 787, aborting
+    /// recovery (and, because recovery refires every boot, turning one bad op
+    /// into a permanent boot failure). The prior valid space assignment must
+    /// survive (skip = unchanged, not NULL-clobber), and a second recovery
+    /// pass must be idempotent.
+    #[tokio::test]
+    async fn recovery_set_space_dangling_target_skips_not_aborts_605() {
+        let (pool, _dir) = seed_space_recovery_pool(&[
+            // Happy path first: existing space target applies.
+            (
+                1,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1","value_text":null,"value_num":null,"value_date":null}"#,
+            ),
+            // Dangling target: GHOST_SPACE has no blocks row — must be
+            // skipped without aborting the replay tx.
+            (
+                2,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"GHOST_SPACE","value_text":null,"value_num":null,"value_date":null}"#,
+            ),
+        ])
+        .await;
+        // seed_space_recovery_pool unwraps recover_derived_state_from_op_log,
+        // so reaching here proves the dangling ref did not abort recovery.
+
+        assert_eq!(
+            space_id_of(&pool, "PAGE1").await.as_deref(),
+            Some("SPACE1"),
+            "dangling space op must be skipped, leaving the prior valid space (#605)"
+        );
+        assert_eq!(
+            space_id_of(&pool, "CHILD1").await.as_deref(),
+            Some("SPACE1"),
+            "fan-out member must also keep the prior valid space (#605)"
+        );
+
+        // Second pass (recovery refires on every boot while the derived-table
+        // gate stays open) must be idempotent — no error, same end state.
+        recover_derived_state_from_op_log(&pool)
+            .await
+            .expect("second recovery pass must be idempotent, not FK-abort (#605)");
+        assert_eq!(space_id_of(&pool, "PAGE1").await.as_deref(), Some("SPACE1"));
+        assert_eq!(
+            space_id_of(&pool, "CHILD1").await.as_deref(),
+            Some("SPACE1")
+        );
+    }
+
+    /// #605 regression, full boot path (BUG-73 DROP-TABLE corruption): the
+    /// recreated temp `blocks` table must carry `space_id` (no later
+    /// migration re-runs to add it — `_sqlx_migrations` already records
+    /// 0086), so a valid `set_property(space)` op replays onto the column
+    /// instead of aborting boot with "no such column: space_id"; and an op
+    /// whose target space block never reaches the recovered table must be
+    /// skipped, not turn `init_pool` into a permanent boot failure. The
+    /// dangling-target block survives with `space_id` NULL, and a subsequent
+    /// boot (recovery refires while `block_properties` / `block_tags` stay
+    /// empty) succeeds too.
+    #[tokio::test]
+    async fn init_pool_recovery_dangling_space_ref_boots_605() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        let ts = chrono::Utc::now().timestamp_millis();
+        let ops: &[(i64, &str, &str)] = &[
+            (
+                1,
+                "create_block",
+                r#"{"block_id":"SPACE1","block_type":"page","content":"Space","parent_id":null,"position":1}"#,
+            ),
+            (
+                2,
+                "create_block",
+                r#"{"block_id":"PAGE1","block_type":"page","content":"Page A","parent_id":null,"position":2}"#,
+            ),
+            (
+                3,
+                "create_block",
+                r#"{"block_id":"PAGE2","block_type":"page","content":"Page B","parent_id":null,"position":3}"#,
+            ),
+            // Valid target — must apply onto the temp table's space_id column.
+            (
+                4,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1"}"#,
+            ),
+            // GHOST_SPACE has no create_block op — absent after recovery.
+            (
+                5,
+                "set_property",
+                r#"{"block_id":"PAGE2","key":"space","value_ref":"GHOST_SPACE"}"#,
+            ),
+        ];
+        for (seq, op_type, payload) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev1', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // Corrupt: drop blocks so recovery runs on reopen.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        // Boot 1: must NOT abort — neither with "no such column: space_id"
+        // (temp-table schema) nor FK 787 (dangling ref) — the #605 regression.
+        let pool = init_pool(&db_path)
+            .await
+            .expect("boot must survive set_property(space) replay incl. a dangling ref (#605)");
+        let assert_space_ids = |pool: SqlitePool| async move {
+            let valid: Option<String> =
+                sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'PAGE1'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                valid.as_deref(),
+                Some("SPACE1"),
+                "valid space op must apply onto the recovered table's space_id (#605)"
+            );
+            let dangling: Option<String> =
+                sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'PAGE2'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                dangling, None,
+                "block survives with space_id NULL when the target space is absent (#605)"
+            );
+        };
+        assert_space_ids(pool).await;
+
+        // Boot 2: with block_properties / block_tags still empty the
+        // derived-state gate stays open and recovery replays again — a
+        // permanent-boot-failure regression would also re-fail here.
+        let pool = init_pool(&db_path)
+            .await
+            .expect("recovery must stay idempotent across boots (#605)");
+        assert_space_ids(pool).await;
     }
 
     /// #429 regression: recovery replay of a `delete_block` op must (1) cascade
