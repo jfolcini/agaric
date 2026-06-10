@@ -19,7 +19,15 @@
 
 import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
 import type React from 'react'
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -157,6 +165,9 @@ export function BlockTree({
     hasChildrenSet,
   } = useBlockCollapse(blocks, {
     onBeforeCollapse: (blockId) => handleBeforeCollapseRef.current?.(blockId),
+    // #752 — persistence is scoped per page root (one pruned localStorage
+    // entry per page instead of one unbounded global key).
+    pageKey: rootParentId,
   })
 
   // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
@@ -262,7 +273,10 @@ export function BlockTree({
     placeholder: editorPlaceholder,
   })
 
-  rovingEditorRef.current = rovingEditor
+  // (#752) `rovingEditorRef` is synced in the consolidated ref-sync layout
+  // effect below — writing it here during render was a concurrent-rendering
+  // hazard (a thrown/abandoned render would publish a handle from a render
+  // that never committed).
 
   // #82 (PEND-66) — publish this BlockTree's roving editor to the module
   // registry so app-level UI outside the tree (the command palette's
@@ -433,9 +447,8 @@ export function BlockTree({
     t,
   })
 
-  // Sync the flush ref so `useBlockNavigateToLink` (created above) can
-  // call into the latest `handleFlush` lazily.
-  handleFlushRef.current = handleFlush
+  // (`handleFlushRef` — read lazily by `useBlockNavigateToLink` — is synced
+  // in the consolidated ref-sync layout effect below, #752.)
 
   // ── Scroll container ref (for auto-scroll during drag) ──────────────
   const scrollContainerRef = useRef<HTMLElement | null>(null)
@@ -462,16 +475,8 @@ export function BlockTree({
     scrollContainerRef,
   })
 
-  // ── Wire up the onBeforeCollapse ref now that handleFlush is available ──
-  handleBeforeCollapseRef.current = (blockId: string) => {
-    if (focusedBlockId) {
-      const descendants = getDragDescendants(blocks, blockId)
-      if (descendants.has(focusedBlockId)) {
-        handleFlush()
-        setFocused(null)
-      }
-    }
-  }
+  // (`handleBeforeCollapseRef` is wired in the consolidated ref-sync layout
+  // effect below, #752, now that `handleFlush` is available.)
 
   // ── B-14: Clear focus when zoom changes and focused block is outside view ──
   useEffect(() => {
@@ -484,11 +489,6 @@ export function BlockTree({
       setFocused(null)
     }
   }, [zoomedBlockId, blocks, handleFlush, setFocused])
-
-  // ── Sync slash-command + checkbox refs with latest handlers ────────
-  // (`handleNavigateRef` is owned by `useBlockNavigateToLink` above.)
-  handleSlashCommandRef.current = handleSlashCommand
-  handleCheckboxRef.current = handleCheckboxSyntax
 
   const handlePropertySelect = useCallback(
     (item: PickerItem) => {
@@ -511,7 +511,36 @@ export function BlockTree({
     [focusedBlockId, t],
   )
 
-  handlePropertySelectRef.current = handlePropertySelect
+  // ── Consolidated late-bound ref sync (#752) ─────────────────────────
+  // These refs bridge handlers created at different points of this render
+  // to hooks that captured the ref objects earlier (`useRovingEditor`
+  // callbacks, `useBlockNavigateToLink`, `useBlockCollapse`). They used to
+  // be written DURING render, which is a concurrent-rendering hazard: a
+  // render React throws away (StrictMode double-render, a suspended or
+  // aborted concurrent pass) would still have published its handlers. All
+  // of these refs are read exclusively at event time, never during render,
+  // so syncing them once per commit in a layout effect (before the browser
+  // paints, hence before any user event can read them) is equivalent and
+  // safe. No dependency array on purpose — the sync must track every commit.
+  // (`handleNavigateRef` is owned by `useBlockNavigateToLink` above.)
+  useLayoutEffect(() => {
+    rovingEditorRef.current = rovingEditor
+    handleFlushRef.current = handleFlush
+    handleSlashCommandRef.current = handleSlashCommand
+    handleCheckboxRef.current = handleCheckboxSyntax
+    handlePropertySelectRef.current = handlePropertySelect
+    // onBeforeCollapse — rescue focus (flush + clear) when the collapsing
+    // subtree contains the focused block.
+    handleBeforeCollapseRef.current = (blockId: string) => {
+      if (focusedBlockId) {
+        const descendants = getDragDescendants(blocks, blockId)
+        if (descendants.has(focusedBlockId)) {
+          handleFlush()
+          setFocused(null)
+        }
+      }
+    }
+  })
 
   // ── Draft discard callback for Escape ────────────────────────────────
   const handleDiscardDraft = useCallback((blockId: string) => {
@@ -675,9 +704,17 @@ export function BlockTree({
   const activeBlock = dnd.activeId ? (blocksById.get(dnd.activeId) ?? null) : null
   // R8 (#407): how many blocks the drag is actually moving (the active block
   // plus its descendant subtree) — surfaced as a badge on the overlay.
-  const draggingCount = dnd.activeId
-    ? getDragDescendants(collapsedVisible, dnd.activeId).size + 1
-    : 1
+  // #752 — count over the FULL `blocks` list, not `collapsedVisible`: a drag
+  // always moves the whole subtree, so dragging a COLLAPSED parent (whose
+  // children are filtered out of `collapsedVisible`) must still show the
+  // real subtree size instead of "1". Memoised: BlockTree re-renders on every
+  // drag-move (`offsetLeft`/`overId` state in useBlockDnD), while `blocks`
+  // and `activeId` are stable for the whole drag — without the memo the O(n)
+  // subtree scan would re-run per pointer move on large pages.
+  const draggingCount = useMemo(
+    () => (dnd.activeId ? getDragDescendants(blocks, dnd.activeId).size + 1 : 1),
+    [blocks, dnd.activeId],
+  )
 
   // ── Action / resolver bags published via context (MAINT-118) ────────
   // Memoised so descendants only re-render when callbacks change.
@@ -749,6 +786,12 @@ export function BlockTree({
         sensors={dnd.sensors}
         collisionDetection={closestCenter}
         measuring={measuring}
+        // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
+        // already runs the custom `useAutoScrollOnDrag` RAF loop against the
+        // #main-content container. Running both is additive (jank), and the
+        // built-in one ignores `prefers-reduced-motion`, defeating the custom
+        // loop's reduced-motion opt-out.
+        autoScroll={false}
         onDragStart={dnd.handleDragStart}
         onDragMove={dnd.handleDragMove}
         onDragOver={dnd.handleDragOver}

@@ -329,6 +329,49 @@ describe('useBlockDatePicker handleDatePick — date mode', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('create_block', expect.anything())
   })
 
+  // #752 — handleDateMode used to throw/await with no catch anywhere in the
+  // chain (BlockTree's onSelect drops the promise), so any failure became an
+  // unhandled promise rejection with the picker silently closed. It now owns
+  // its error path like the other mode handlers.
+  it('shows error toast when listing pages fails (no unhandled rejection)', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('list failed'))
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      // Must resolve (not reject) — the caller drops the promise.
+      await result.current.handleDatePick(new Date(2025, 0, 15))
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.insertDateLinkFailed')
+  })
+
+  it('shows error toast when creating the date page fails', async () => {
+    mockedInvoke.mockResolvedValueOnce([]) // list_all_pages_in_space
+    mockedInvoke.mockRejectedValueOnce(new Error('create failed')) // create_page_in_space
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 0, 15))
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.insertDateLinkFailed')
+  })
+
+  it('shows error toast when no space is active instead of throwing', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockDatePicker(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleDatePick(new Date(2025, 0, 15))
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.insertDateLinkFailed')
+  })
+
   it('updates pagesListRef when creating new page', async () => {
     mockedInvoke.mockResolvedValueOnce([])
     mockedInvoke.mockResolvedValueOnce('NEW_PAGE')

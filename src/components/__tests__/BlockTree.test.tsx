@@ -292,7 +292,13 @@ beforeEach(() => {
     return emptyPage
   })
   try {
-    localStorage.removeItem('collapsed_ids')
+    // #752 — collapse persistence is scoped per page (`collapsed_ids:<page>`);
+    // drop every collapse key (legacy global one included) so a collapse
+    // toggled in one test can't leak into the next via the shared jsdom
+    // localStorage.
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('collapsed_ids')) localStorage.removeItem(key)
+    }
   } catch {
     // jsdom localStorage may not be available
   }

@@ -32,7 +32,12 @@ function isSuggestionPopupVisible(): boolean {
 }
 
 export interface DeleteBlockOpts {
-  /** Where to place the cursor in the target block after deletion. */
+  /**
+   * Where to place the cursor when deletion focuses the PREVIOUS block
+   * (#752 — forwarded to `RovingEditorHandle.mount`'s `cursorPlacement`).
+   * When deletion focuses the next block instead (first block deleted),
+   * the default placement applies.
+   */
   cursorPlacement: 'end'
 }
 

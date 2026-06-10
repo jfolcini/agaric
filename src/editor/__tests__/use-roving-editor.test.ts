@@ -8,6 +8,7 @@ import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { resetAllShortcuts, setCustomShortcut } from '../../lib/keyboard-config'
 import { logger } from '../../lib/logger'
 import { Underline } from '../extensions/underline'
 import { parse, serialize } from '../markdown-serializer'
@@ -512,6 +513,68 @@ describe('custom extension keyboard shortcuts', () => {
   })
 })
 
+// -- Frozen-at-creation shortcut bindings (#752) ------------------------------
+
+describe('shortcut bindings are frozen at editor creation (#752)', () => {
+  let editor: Editor
+
+  afterEach(() => {
+    editor?.destroy()
+    resetAllShortcuts()
+  })
+
+  /** Run a keydown through the editor's ProseMirror keymap plugins. */
+  function dispatchKeydown(
+    ed: Editor,
+    key: string,
+    mods: { ctrlKey?: boolean; shiftKey?: boolean } = {},
+  ): boolean {
+    return (
+      ed.view.someProp('handleKeyDown', (handler) =>
+        handler(ed.view, new KeyboardEvent('keydown', { key, ...mods })),
+      ) ?? false
+    )
+  }
+
+  function setHelloContentSelected(ed: Editor): void {
+    ed.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+    ed.commands.selectAll()
+  }
+
+  it('honours a Settings rebind that existed BEFORE the editor was created', () => {
+    setCustomShortcut('inlineCode', 'Ctrl + M')
+    editor = createEditor([CodeWithShortcut])
+    setHelloContentSelected(editor)
+
+    expect(dispatchKeydown(editor, 'm', { ctrlKey: true })).toBe(true)
+    expect(editor.isActive('code')).toBe(true)
+  })
+
+  // Pins the freeze contract: TipTap builds its keymap exactly once from
+  // `addKeyboardShortcuts()`, so `getShortcutKeys` is read at editor
+  // creation only. A rebind made while an editor is alive does NOT take
+  // effect until a new editor is created (app reload) — unlike the
+  // document-level `matchesShortcutBinding` listeners, which are live.
+  // If live rebinding is ever implemented (handleKeyDown dispatch instead
+  // of a static keymap), update this test deliberately.
+  it('does NOT pick up a rebind made AFTER the editor was created (reload required)', () => {
+    editor = createEditor([CodeWithShortcut]) // default binding: Ctrl + E
+    setCustomShortcut('inlineCode', 'Ctrl + M')
+    setHelloContentSelected(editor)
+
+    // The new binding is dead on the existing editor…
+    expect(dispatchKeydown(editor, 'm', { ctrlKey: true })).toBe(false)
+    expect(editor.isActive('code')).toBe(false)
+
+    // …while the binding captured at creation still fires.
+    expect(dispatchKeydown(editor, 'e', { ctrlKey: true })).toBe(true)
+    expect(editor.isActive('code')).toBe(true)
+  })
+})
+
 // -- Mount logic (replaceDocSilently with real Editor) ------------------------
 
 describe('mount logic (real Editor)', () => {
@@ -683,6 +746,42 @@ describe('useRovingEditor integration (renderHook)', () => {
 
     expect(result.current.activeBlockId).toBe('block-1')
     expect(result.current.originalMarkdown).toBe('hello world')
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  // #752 — DeleteBlockOpts.cursorPlacement is forwarded to mount(); 'end'
+  // must land the caret at the end of the document instead of the bare
+  // focus() default.
+  it("mount() with cursorPlacement 'end' places the caret at the end of the doc", async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-cp-1', 'hello world', { cursorPlacement: 'end' })
+    })
+
+    const editor = result.current.editor as Editor
+    const { from, empty } = editor.state.selection
+    expect(empty).toBe(true)
+    // End of a single-paragraph doc: docSize - 1 (inside the paragraph).
+    expect(from).toBe(editor.state.doc.content.size - 1)
+
+    result.current.editor?.destroy()
+    unmountHook()
+  })
+
+  it("mount() with cursorPlacement 'start' places the caret at the start of the doc", async () => {
+    const { result, unmount: unmountHook } = await setup()
+
+    act(() => {
+      result.current.mount('block-cp-2', 'hello world', { cursorPlacement: 'start' })
+    })
+
+    const editor = result.current.editor as Editor
+    const { from, empty } = editor.state.selection
+    expect(empty).toBe(true)
+    expect(from).toBe(1)
 
     result.current.editor?.destroy()
     unmountHook()

@@ -7,6 +7,7 @@ import { notify } from '@/lib/notify'
 
 import { parse } from '../editor/markdown-serializer'
 import { pmEndOfFirstBlock } from '../editor/types'
+import type { DeleteBlockOpts } from '../editor/use-block-keyboard'
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { announce } from '../lib/announcer'
 import type { FlatBlock } from '../lib/tree-utils'
@@ -73,7 +74,7 @@ export interface UseBlockKeyboardHandlersParams {
 export interface UseBlockKeyboardHandlersReturn {
   handleFocusPrev: () => void
   handleFocusNext: () => void
-  handleDeleteBlock: () => void
+  handleDeleteBlock: (opts?: DeleteBlockOpts) => void
   handleIndent: () => void
   handleDedent: () => void
   handleMoveUp: () => void
@@ -144,32 +145,43 @@ export function useBlockKeyboardHandlers({
     }
   }, [collapsedVisible, focusedBlockId, setFocused, t])
 
-  const handleDeleteBlock = useCallback(() => {
-    if (!focusedBlockId) return
-    if (deleteInProgress.current) return
-    if (collapsedVisible.length <= 1) {
-      notify.error(t('blockTree.cannotDeleteLastBlock'))
-      return
-    }
-    deleteInProgress.current = true
-    const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
-    rovingEditorRef.current.unmount()
-    remove(focusedBlockId).finally(() => {
-      deleteInProgress.current = false
-    })
-    announce(t('announce.blockDeleted'))
-    if (idx > 0) {
-      const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
-      setFocused(prevBlock.id)
-      rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '')
-    } else if (idx + 1 < collapsedVisible.length) {
-      const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
-      setFocused(nextBlock.id)
-      rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
-    } else {
-      setFocused(null)
-    }
-  }, [focusedBlockId, collapsedVisible, remove, setFocused, t])
+  const handleDeleteBlock = useCallback(
+    (opts?: DeleteBlockOpts) => {
+      if (!focusedBlockId) return
+      if (deleteInProgress.current) return
+      if (collapsedVisible.length <= 1) {
+        notify.error(t('blockTree.cannotDeleteLastBlock'))
+        return
+      }
+      deleteInProgress.current = true
+      const idx = collapsedVisible.findIndex((b) => b.id === focusedBlockId)
+      rovingEditorRef.current.unmount()
+      remove(focusedBlockId).finally(() => {
+        deleteInProgress.current = false
+      })
+      announce(t('announce.blockDeleted'))
+      if (idx > 0) {
+        const prevBlock = collapsedVisible[idx - 1] as (typeof collapsedVisible)[number]
+        setFocused(prevBlock.id)
+        // #752 — honour the caller's cursor-placement hint (Backspace on an
+        // empty block lands the caret at the END of the previous block, the
+        // way a plain-text backspace would).
+        rovingEditorRef.current.mount(prevBlock.id, prevBlock.content ?? '', {
+          cursorPlacement: opts?.cursorPlacement,
+        })
+      } else if (idx + 1 < collapsedVisible.length) {
+        // Deleting the FIRST block focuses the NEXT one. The 'end' hint is
+        // intentionally NOT applied here: the caret belongs at the default
+        // (start) position when focus moves forward.
+        const nextBlock = collapsedVisible[idx + 1] as (typeof collapsedVisible)[number]
+        setFocused(nextBlock.id)
+        rovingEditorRef.current.mount(nextBlock.id, nextBlock.content ?? '')
+      } else {
+        setFocused(null)
+      }
+    },
+    [focusedBlockId, collapsedVisible, remove, setFocused, t],
+  )
 
   const handleIndent = useCallback(() => {
     if (!focusedBlockId) return

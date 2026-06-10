@@ -95,6 +95,19 @@ export function shouldSplitOnBlur(markdown: string): boolean {
 // only ship one copy of the grammars (see `src/lib/lowlight-curated.ts`).
 const lowlight = curatedLowlight
 
+// ── Configurable formatting shortcuts ────────────────────────────────────
+// NOTE (#752): the bindings below are FROZEN at editor creation. TipTap
+// builds its keymap exactly once from `addKeyboardShortcuts()`, so
+// `getShortcutKeys(...)` is read a single time when the Editor instance is
+// constructed. A Settings rebind therefore only applies to editors created
+// afterwards (in practice: after an app reload) — unlike the document-level
+// listeners that route through `matchesShortcutBinding` on every keydown
+// and pick rebinds up live. This freeze is pinned by the
+// "shortcut bindings are frozen at editor creation (#752)" test in
+// `__tests__/use-roving-editor.test.ts`; if live rebinding is ever wanted
+// here, the extensions must dispatch through a `handleKeyDown` plugin prop
+// instead of a static keymap.
+
 /** Inline Code with configurable shortcut to toggle inline code. @internal Exported for testing. */
 export const CodeWithShortcut = Code.extend({
   addKeyboardShortcuts() {
@@ -203,14 +216,26 @@ export interface RovingEditorOptions {
   resolveTagStatus?: ((id: string) => 'active' | 'deleted') | undefined
 }
 
+/** Options for {@link RovingEditorHandle.mount}. */
+export interface MountOptions {
+  /**
+   * Where to place the caret after the mount focuses the editor.
+   * `'end'` → end of the document (e.g. Backspace-delete landing in the
+   * previous block); `'start'` → start. Omitted → TipTap's default focus
+   * behaviour (restore previous selection / document start).
+   */
+  cursorPlacement?: 'start' | 'end' | undefined
+}
+
 export interface RovingEditorHandle {
   /** The TipTap editor instance (null before first mount). */
   editor: Editor | null
   /**
    * Mount the editor into a block. Parses markdown → PM doc → setContent.
    * Undo history is reset — Ctrl+Z never crosses the mount boundary.
+   * `opts.cursorPlacement` positions the caret after focus (#752).
    */
-  mount: (blockId: string, markdown: string) => void
+  mount: (blockId: string, markdown: string, opts?: MountOptions) => void
   /**
    * Unmount the editor. Serializes PM doc → markdown. Returns the new
    * markdown string if content changed, or null if unchanged.
@@ -412,7 +437,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   }, [editor])
 
   const mount = useCallback(
-    (blockId: string, markdown: string) => {
+    (blockId: string, markdown: string, opts?: MountOptions) => {
       if (!editor) return
       activeBlockIdRef.current = blockId
       originalMarkdownRef.current = markdown
@@ -477,7 +502,10 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
         tr.setMeta('addToHistory', false)
         editor.view.dispatch(tr)
       }
-      editor.commands.focus()
+      // #752 — honour the caller's cursor-placement hint (previously the
+      // `DeleteBlockOpts.cursorPlacement` contract was documented + passed
+      // but silently dropped by this bare `focus()`).
+      editor.commands.focus(opts?.cursorPlacement ?? null)
       editor.on('update', handleEditorUpdate)
     },
     [editor, handleEditorUpdate],

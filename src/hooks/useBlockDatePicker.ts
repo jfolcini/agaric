@@ -3,6 +3,7 @@ import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 import type { RovingEditorHandle } from '../editor/use-roving-editor'
@@ -130,41 +131,59 @@ async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
 /**
  * Find or create a dedicated "date page" and insert a link to it at the
  * current editor cursor position.
+ *
+ * #752 — owns its own error path like the other mode handlers: nothing up
+ * the chain catches (`handleDatePick`'s promise is dropped by BlockTree's
+ * `onSelect`), so a rejection here used to surface as an unhandled promise
+ * rejection with the picker silently closed and no feedback.
  */
 async function handleDateMode(ctx: DatePickContext): Promise<void> {
-  // BUG-1 / H-3b — date pages must own a `space` property to surface
-  // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
-  // path leaks pages without `space`, so route through the atomic
-  // `createPageInSpace` helper using the active space from the store.
-  const currentSpaceId = useSpaceStore.getState().currentSpaceId
-  if (currentSpaceId === null || currentSpaceId === undefined) {
-    throw new Error('No active space; cannot create date page')
-  }
-  // limit-clamp-followup — `listAllPagesInSpace` returns every page in
-  // the active space (no pagination, no silent clamp), so journal /
-  // date pages past index 99 are no longer truncated.  The
-  // `currentSpaceId` null-check above guarantees a real spaceId, so no
-  // pre-bootstrap fallback is needed here.
-  const pages = await listAllPagesInSpace(currentSpaceId)
-  const existing = pages.find((p) => p.content === ctx.dateStr || p.content === ctx.legacyStr)
-  let datePageId = existing?.id
-  if (!datePageId) {
-    const newPageId = await createPageInSpace({
-      content: ctx.dateStr,
-      spaceId: currentSpaceId,
-    })
-    datePageId = newPageId
-    useResolveStore.getState().set(newPageId, ctx.dateStr, false)
-    ctx.pagesListRef.current = [...ctx.pagesListRef.current, { id: newPageId, title: ctx.dateStr }]
-  }
+  try {
+    // BUG-1 / H-3b — date pages must own a `space` property to surface
+    // in PageBrowser. The legacy `createBlock({ blockType: 'page' })`
+    // path leaks pages without `space`, so route through the atomic
+    // `createPageInSpace` helper using the active space from the store.
+    const currentSpaceId = useSpaceStore.getState().currentSpaceId
+    if (currentSpaceId === null || currentSpaceId === undefined) {
+      throw new Error('No active space; cannot create date page')
+    }
+    // limit-clamp-followup — `listAllPagesInSpace` returns every page in
+    // the active space (no pagination, no silent clamp), so journal /
+    // date pages past index 99 are no longer truncated.  The
+    // `currentSpaceId` null-check above guarantees a real spaceId, so no
+    // pre-bootstrap fallback is needed here.
+    const pages = await listAllPagesInSpace(currentSpaceId)
+    const existing = pages.find((p) => p.content === ctx.dateStr || p.content === ctx.legacyStr)
+    let datePageId = existing?.id
+    if (!datePageId) {
+      const newPageId = await createPageInSpace({
+        content: ctx.dateStr,
+        spaceId: currentSpaceId,
+      })
+      datePageId = newPageId
+      useResolveStore.getState().set(newPageId, ctx.dateStr, false)
+      ctx.pagesListRef.current = [
+        ...ctx.pagesListRef.current,
+        { id: newPageId, title: ctx.dateStr },
+      ]
+    }
 
-  if (ctx.rovingEditor.editor && datePageId) {
-    const editor = ctx.rovingEditor.editor
-    const id = datePageId
-    editor.commands.focus()
-    requestAnimationFrame(() => {
-      editor.chain().focus().insertBlockLink(id).run()
-    })
+    if (ctx.rovingEditor.editor && datePageId) {
+      const editor = ctx.rovingEditor.editor
+      const id = datePageId
+      editor.commands.focus()
+      requestAnimationFrame(() => {
+        editor.chain().focus().insertBlockLink(id).run()
+      })
+    }
+  } catch (err) {
+    logger.error(
+      'useBlockDatePicker',
+      'Failed to insert date link',
+      { blockId: ctx.blockId ?? '' },
+      err,
+    )
+    notify.error(ctx.t('blockTree.insertDateLinkFailed'))
   }
 }
 
