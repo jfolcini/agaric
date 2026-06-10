@@ -69,6 +69,15 @@ export function useViewportObserver(rootMargin = '200px 0px'): ViewportObserver 
       { rootMargin },
     )
 
+    // Ref callbacks run during commit, *before* this passive effect, so
+    // elements mounted in the hook's first commit (or while the observer
+    // is being rebuilt after a `rootMargin` change) land in
+    // `elementsByIdRef` while `observerRef.current` is still null and
+    // would otherwise never be observed. Catch them up here (#755).
+    for (const el of elementsByIdRef.current.values()) {
+      observerRef.current.observe(el)
+    }
+
     return () => {
       observerRef.current?.disconnect()
       observerRef.current = null

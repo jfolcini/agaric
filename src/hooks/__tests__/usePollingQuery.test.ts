@@ -215,6 +215,91 @@ describe('usePollingQuery', () => {
     expect(result.current.data).toBe('b')
   })
 
+  // ── #755: stale-response guard (requestIdRef) ──────────────────
+
+  describe('stale-response guard (#755)', () => {
+    it('discards a stale response when queryFn changes mid-flight', async () => {
+      let resolveFirst!: (v: string) => void
+      const qf1 = vi.fn(
+        () =>
+          new Promise<string>((r) => {
+            resolveFirst = r
+          }),
+      )
+      const qf2 = vi.fn().mockResolvedValue('fresh')
+
+      const { result, rerender } = renderHook(
+        ({ qf }: { qf: () => Promise<string> }) => usePollingQuery(qf, { intervalMs: 5000 }),
+        { initialProps: { qf: qf1 } },
+      )
+
+      // First request still in flight; deps change restarts polling.
+      rerender({ qf: qf2 })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(result.current.data).toBe('fresh')
+
+      // The slow superseded request finally resolves — it must NOT
+      // overwrite the newer response.
+      await act(async () => resolveFirst('stale'))
+      expect(result.current.data).toBe('fresh')
+      expect(result.current.loading).toBe(false)
+    })
+
+    it('discards a stale rejection — no error flash from a superseded request', async () => {
+      let rejectFirst!: (e: Error) => void
+      const qf1 = vi.fn(
+        () =>
+          new Promise<string>((_r, rej) => {
+            rejectFirst = rej
+          }),
+      )
+      const qf2 = vi.fn().mockResolvedValue('fresh')
+
+      const { result, rerender } = renderHook(
+        ({ qf }: { qf: () => Promise<string> }) =>
+          usePollingQuery(qf, { intervalMs: 5000, errorMessage: 'Load failed' }),
+        { initialProps: { qf: qf1 } },
+      )
+
+      rerender({ qf: qf2 })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(result.current.data).toBe('fresh')
+
+      await act(async () => rejectFirst(new Error('stale failure')))
+      expect(result.current.error).toBeNull()
+      expect(result.current.data).toBe('fresh')
+    })
+
+    it('ignores an in-flight response after enabled flips to false', async () => {
+      let resolve!: (v: string) => void
+      const queryFn = vi.fn(
+        () =>
+          new Promise<string>((r) => {
+            resolve = r
+          }),
+      )
+      const { result, rerender } = renderHook(
+        ({ enabled }: { enabled: boolean }) =>
+          usePollingQuery(queryFn, { intervalMs: 5000, enabled }),
+        { initialProps: { enabled: true } },
+      )
+
+      expect(result.current.loading).toBe(true)
+
+      rerender({ enabled: false })
+      // The discarded request can no longer clear loading; the effect does.
+      expect(result.current.loading).toBe(false)
+
+      await act(async () => resolve('late'))
+      expect(result.current.data).toBeNull()
+      expect(result.current.loading).toBe(false)
+    })
+  })
+
   // ── PERF-21: visibility-aware polling ──────────────────────────
 
   describe('document.hidden gating (PERF-21)', () => {
