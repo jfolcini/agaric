@@ -61,13 +61,54 @@ pub async fn get_local_heads(pool: &SqlitePool) -> Result<Vec<DeviceHead>, AppEr
 
 /// Check whether a full reset is required for sync with a remote peer.
 ///
-/// Returns `true` if the remote advertises a `(device_id, seq)` that we no
-/// longer have in our op log (e.g. after compaction).
+/// Returns `true` only when the remote advertises a head for **our own
+/// device** (`local_device_id`) that our op log can no longer satisfy —
+/// i.e. the peer claims to have observed ops we authored, but we have
+/// lost that history (log compacted past the peer's frontier, vault
+/// restored from an older backup, …). In that situation a delta replay
+/// is impossible and the daemon layer falls back to snapshot catch-up.
+///
+/// # Why only own-device heads (#602)
+///
+/// Post-#490-M1 the local `op_log` is strictly device-local: the only
+/// writer is `op_log::append_local_op*` (the local command path), and
+/// inbound sync lands remote state via the Loro engine import + SQL
+/// projection + write-ahead inbox
+/// ([`crate::sync_protocol::loro_sync::import_and_project`]) — it never
+/// inserts the peer's ops into our `op_log`. Resolving a *remote*
+/// device's advertised `(device_id, seq)` against the local `op_log` is
+/// therefore unconditionally `NotFound` the moment that peer has made
+/// any local edit, which degenerated EVERY session between two edited
+/// devices into `ResetRequired` → stale-snapshot refusal (M-58) →
+/// backoff, forever (issue #602). Remote-frontier staleness is instead
+/// detected where it can be answered correctly: the Loro version-vector
+/// reachability gate in [`crate::sync_protocol::loro_sync::apply_remote`]
+/// (MAINT-228 → `SnapshotFallbackRequested` → `ResetRequired`).
+///
+/// A `seq <= 0` claim means "I have observed none of your ops" and is
+/// trivially satisfiable — never a reset condition ([`get_local_heads`]
+/// only ever advertises seqs `>= 1`, but synthetic/legacy peers send 0).
+///
+/// TODO(#87 plan §10.5): once per-peer version vectors are persisted
+/// (`peer_refs.loro_vv_bytes`) and the orchestrator sends incremental
+/// `Update`s, head/reset detection should move to vv comparison
+/// entirely and this op-log-seq check can be retired from the
+/// handshake.
 pub async fn check_reset_required(
     pool: &SqlitePool,
+    local_device_id: &str,
     remote_heads: &[DeviceHead],
 ) -> Result<bool, AppError> {
     for head in remote_heads {
+        // #602: the local op_log can only validly answer questions about
+        // ops THIS device authored — skip every other device's head.
+        if head.device_id != local_device_id {
+            continue;
+        }
+        // "Zero ops observed" is trivially covered.
+        if head.seq <= 0 {
+            continue;
+        }
         // I-Core-8: wrap to typed read-pool — caller is in write context
         match op_log::get_op_by_seq(&ReadPool(pool.clone()), &head.device_id, head.seq).await {
             Ok(_) => {}

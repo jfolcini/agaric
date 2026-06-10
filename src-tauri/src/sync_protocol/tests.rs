@@ -168,6 +168,101 @@ async fn get_local_heads_plan_uses_index_seeks() {
     );
 }
 
+// ── check_reset_required (#602) ─────────────────────────────────────
+
+/// #602 regression, unit level: a head advertised for a REMOTE device
+/// must NOT trigger a reset, no matter that it is absent from the
+/// local op_log — post-#490-M1 remote ops never land there (only
+/// `append_local_op*` writes the op_log), so the absence carries no
+/// information. Pre-fix this returned `true`, degenerating every
+/// session between two edited devices into ResetRequired.
+#[tokio::test]
+async fn check_reset_required_ignores_remote_device_heads() {
+    let (pool, _dir) = test_pool().await;
+
+    // Local device has one op of its own.
+    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK1"), FIXED_TS)
+        .await
+        .unwrap();
+
+    // Remote advertises its OWN head — never present in our op_log.
+    let remote_heads = vec![DeviceHead {
+        device_id: "remote-dev".into(),
+        seq: 7,
+        hash: "remote-hash".into(),
+    }];
+
+    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
+        .await
+        .unwrap();
+    assert!(
+        !reset,
+        "#602: a remote device's head must not be resolved against the \
+         local op_log — it can never be there post-#490-M1"
+    );
+}
+
+/// The genuine reset case the local op_log CAN detect: the remote
+/// claims to have observed ops WE authored at a seq we no longer have
+/// (compaction past the peer's frontier / own-history loss).
+#[tokio::test]
+async fn check_reset_required_detects_own_history_loss() {
+    let (pool, _dir) = test_pool().await;
+
+    // Local device has seq 1 only; the remote claims it observed our
+    // seq 5 — we lost (or never had) that history.
+    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK2"), FIXED_TS)
+        .await
+        .unwrap();
+
+    let remote_heads = vec![DeviceHead {
+        device_id: "local-dev".into(),
+        seq: 5,
+        hash: "claimed-own-hash".into(),
+    }];
+
+    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
+        .await
+        .unwrap();
+    assert!(
+        reset,
+        "an own-device head we cannot satisfy must still trigger reset \
+         (compaction / own-history loss)"
+    );
+}
+
+/// An own-device head we DO satisfy must not trigger a reset; a seq-0
+/// claim ("I have observed none of your ops") is trivially covered.
+#[tokio::test]
+async fn check_reset_required_satisfied_and_zero_seq_heads_pass() {
+    let (pool, _dir) = test_pool().await;
+
+    append_local_op_at(&pool, "local-dev", test_create_payload("CRRBLK3"), FIXED_TS)
+        .await
+        .unwrap();
+
+    let remote_heads = vec![
+        DeviceHead {
+            device_id: "local-dev".into(),
+            seq: 1,
+            hash: "own-hash".into(),
+        },
+        DeviceHead {
+            device_id: "fresh-peer".into(),
+            seq: 0,
+            hash: String::new(),
+        },
+    ];
+
+    let reset = check_reset_required(&pool, "local-dev", &remote_heads)
+        .await
+        .unwrap();
+    assert!(
+        !reset,
+        "satisfied own-device head + seq-0 peer head must not reset"
+    );
+}
+
 // ── complete_sync ───────────────────────────────────────────────────
 
 #[tokio::test]

@@ -3373,35 +3373,19 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     resp_mat.dispatch_op(&record).await.unwrap();
     resp_mat.flush_foreground().await.unwrap();
 
-    // M-58: also seed an op attributed to the initiator on the
-    // responder side. In the real flow this would have been delivered
-    // via a prior sync session; here we synthesize it directly so the
-    // snapshot's `up_to_seqs` covers FEAT6_INIT as well as FEAT6_RESP.
-    // Without this, M-58's covering check correctly rejects the offer
-    // (snapshot would NOT cover the initiator's advertised FEAT6_INIT
-    // head and applying it would silently wipe the initiator's own
-    // op_log entry — see `apply_snapshot` which `DELETE FROM op_log`s).
-    let init_record = append_local_op_at(
-        &resp_pool,
-        "FEAT6_INIT",
-        OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: BlockId::test_id("FEAT6BLK002"),
-            block_type: "content".into(),
-            parent_id: None,
-            position: Some(2),
-            index: None,
-            content: "initiator-origin op already mirrored on responder".into(),
-        }),
-        1_736_942_401_000,
-    )
-    .await
-    .unwrap();
-    resp_mat.dispatch_op(&init_record).await.unwrap();
-    resp_mat.flush_foreground().await.unwrap();
+    // #602: NO op is hand-seeded into the responder's op_log for the
+    // initiator's device any more. Post-#490-M1 the op_log is strictly
+    // device-local (only `append_local_op*` writes it; inbound sync
+    // lands remote state via the Loro engine + SQL projection, never
+    // the op_log), so a responder NEVER holds rows for the initiator's
+    // device — the old hand-seed here ("delivered via a prior sync
+    // session", a flow that no longer exists) masked exactly the #602
+    // bug. The snapshot's `up_to_seqs` is therefore `{FEAT6_RESP: 1}`
+    // only — the shape a real responder produces.
 
     // Create a snapshot BEFORE simulating compaction. The snapshot
     // captures the current state of `blocks`, etc., and an
-    // `up_to_seqs` of `{FEAT6_RESP: 1, FEAT6_INIT: 1}`.
+    // `up_to_seqs` of `{FEAT6_RESP: 1}`.
     create_snapshot(&resp_pool, "FEAT6_RESP").await.unwrap();
 
     // Simulate compaction: wipe the responder's op_log so it cannot
@@ -3457,18 +3441,28 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
 
     // Initiator side: we drive a minimal client manually through the
     // wire protocol to exercise the same code path as
-    // `run_sync_session` without the full daemon scaffolding. The
-    // initiator claims heads for BOTH devices at the seqs the
-    // responder's snapshot recorded (1 each). The responder's op_log
-    // is empty after the simulated compaction, so any head lookup
-    // fails — `check_reset_required` returns true and the orchestrator
-    // transitions to `ResetRequired`. M-58's covering check then
-    // confirms the snapshot at `{FEAT6_RESP: 1, FEAT6_INIT: 1}` covers
-    // the initiator's frontier and lets the offer proceed.
+    // `run_sync_session` without the full daemon scaffolding.
+    //
+    // #602: the initiator advertises its own device at seq 0 (it has no
+    // local ops — its DB is empty; the head also serves as the wire-
+    // level peer identification that production additionally gets from
+    // the TLS cert CN) plus a STALE claim on the responder's own
+    // history at seq 1. The responder's op_log is empty after the
+    // simulated compaction, so `check_reset_required`'s own-device
+    // lookup for `(FEAT6_RESP, 1)` fails — the orchestrator transitions
+    // to `ResetRequired` (the one genuine reset case the local op_log
+    // can still detect post-#490-M1: the peer observed ops we authored
+    // but no longer have). M-58's covering check then confirms the
+    // snapshot at `{FEAT6_RESP: 1}` covers the initiator's frontier
+    // (seq-0 self head is trivially covered) and lets the offer
+    // proceed. Had the initiator claimed own ops (seq >= 1), M-58 would
+    // — correctly — refuse, because applying the snapshot wipes the
+    // initiator's op_log (see
+    // `try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote`).
     let init_self_head = DeviceHead {
         device_id: "FEAT6_INIT".into(),
-        seq: 1,
-        hash: "fake_init_hash".into(),
+        seq: 0,
+        hash: String::new(),
     };
     let stale_resp_head = DeviceHead {
         device_id: "FEAT6_RESP".into(),
@@ -3523,16 +3517,17 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     init_mat.flush_background().await.unwrap();
 
     // ── Verify: initiator now has the snapshot's blocks ───────────────
-    // The snapshot covers both seeded ops (FEAT6_RESP's and the
-    // mirrored FEAT6_INIT op added in the M-58 setup), so the
-    // initiator's `blocks` table should hold both rows post-apply.
+    // The snapshot covers the responder's seeded op only (#602: nothing
+    // is hand-mirrored into the responder's op_log for FEAT6_INIT any
+    // more), so the initiator's `blocks` table holds exactly that row
+    // post-apply.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
         .fetch_one(&init_pool)
         .await
         .unwrap();
     assert_eq!(
-        count, 2,
-        "initiator must have both blocks from the responder's snapshot"
+        count, 1,
+        "initiator must have the responder's snapshot block"
     );
 
     let content: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = 'FEAT6BLK001'")
@@ -3561,6 +3556,267 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
 
     resp_mat.shutdown();
     init_mat.shutdown();
+}
+
+// ======================================================================
+// #602 — two devices with local edits must converge via normal sessions
+// ======================================================================
+
+/// Serde round-trip a message through its JSON wire encoding — exactly
+/// what `SyncConnection::send_json` / `recv_json` do on the real
+/// transport.
+fn wire_roundtrip_602(msg: &SyncMessage) -> SyncMessage {
+    let json = serde_json::to_string(msg).expect("serialize SyncMessage");
+    serde_json::from_str(&json).expect("deserialize SyncMessage")
+}
+
+/// Drive one full initiator↔responder session at the protocol layer,
+/// mirroring the message loops of `run_sync_session` (initiator) and
+/// `handle_incoming_sync` (responder): each side feeds incoming
+/// messages to `handle_message`, forwards the reply, and drains
+/// `next_message` — until neither side has anything left to deliver.
+async fn pump_full_session_602(
+    initiator: &mut crate::sync_protocol::SyncOrchestrator,
+    responder: &mut crate::sync_protocol::SyncOrchestrator,
+) {
+    use std::collections::VecDeque;
+    let first = initiator.start().await.expect("initiator start");
+    let mut to_responder: VecDeque<SyncMessage> = VecDeque::from([wire_roundtrip_602(&first)]);
+    let mut to_initiator: VecDeque<SyncMessage> = VecDeque::new();
+    loop {
+        let mut progressed = false;
+        while let Some(msg) = to_responder.pop_front() {
+            progressed = true;
+            if let Some(resp) = responder
+                .handle_message(msg)
+                .await
+                .expect("responder handle_message")
+            {
+                to_initiator.push_back(wire_roundtrip_602(&resp));
+            }
+            while let Some(m) = responder.next_message() {
+                to_initiator.push_back(wire_roundtrip_602(&m));
+            }
+        }
+        while let Some(msg) = to_initiator.pop_front() {
+            progressed = true;
+            if let Some(resp) = initiator
+                .handle_message(msg)
+                .await
+                .expect("initiator handle_message")
+            {
+                to_responder.push_back(wire_roundtrip_602(&resp));
+            }
+            while let Some(m) = initiator.next_message() {
+                to_responder.push_back(wire_roundtrip_602(&m));
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+}
+
+/// #602: make ONE local edit on a device through the real local-edit
+/// pipeline: op_log append (`append_local_op_at`, the only legitimate
+/// op_log writer) → materializer SQL projection (`dispatch_op`) →
+/// engine dispatch (`merge::engine_apply` — the same call
+/// `dispatch_for_record` makes in production, invoked here against
+/// THIS device's registry because the process-global `OnceLock`
+/// registry cannot represent two devices in one test process).
+///
+/// Crucially this seeds ONLY the device's own state — nothing is ever
+/// hand-written into the PEER's op_log (post-#490-M1 no real flow does).
+async fn make_local_edit_602(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    state: &'static crate::loro::shared::LoroState,
+    device_id: &str,
+    space: &crate::space::SpaceId,
+    block_id: &str,
+    content: &str,
+    ts: i64,
+) {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: crate::ulid::BlockId::from_trusted(block_id),
+        block_type: "content".into(),
+        parent_id: None,
+        position: Some(1),
+        index: None,
+        content: content.into(),
+    });
+    let record = crate::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
+        .await
+        .expect("append_local_op_at");
+    mat.dispatch_op(&record).await.expect("dispatch_op");
+    mat.flush_foreground().await.expect("flush_foreground");
+    crate::merge::engine_apply(
+        &format!("{device_id}/{}", record.seq),
+        &payload,
+        device_id,
+        space,
+        &record.created_at.to_string(),
+        state,
+    );
+}
+
+/// #602 regression (keystone of #87) — two devices that have BOTH made
+/// local edits must still be able to sync.
+///
+/// Post-#490-M1 the op_log is strictly device-local: only
+/// `append_local_op*` writes it; inbound sync lands remote state via
+/// the Loro engine + SQL projection + write-ahead inbox — never the
+/// op_log. `check_reset_required` however resolved EVERY head the
+/// remote advertised against the LOCAL op_log, so the moment the
+/// initiator advertised any own-device op the responder's lookup was
+/// `NotFound` → `ResetRequired` — every session, both directions. The
+/// snapshot fallback then dead-ends: the responder's snapshot
+/// `up_to_seqs` is built solely from its own op_log and can never
+/// cover the initiator's own head, so M-58 (correctly) refuses the
+/// offer → `SnapshotStale` → wire `Error` → backoff — no remaining
+/// path to convergence, forever.
+///
+/// This test runs two devices (distinct device_ids, DBs, and Loro
+/// registries — the #602 test seam) that each appended ONE local op
+/// through the real local-edit pipeline, drives one full sync session
+/// in each direction over the JSON wire encoding, and asserts:
+///   1. every session completes — no `ResetRequired` (the #602
+///      failure signature) and no `Failed`,
+///   2. both SQL DBs hold both blocks,
+///   3. both Loro engines converge to the same version vector.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue602_two_edited_devices_converge_without_reset_required() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const DEV_A: &str = "DEV602A";
+    const DEV_B: &str = "DEV602B";
+    const BLOCK_A: &str = "01HZ602BLKAXXXXXXXXXXXXXXX";
+    const BLOCK_B: &str = "01HZ602BLKBXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ602SPACEXXXXXXXXXXXXXX");
+
+    let (pool_a, _dir_a) = test_pool().await;
+    let (pool_b, _dir_b) = test_pool().await;
+    let mat_a = Materializer::new(pool_a.clone());
+    let mat_b = Materializer::new(pool_b.clone());
+
+    // #602 test seam: one Loro registry per device. Leaked to match the
+    // `&'static` shape of the production process-global state.
+    let state_a: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    let state_b: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+
+    // The devices are mutually paired.
+    peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
+    peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
+
+    // Each device makes one local edit of its own.
+    make_local_edit_602(
+        &pool_a,
+        &mat_a,
+        state_a,
+        DEV_A,
+        &space,
+        BLOCK_A,
+        "edit from device A",
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &pool_b,
+        &mat_b,
+        state_b,
+        DEV_B,
+        &space,
+        BLOCK_B,
+        "edit from device B",
+        1_736_942_401_000,
+    )
+    .await;
+
+    // ── Session 1: A initiates, B responds (B's state flows to A) ────
+    let mut init_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    let mut resp_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    pump_full_session_602(&mut init_a, &mut resp_b).await;
+
+    assert_eq!(
+        resp_b.session().state,
+        SyncState::Complete,
+        "#602: responder B must complete the session for an initiator \
+         that advertised its own op_log head — ResetRequired here means \
+         check_reset_required resolved the remote's own-device head \
+         against the LOCAL op_log, which never contains remote ops \
+         post-#490-M1"
+    );
+    assert_eq!(
+        init_a.session().state,
+        SyncState::Complete,
+        "#602: initiator A must complete session 1 (got a terminal \
+         non-Complete state — see responder assertion)"
+    );
+
+    // ── Session 2: B initiates, A responds (A's state flows to B) ────
+    let mut init_b = SyncOrchestrator::new(pool_b.clone(), DEV_B.into(), mat_b.clone())
+        .with_loro_state(state_b)
+        .with_expected_remote_id(DEV_A.into());
+    let mut resp_a = SyncOrchestrator::new(pool_a.clone(), DEV_A.into(), mat_a.clone())
+        .with_loro_state(state_a)
+        .with_expected_remote_id(DEV_B.into());
+    pump_full_session_602(&mut init_b, &mut resp_a).await;
+
+    assert_eq!(
+        resp_a.session().state,
+        SyncState::Complete,
+        "#602: responder A must complete session 2 (reverse direction)"
+    );
+    assert_eq!(
+        init_b.session().state,
+        SyncState::Complete,
+        "#602: initiator B must complete session 2 (reverse direction)"
+    );
+
+    // ── Convergence: both SQL DBs hold both blocks ────────────────────
+    for (label, pool) in [("A", &pool_a), ("B", &pool_b)] {
+        for (block_id, content) in [
+            (BLOCK_A, "edit from device A"),
+            (BLOCK_B, "edit from device B"),
+        ] {
+            let row: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+                .bind(block_id)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.as_deref(),
+                Some(content),
+                "device {label}'s DB must hold block {block_id} after both sessions"
+            );
+        }
+    }
+
+    // ── Convergence: both engines reached the same version vector ────
+    let vv_a = {
+        let mut g = state_a.registry.for_space(&space, DEV_A).expect("space A");
+        g.engine_mut().version_vector()
+    };
+    let vv_b = {
+        let mut g = state_b.registry.for_space(&space, DEV_B).expect("space B");
+        g.engine_mut().version_vector()
+    };
+    let decoded_a = loro::VersionVector::decode(&vv_a).expect("decode vv A");
+    let decoded_b = loro::VersionVector::decode(&vv_b).expect("decode vv B");
+    assert_eq!(
+        decoded_a, decoded_b,
+        "both engines must converge to the same Loro version vector"
+    );
+
+    mat_a.flush_background().await.unwrap();
+    mat_b.flush_background().await.unwrap();
+    mat_a.shutdown();
+    mat_b.shutdown();
 }
 
 // ======================================================================
