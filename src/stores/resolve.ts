@@ -40,7 +40,6 @@ import { listBlocks, listBlocksLimit, listTagsByPrefix } from '../lib/tauri'
 import { useSpaceStore } from './space'
 
 const MAX_CACHE_SIZE = 10_000
-const MAX_PAGES_LIST_SIZE = 5_000
 
 /**
  * Sentinel used when no current space is active (boot, test fixtures).
@@ -81,8 +80,6 @@ interface ResolveEntry {
 interface ResolveStore {
   /** Composite key (`${spaceId}::${ulid}`) → { title, deleted } */
   cache: Map<string, ResolveEntry>
-  /** Preloaded pages list for the [[ picker (current-space scoped). */
-  pagesList: Array<{ id: string; title: string }>
   /** Bumped on cache updates to trigger re-renders */
   version: number
   /** Whether preload has been called at least once */
@@ -98,28 +95,30 @@ interface ResolveStore {
    * the space store to hydrate before invoking preload, otherwise
    * the IPC is skipped entirely (fail closed on cross-space leaks).
    *
-   * `forceRefresh` is a semantic flag — fetched data always wins over
-   * stale cache entries regardless. Kept for callsite intent
-   * (post-sync vs initial boot).
+   * `forceRefresh` distinguishes callsite intent (post-sync vs initial
+   * boot) AND drives the in-flight coalescing policy (#753): concurrent
+   * preloads for the same space join the in-flight scan; a `forceRefresh`
+   * call additionally schedules exactly ONE trailing re-scan after the
+   * in-flight one settles (the in-flight snapshot may predate the data
+   * the force caller — e.g. `sync:complete` — wants picked up). Fetched
+   * data always wins over stale cache entries regardless of the flag.
    */
   preload: (spaceId?: string | null | undefined, forceRefresh?: boolean) => Promise<void>
   /** Add/update a single entry under the active space. */
   set: (id: string, title: string, deleted: boolean) => void
-  /** Batch-add entries under the active space. */
+  /**
+   * Batch-add entries under the active space. Entries already cached
+   * with an identical `{ title, deleted }` are skipped; when EVERY
+   * entry is unchanged the call is a no-op — no Map clone, no
+   * `version` bump (#753: batchSet fires per picker keystroke with
+   * mostly-cached rows, and an unconditional bump re-renders every
+   * version-subscribed block row).
+   */
   batchSet: (entries: Array<{ id: string; title: string; deleted: boolean }>) => void
   /** Resolve title under the active space, with fallback. */
   resolveTitle: (id: string) => string
   /** Resolve deleted status under the active space. */
   resolveStatus: (id: string) => 'active' | 'deleted'
-  /**
-   * Clear the short-query page-title search cache (`pagesList`) on
-   * space switch so the link picker's `searchPagesViaCache` path can
-   * no longer surface pages from the previous space. The composite
-   * `cache` map is intentionally not touched here — that's
-   * `clearAllForSpace`'s responsibility.
-   * `version` is bumped so any memoised reads recompute.
-   */
-  clearPagesList: () => void
   /**
    * FEAT-3p7 — flush every cache entry whose composite key starts with
    * `${prevSpaceId}::`. Other spaces' entries (and the
@@ -132,13 +131,73 @@ interface ResolveStore {
 }
 
 export const useResolveStore = create<ResolveStore>((set, get) => {
+  /**
+   * #753 — in-flight preload coalescing. Boot (`useAppSpaceLifecycle`)
+   * and `sync:complete` (`useSyncEvents`) can both fire `preload` for
+   * the same space within the same tick window; without coalescing each
+   * call runs its own full pages+tags scan. Keyed by `spaceId` so a
+   * space-switch preload never joins the previous space's scan.
+   * `trailingForce` records that at least one `forceRefresh` caller
+   * arrived while a scan was in flight — exactly one re-scan runs after
+   * the current one settles, so post-sync data is still picked up.
+   */
+  const inflightPreloads = new Map<string, { promise: Promise<void>; trailingForce: boolean }>()
+
+  /** One full pages+tags scan for `spaceId`. Never rejects (logs instead). */
+  async function runPreloadScan(spaceId: string): Promise<void> {
+    try {
+      // Fetch all pages with cursor-based pagination, scoped to the
+      // active space (FEAT-3p7).
+      const fetchedPages = new Map<string, ResolveEntry>()
+      let cursor: string | undefined
+      let hasMore = true
+      while (hasMore) {
+        const pagesResp = await listBlocks({
+          blockType: 'page',
+          limit: listBlocksLimit(100),
+          cursor,
+          spaceId,
+        })
+        for (const p of pagesResp.items) {
+          fetchedPages.set(keyFor(spaceId, p.id), {
+            title: p.content ?? 'Untitled',
+            deleted: p.deleted_at !== null,
+          })
+        }
+        hasMore = pagesResp.has_more
+        cursor = pagesResp.next_cursor ?? undefined
+      }
+
+      // Fetch all tags. Tags are not space-scoped on the wire (the
+      // tag table is global), but we key them under `spaceId` so a
+      // `clearAllForSpace` flush wipes them too — the next preload
+      // re-fetches them under the new space's prefix.
+      const tags = await listTagsByPrefix({ prefix: '' })
+      const fetchedTags = new Map<string, ResolveEntry>()
+      for (const t of tags) {
+        fetchedTags.set(keyFor(spaceId, t.tag_id), {
+          title: t.name,
+          deleted: false,
+        })
+      }
+
+      // Merge: fetched data always wins over stale cache entries.
+      set((state) => ({
+        cache: new Map([...state.cache, ...fetchedPages, ...fetchedTags]),
+        version: state.version + 1,
+        _preloaded: true,
+      }))
+    } catch (err) {
+      logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
+    }
+  }
+
   return {
     cache: new Map(),
-    pagesList: [],
     version: 0,
     _preloaded: false,
 
-    preload: async (spaceId, _forceRefresh = false) => {
+    preload: (spaceId, forceRefresh = false) => {
       // FE-H-22 — fail closed during pre-bootstrap. Earlier we forwarded
       // `spaceId ?? ''` to `listBlocks` and relied on the backend
       // treating `''` as a no-match SQL filter. That contract is
@@ -147,66 +206,34 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       // cross-space barrier is the most-protected invariant — skip the
       // fetch entirely until the space store hydrates and a real
       // `spaceId` is threaded through.
-      if (spaceId == null) return
-      try {
-        // Fetch all pages with cursor-based pagination, scoped to the
-        // active space (FEAT-3p7).
-        const pagesList: Array<{ id: string; title: string }> = []
-        const fetchedPages = new Map<string, ResolveEntry>()
-        let cursor: string | undefined
-        let hasMore = true
-        while (hasMore) {
-          const pagesResp = await listBlocks({
-            blockType: 'page',
-            limit: listBlocksLimit(100),
-            cursor,
-            spaceId,
-          })
-          for (const p of pagesResp.items) {
-            const title = p.content ?? 'Untitled'
-            fetchedPages.set(keyFor(spaceId, p.id), {
-              title,
-              deleted: p.deleted_at !== null,
-            })
-            pagesList.push({ id: p.id, title })
-          }
-          hasMore = pagesResp.has_more
-          cursor = pagesResp.next_cursor ?? undefined
-        }
+      if (spaceId == null) return Promise.resolve()
 
-        // Fetch all tags. Tags are not space-scoped on the wire (the
-        // tag table is global), but we key them under `spaceId` so a
-        // `clearAllForSpace` flush wipes them too — the next preload
-        // re-fetches them under the new space's prefix.
-        const tags = await listTagsByPrefix({ prefix: '' })
-        const fetchedTags = new Map<string, ResolveEntry>()
-        for (const t of tags) {
-          fetchedTags.set(keyFor(spaceId, t.tag_id), {
-            title: t.name,
-            deleted: false,
-          })
-        }
-
-        // Merge: fetched data always wins over stale cache entries.
-        // Both branches use the same order — forceRefresh is a semantic
-        // flag for callers, not a behavioral switch.
-        set((state) => {
-          const cache = new Map([...state.cache, ...fetchedPages, ...fetchedTags])
-          const fetchedIds = new Set(pagesList.map((p) => p.id))
-          const mergedPagesList = [
-            ...pagesList,
-            ...state.pagesList.filter((p) => !fetchedIds.has(p.id)),
-          ]
-          return {
-            cache,
-            pagesList: mergedPagesList,
-            version: state.version + 1,
-            _preloaded: true,
-          }
-        })
-      } catch (err) {
-        logger.warn('ResolveStore', 'preload failed, using fallback', {}, err)
+      // #753 — coalesce concurrent preloads of the same space. A plain
+      // call joins the in-flight scan; a forceRefresh call additionally
+      // schedules ONE trailing re-scan (see `inflightPreloads` doc).
+      const inflight = inflightPreloads.get(spaceId)
+      if (inflight) {
+        if (forceRefresh) inflight.trailingForce = true
+        return inflight.promise
       }
+
+      const entry = { promise: Promise.resolve(), trailingForce: false }
+      entry.promise = (async () => {
+        try {
+          await runPreloadScan(spaceId)
+          while (entry.trailingForce) {
+            entry.trailingForce = false
+            await runPreloadScan(spaceId)
+          }
+        } finally {
+          // Runs synchronously with the body's completion — before any
+          // joiner's `await` continuation — so a late caller can never
+          // observe (and mark trailingForce on) a finished entry.
+          if (inflightPreloads.get(spaceId) === entry) inflightPreloads.delete(spaceId)
+        }
+      })()
+      inflightPreloads.set(spaceId, entry)
+      return entry.promise
     },
 
     // FE-H-21 — `set` and `batchSet` both bump `version` inline so the
@@ -221,26 +248,27 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
         const cache = new Map(state.cache)
         cache.set(compositeKey, { title, deleted })
         evictOldest(cache, MAX_CACHE_SIZE)
-        // Also update pagesList if it's a new non-deleted entry
-        // (pages created via onCreatePage should appear in picker).
-        // pagesList is keyed by raw ULID — only one space's pages
-        // should be present at a time (cleared on switch via
-        // `clearPagesList`).
-        const existsInPagesList = state.pagesList.some((p) => p.id === id)
-        let pagesList = existsInPagesList ? state.pagesList : [...state.pagesList, { id, title }]
-        if (pagesList.length > MAX_PAGES_LIST_SIZE) {
-          pagesList = pagesList.slice(-MAX_PAGES_LIST_SIZE)
-        }
-        return { cache, pagesList, version: state.version + 1 }
+        return { cache, version: state.version + 1 }
       })
     },
 
     batchSet: (entries) => {
       if (entries.length === 0) return
       const spaceId = activeSpaceId()
+      // #753 — diff before cloning. batchSet fires per picker keystroke
+      // (BlockTree batchResolve) with mostly already-cached rows; when
+      // nothing actually changed, cloning the full 10k-entry Map and
+      // bumping `version` re-renders every version-subscribed block row
+      // for zero gain. Only the changed subset is written.
+      const current = get().cache
+      const changed = entries.filter((e) => {
+        const cached = current.get(keyFor(spaceId, e.id))
+        return !cached || cached.title !== e.title || cached.deleted !== e.deleted
+      })
+      if (changed.length === 0) return
       set((state) => {
         const cache = new Map(state.cache)
-        for (const e of entries) {
+        for (const e of changed) {
           cache.set(keyFor(spaceId, e.id), {
             title: e.title,
             deleted: e.deleted,
@@ -262,8 +290,6 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       if (cached) return cached.deleted ? 'deleted' : 'active'
       return 'active'
     },
-
-    clearPagesList: () => set((state) => ({ pagesList: [], version: state.version + 1 })),
 
     clearAllForSpace: (prevSpaceId) =>
       set((state) => {

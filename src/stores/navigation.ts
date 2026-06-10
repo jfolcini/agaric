@@ -86,6 +86,84 @@ interface NavigationStore {
 type NavigationState = NavigationStore
 
 /**
+ * Every member of the `View` union — used by the CR-PERSIST coercers.
+ * Derived from a `satisfies Record<View, true>` literal so that adding a
+ * `View` member without listing it here is a compile error — a missing
+ * member would make `coerceView` silently rewrite that view to the
+ * `'journal'` default on every load.
+ */
+const ALL_VIEWS = Object.keys({
+  journal: true,
+  search: true,
+  pages: true,
+  tags: true,
+  trash: true,
+  status: true,
+  history: true,
+  templates: true,
+  settings: true,
+  graph: true,
+  'page-editor': true,
+} satisfies Record<View, true>) as readonly View[]
+
+/**
+ * CR-PERSIST — coerce an arbitrary persisted JSON value into a valid `View`,
+ * or `null` if it isn't one. `localStorage` can hold anything (manual edits,
+ * a corrupt write, a future-shape downgrade); hydrating a bare cast lets a
+ * malformed blob reach `ViewDispatcher` as `currentView`.
+ */
+function coerceView(raw: unknown): View | null {
+  return typeof raw === 'string' && (ALL_VIEWS as readonly string[]).includes(raw)
+    ? (raw as View)
+    : null
+}
+
+/** CR-PERSIST — coerce a persisted value into a `Record<string, View>`, dropping invalid slots. */
+function coerceViewBySpace(raw: unknown): Record<string, View> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, View> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const view = coerceView(value)
+    if (view) out[key] = view
+  }
+  return out
+}
+
+/**
+ * CR-PERSIST (#753) — coerce an entire persisted navigation blob
+ * field-by-field. Shared by `migrate` (version-mismatched blobs) and
+ * `merge` (same-version blobs): zustand's persist middleware only calls
+ * `migrate` when the stored version DIFFERS from `options.version`, so a
+ * corrupt blob that still carries `version: 3` (or a non-numeric
+ * version) bypasses `migrate` entirely and reaches the default shallow
+ * `merge` raw — coercing in `merge` as well closes that path. The
+ * coercion is idempotent, so the migrate→merge double pass on
+ * version-mismatched blobs is harmless.
+ *
+ * `selectedBlockId` is always reset to `null` — it's a one-shot UI
+ * affordance and is excluded from `partialize` anyway.
+ */
+function coercePersistedNavigation(
+  persisted: unknown,
+  version: number,
+): Pick<NavigationState, 'currentView' | 'currentViewBySpace' | 'selectedBlockId'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  const currentView = coerceView(blob['currentView']) ?? 'journal'
+  const persistedBySpace = coerceViewBySpace(blob['currentViewBySpace'])
+  // v2 → v3 (FEAT-3p4): seed `currentViewBySpace[__legacy__]` from the
+  // flat `currentView` so a returning v2 user lands on their last view
+  // until the space subscriber pulls the proper per-space slot.
+  const currentViewBySpace =
+    version < 3 && Object.keys(persistedBySpace).length === 0
+      ? { [LEGACY_SPACE_KEY]: currentView }
+      : persistedBySpace
+  return { currentView, currentViewBySpace, selectedBlockId: null }
+}
+
+/**
  * Per-space view selector (FEAT-3p4). Pass `currentSpaceId` from
  * `useSpaceStore`.
  *
@@ -150,27 +228,22 @@ export const useNavigationStore = create<NavigationStore>()(
         // persisted blob so the rehydrated shape matches the slimmer v2
         // contract (`currentView` only).
         //
-        // v2 → v3 (FEAT-3p4): seed `currentViewBySpace[__legacy__]` from
-        // the rehydrated flat `currentView` so a returning user lands on
-        // their last view until the space subscriber pulls the proper
-        // per-space slot on first space switch.
-        if (version >= 3) return persisted as NavigationState
-        if (persisted == null || typeof persisted !== 'object') {
-          return persisted as NavigationState
-        }
-        const old = persisted as {
-          currentView?: View
-          currentViewBySpace?: Record<string, View>
-          selectedBlockId?: string | null
-        }
-        const currentView = old.currentView ?? 'journal'
-        const currentViewBySpace = old.currentViewBySpace ?? { [LEGACY_SPACE_KEY]: currentView }
-        return {
-          currentView,
-          currentViewBySpace,
-          selectedBlockId: null,
-        } as NavigationState
+        // CR-PERSIST (#753): EVERY version is coerced field-by-field
+        // instead of bare-cast (previously a v>=3 blob was returned
+        // `as NavigationState` unvalidated). Note zustand only invokes
+        // `migrate` on a version MISMATCH — same-version blobs are
+        // coerced by `merge` below.
+        return coercePersistedNavigation(persisted, version) as NavigationState
       },
+      // CR-PERSIST (#753) — zustand skips `migrate` when the stored
+      // version equals `options.version` (or isn't a number), handing the
+      // raw blob straight to `merge`. Coerce here too so a corrupt
+      // `localStorage` payload that still says `version: 3` (e.g.
+      // `currentView: 42`) can't reach `ViewDispatcher`.
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedNavigation(persisted, 3),
+      }),
     },
   ),
 )

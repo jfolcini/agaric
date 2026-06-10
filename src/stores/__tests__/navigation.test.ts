@@ -1083,6 +1083,137 @@ describe('useNavigationStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // CR-PERSIST (#753) — coercing navigation migrate
+  // ---------------------------------------------------------------------------
+  //
+  // EVERY persisted blob is coerced field-by-field: version-mismatched
+  // blobs through `migrate`, same-version (v3) blobs through `merge`
+  // (zustand never calls `migrate` when the stored version matches).
+  // Previously a v>=3 blob was returned `as NavigationState` unvalidated,
+  // so a corrupt localStorage payload reached ViewDispatcher as
+  // `currentView` directly.
+  describe('CR-PERSIST navigation migrate (#753)', () => {
+    const migrate = useNavigationStore.persist.getOptions().migrate
+    type MigratedNav = {
+      currentView: string
+      currentViewBySpace: Record<string, string>
+      selectedBlockId: string | null
+    }
+    function run(blob: unknown, version: number): MigratedNav {
+      return migrate?.(blob, version) as MigratedNav
+    }
+
+    it('is wired into the persist options', () => {
+      expect(typeof migrate).toBe('function')
+    })
+
+    it('passes a well-formed v3 blob through unchanged', () => {
+      const blob = {
+        currentView: 'search',
+        currentViewBySpace: { SPACE_A: 'pages', SPACE_B: 'journal' },
+      }
+      const result = run(blob, 3)
+      expect(result.currentView).toBe('search')
+      expect(result.currentViewBySpace).toEqual({ SPACE_A: 'pages', SPACE_B: 'journal' })
+    })
+
+    it('coerces a corrupt v3 currentView to the journal default', () => {
+      expect(run({ currentView: 42 }, 3).currentView).toBe('journal')
+      expect(run({ currentView: 'not-a-view' }, 3).currentView).toBe('journal')
+      expect(run({ currentView: null }, 3).currentView).toBe('journal')
+    })
+
+    it('drops invalid per-space slots from a v3 blob but keeps valid ones', () => {
+      const blob = {
+        currentView: 'pages',
+        currentViewBySpace: {
+          SPACE_OK: 'tags',
+          SPACE_BAD_TYPE: 7,
+          SPACE_BAD_VIEW: 'bogus-view',
+          SPACE_NULL: null,
+        },
+      }
+      const result = run(blob, 3)
+      expect(result.currentViewBySpace).toEqual({ SPACE_OK: 'tags' })
+    })
+
+    it('handles a non-object / null v3 blob without throwing', () => {
+      for (const blob of [null, undefined, 'corrupt', 17, ['journal']]) {
+        const result = run(blob, 3)
+        expect(result.currentView).toBe('journal')
+        expect(result.currentViewBySpace).toEqual({})
+        expect(result.selectedBlockId).toBeNull()
+      }
+    })
+
+    it('always resets selectedBlockId to null (one-shot affordance)', () => {
+      const result = run({ currentView: 'pages', selectedBlockId: 'BLOCK_9' }, 3)
+      expect(result.selectedBlockId).toBeNull()
+    })
+
+    it('v2 → v3 seeds currentViewBySpace[__legacy__] from the flat currentView', () => {
+      const result = run({ currentView: 'history' }, 2)
+      expect(result.currentView).toBe('history')
+      expect(result.currentViewBySpace).toEqual({ __legacy__: 'history' })
+    })
+
+    it('v2 blob with a corrupt currentView seeds the legacy slot with the default', () => {
+      const result = run({ currentView: { nested: true } }, 2)
+      expect(result.currentView).toBe('journal')
+      expect(result.currentViewBySpace).toEqual({ __legacy__: 'journal' })
+    })
+
+    // zustand's persist middleware only invokes `migrate` when the stored
+    // version DIFFERS from `options.version` — a corrupt blob that still
+    // carries `version: 3` (or a non-numeric version) bypasses `migrate`
+    // entirely and is handed RAW to `merge`. The coercion must therefore
+    // also live in `merge`, or the migrate-side coercion above never runs
+    // for the very blobs it was written for.
+    describe('merge path (same-version blobs bypass migrate)', () => {
+      const options = useNavigationStore.persist.getOptions()
+      const defaults = {
+        currentView: 'journal',
+        currentViewBySpace: {},
+        selectedBlockId: null,
+        pendingPageBrowserFilter: null,
+      } as Parameters<NonNullable<typeof options.merge>>[1]
+      function mergeRun(blob: unknown): MigratedNav {
+        return options.merge?.(blob, defaults) as unknown as MigratedNav
+      }
+
+      it('is wired into the persist options', () => {
+        expect(typeof options.merge).toBe('function')
+      })
+
+      it('coerces a corrupt same-version blob instead of passing it through', () => {
+        const result = mergeRun({
+          currentView: 42,
+          currentViewBySpace: { SPACE_OK: 'tags', SPACE_BAD: 'bogus-view' },
+        })
+        expect(result.currentView).toBe('journal')
+        expect(result.currentViewBySpace).toEqual({ SPACE_OK: 'tags' })
+        expect(result.selectedBlockId).toBeNull()
+      })
+
+      it('passes a well-formed blob through unchanged', () => {
+        const result = mergeRun({
+          currentView: 'search',
+          currentViewBySpace: { SPACE_A: 'pages' },
+        })
+        expect(result.currentView).toBe('search')
+        expect(result.currentViewBySpace).toEqual({ SPACE_A: 'pages' })
+      })
+
+      it('falls back to defaults when storage is empty (undefined persisted)', () => {
+        const result = mergeRun(undefined)
+        expect(result.currentView).toBe('journal')
+        expect(result.currentViewBySpace).toEqual({})
+        expect(result.selectedBlockId).toBeNull()
+      })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // FEAT-9: navigateToPage → useRecentPagesStore.recordVisit integration
   // ---------------------------------------------------------------------------
   describe('FEAT-9 recentPages recordVisit hook', () => {
@@ -1136,6 +1267,25 @@ describe('useNavigationStore', () => {
       useTabsStore.getState().goBack()
 
       expect(recordVisitSpy).not.toHaveBeenCalled()
+
+      recordVisitSpy.mockRestore()
+    })
+
+    it('#753 — an aborted navigation (no active tab) does NOT record a visit', () => {
+      // Force the `!activeTab` bail: an out-of-range activeTabIndex on a
+      // non-date page aborts the navigation before anything is pushed.
+      useTabsStore.setState({ tabs: [], activeTabIndex: 0 })
+      const viewBefore = useNavigationStore.getState().currentView
+      const recordVisitSpy = vi.spyOn(useRecentPagesStore.getState(), 'recordVisit')
+
+      useTabsStore.getState().navigateToPage('GHOST', 'Never Opened')
+
+      // The navigation aborted — the page was never opened, so it must
+      // not pollute the recents list (previously recordVisit fired
+      // unconditionally before the bail).
+      expect(recordVisitSpy).not.toHaveBeenCalled()
+      expect(useRecentPagesStore.getState().recentPages).toHaveLength(0)
+      expect(useNavigationStore.getState().currentView).toBe(viewBefore)
 
       recordVisitSpy.mockRestore()
     })

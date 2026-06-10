@@ -47,12 +47,6 @@ describe('useAppSpaceLifecycle — preload', () => {
 })
 
 describe('useAppSpaceLifecycle — cross-space link enforcement', () => {
-  it('flushes the pages list on mount', () => {
-    const clearPagesList = vi.spyOn(useResolveStore.getState(), 'clearPagesList')
-    renderHook(() => useAppSpaceLifecycle())
-    expect(clearPagesList).toHaveBeenCalled()
-  })
-
   it('flushes the previous space cache when currentSpaceId changes', async () => {
     const clearAllForSpace = vi.spyOn(useResolveStore.getState(), 'clearAllForSpace')
 

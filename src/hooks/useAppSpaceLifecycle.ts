@@ -11,10 +11,9 @@
  *    — the first pass may run with `currentSpaceId == null` and a
  *    second pass runs once the space store hydrates.
  * 2. Cross-space link enforcement (FEAT-3p7) — on space switch, flush
- *    BOTH the short-query pages list AND every cache entry keyed
- *    under the previous space, so a chip whose ULID belongs to the
- *    previous space cannot silently navigate the user across the
- *    space boundary on click.
+ *    every resolve-cache entry keyed under the previous space, so a
+ *    chip whose ULID belongs to the previous space cannot silently
+ *    navigate the user across the space boundary on click.
  * 3. Visual identity (FEAT-3p10) — re-bind the `--accent-current` CSS
  *    variable on `document.documentElement` and re-stamp the OS
  *    window title as `"<SpaceName> · Agaric"`. `setWindowTitle`
@@ -46,19 +45,20 @@ export function useAppSpaceLifecycle(): void {
   // prefix to flush, then update the ref so the next switch sees the
   // now-current space as the next "previous". Kept in its own effect
   // (separate from the visual-identity effect below) so the two
-  // concerns stay decoupled.
+  // concerns stay decoupled. (#753 — the dead `pagesList` mirror that
+  // was also flushed here is gone; the picker's short-query cache is
+  // the hook-local `pagesListRef` in `useBlockResolve`.)
   const prevSpaceIdRef = useRef<string | null>(currentSpaceId)
   useEffect(() => {
     const prev = prevSpaceIdRef.current
     if (prev != null && prev !== currentSpaceId) {
       useResolveStore.getState().clearAllForSpace(prev)
     }
-    useResolveStore.getState().clearPagesList()
     prevSpaceIdRef.current = currentSpaceId
   }, [currentSpaceId])
 
   // FEAT-3p10 — visual identity. Kept in its own effect (not folded
-  // into the `clearPagesList` effect above) so the two concerns stay
+  // into the cache-flush effect above) so the two concerns stay
   // decoupled. `setWindowTitle` is a no-op in non-Tauri runtimes
   // (vitest jsdom, storybook).
   useEffect(() => {

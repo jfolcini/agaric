@@ -139,13 +139,11 @@ beforeEach(() => {
     isReady: true,
   })
 
-  // FEAT-3 Phase 2 — reset the resolve store so the `pagesList` /
-  // `cache` state doesn't leak between tests (and so the
-  // space-switch clear-cache test can observe a deterministic
-  // starting state).
+  // FEAT-3 Phase 2 — reset the resolve store so the `cache` state
+  // doesn't leak between tests (and so the space-switch clear-cache
+  // test can observe a deterministic starting state).
   useResolveStore.setState({
     cache: new Map(),
-    pagesList: [],
     version: 0,
     _preloaded: false,
   })
@@ -2010,22 +2008,21 @@ describe('App', () => {
   })
 
   // FEAT-3p7 — Cross-space link enforcement. When the active space
-  // changes, the App-level subscriber must:
-  //   1. Wipe the `pagesList` short-query cache (so the link picker
-  //      cannot surface previous-space pages).
-  //   2. Flush every cache entry keyed under the previous space (so
-  //      a stale chip resolution can't leak across the boundary —
-  //      foreign chips fall through to the broken-link UX instead).
+  // changes, the App-level subscriber must flush every cache entry
+  // keyed under the previous space (so a stale chip resolution can't
+  // leak across the boundary — foreign chips fall through to the
+  // broken-link UX instead).
   //
   // The previous Phase 2 behaviour kept the cache intact and relied
   // on the chip resolver to render foreign titles "for continuity";
   // the locked-in policy (FEAT-3p7) inverts this — no live links
-  // between spaces, ever.
+  // between spaces, ever. (#753 — the dead `pagesList` store mirror
+  // that was also flushed here has been deleted; the picker's
+  // short-query cache is the hook-local ref in `useBlockResolve`.)
   describe('FEAT-3p7 — cross-space cache flush on space switch', () => {
-    it('flushes both pagesList and the previous space cache when currentSpaceId changes', async () => {
-      // Override the default mock so `preload()` populates
-      // `useResolveStore.pagesList` with a deterministic entry, and
-      // the ULID→title `cache` lands keyed under SPACE_A.
+    it('flushes the previous space cache when currentSpaceId changes', async () => {
+      // Override the default mock so `preload()` lands the ULID→title
+      // `cache` entry keyed under SPACE_A.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_spaces') {
           return [
@@ -2055,26 +2052,20 @@ describe('App', () => {
 
       render(<App />)
 
-      // Wait for `preload()` to resolve and populate the cache + pagesList
-      // for SPACE_A. The clear-on-mount effect runs synchronously first
-      // (against an empty list); `preload()` is async and fills in next.
-      await waitFor(() => {
-        expect(useResolveStore.getState().pagesList.length).toBeGreaterThan(0)
-      })
-      // FEAT-3p7 — composite keys: SPACE_A's preload writes
+      // Wait for `preload()` to resolve and populate the cache for
+      // SPACE_A. FEAT-3p7 — composite keys: SPACE_A's preload writes
       // `${SPACE_A}::PAGE_A1`.
-      expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toEqual({
-        title: 'Page A1',
-        deleted: false,
+      await waitFor(() => {
+        expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_A1'))).toEqual({
+          title: 'Page A1',
+          deleted: false,
+        })
       })
 
       act(() => {
         useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
       })
 
-      await waitFor(() => {
-        expect(useResolveStore.getState().pagesList.length).toBe(0)
-      })
       // FEAT-3p7 — `clearAllForSpace('SPACE_A')` flushes every
       // `${SPACE_A}::*` entry so a foreign-space chip doesn't
       // continue resolving to its old title from a stale cache hit.

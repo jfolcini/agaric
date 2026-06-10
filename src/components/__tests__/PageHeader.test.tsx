@@ -124,7 +124,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Page' }], label: 'My Page' }],
     activeTabIndex: 0,
   })
-  useResolveStore.setState({ cache: new Map(), pagesList: [], version: 0, _preloaded: false })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   useUndoStore.setState({ pages: new Map() })
   // FEAT-3 Phase 2 — seed two spaces so the "Move to space" sub-menu
   // (which filters out the current owner) has a non-empty target list
@@ -1701,7 +1701,6 @@ describe('PageHeader rich title rendering (BUG-1)', () => {
     setupTagMock([])
     useResolveStore.setState({
       cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
-      pagesList: [],
       version: 1,
       _preloaded: false,
     })
@@ -1717,7 +1716,6 @@ describe('PageHeader rich title rendering (BUG-1)', () => {
     setupTagMock([])
     useResolveStore.setState({
       cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
-      pagesList: [],
       version: 1,
       _preloaded: false,
     })
@@ -1739,7 +1737,6 @@ describe('PageHeader rich title rendering (BUG-1)', () => {
     setupTagMock([])
     useResolveStore.setState({
       cache: new Map([[BLOCK_ID, { title: 'Linked Page', deleted: false }]]),
-      pagesList: [],
       version: 1,
       _preloaded: false,
     })
