@@ -44,7 +44,9 @@ use sqlx::SqliteConnection;
 
 use crate::error::AppError;
 use crate::loro::engine::BlockSnapshot;
-use crate::op::{SetPropertyPayload, is_reserved_property_key};
+use crate::op::{
+    SPACE_PROPERTY_KEY, SetPropertyPayload, is_column_backed_property_key, is_reserved_property_key,
+};
 
 /// Project a `CreateBlock` engine state into SQL.
 ///
@@ -234,7 +236,7 @@ pub async fn project_set_property_to_sql(
                 )));
             }
         }
-    } else if payload.key == "space" {
+    } else if payload.key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed ONLY — project the logged
         // `SetProperty(space)` op to the denormalized `blocks.space_id` for
         // the whole owning-page group; no block_properties row. Keeps old
@@ -447,7 +449,7 @@ pub async fn project_delete_property_to_sql(
                 )));
             }
         }
-    } else if key == "space" {
+    } else if key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed only — project the logged
         // `DeleteProperty(space)` op to clear `blocks.space_id` for the whole
         // owning-page group; no block_properties row. Parity with the set path.
@@ -696,7 +698,7 @@ pub async fn reproject_block_properties_from_engine(
     .await?;
 
     for (key, value) in props {
-        if is_reserved_property_key(key) || key == "space" {
+        if is_column_backed_property_key(key) {
             // Reserved keys map to dedicated `blocks` columns, never
             // `block_properties` (handled by the reserved-key pass below).
             // #533: `space` is likewise column-backed (`blocks.space_id`,

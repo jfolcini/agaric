@@ -18,7 +18,9 @@ use tauri::State;
 use crate::db::{CommandTx, ReadPool};
 use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{DeletePropertyPayload, OpPayload, UndoResult, is_reserved_property_key};
+use crate::op::{
+    DeletePropertyPayload, OpPayload, SPACE_PROPERTY_KEY, UndoResult, is_reserved_property_key,
+};
 use crate::op_log;
 use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
 use crate::pairing::PairingSession;
@@ -780,7 +782,7 @@ async fn delete_property_core(
                 )));
             }
         }
-    } else if key == "space" {
+    } else if key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed only — clear the
         // denormalized `blocks.space_id` for the whole owning-page group;
         // no block_properties row to delete. Parity with the replay path.

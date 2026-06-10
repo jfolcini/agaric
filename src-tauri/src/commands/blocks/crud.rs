@@ -2,7 +2,8 @@ use crate::db::{CommandTx, WritePool};
 use crate::device::DeviceId;
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
-    PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload, validate_set_property,
+    PurgeBlockPayload, RestoreBlockPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
+    validate_set_property,
 };
 use std::sync::Arc;
 
@@ -2943,7 +2944,7 @@ pub(crate) async fn set_property_in_tx(
                 "is_reserved_property_key('{key}') returned true for an unrecognised key"
             ),
         }
-    } else if key == "space" {
+    } else if key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed ONLY — no block_properties
         // row. Stamp the denormalized `blocks.space_id` for the page's own
         // row AND every block whose owning page is this one
@@ -3102,7 +3103,7 @@ pub(crate) async fn delete_property_in_tx(
                 )));
             }
         }
-    } else if key == "space" {
+    } else if key == SPACE_PROPERTY_KEY {
         // #533 Phase 2: `space` is column-backed only — clear the
         // denormalized `blocks.space_id` for the whole owning-page group;
         // there is no block_properties row to delete. Parity with the
