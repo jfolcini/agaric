@@ -104,16 +104,24 @@ export function usePaginatedQuery<T>(
           setItems((prev) => {
             if (prev.length + resp.items.length > maxItems) {
               setCapped(true)
+              // Cap reached: kill the pagination state too. Leaving
+              // `hasMore` / `nextCursor` live would let "Load more" keep
+              // fetching pages we discard forever (consumers gate the
+              // button on `hasMore` alone).
+              setHasMore(false)
+              setNextCursor(null)
               return prev
             }
+            setNextCursor(resp.next_cursor)
+            setHasMore(resp.has_more)
             return [...prev, ...resp.items]
           })
         } else {
           setItems(resp.items)
           setCapped(false)
+          setNextCursor(resp.next_cursor)
+          setHasMore(resp.has_more)
         }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
         // Last-write wins. The backend's `total_count` should be
         // stable across cursor pages for the same query (it ignores
         // the cursor/limit), but if it ever isn't, the most recent

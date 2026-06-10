@@ -89,16 +89,23 @@ export interface SearchQueryAST {
   freeText: string
 }
 
-/** Stable React key for a token (kind + value, immune to re-order). */
+/**
+ * Stable React key for a token (kind + value + start column).
+ *
+ * The `span[0]` suffix disambiguates duplicate tokens — the parser only
+ * invalidates duplicate `due:` / `scheduled:` filters, so e.g.
+ * `tag:#a tag:#a` yields two tokens whose kind + value collide. Spans
+ * never overlap, so the start column makes every key in one query unique.
+ */
 export function tokenKey(t: FilterToken): string {
   if (t.kind === 'invalid') return `invalid:${t.source}:${t.span[0]}`
   if (t.kind === 'due' || t.kind === 'scheduled') {
     // Date values: use raw text so two distinct named buckets / ops
     // get distinct keys.
-    return `${t.kind}:${t.raw}`
+    return `${t.kind}:${t.raw}:${t.span[0]}`
   }
   if (t.kind === 'prop' || t.kind === 'notProp') {
-    return `${t.kind}:${t.key}=${t.value}`
+    return `${t.kind}:${t.key}=${t.value}:${t.span[0]}`
   }
-  return `${t.kind}:${t.value}`
+  return `${t.kind}:${t.value}:${t.span[0]}`
 }

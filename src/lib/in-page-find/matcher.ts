@@ -152,20 +152,93 @@ function scanLiteral(
   caseSensitive: boolean,
 ): Array<{ start: number; end: number }> {
   if (needle.length === 0) return []
-  const haystack = caseSensitive ? text : text.toLocaleLowerCase()
+  if (caseSensitive) return scanIndexOf(text, text, needle, wholeWord)
+  const haystack = text.toLocaleLowerCase()
+  // Fast path only when folding preserved the code-unit length. Lowercase
+  // mappings never contract (1→N, N ≥ 1), so equal total length means every
+  // code point folded 1:1 and offsets into `haystack` are valid offsets
+  // into `text`. When folding expands (e.g. `İ` U+0130 → `i` + U+0307,
+  // 1 → 2 units) every later offset shifts and the indexOf results would
+  // point at the wrong span in the original — fall through to the
+  // code-point walk that carries an explicit offset map.
+  if (haystack.length === text.length) {
+    return scanIndexOf(text, haystack, needle, wholeWord)
+  }
+  return scanLiteralFolded(text, needle, wholeWord)
+}
+
+/**
+ * `indexOf` loop over `haystack`, emitting offsets that are valid in
+ * `original` (callers guarantee 1:1 code-unit alignment between the two).
+ * `String.prototype.matchAll` requires a global RegExp, and we want to
+ * keep literal mode allocation-free per char.
+ */
+function scanIndexOf(
+  original: string,
+  haystack: string,
+  needle: string,
+  wholeWord: boolean,
+): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number }> = []
   let from = 0
-  // `indexOf` loop — `String.prototype.matchAll` requires a global RegExp,
-  // and we want to keep literal mode allocation-free per char.
   while (from <= haystack.length) {
     const idx = haystack.indexOf(needle, from)
     if (idx === -1) break
     const end = idx + needle.length
-    if (!wholeWord || isWholeWord(text, idx, end)) {
+    if (!wholeWord || isWholeWord(original, idx, end)) {
       out.push({ start: idx, end })
     }
     // Step by 1 (not by needle.length) so overlapping matches surface —
     // e.g. needle "aa" in "aaaa" returns 3 matches, not 2.
+    from = idx + 1
+  }
+  return out
+}
+
+/**
+ * Slow literal path for haystacks whose lowercase fold changes length.
+ *
+ * Folds the text one code point at a time and records, for every folded
+ * code unit, the original span of the code point that produced it. Matches
+ * found in the folded string are then mapped back to original offsets, so
+ * a length-changing fold early in the node (e.g. Turkish `İ`) no longer
+ * shifts every later highlight span.
+ */
+function scanLiteralFolded(
+  text: string,
+  needle: string,
+  wholeWord: boolean,
+): Array<{ start: number; end: number }> {
+  // foldedStart[j] / foldedEnd[j] — original [start, end) span of the code
+  // point that produced folded code unit `j`.
+  const foldedStart: number[] = []
+  const foldedEnd: number[] = []
+  let folded = ''
+  let oi = 0
+  for (const ch of text) {
+    const f = ch.toLocaleLowerCase()
+    for (let k = 0; k < f.length; k++) {
+      foldedStart.push(oi)
+      foldedEnd.push(oi + ch.length)
+    }
+    folded += f
+    oi += ch.length
+  }
+  const out: Array<{ start: number; end: number }> = []
+  let from = 0
+  while (from <= folded.length) {
+    const idx = folded.indexOf(needle, from)
+    if (idx === -1) break
+    const start = foldedStart[idx]
+    const end = foldedEnd[idx + needle.length - 1]
+    if (start !== undefined && end !== undefined && (!wholeWord || isWholeWord(text, start, end))) {
+      // Two folded offsets can map to the same original span (a match
+      // starting inside a multi-unit fold) — emit each span once.
+      const last = out[out.length - 1]
+      if (!last || last.start !== start || last.end !== end) {
+        out.push({ start, end })
+      }
+    }
     from = idx + 1
   }
   return out
@@ -193,16 +266,34 @@ function scanRegex(
   return out
 }
 
-const WORD_RE = /[A-Za-z0-9_]/
-function isWordChar(ch: string | undefined): boolean {
-  if (ch === undefined) return false
-  return WORD_RE.test(ch)
+// Unicode-aware word characters: letters, digits (any script), underscore.
+// ASCII-only `[A-Za-z0-9_]` treated every non-Latin letter as a boundary,
+// so whole-word "мир" matched inside "мирный".
+const WORD_RE = /[\p{L}\p{N}_]/u
+function isWordCodePoint(cp: number | undefined): boolean {
+  if (cp === undefined) return false
+  return WORD_RE.test(String.fromCodePoint(cp))
+}
+
+/**
+ * Code point ending immediately before `index`, stepping back over a full
+ * surrogate pair so astral letters (e.g. 𝐀) are classified whole rather
+ * than as two unpaired surrogates.
+ */
+function codePointBefore(text: string, index: number): number | undefined {
+  if (index <= 0) return undefined
+  const low = text.charCodeAt(index - 1)
+  if (low >= 0xdc00 && low <= 0xdfff && index >= 2) {
+    const high = text.charCodeAt(index - 2)
+    if (high >= 0xd800 && high <= 0xdbff) return text.codePointAt(index - 2)
+  }
+  return low
 }
 
 function isWholeWord(text: string, start: number, end: number): boolean {
-  const before = start === 0 ? undefined : text[start - 1]
-  const after = end >= text.length ? undefined : text[end]
-  return !isWordChar(before) && !isWordChar(after)
+  const before = codePointBefore(text, start)
+  const after = end >= text.length ? undefined : text.codePointAt(end)
+  return !isWordCodePoint(before) && !isWordCodePoint(after)
 }
 
 /**

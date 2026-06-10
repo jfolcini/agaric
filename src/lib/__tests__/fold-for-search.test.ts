@@ -362,6 +362,25 @@ describe('findFoldedMatch (PAGES-FOLD-MARK)', () => {
     expect(match).toEqual({ start: 0, length: 5 })
   })
 
+  it('supplementary-plane compat character: 𝐀 folds to "a" as one code point (#756)', () => {
+    // U+1D400 (MATHEMATICAL BOLD CAPITAL A) is a surrogate pair. Walking
+    // per code *unit* folded each lone half to itself (2 units) while the
+    // whole-string fold produces "a" (1 unit), desyncing the span math.
+    const haystack = '𝐀bc'
+    const match = findFoldedMatch(haystack, 'abc')
+    expect(match).toEqual({ start: 0, length: 4 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('𝐀bc')
+  })
+
+  it('span math stays aligned for matches after a supplementary-plane character (#756)', () => {
+    const haystack = '𝐀 naïve'
+    const match = findFoldedMatch(haystack, 'naive')
+    expect(match).toEqual({ start: 3, length: 5 })
+    if (match === null) throw new Error('expected match')
+    expect(haystack.slice(match.start, match.start + match.length)).toBe('naïve')
+  })
+
   it('indexOfFolded stays consistent with findFoldedMatch.start', () => {
     // Spot-check the wrapper across the cases above.
     expect(indexOfFolded('Straße', 'strasse')).toBe(0)

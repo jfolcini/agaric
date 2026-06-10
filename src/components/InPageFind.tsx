@@ -223,6 +223,24 @@ export function InPageFind({
       return
     }
     const textNodes = collectTextNodes(container)
+    // Index this walk last published via `setResult`. A fresh walk always
+    // starts at the first match — but if the store's index has moved away
+    // from what we last published, the user pressed Enter/F3 mid-walk
+    // (chunked pages), and resetting to 0 on every chunk would throw their
+    // position away. Preserve it instead, clamped to the still-growing
+    // match list (matches append in document order, so indices are stable).
+    let publishedIndex: number | null = null
+    const indexFor = (totalMatches: number): number => {
+      if (totalMatches === 0) return -1
+      const storeIndex = useInPageFindStore.getState().currentIndex
+      const desired =
+        publishedIndex !== null && storeIndex !== publishedIndex
+          ? storeIndex // user navigated since our last publish — keep it
+          : (publishedIndex ?? 0) // fresh walk → first match; else hold position
+      const next = Math.min(Math.max(desired, 0), totalMatches - 1)
+      publishedIndex = next
+      return next
+    }
     const handle = runWalker(textNodes, compiled, {
       onProgress: (partial: FindResult) => {
         matchesRef.current = partial.matches
@@ -231,14 +249,14 @@ export function InPageFind({
         // for each chunk on long pages.
         setResult({
           totalMatches: partial.matches.length,
-          currentIndex: partial.matches.length > 0 ? 0 : -1,
+          currentIndex: indexFor(partial.matches.length),
           regexError: null,
           skippedLongNodes: partial.skippedLongNodes,
         })
       },
       onComplete: (final: FindResult) => {
         matchesRef.current = final.matches
-        const startIndex = final.matches.length > 0 ? 0 : -1
+        const startIndex = indexFor(final.matches.length)
         setResult({
           totalMatches: final.matches.length,
           currentIndex: startIndex,

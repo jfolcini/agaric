@@ -121,6 +121,50 @@ describe('FilterChipRow', () => {
     expect(screen.getByText('not-prop:archived=true')).toBeInTheDocument()
   })
 
+  it('renders duplicate filter tokens as separate chips without duplicate React keys (#756)', async () => {
+    const user = userEvent.setup()
+    const onRemove = vi.fn()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // Same kind + value twice — only due:/scheduled: duplicates are
+      // invalidated by the parser, so this is a legal AST. Keys must
+      // differ via span[0] or React logs the "same key" warning and
+      // chip removal targets the wrong index after reconciliation.
+      const filters: FilterToken[] = [
+        { kind: 'tag', value: 'urgent', span: [0, 11] },
+        { kind: 'tag', value: 'urgent', span: [12, 23] },
+      ]
+      render(<FilterChipRow filters={filters} onRemove={onRemove} onClearAll={vi.fn()} />)
+      expect(screen.getAllByText('tag:#urgent')).toHaveLength(2)
+      const dupKeyWarnings = errorSpy.mock.calls.filter((args) =>
+        args.some((a) => typeof a === 'string' && a.includes('same key')),
+      )
+      expect(dupKeyWarnings).toHaveLength(0)
+      // Removing the second duplicate still reports its own index.
+      const removeButtons = screen.getAllByRole('button', { name: /Remove filter/ })
+      const second = removeButtons[1]
+      expect(second).toBeDefined()
+      if (!second) throw new Error('expected second remove button')
+      await user.click(second)
+      expect(onRemove).toHaveBeenCalledWith(1)
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('duplicate chips pass an axe scan (#756)', async () => {
+    const filters: FilterToken[] = [
+      { kind: 'tag', value: 'urgent', span: [0, 11] },
+      { kind: 'tag', value: 'urgent', span: [12, 23] },
+    ]
+    const { container } = render(
+      <FilterChipRow filters={filters} onRemove={vi.fn()} onClearAll={vi.fn()} />,
+    )
+    // oxlint-disable-next-line typescript/no-explicit-any -- vitest-axe loose typing.
+    const results = await axe(container as any)
+    expect(results).toHaveNoViolations()
+  })
+
   it('has no a11y violations', async () => {
     const filters: FilterToken[] = [
       { kind: 'tag', value: 'urgent', span: [0, 11] },

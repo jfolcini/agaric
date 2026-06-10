@@ -112,11 +112,16 @@ export function indexOfFolded(haystack: string, needle: string): number {
  *    `findFoldedMatch` handles by walking original code units one at
  *    a time and accumulating their folded output.
  *
- * Walks haystack one code unit at a time, accumulating the fold of
- * each code unit onto a running buffer.  Per-code-unit folding is
+ * Walks haystack one code **point** at a time, accumulating the fold of
+ * each code point onto a running buffer.  Per-code-point folding is
  * safe because NFKD decomposes individual code points independently
  * and combining-mark stripping never re-introduces context across
- * characters.  O(n) on the haystack length.
+ * characters.  Walking code *units* instead would split surrogate
+ * pairs: a supplementary-plane compatibility character such as 𝐀
+ * (U+1D400) NFKD-folds to "a" as a whole code point, but its two lone
+ * surrogate halves fold to themselves — desyncing the running buffer
+ * from the whole-string fold and corrupting the span math.  O(n) on
+ * the haystack length.
  */
 export function findFoldedMatch(
   haystack: string,
@@ -141,21 +146,24 @@ export function findFoldedMatch(
       start = originalCursor
     }
     if (start !== null && foldedSoFar.length >= foldedEnd) {
-      // Greedily absorb trailing code units that fold to nothing (e.g.
+      // Greedily absorb trailing code points that fold to nothing (e.g.
       // standalone combining marks) — they visually attach to the last
       // matched base character so they belong inside the highlight span.
       if (originalCursor < haystack.length) {
-        const nextFold = foldForSearch(haystack.charAt(originalCursor))
-        if (nextFold === '') {
-          originalCursor++
+        const next = String.fromCodePoint(haystack.codePointAt(originalCursor) as number)
+        if (foldForSearch(next) === '') {
+          originalCursor += next.length
           continue
         }
       }
       return { start, length: originalCursor - start }
     }
     if (originalCursor >= haystack.length) break
-    foldedSoFar += foldForSearch(haystack.charAt(originalCursor))
-    originalCursor++
+    // Step by full code point — `charAt` would split surrogate pairs and
+    // fold each lone half to itself, desyncing from the whole-string fold.
+    const ch = String.fromCodePoint(haystack.codePointAt(originalCursor) as number)
+    foldedSoFar += foldForSearch(ch)
+    originalCursor += ch.length
   }
   // Defensive fallback: should not happen for well-formed input.
   return null

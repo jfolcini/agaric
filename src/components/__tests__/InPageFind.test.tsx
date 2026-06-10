@@ -14,7 +14,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { useInPageFindStore } from '../../stores/useInPageFindStore'
@@ -163,6 +163,74 @@ describe('InPageFind — navigation', () => {
     fireEvent.keyDown(window, { key: 'F3' })
     expect(useInPageFindStore.getState().currentIndex).toBe(1)
     fireEvent.keyDown(window, { key: 'F3', shiftKey: true })
+    expect(useInPageFindStore.getState().currentIndex).toBe(0)
+  })
+})
+
+describe('InPageFind — chunked walk preserves navigation (#756)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('Enter mid-walk is not reset to match 0 by later chunks or completion', () => {
+    // 60 text nodes > CHUNK_SIZE (50) forces a two-chunk walk with an
+    // onProgress publish between chunks. Every node holds one match.
+    host.innerHTML = Array.from({ length: 60 }, (_, i) => `<p>alpha ${i}</p>`).join('')
+    useInPageFindStore.getState().setContainer(host)
+
+    render(<InPageFind />)
+    openToolbar('alpha')
+
+    // Chunk 1 (nodes 0..49) → onProgress publishes the partial count and
+    // the default starting index 0. `advanceTimersToNextTimer` fires only
+    // the chunk-1 timer — chunk 2's nested setTimeout(0) stays pending.
+    act(() => {
+      vi.advanceTimersToNextTimer()
+    })
+    expect(useInPageFindStore.getState().totalMatches).toBe(50)
+    expect(useInPageFindStore.getState().currentIndex).toBe(0)
+
+    // User presses Enter while the walk is still running.
+    const input = screen.getByTestId('in-page-find-input') as HTMLInputElement
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(useInPageFindStore.getState().currentIndex).toBe(1)
+
+    // Chunk 2 completes the walk — the navigated position must survive
+    // both the chunk's progress publish and onComplete.
+    act(() => {
+      vi.runAllTimers()
+    })
+    expect(useInPageFindStore.getState().totalMatches).toBe(60)
+    expect(useInPageFindStore.getState().currentIndex).toBe(1)
+  })
+
+  it('a fresh walk still starts at the first match', () => {
+    host.innerHTML = Array.from({ length: 60 }, (_, i) => `<p>alpha ${i}</p>`).join('')
+    useInPageFindStore.getState().setContainer(host)
+
+    render(<InPageFind />)
+    openToolbar('alpha')
+    act(() => {
+      vi.runAllTimers()
+    })
+    // Navigate away, then change the query → the new walk resets to 0
+    // even though the store still carried index 3 when it started.
+    act(() => {
+      useInPageFindStore.getState().next()
+      useInPageFindStore.getState().next()
+      useInPageFindStore.getState().next()
+    })
+    expect(useInPageFindStore.getState().currentIndex).toBe(3)
+    act(() => {
+      useInPageFindStore.getState().setQuery('alpha 1')
+    })
+    act(() => {
+      vi.runAllTimers()
+    })
+    expect(useInPageFindStore.getState().totalMatches).toBe(11)
     expect(useInPageFindStore.getState().currentIndex).toBe(0)
   })
 })

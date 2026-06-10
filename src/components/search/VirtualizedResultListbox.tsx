@@ -138,7 +138,12 @@ export function VirtualizedResultListbox({
   return (
     <ul
       ref={scrollRef}
-      className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[calc(100dvh-320px)] overflow-y-auto"
+      // `max(…, 12rem)` floors the viewport-derived cap: with the Android
+      // soft keyboard up, `100dvh` shrinks far enough that `100dvh - 320px`
+      // collapses the listbox to a sliver (or 0). The floor keeps ~5 rows
+      // visible; small groups are unaffected (their intrinsic height is
+      // below the cap either way).
+      className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto"
       aria-label={ariaLabel}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model (PEND-50) requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host. A virtualized custom listbox can't be a <datalist>/<select> (those can't host the absolutely-positioned virtual rows).
       role="listbox"
