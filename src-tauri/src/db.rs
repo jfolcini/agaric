@@ -551,59 +551,87 @@ async fn ensure_blocks_table_exists(pool: &SqlitePool) -> Result<(), crate::erro
         return Ok(());
     }
 
-    let migration_rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-        .fetch_one(pool)
-        .await?;
+    // #618: the highest applied migration version determines the era-correct
+    // temp-table schema and `deleted_at` encoding below. `IFNULL(MAX(…), 0)`
+    // doubles as the fresh-DB gate: 0 rows ⇒ no migration ever ran ⇒ this is
+    // a fresh database, not a corrupted one — skip recovery.
+    let max_applied_migration =
+        sqlx::query_scalar!(r#"SELECT IFNULL(MAX(version), 0) AS "v!: i64" FROM _sqlx_migrations"#)
+            .fetch_one(pool)
+            .await?;
 
-    if migration_rows == 0 {
+    if max_applied_migration == 0 {
         return Ok(());
     }
 
+    // #618: era switches — `ensure_blocks_table_exists` fires for ANY
+    // missing-blocks state (every rebuild migration DROPs `blocks`, and
+    // external corruption can hit a fully-migrated DB), so the temp schema
+    // must match what the migrations still pending a (re-)run expect:
+    //
+    // * `deleted_at` flipped TEXT rfc3339 → INTEGER epoch-ms in 0080. Only
+    //   0080 julianday()-converts; the later rebuilds (0085, 0089) copy the
+    //   column RAW into a `STRICT` INTEGER column, and an at-head DB keeps
+    //   this temp table as the live `blocks` where every reader decodes i64.
+    //   Writing rfc3339 TEXT on a ≥0080 DB therefore wedges boot permanently:
+    //   this recovery tx commits before migrations run, so the next boot
+    //   finds `blocks` present, skips recovery, and fails the same rebuild
+    //   again (SQLITE_CONSTRAINT_DATATYPE).
+    // * `space_id` (#605) exists iff 0086 is recorded. With 0086 applied no
+    //   later migration re-adds the column, and the post-migration
+    //   `set_property(space)` replay needs it ("no such column" otherwise);
+    //   WITHOUT 0086 recorded, `ALTER TABLE blocks ADD COLUMN space_id`
+    //   re-runs at boot and would abort with "duplicate column name" if the
+    //   temp table already carried it (the exactly-0085-era sibling wedge).
+    let deleted_at_is_ms = max_applied_migration >= 80;
+    let has_space_id_column = max_applied_migration >= 86;
+
     tracing::warn!(
-        "blocks table missing — likely from a partial migration-73 run. \
+        max_applied_migration,
+        "blocks table missing — likely from a partial blocks-rebuild migration run. \
          Creating temporary table and recovering from op_log."
     );
 
     let mut tx = pool.begin().await?;
 
-    // Temporary blocks table: no STRICT, no FK constraints, no CHECK.
-    // Migration 73 will rebuild it with the proper constraints.
-    //
-    // #605: `space_id` must be present here — on a DB whose `_sqlx_migrations`
-    // already records 0086, no later migration re-runs to add the column, so
-    // this temp schema is what `recover_derived_state_from_op_log` replays
-    // `set_property(space)` / `delete_property(space)` ops against. Without
-    // the column those arms fail with "no such column: space_id" and turn
-    // recovery into a permanent boot failure (it refires and re-fails on
-    // every startup).
-    sqlx::query(
+    // Temporary blocks table: no STRICT, no FK constraints, no CHECK. The
+    // pending re-run of the rebuild migration that lost the table restores
+    // the proper constraints (or, at head, this table serves as-is).
+    let deleted_at_type = if deleted_at_is_ms { "INTEGER" } else { "TEXT" };
+    let space_id_column = if has_space_id_column {
+        ",\n            space_id       TEXT"
+    } else {
+        ""
+    };
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE TABLE blocks (
             id             TEXT NOT NULL PRIMARY KEY,
             block_type     TEXT NOT NULL DEFAULT 'content',
             content        TEXT,
             parent_id      TEXT,
             position       INTEGER,
-            deleted_at     TEXT,
+            deleted_at     {deleted_at_type},
             todo_state     TEXT,
             priority       TEXT,
             due_date       TEXT,
             scheduled_date TEXT,
-            page_id        TEXT,
-            space_id       TEXT
-        )",
-    )
+            page_id        TEXT{space_id_column}
+        )"
+    )))
     .execute(&mut *tx)
     .await?;
 
     // Replay create / edit / move / delete / restore / purge ops into blocks.
-    recover_blocks_from_op_log(&mut tx).await?;
+    recover_blocks_from_op_log(&mut tx, deleted_at_is_ms).await?;
 
     tx.commit().await?;
     Ok(())
 }
 
 /// #429: read an `op_log` row's `created_at` as an rfc3339 string, for use as
-/// `blocks.deleted_at` when recovery replays a `delete_block`.
+/// `blocks.deleted_at` when recovery replays a `delete_block` on a pre-0080
+/// database (post-0080 the column is INTEGER ms — see [`op_created_at_ms`],
+/// #618).
 ///
 /// `created_at` is INTEGER-ms post-migration 0079/0080 but original-format
 /// **TEXT rfc3339** on the older databases that actually reach this recovery
@@ -640,11 +668,49 @@ fn op_created_at_rfc3339(row: &sqlx::sqlite::SqliteRow, fallback: &str) -> Strin
     fallback.to_string()
 }
 
+/// #618: read an `op_log` row's `created_at` as epoch-ms, for use as
+/// `blocks.deleted_at` when recovery replays a `delete_block` on a database
+/// where migration 0080 has already run (`deleted_at` is INTEGER ms there,
+/// and no later migration converts — the 0085/0089 rebuild re-runs copy the
+/// column RAW into a `STRICT` INTEGER column).
+///
+/// On that population `created_at` is INTEGER ms (0080 applied ⇒ 0079
+/// applied), but a TEXT read is still tried (first, mirroring
+/// [`op_created_at_rfc3339`]) so the helper is robust to either column era.
+/// sqlx's `try_get` type-checks the stored value, so each read either
+/// matches its era exactly or fails cleanly — an `i64` read of a TEXT value
+/// errors (`ColumnDecode` mismatch) rather than coercing through the value's
+/// leading integer, and vice versa. `fallback_ms` (boot-time `now_ms()`) is
+/// used only if neither read succeeds — it never should for a well-formed
+/// op row.
+fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) -> i64 {
+    if let Ok(s) = row.try_get::<String, _>("created_at") {
+        // Defensive: a TEXT column holding an all-digit ms value.
+        if let Ok(ms) = s.parse::<i64>() {
+            return ms;
+        }
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+            return dt.timestamp_millis();
+        }
+    }
+    if let Ok(ms) = row.try_get::<i64, _>("created_at") {
+        return ms;
+    }
+    fallback_ms
+}
+
 /// Replay block-level ops from `op_log` into an existing (temporary)
 /// `blocks` table.  Called by [`ensure_blocks_table_exists`] inside a
 /// transaction so the rebuild is atomic.
+///
+/// `deleted_at_is_ms` (#618) selects the era-correct encoding the delete arm
+/// writes into `deleted_at`: INTEGER epoch-ms once `_sqlx_migrations` shows
+/// 0080 applied (nothing converts after 0080 — the 0085/0089 rebuilds copy
+/// RAW into a STRICT INTEGER column), rfc3339 TEXT before that (0080's
+/// julianday() backfill is the designated converter).
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
+    deleted_at_is_ms: bool,
 ) -> Result<(), crate::error::AppError> {
     // Guard: op_log might not exist on ancient databases.
     // R4 (#347): propagate with `?` — a transient probe failure must not
@@ -681,12 +747,13 @@ async fn recover_blocks_from_op_log(
 
     tracing::info!("Replaying {} ops into temporary blocks table", ops.len());
 
-    // #429: fallback only — used when an op's own `created_at` cannot be
+    // #429: fallbacks only — used when an op's own `created_at` cannot be
     // read/converted (it never should). The delete arm stamps the op's OWN
     // timestamp so each delete cohort keeps a distinct `(seed, deleted_at)`
     // identity that `list_trash` / `restore_block` group on; a shared
     // boot-time `now` would collapse every recovered deletion into one cohort.
     let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let now_ms_fallback = now_ms();
 
     for row in ops {
         let op_type: String = row.try_get("op_type")?;
@@ -759,8 +826,13 @@ async fn recover_blocks_from_op_log(
                 // production / the purge cascade). The `deleted_at IS NULL`
                 // guard preserves an already-deleted descendant's original
                 // cohort timestamp (mirrors `descendants_cte_active!()`).
-                let deleted_at = op_created_at_rfc3339(&row, &now_rfc3339);
-                sqlx::query(
+                //
+                // #618: encode per era — INTEGER epoch-ms once 0080 has run
+                // (any later rebuild re-run copies `deleted_at` RAW into a
+                // STRICT INTEGER column, so rfc3339 TEXT wedges 0085/0089 and
+                // corrupts at-head i64 reads), rfc3339 TEXT before that
+                // (0080's julianday() backfill converts it).
+                let query = sqlx::query(
                     "UPDATE blocks SET deleted_at = ?1 \
                      WHERE deleted_at IS NULL \
                        AND id IN ( \
@@ -773,11 +845,13 @@ async fn recover_blocks_from_op_log(
                            ) \
                            SELECT id FROM descendants \
                        )",
-                )
-                .bind(&deleted_at)
-                .bind(block_id)
-                .execute(&mut *executor)
-                .await?;
+                );
+                let query = if deleted_at_is_ms {
+                    query.bind(op_created_at_ms(&row, now_ms_fallback))
+                } else {
+                    query.bind(op_created_at_rfc3339(&row, &now_rfc3339))
+                };
+                query.bind(block_id).execute(&mut *executor).await?;
             }
             "restore_block" => {
                 let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -3089,25 +3163,20 @@ mod tests {
         );
 
         // (2) Cohort + op timestamp: all three share one `deleted_at`, and it
-        // reflects the 2020 op time — not boot-time `now`. In the recovery
-        // scenario `deleted_at` is rfc3339 TEXT (the recovery temp-table
-        // schema; post-DROP no later migration re-runs to convert it), so the
-        // op's `created_at` ms was rendered to rfc3339 by the recovery.
-        let stamps: Vec<String> =
+        // is the 2020 op instant — not boot-time `now`. This DB is at head
+        // (`_sqlx_migrations` records ≥ 0080 and post-DROP no later migration
+        // re-runs to convert anything), so recovery writes INTEGER epoch-ms
+        // (#618) — the encoding every at-head reader (`list_trash`,
+        // `restore_block`) decodes as i64.
+        let stamps: Vec<i64> =
             sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id IN ('P429','C429','G429')")
                 .fetch_all(&pool)
                 .await
                 .unwrap();
         assert_eq!(stamps.len(), 3, "all three rows recovered");
         assert!(
-            stamps.iter().all(|s| *s == stamps[0]),
-            "the whole cohort must share one deleted_at: {stamps:?}"
-        );
-        let this_year = chrono::Utc::now().format("%Y").to_string();
-        assert!(
-            stamps[0].starts_with("2020") && !stamps[0].starts_with(&this_year),
-            "deleted_at must come from the op's 2020 created_at, not boot-time now: {}",
-            stamps[0]
+            stamps.iter().all(|s| *s == DELETE_TS_MS),
+            "the whole cohort must share the delete op's epoch-ms instant: {stamps:?}"
         );
     }
 
@@ -3157,6 +3226,390 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(op_created_at_rfc3339(&row, "FALLBACK"), "FALLBACK");
+    }
+
+    /// #618: `op_created_at_ms` must read every `created_at` era to epoch-ms —
+    /// INTEGER ms (post-0079, the population the ms delete arm actually
+    /// serves), the defensive all-digit-TEXT case, TEXT rfc3339 (converted
+    /// to the exact instant via chrono), and fallback when unreadable.
+    #[tokio::test]
+    async fn op_created_at_ms_reads_integer_text_digit_and_rfc3339_618() {
+        let dir = TempDir::new().unwrap();
+        let pool = init_pool(&dir.path().join("t.db")).await.unwrap();
+
+        // INTEGER ms (post-0079 op_log — the era this helper serves).
+        let row = sqlx::query("SELECT 1600000000000 AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_created_at_ms(&row, -1),
+            1_600_000_000_000,
+            "INTEGER ms created_at must be read verbatim"
+        );
+
+        // Defensive: TEXT column holding an all-digit ms value.
+        let row = sqlx::query("SELECT '1600000000000' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_created_at_ms(&row, -1),
+            1_600_000_000_000,
+            "all-digit TEXT created_at must parse to ms"
+        );
+
+        // TEXT rfc3339 → converted to ms via chrono (an i64 read of a TEXT
+        // value fails sqlx's type check, so only the String path serves it).
+        let row = sqlx::query("SELECT '2020-09-13T12:26:40+00:00' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_created_at_ms(&row, -1),
+            1_600_000_000_000,
+            "rfc3339 TEXT created_at must convert to the exact instant in ms"
+        );
+
+        // Empty / unreadable → fallback.
+        let row = sqlx::query("SELECT '' AS created_at")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            op_created_at_ms(&row, -1),
+            -1,
+            "unreadable created_at must fall back"
+        );
+    }
+
+    /// #618: seed a real `_sqlx_migrations` bookkeeping table recording every
+    /// migration with `version <= through` as applied. Checksums come from the
+    /// same `sqlx::migrate!` expansion production uses, so a subsequent
+    /// `init_pool` boot validates the applied set and resumes at
+    /// `through + 1` — exactly like a real DB whose later migration crashed.
+    /// (The DDL mirrors sqlx-sqlite's `ensure_migrations_table`; the real
+    /// migrator's `CREATE TABLE IF NOT EXISTS` then no-ops over it.)
+    async fn seed_sqlx_migrations_through(pool: &SqlitePool, through: i64) {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+                version BIGINT PRIMARY KEY,
+                description TEXT NOT NULL,
+                installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                success BOOLEAN NOT NULL,
+                checksum BLOB NOT NULL,
+                execution_time BIGINT NOT NULL
+            )",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        let migrator = sqlx::migrate!("./migrations");
+        for m in migrator.iter() {
+            if !m.migration_type.is_up_migration() || m.version > through {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations \
+                 (version, description, success, checksum, execution_time) \
+                 VALUES (?, ?, TRUE, ?, -1)",
+            )
+            .bind(m.version)
+            .bind(m.description.as_ref())
+            .bind(m.checksum.as_ref())
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+    }
+
+    /// #618 mechanical pin of the wedge: an rfc3339 TEXT `deleted_at` in the
+    /// (non-STRICT) recovered `blocks` table makes the 0085 rebuild re-run
+    /// fail — its bulk copy moves `deleted_at` RAW into the
+    /// `_new_blocks … deleted_at INTEGER … STRICT` column with no julianday()
+    /// conversion (only 0080 converts), so SQLite raises
+    /// SQLITE_CONSTRAINT_DATATYPE. With INTEGER epoch-ms (the #618 recovery
+    /// output) the same re-run succeeds and preserves the instant.
+    #[tokio::test]
+    async fn text_deleted_at_wedges_0085_rerun_integer_ms_passes_618() {
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_through(&pool, 0, 84).await;
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // The pre-#618 recovery temp table: non-STRICT, TEXT deleted_at.
+        let temp_ddl_text = "CREATE TABLE blocks (
+            id             TEXT NOT NULL PRIMARY KEY,
+            block_type     TEXT NOT NULL DEFAULT 'content',
+            content        TEXT,
+            parent_id      TEXT,
+            position       INTEGER,
+            deleted_at     TEXT,
+            todo_state     TEXT,
+            priority       TEXT,
+            due_date       TEXT,
+            scheduled_date TEXT,
+            page_id        TEXT
+        )";
+        sqlx::query(temp_ddl_text).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, content, deleted_at) \
+             VALUES ('B618', 'x', '2020-09-13T12:26:40+00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let migrator = sqlx::migrate!("./migrations");
+        let sql_0085 = migrator
+            .iter()
+            .find(|m| m.version == 85 && m.migration_type.is_up_migration())
+            .expect("migration 0085 exists")
+            .sql
+            .as_str()
+            .to_owned();
+
+        let mut tx = pool.begin().await.unwrap();
+        let err = sqlx::query(sqlx::AssertSqlSafe(sql_0085))
+            .execute(&mut *tx)
+            .await
+            .expect_err(
+                "0085 re-run over rfc3339 TEXT deleted_at must fail on the STRICT INTEGER column",
+            );
+        let msg = err.to_string();
+        assert!(
+            msg.contains("deleted_at"),
+            "the failure must be the deleted_at datatype mismatch: {msg}"
+        );
+        tx.rollback().await.unwrap();
+
+        // Same era, INTEGER epoch-ms deleted_at (the #618 recovery output):
+        // the re-run succeeds (apply_migrations_through panics on failure)
+        // and the instant survives to the rebuilt STRICT table.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let temp_ddl_ms = "CREATE TABLE blocks (
+            id             TEXT NOT NULL PRIMARY KEY,
+            block_type     TEXT NOT NULL DEFAULT 'content',
+            content        TEXT,
+            parent_id      TEXT,
+            position       INTEGER,
+            deleted_at     INTEGER,
+            todo_state     TEXT,
+            priority       TEXT,
+            due_date       TEXT,
+            scheduled_date TEXT,
+            page_id        TEXT
+        )";
+        sqlx::query(temp_ddl_ms).execute(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, content, deleted_at) VALUES ('B618', 'x', 1600000000000)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        apply_migrations_through(&pool, 84, 85).await;
+        let got: i64 = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'B618'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            got, 1_600_000_000_000,
+            "epoch-ms deleted_at must pass the 0085 rebuild verbatim"
+        );
+    }
+
+    /// #618 end-to-end: a DB whose 0085 rebuild crashed after the DROP
+    /// committed (`_sqlx_migrations` records 0084, `blocks` missing) must
+    /// boot. Recovery replays the delete op as INTEGER epoch-ms (0080 is
+    /// applied, so no julianday() conversion ever re-runs), the 0085..head
+    /// re-run copies it into the STRICT INTEGER column, and a second boot
+    /// stays healthy — the pre-#618 code wedged here permanently (boot 1
+    /// failed 0085 on the TEXT deleted_at; every later boot found `blocks`
+    /// present, skipped recovery, and failed 0085 the same way).
+    #[tokio::test]
+    async fn init_pool_recovery_at_0085_era_writes_ms_deleted_at_618() {
+        let (pool, dir) = unmigrated_pool().await;
+        let db_path = dir.path().join("test.db");
+        apply_migrations_through(&pool, 0, 84).await;
+        seed_sqlx_migrations_through(&pool, 84).await;
+
+        const DELETE_TS_MS: i64 = 1_600_000_000_000; // 2020-09-13
+        const CREATE_TS_MS: i64 = 1_500_000_000_000; // 2017, before the delete
+
+        // op_log.created_at is INTEGER ms at v84 (0079 applied).
+        let ops: &[(i64, &str, &str, i64)] = &[
+            (
+                1,
+                "create_block",
+                r#"{"block_id":"P618","block_type":"page","content":"P","parent_id":null,"position":1}"#,
+                CREATE_TS_MS,
+            ),
+            (
+                2,
+                "create_block",
+                r#"{"block_id":"C618","block_type":"content","content":"C","parent_id":"P618","position":1}"#,
+                CREATE_TS_MS,
+            ),
+            (3, "delete_block", r#"{"block_id":"P618"}"#, DELETE_TS_MS),
+        ];
+        for (seq, op_type, payload, ts) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev618', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // The 0085-era crash state: blocks gone, bookkeeping says 0084.
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        // Boot 1: recovery + the 0085..head re-run must succeed.
+        let pool = init_pool(&db_path).await.expect(
+            "boot at the 0085 era must not wedge on the STRICT INTEGER deleted_at re-rebuild (#618)",
+        );
+        let stamps: Vec<i64> =
+            sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id IN ('P618', 'C618')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stamps.len(), 2, "both subtree members must be recovered");
+        assert!(
+            stamps.iter().all(|s| *s == DELETE_TS_MS),
+            "deleted_at must be the delete op's epoch-ms instant, got {stamps:?}"
+        );
+        drop(pool);
+
+        // Boot 2: the wedge class is permanent, so prove the second boot is
+        // healthy and the recovered cohort is stable.
+        let pool = init_pool(&db_path)
+            .await
+            .expect("second boot must stay healthy (#618 wedge was permanent)");
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE deleted_at = ?")
+            .bind(DELETE_TS_MS)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 2,
+            "recovered deletion cohort must persist across boots"
+        );
+    }
+
+    /// #618 era parity (the pre-0080 population BUG-73/#429 originally
+    /// served): with `_sqlx_migrations` recording only ≤0078, recovery must
+    /// STILL write rfc3339 TEXT — 0080's julianday() backfill re-runs and is
+    /// the designated converter. The op's instant must survive to head as the
+    /// exact epoch-ms value.
+    #[tokio::test]
+    async fn init_pool_recovery_pre_0080_era_text_deleted_at_converts_via_0080_618() {
+        let (pool, dir) = unmigrated_pool().await;
+        let db_path = dir.path().join("test.db");
+        apply_migrations_through(&pool, 0, 78).await;
+        seed_sqlx_migrations_through(&pool, 78).await;
+
+        // op_log.created_at is still TEXT rfc3339 at v78 (0079 not yet run).
+        const DELETE_TS_RFC: &str = "2020-09-13T12:26:40+00:00";
+        const DELETE_TS_MS: i64 = 1_600_000_000_000;
+        let ops: &[(i64, &str, &str, &str)] = &[
+            (
+                1,
+                "create_block",
+                r#"{"block_id":"P618B","block_type":"page","content":"P","parent_id":null,"position":1}"#,
+                "2017-07-14T02:40:00+00:00",
+            ),
+            (2, "delete_block", r#"{"block_id":"P618B"}"#, DELETE_TS_RFC),
+        ];
+        for (seq, op_type, payload, ts) in ops {
+            sqlx::query(
+                "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+                 VALUES ('dev618', ?, ?, ?, ?, ?, 'user')",
+            )
+            .bind(seq)
+            .bind(format!("h{seq}"))
+            .bind(op_type)
+            .bind(payload)
+            .bind(ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        let pool = init_pool(&db_path)
+            .await
+            .expect("pre-0080-era recovery must keep booting (#429 population)");
+        let got: i64 = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = 'P618B'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            got, DELETE_TS_MS,
+            "0080's julianday() backfill must convert the recovery's rfc3339 deleted_at \
+             to the exact op instant"
+        );
+    }
+
+    /// #618 sibling wedge (the #605 space_id column, era-inverted): on a DB
+    /// whose `_sqlx_migrations` records exactly 0085 (0086 unapplied), the
+    /// recovery temp table must NOT carry `space_id` — 0086's
+    /// `ALTER TABLE blocks ADD COLUMN space_id` re-runs at boot and would
+    /// abort with "duplicate column name". (The #605 era — 0086 recorded, no
+    /// re-run — keeps the column; that path is pinned by the #605/#708 tests.)
+    #[tokio::test]
+    async fn init_pool_recovery_at_0086_era_omits_space_id_so_rerun_adds_it_618() {
+        let (pool, dir) = unmigrated_pool().await;
+        let db_path = dir.path().join("test.db");
+        apply_migrations_through(&pool, 0, 85).await;
+        seed_sqlx_migrations_through(&pool, 85).await;
+
+        sqlx::query(
+            "INSERT INTO op_log (device_id, seq, hash, op_type, payload, created_at, origin) \
+             VALUES ('dev618', 1, 'h1', 'create_block', \
+             '{\"block_id\":\"P618C\",\"block_type\":\"page\",\"content\":\"P\",\"parent_id\":null,\"position\":1}', \
+             1600000000000, 'user')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("DROP TABLE blocks")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+
+        let pool = init_pool(&db_path).await.expect(
+            "boot at the exactly-0085 era must not wedge 0086's ADD COLUMN space_id re-run (#618)",
+        );
+        // 0086 re-ran: the column exists, and the recovered block is intact.
+        let space_id: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'P618C'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(space_id, None, "recovered block boots with space_id NULL");
     }
 
     /// BUG-73 regression: derived-state recovery must not crash when op_log
