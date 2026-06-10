@@ -3,9 +3,10 @@
 //!
 //! ## Why a process global
 //!
-//! `crate::merge::engine_apply` is called from `merge::apply.rs`,
-//! which runs inside the merge orchestrator's async function. That
-//! function does not (and should not) take an `AppHandle` parameter
+//! `crate::merge::engine_apply` is called from the materializer's
+//! apply path (the in-tx `apply_*_via_loro` helpers read this state,
+//! and the post-commit cohort fanouts dispatch through it). Those
+//! functions do not (and should not) take an `AppHandle` parameter
 //! — the merge layer has been kept tauri-agnostic for testability.
 //! But the engine state must persist across calls so successive ops
 //! mutate the same Loro doc (otherwise every op would start from an

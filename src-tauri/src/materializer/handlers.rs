@@ -174,15 +174,18 @@ pub(super) async fn handle_foreground_task(
             }
             tx.commit().await?;
 
-            // Post-commit engine-dispatch fan-out for the batch. Runs
-            // AFTER `tx.commit` so any record whose sibling rolled the
-            // tx back is not visible here (an Err inside the loop above
-            // returns early before we reach this point). Each record
-            // dispatches its op to the engine and, for Restore/Delete
-            // ops, fans out the captured descendant cohort so the
+            // Post-commit cohort fan-out for the batch. Runs AFTER
+            // `tx.commit` so any record whose sibling rolled the tx
+            // back is not visible here (an Err inside the loop above
+            // returns early before we reach this point). Each op was
+            // already engine-applied INSIDE the tx (`apply_op_tx` →
+            // `apply_*_via_loro`) — there is deliberately NO per-op
+            // re-dispatch here (#603: a second engine apply routed
+            // new-scheme create/move ops through the legacy position
+            // path, converging sibling order toward ULID order). Only
+            // the Restore/Delete descendant cohorts fan out, so the
             // engine's per-block-id mutation matches the SQL cascade.
             for (record, effects) in records.iter().zip(per_record_effects.iter()) {
-                crate::merge::dispatch_for_record(pool, record).await;
                 dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
                 dispatch_delete_descendants(
                     record,
@@ -253,12 +256,16 @@ pub(super) async fn apply_op(
     advance_apply_cursor(&mut tx, record.seq).await?;
     tx.commit().await?;
 
-    // Engine-dispatch hook on the materializer hot path. Dispatched
-    // AFTER `tx.commit` so the per-space `LoroEngine` only ever
-    // observes durably-applied ops (a rolled-back tx must not leak
-    // into Loro's in-process state). `dispatch_for_record` swallows
-    // its own errors and never propagates failure back to the
-    // materializer.
+    // The op itself was engine-applied INSIDE the tx above
+    // (`apply_op_tx` → `apply_*_via_loro`, #400-routed on
+    // `index`/`new_index`). There is deliberately NO per-op post-commit
+    // engine re-dispatch: the old `dispatch_for_record` call re-applied
+    // every op through the legacy position path, converging engine
+    // sibling order toward ULID order on every boot replay (#603).
+    // Note the engine therefore observes the op BEFORE the commit; a
+    // tx rollback leaves the engine ahead of SQL until the next op-log
+    // replay reconciles it (pre-existing property of the via-loro
+    // design, see `apply_create_block_via_loro`'s atomicity note).
     //
     // RestoreBlock / DeleteBlock cascade fan-out. The SQL helpers
     // walk the descendant cohort but the Loro engine is per-block-id
@@ -269,7 +276,6 @@ pub(super) async fn apply_op(
     // PRE-UPDATE in `apply_op_tx` because `resolve_block_space`
     // filters `deleted_at IS NULL`; a post-commit lookup would return
     // `None` for every cohort row.
-    crate::merge::dispatch_for_record(pool, record).await;
     dispatch_restore_descendants(pool, record, &effects.restored_cohort).await;
     dispatch_delete_descendants(
         record,
@@ -300,25 +306,23 @@ pub(super) async fn apply_op(
 ///
 /// ## Why the cohort INCLUDES the seed
 ///
-/// The upstream `dispatch_for_record` call in `apply_op` also
-/// targets the seed block, so in a hypothetically healthy world the
-/// seed would be applied twice (once via dispatch, once via this
-/// helper).  Engine `apply_restore_block` is idempotent (no-op on an
-/// already-restored block).  Including the seed here makes this helper
-/// the canonical cohort-restore function regardless of whether
-/// `dispatch_for_record` reaches the engine for any specific
-/// op record.  Net cost: one extra idempotent engine call per
+/// The in-tx engine apply (`apply_restore_block_via_loro`) already
+/// targets the seed block, so the seed is applied twice (once in-tx,
+/// once via this helper).  Engine `apply_restore_block` is idempotent
+/// (no-op on an already-restored block).  Including the seed here makes
+/// this helper the canonical cohort-restore function regardless of
+/// whether the in-tx apply reached the engine for any specific op
+/// record (it falls back to SQL-only on unresolved space / uninit Loro
+/// state).  Net cost: one extra idempotent engine call per
 /// RestoreBlock.
 ///
 /// ## Implementation note
 ///
 /// We call `engine_apply` directly with a synthesised
-/// [`OpPayload::RestoreBlock`] rather than re-marshalling through
-/// `dispatch_for_record`.  Synthetic records don't have a
-/// stored payload to JSON-parse; going direct skips a serialise +
-/// deserialise round-trip per cohort entry and keeps the per-call cost
-/// bounded by the registry lock + the engine's per-block-id mutation
-/// (single-digit microseconds).
+/// [`OpPayload::RestoreBlock`] — synthetic per-descendant records have
+/// no stored payload to JSON-parse, so going direct keeps the per-call
+/// cost bounded by the registry lock + the engine's per-block-id
+/// mutation (single-digit microseconds).
 ///
 /// Errors inside `engine_apply` are absorbed (warn + skip) so this
 /// helper has nothing to propagate.  Every per-block call reuses the
@@ -418,19 +422,19 @@ async fn dispatch_restore_descendants(
 /// ## Why the cohort INCLUDES the seed
 ///
 /// Same idempotent-seed rationale as `dispatch_restore_descendants`:
-/// the upstream `dispatch_for_record` already targets the seed,
-/// so including the seed here yields one extra idempotent engine call
-/// per `DeleteBlock` (engine `apply_delete_block` is a no-op on an
-/// already-deleted block — sets `deleted_at` to the same marker).
-/// Including the seed makes this helper the canonical cohort-delete
-/// function regardless of whether `dispatch_for_record` reaches
-/// the engine for any specific op record.
+/// the in-tx engine apply (`apply_delete_block_via_loro`) already
+/// targets the seed, so including the seed here yields one extra
+/// idempotent engine call per `DeleteBlock` (engine
+/// `apply_delete_block` is a no-op on an already-deleted block — sets
+/// `deleted_at` to the same marker). Including the seed makes this
+/// helper the canonical cohort-delete function regardless of whether
+/// the in-tx apply reached the engine for any specific op record.
 ///
 /// ## Implementation note
 ///
 /// We synthesise a per-cohort `OpPayload::DeleteBlock` and call
-/// `engine_apply` directly, skipping the JSON round-trip the dispatch
-/// path takes through stored payloads.  Errors inside `engine_apply`
+/// `engine_apply` directly (no JSON round-trip through a stored
+/// payload).  Errors inside `engine_apply`
 /// are absorbed (warn + skip) so this helper has nothing to propagate.
 /// Per-call cost is bounded by the registry lock + the engine's
 /// per-block-id mutation (single-digit microseconds).
@@ -550,8 +554,8 @@ fn notify_gcal_for_events(
 /// helper (`dispatch_restore_descendants`) is the canonical path for
 /// driving Loro on the whole subtree. The engine's
 /// `apply_restore_block` is idempotent so the duplicate seed-apply
-/// (the upstream `dispatch_for_record` call also reaches the seed
-/// when the parse path is healthy) is harmless. Empty for every op
+/// (the in-tx `apply_restore_block_via_loro` also reaches the seed
+/// when space resolution is healthy) is harmless. Empty for every op
 /// type other than `RestoreBlock`.
 ///
 /// `deleted_cohort` is the symmetric companion for the `DeleteBlock`
@@ -1377,10 +1381,11 @@ async fn apply_op_tx(
             // (`dispatch_restore_descendants`) is the canonical path
             // that drives Loro for the entire cohort. Including the
             // seed makes the helper self-contained and avoids
-            // depending on the upstream `dispatch_for_record` call
-            // also reaching the engine — the duplicate apply on the
-            // seed is idempotent (engine's `apply_restore_block` is a
-            // no-op on an already-restored block).
+            // depending on the in-tx `apply_restore_block_via_loro`
+            // seed apply also reaching the engine — the duplicate
+            // apply on the seed is idempotent (engine's
+            // `apply_restore_block` is a no-op on an already-restored
+            // block).
             let cohort = collect_restore_cohort(conn, &p).await?;
             // PEND-56b: cohort feeds the count refresh.
             pre_state.cohort = cohort.clone();
@@ -1540,8 +1545,8 @@ async fn collect_restore_cohort(
 /// `dispatch_delete_descendants` re-applies the seed alongside
 /// the descendants (idempotent — `apply_delete_block` is a no-op on an
 /// already-deleted block) so the helper is the canonical cohort-delete
-/// path regardless of whether the upstream `dispatch_for_record`
-/// reaches the engine for any specific op record.
+/// path regardless of whether the in-tx `apply_delete_block_via_loro`
+/// seed apply reached the engine for any specific op record.
 ///
 /// The captured cohort feeds the post-commit
 /// `dispatch_delete_descendants` fanout; the SELECT itself is
@@ -3548,7 +3553,7 @@ mod delete_cascade_tests {
     /// seed AND its two descendants.  Without the day-15 fanout the
     /// engine-side state would still report `deleted_at = Null` on the
     /// two descendants (only the seed sees an engine apply via the
-    /// upstream `dispatch_for_record`).
+    /// in-tx `apply_delete_block_via_loro`).
     #[tokio::test]
     async fn delete_block_dispatches_to_loro_for_each_descendant() {
         let (pool, _dir) = fresh_pool().await;
@@ -3667,6 +3672,230 @@ mod delete_cascade_tests {
         );
 
         tx.commit().await.expect("commit");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #603 — engine/SQL sibling-order consistency through the FULL `apply_op`
+// path (in-tx engine apply + cursor advance + commit + post-commit fanout).
+//
+// Before #603, every op was engine-applied a SECOND time after commit via
+// `dispatch_for_record` → `merge::engine_apply`, whose Create/Move arms
+// ignored the new-scheme `index`/`new_index` and re-applied through the
+// legacy position path — converging engine sibling order toward ULID
+// (creation) order. The next in-tx apply under the same parent then
+// reprojected the corrupted engine order into `blocks.position`.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod sibling_order_full_apply_603_tests {
+    use super::*;
+    use crate::db::init_pool;
+    use crate::loro::shared::LoroState;
+    use crate::op::OpPayload;
+    use crate::space::SpaceId;
+    use crate::ulid::BlockId;
+    use sqlx::SqlitePool;
+    use tempfile::TempDir;
+
+    const PAGE_ID: &str = "01HZ00000000000000000603PG";
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    const DEVICE_ID: &str = "device-sibling-order-603";
+    // Creation (and therefore ULID/lexicographic) order: A < B < C. The
+    // expected FINAL sibling order is the reverse, [C, B, A], so any
+    // legacy-path convergence toward ULID order trips the assertions.
+    const BLOCK_A: &str = "01HZ00000000000000000603QA";
+    const BLOCK_B: &str = "01HZ00000000000000000603QB";
+    const BLOCK_C: &str = "01HZ00000000000000000603QC";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().expect("tempdir");
+        let db_path = dir.path().join("sibling_order_603.db");
+        let pool = init_pool(&db_path).await.expect("init_pool");
+        (pool, dir)
+    }
+
+    /// Seed SQL with the space block + an empty page whose
+    /// `blocks.space_id` resolves to `SPACE` (#533 column-only
+    /// membership), and seed the engine with the same page so create
+    /// ops can anchor on it.
+    async fn seed_page(pool: &SqlitePool, state: &LoroState) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
+        )
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .expect("seed space block");
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 space_id) \
+             VALUES (?, 'page', 'P', NULL, 0, ?, ?)",
+        )
+        .bind(PAGE_ID)
+        .bind(PAGE_ID)
+        .bind(SPACE)
+        .execute(pool)
+        .await
+        .expect("seed page");
+
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_ID, "page", "P", None, 0)
+            .expect("seed engine page");
+    }
+
+    /// Append `payload` to op_log and drive it through the FULL
+    /// `apply_op` path — in-tx engine apply, cursor advance, commit,
+    /// post-commit fanout — exactly like the production consumer.
+    async fn apply(pool: &SqlitePool, payload: OpPayload) {
+        let record = std::sync::Arc::new(
+            crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+                .await
+                .expect("append op_log"),
+        );
+        let gcal_handle: OnceLock<GcalConnectorHandle> = OnceLock::new();
+        super::apply_op(pool, &record, &gcal_handle)
+            .await
+            .expect("apply_op");
+    }
+
+    fn new_scheme_create(block_id: &str, index: i64) -> OpPayload {
+        OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+            block_id: BlockId::from_trusted(block_id),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: None,
+            index: Some(index),
+            content: "c".into(),
+        })
+    }
+
+    fn engine_children(state: &LoroState) -> Vec<String> {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(PAGE_ID))
+            .expect("children_ordered_block_ids")
+    }
+
+    async fn sql_children(pool: &SqlitePool) -> Vec<String> {
+        sqlx::query_as::<_, (String,)>(
+            "SELECT id FROM blocks WHERE parent_id = ? ORDER BY position, id",
+        )
+        .bind(PAGE_ID)
+        .fetch_all(pool)
+        .await
+        .expect("sql children")
+        .into_iter()
+        .map(|(id,)| id)
+        .collect()
+    }
+
+    /// ≥2 new-scheme creates plus a new-scheme move through the FULL
+    /// `apply_op` path. After every step the engine sibling order must
+    /// equal SQL `ORDER BY position`, and the final order must be the
+    /// user's order ([C, B, A] — the reverse of ULID order).
+    ///
+    /// NOTE (verified empirically): this lockstep test does NOT fail on
+    /// the pre-#603 code by itself — in this fresh-apply harness the
+    /// created rows carry no `page_id`/`space_id` at post-commit
+    /// re-dispatch time, so the old `dispatch_for_record` skipped the
+    /// creates on space resolution (the same skip-equivalence that
+    /// justifies its removal), and the legacy move re-apply is harmless
+    /// when siblings carry no legacy position meta. The pre-fix-failing
+    /// regression net for #603 is
+    /// `recovery::tests::boot_replay_preserves_new_scheme_sibling_order_603`
+    /// (rows pre-stamped, re-dispatch resolved and scrambled) plus the
+    /// `engine_apply` routing unit tests in `merge::apply`. This test
+    /// guards the invariant going forward: engine order == SQL order
+    /// through the full production apply path.
+    #[tokio::test]
+    async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
+        let (pool, _dir) = fresh_pool().await;
+        let state = crate::loro::shared::install_for_test();
+        seed_page(&pool, state).await;
+
+        // A appended at slot 0.
+        apply(&pool, new_scheme_create(BLOCK_A, 0)).await;
+        // B inserted ABOVE A (insert-above) → [B, A].
+        apply(&pool, new_scheme_create(BLOCK_B, 0)).await;
+        assert_eq!(
+            engine_children(state),
+            vec![BLOCK_B.to_string(), BLOCK_A.to_string()],
+            "after 2 new-scheme creates the engine must hold the user's \
+             order, not ULID order",
+        );
+        // C inserted between → [B, C, A].
+        apply(&pool, new_scheme_create(BLOCK_C, 1)).await;
+        assert_eq!(
+            engine_children(state),
+            vec![
+                BLOCK_B.to_string(),
+                BLOCK_C.to_string(),
+                BLOCK_A.to_string()
+            ],
+        );
+        assert_eq!(
+            engine_children(state),
+            sql_children(&pool).await,
+            "engine order and SQL ORDER BY position must agree after creates",
+        );
+
+        // Stamp `page_id`/`space_id` on the created children: the apply
+        // projection inserts neither (#533 space propagation runs
+        // outside this path), and the MoveBlock below anchors space
+        // resolution on the moved block itself. Mirrors the stamping
+        // the engine-path tests do for the same reason.
+        for id in [BLOCK_A, BLOCK_B, BLOCK_C] {
+            sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
+                .bind(PAGE_ID)
+                .bind(SPACE)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .expect("stamp page_id/space_id");
+        }
+
+        // Move C to the top (new-scheme `new_index`; the legacy
+        // `new_position` breadcrumb is junk on purpose so any code
+        // path routing on it is caught) → [C, B, A].
+        apply(
+            &pool,
+            OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+                block_id: BlockId::from_trusted(BLOCK_C),
+                new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+                new_position: 99,
+                new_index: Some(0),
+            }),
+        )
+        .await;
+
+        let expected = vec![
+            BLOCK_C.to_string(),
+            BLOCK_B.to_string(),
+            BLOCK_A.to_string(),
+        ];
+        assert_eq!(
+            engine_children(state),
+            expected,
+            "engine must hold the user's final order (reverse of ULID order)",
+        );
+        assert_eq!(
+            sql_children(&pool).await,
+            expected,
+            "SQL ORDER BY position must match the engine's final order",
+        );
     }
 }
 

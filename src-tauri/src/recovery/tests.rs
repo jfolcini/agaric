@@ -2434,3 +2434,169 @@ async fn replay_progress_marker_survives_second_crash_c2b() {
         "no double-apply: block count must be unchanged across the second replay",
     );
 }
+
+// =====================================================================
+// #603 — boot-replay sibling-order regression.
+//
+// Boot replay re-drives every op past the apply cursor through the
+// FULL `apply_op` path (foreground queue → `apply_op_tx` in-tx engine
+// apply → commit → post-commit fanout). Before #603, each replayed op
+// was ALSO re-applied post-commit via the legacy position path
+// (`dispatch_for_record` → `merge::engine_apply`), which ignored the
+// new-scheme `index`/`new_index` and converged engine sibling order
+// toward ULID (creation) order — scrambling insert-above/move orders
+// on every boot.
+// =====================================================================
+
+/// New-scheme creates + a move replayed via the apply-cursor path must
+/// leave the engine sibling order equal to SQL `ORDER BY position`,
+/// and equal to the user's order — NOT ULID order.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boot_replay_preserves_new_scheme_sibling_order_603() {
+    use crate::space::SpaceId;
+
+    const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    const PAGE_ID: &str = "01HZ00000000000000000603PG";
+    // Creation (ULID) order: A < B < C; expected final order is the
+    // REVERSE so legacy-path convergence toward ULID order is caught.
+    const BLOCK_A: &str = "01HZ00000000000000000603QA";
+    const BLOCK_B: &str = "01HZ00000000000000000603QB";
+    const BLOCK_C: &str = "01HZ00000000000000000603QC";
+    let device_id = "dev-replay-order-603";
+
+    let (pool, _dir) = test_pool().await;
+    let state = crate::loro::shared::install_for_test();
+
+    // Seed SQL: space block + page with `blocks.space_id` set (#533
+    // column-only membership), and seed the engine with the same page.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+         VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, space_id) \
+         VALUES (?, 'page', 'P', NULL, 0, ?, ?)",
+    )
+    .bind(PAGE_ID)
+    .bind(PAGE_ID)
+    .bind(SPACE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Boot replay re-applies ops over ALREADY-materialized SQL (the
+    // prior session's local commands wrote the rows; only the engine
+    // is behind). Seed the children as the prior session left them —
+    // full rows with `page_id`/`space_id` (#533) and final positions —
+    // so each replayed op's in-tx space resolution stays on the engine
+    // path (a MoveBlock anchors on the moved block itself).
+    for (id, pos) in [(BLOCK_C, 1_i64), (BLOCK_B, 2), (BLOCK_A, 3)] {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
+                                 space_id) \
+             VALUES (?, 'content', 'c', ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(PAGE_ID)
+        .bind(pos)
+        .bind(PAGE_ID)
+        .bind(SPACE)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .apply_create_block(PAGE_ID, "page", "P", None, 0)
+            .unwrap();
+    }
+
+    // Append the session's ops WITHOUT materialising (the apply cursor
+    // stays at 0, exactly like a session whose local commands never
+    // advanced it): A appended, B insert-above (→ [B, A]), C between
+    // (→ [B, C, A]), then C moved to the top (→ [C, B, A]).
+    let new_scheme_create = |block_id: &str, index: i64| {
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(block_id),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: None,
+            index: Some(index),
+            content: "c".into(),
+        })
+    };
+    for payload in [
+        new_scheme_create(BLOCK_A, 0),
+        new_scheme_create(BLOCK_B, 0),
+        new_scheme_create(BLOCK_C, 1),
+        OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+            block_id: BlockId::from_trusted(BLOCK_C),
+            new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            new_position: 99, // junk legacy breadcrumb — routing must use new_index
+            new_index: Some(0),
+        }),
+    ] {
+        append_local_op(&pool, device_id, payload).await.unwrap();
+    }
+    assert_eq!(read_cursor(&pool).await, 0, "nothing materialised yet");
+
+    // Boot-replay: walk `op_log WHERE seq > cursor` through the real
+    // foreground queue.
+    let mat = Materializer::new(pool.clone());
+    let report = replay_unmaterialized_ops(&pool, &mat).await.unwrap();
+    assert_eq!(report.ops_replayed, 4);
+    assert!(
+        report.replay_errors.is_empty(),
+        "{:?}",
+        report.replay_errors
+    );
+    assert_eq!(
+        read_cursor(&pool).await,
+        4,
+        "cursor advanced through the move"
+    );
+    mat.shutdown();
+
+    let expected = vec![
+        BLOCK_C.to_string(),
+        BLOCK_B.to_string(),
+        BLOCK_A.to_string(),
+    ];
+
+    // Engine sibling order must be the user's order…
+    let engine_order: Vec<String> = {
+        let space = SpaceId::from_trusted(SPACE);
+        let mut guard = state.registry.for_space(&space, device_id).unwrap();
+        guard
+            .engine_mut()
+            .children_ordered_block_ids(Some(PAGE_ID))
+            .unwrap()
+    };
+    assert_eq!(
+        engine_order, expected,
+        "boot replay must preserve the user's sibling order (reverse of \
+         ULID order) — legacy-path re-apply would converge toward [A, B, C]",
+    );
+
+    // …and SQL `ORDER BY position` must agree with the engine.
+    let sql_order: Vec<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT id FROM blocks WHERE parent_id = ? ORDER BY position, id",
+    )
+    .bind(PAGE_ID)
+    .fetch_all(&pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(id,)| id)
+    .collect();
+    assert_eq!(
+        sql_order, expected,
+        "SQL ORDER BY position must match the engine order after replay",
+    );
+}
