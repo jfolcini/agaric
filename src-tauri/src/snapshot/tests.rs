@@ -4403,3 +4403,207 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
          well-formed and reconcilable with the peer_refs anchor"
     );
 }
+
+// ===========================================================================
+// #607 / #779 — RESET must wipe the Loro sidecar state in the same tx
+// ===========================================================================
+
+/// #607 — `apply_snapshot` must clear `loro_doc_state`, `loro_sync_inbox`
+/// and zero `materializer_apply_cursor` atomically with the core wipe.
+/// Pre-fix, all three survived the RESET: the persisted engine snapshots
+/// rehydrated the pre-reset vault at next boot, leftover inbox slots
+/// replayed pre-reset peer bytes into it, and the cursor pointed past the
+/// end of the (now empty) op_log so the MAX()-gated advance wedged.
+///
+/// Also applies the snapshot a SECOND time on the same pool — the
+/// `benches/snapshot_bench.rs` contract is repeated application, and the
+/// added wipes must keep that path working.
+#[tokio::test]
+async fn apply_snapshot_wipes_loro_doc_state_inbox_and_zeroes_cursor_607() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = test_materializer(&pool);
+
+    // Seed pre-reset sidecar state.
+    sqlx::query(
+        "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES (?, ?, ?, 0, ?)",
+    )
+    .bind("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    .bind(vec![1u8, 2, 3])
+    .bind(1_736_942_400_000_i64)
+    .bind(7_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+        .bind("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        .bind(vec![9u8, 9, 9])
+        .bind(1_736_942_400_000_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE materializer_apply_cursor SET materialized_through_seq = 42, updated_at = ? \
+         WHERE id = 1",
+    )
+    .bind(1_736_942_400_000_i64)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // `sample_snapshot_data` carries a dangling BLOCK-2 link plus tag /
+    // attachment rows that fail the deferred-FK check when actually
+    // APPLIED (the canned data predates any apply-against-pool test);
+    // keep only the self-contained block row.
+    let mut data = sample_snapshot_data();
+    data.tables.block_tags.clear();
+    data.tables.block_properties.clear();
+    data.tables.block_links.clear();
+    data.tables.attachments.clear();
+    let compressed = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &materializer, &compressed[..])
+        .await
+        .expect("apply must succeed");
+
+    let doc_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_rows, 0,
+        "#607: loro_doc_state must be wiped by the RESET"
+    );
+    let inbox_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        inbox_rows, 0,
+        "#607: loro_sync_inbox must be wiped by the RESET"
+    );
+    let cursor: i64 = sqlx::query_scalar(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(cursor, 0, "#607: apply cursor must be zeroed by the RESET");
+
+    // Repeated application (bench contract) — must succeed with the
+    // sidecar wipes now in the tx, and leave the same end state.
+    apply_snapshot(&pool, &materializer, &compressed[..])
+        .await
+        .expect("repeated apply must keep working (snapshot_bench contract)");
+    let cursor: i64 = sqlx::query_scalar(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(cursor, 0);
+
+    materializer.shutdown();
+}
+
+/// #779 — boot-shaped scenario: snapshot catch-up, then the app exits
+/// (the `RunEvent::Exit` handler runs `save_all_engines`), then the next
+/// boot rehydrates. Pre-fix the exit-save persisted the PRE-reset engines
+/// over the wiped `loro_doc_state`, so the next boot's engines held the
+/// old vault while SQL held the peer snapshot. Post-fix the in-process
+/// reload (`reload_registry_from_db`) drops the stale engines first, the
+/// exit-save persists nothing stale, and the rehydrated registry matches
+/// the post-snapshot SQL (no pre-reset content anywhere).
+#[tokio::test]
+async fn apply_snapshot_then_exit_save_and_rehydrate_has_no_pre_reset_state_779() {
+    use crate::loro::engine::LoroEngine;
+    use crate::loro::registry::LoroEngineRegistry;
+    use crate::loro::snapshot::{
+        load_all_space_snapshots, rehydrate_registry, reload_registry_from_db, save_all_engines,
+        save_snapshot,
+    };
+    use crate::space::SpaceId;
+
+    const DEVICE: &str = "device-779";
+    let (pool, _dir) = test_pool().await;
+    let materializer = test_materializer(&pool);
+    let space = SpaceId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+
+    // Session 1 (pre-reset): a live engine holds the old vault and its
+    // snapshot is persisted (periodic save ran at least once).
+    let registry = LoroEngineRegistry::new();
+    {
+        let mut g = registry.for_space(&space, DEVICE).expect("for_space");
+        g.engine_mut()
+            .apply_create_block("BLOCK_OLD_VAULT", "content", "pre-reset vault", None, 0)
+            .expect("create");
+    }
+    {
+        let mut g = registry.for_space(&space, DEVICE).expect("for_space");
+        save_snapshot(&pool, &space, g.engine_mut())
+            .await
+            .expect("persist pre-reset engine");
+    }
+
+    // Snapshot catch-up: SQL RESET + in-process engine reload (#607).
+    // (Satellite rows stripped — see the #607 wipe test above.)
+    let mut data = sample_snapshot_data();
+    data.tables.block_tags.clear();
+    data.tables.block_properties.clear();
+    data.tables.block_links.clear();
+    data.tables.attachments.clear();
+    let compressed = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &materializer, &compressed[..])
+        .await
+        .expect("apply");
+    let rehydrated = reload_registry_from_db(&pool, &registry, DEVICE).await;
+    assert_eq!(rehydrated, 0, "post-RESET loro_doc_state is empty");
+    assert_eq!(registry.len(), 0, "pre-reset engines must be dropped");
+
+    // Simulated app exit: the Exit handler unconditionally runs
+    // save_all_engines over the live registry.
+    let saved = save_all_engines(&pool, &registry).await;
+    assert_eq!(
+        saved, 0,
+        "#779: exit-save must not persist pre-reset engines"
+    );
+    assert!(
+        load_all_space_snapshots(&pool).await.unwrap().is_empty(),
+        "#779: loro_doc_state must still be empty after the exit-save"
+    );
+
+    // Next boot: rehydrate a fresh registry — it must match the
+    // post-snapshot SQL (snapshot block present in SQL; no engine holds
+    // pre-reset content).
+    let boot_registry = LoroEngineRegistry::new();
+    let n = rehydrate_registry(&pool, &boot_registry, DEVICE).await;
+    assert_eq!(n, 0, "nothing to rehydrate after a RESET");
+    {
+        let mut g = boot_registry.for_space(&space, DEVICE).expect("for_space");
+        let engine = g.engine_mut();
+        assert!(
+            engine.read_block("BLOCK_OLD_VAULT").unwrap().is_none(),
+            "#779: the rehydrated engine must NOT contain the pre-reset vault"
+        );
+        // The engine's CRDT export must carry no pre-reset content either
+        // (this is what the next prepare_outgoing would ship to peers).
+        let bytes = engine.export_snapshot().expect("export");
+        let mut probe = LoroEngine::with_peer_id(DEVICE).expect("probe");
+        probe.import(&bytes).expect("import");
+        assert!(
+            probe.read_block("BLOCK_OLD_VAULT").unwrap().is_none(),
+            "#779: the engine export must not re-ship pre-reset content"
+        );
+    }
+    // SQL side: the snapshot's block set is what survives.
+    let block_id: String = sqlx::query_scalar("SELECT id FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        block_id,
+        BlockId::test_id("BLOCK-1").to_string(),
+        "SQL must hold exactly the snapshot's block set"
+    );
+
+    materializer.shutdown();
+}

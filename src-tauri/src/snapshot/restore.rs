@@ -74,18 +74,43 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 /// by `peer_refs::update_on_sync(pool, peer_id, &up_to_hash, "")`. Future
 /// callers MUST follow the same pattern.
 ///
-/// # Caller responsibility: reset the materializer cursor and Loro engines (#486)
+/// # Loro sidecar state is wiped in the same transaction (#607 / #779)
 ///
-/// `apply_snapshot` wipes and replaces `op_log` (and all core tables) but does
-/// NOT reset `materializer_apply_cursor.materialized_through_seq` or the
-/// in-memory Loro engines. Within the same running session this leaves the
-/// cursor pointing at a pre-wipe seq and the engines holding pre-reset state;
-/// the system self-heals at the next boot via `read_apply_cursor`'s H-4
-/// over-shoot clamp. A caller that needs same-session convergence (e.g. an
-/// in-process "reset to peer snapshot") must either restart the process or
-/// reset the cursor to 0 and trigger an engine reload after this function
-/// returns. The production caller (`try_receive_snapshot_catchup`) always
-/// follows a snapshot with a process restart, so this gap is currently dormant.
+/// The RESET clears the CRDT sidecar tables atomically with the core-table
+/// swap:
+///
+/// - `loro_doc_state` — the persisted per-space engine snapshots reflect the
+///   pre-reset lineage. Left in place, the next boot's `rehydrate_registry`
+///   would restore the OLD vault into the engines while SQL holds the peer
+///   snapshot, and the next outbound `prepare_outgoing` would re-ship
+///   pre-reset content to peers (#779).
+/// - `loro_sync_inbox` — leftover write-ahead slots hold pre-reset peer
+///   bytes; boot recovery (`replay_sync_inbox`) would replay them into the
+///   post-reset engines.
+/// - `materializer_apply_cursor` — zeroed. `op_log` is empty after the wipe
+///   (the snapshot carries table data, not ops), so any surviving non-zero
+///   cursor points past the end of the log; the `MAX()`-gated per-op advance
+///   would then hold the cursor above freshly minted seqs and the H-4 boot
+///   clamp is the only thing that would ever correct it.
+///
+/// # Caller responsibility: reload the in-memory Loro engines (#607)
+///
+/// `apply_snapshot` takes no engine registry, so the in-memory engines still
+/// hold pre-reset state when this returns — and there is NO process restart
+/// after a snapshot catch-up (`try_receive_snapshot_catchup` applies and
+/// returns; an earlier revision of this doc claimed otherwise). Even a real
+/// restart would not heal on its own: the `RunEvent::Exit` handler's
+/// `save_all_engines` would persist the pre-reset engines back into the
+/// freshly wiped `loro_doc_state`. Callers MUST therefore follow this call
+/// with [`crate::loro::snapshot::reload_registry_from_db`] (drop every
+/// engine, rehydrate from the now-empty `loro_doc_state`) so the live
+/// registry matches SQL. The production caller
+/// (`try_receive_snapshot_catchup`) performs this reload immediately after
+/// `apply_snapshot` returns. Post-reset engines are intentionally EMPTY —
+/// the snapshot format carries no CRDT state, and rebuilding a Loro doc
+/// from snapshot SQL would mint a fresh history whose tree nodes duplicate
+/// the peer's on the next loro-sync merge; an empty engine instead imports
+/// the peer's full CRDT state cleanly on the next session.
 pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
     materializer: &Materializer,
@@ -155,6 +180,30 @@ pub async fn apply_snapshot<R: std::io::Read>(
     crate::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
     sqlx::query!("DELETE FROM op_log").execute(&mut *tx).await?;
     crate::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
+
+    // #607 / #779: wipe the Loro sidecar state in the SAME tx as the core
+    // swap (see the function docs). `loro_doc_state` would otherwise
+    // rehydrate the pre-reset engines at next boot; `loro_sync_inbox`
+    // would replay pre-reset peer bytes into them; a non-zero apply
+    // cursor over an empty op_log is the H-4 impossible state. The
+    // in-memory engines are the caller's responsibility
+    // (`crate::loro::snapshot::reload_registry_from_db`).
+    sqlx::query!("DELETE FROM loro_doc_state")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("DELETE FROM loro_sync_inbox")
+        .execute(&mut *tx)
+        .await?;
+    let cursor_reset_at = crate::db::now_ms();
+    sqlx::query!(
+        "UPDATE materializer_apply_cursor \
+         SET materialized_through_seq = 0, \
+             updated_at = ? \
+         WHERE id = 1",
+        cursor_reset_at,
+    )
+    .execute(&mut *tx)
+    .await?;
 
     // M-66 — surface dropped drafts via a warn line.
     //

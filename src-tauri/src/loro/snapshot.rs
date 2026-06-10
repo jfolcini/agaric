@@ -218,6 +218,41 @@ pub async fn rehydrate_registry(
     ok
 }
 
+/// In-process engine reload after a snapshot RESET (#607 / #779).
+///
+/// `snapshot::apply_snapshot` replaces every core SQL table and wipes the
+/// Loro sidecar state (`loro_doc_state`, `loro_sync_inbox`, the apply
+/// cursor) in one transaction — but it has no access to the live engine
+/// registry, so the in-memory engines still hold the pre-reset CRDT
+/// lineage when it returns. Left alone, the next `prepare_outgoing` would
+/// export that stale state to peers and the next periodic / exit-time
+/// `save_all_engines` would persist it straight back into the freshly
+/// wiped `loro_doc_state` (#779's restart scenario).
+///
+/// This is the matching reload primitive: drop every engine, then re-run
+/// the standard boot rehydration against whatever `loro_doc_state` now
+/// holds. After a RESET that table is empty, so the registry ends up
+/// empty — which is the CORRECT post-reset state, not a shortcut: the
+/// snapshot format carries SQL rows only (no CRDT history), and seeding
+/// fresh Loro docs from snapshot SQL would mint an independent history
+/// whose tree nodes would duplicate the peer's on the next loro-sync
+/// merge. An empty engine instead has an empty version vector, so the
+/// next sync session imports the peer's full CRDT state cleanly and
+/// re-converges engine and SQL.
+///
+/// Must be called immediately after `apply_snapshot` returns, before any
+/// further engine access (the production caller is
+/// `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`).
+/// Returns the number of engines rehydrated (0 after a RESET).
+pub async fn reload_registry_from_db(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+) -> usize {
+    registry.clear();
+    rehydrate_registry(pool, registry, device_id).await
+}
+
 /// Walk the registry and persist every engine's current snapshot.  Used
 /// by the periodic scheduler.  Per-space errors are logged + continued
 /// so one bad space never blocks the rest.
@@ -237,10 +272,26 @@ pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) 
     // the lock-time cursor can only be >= this value, and each engine
     // reflects all ops <= (lock-time cursor - 1) >= this watermark.
     let applied_through_seq = snapshot_watermark(pool).await;
+    // #607 review: capture the clear-generation BEFORE collecting doc
+    // handles. A snapshot RESET (`registry.clear()` +
+    // `apply_snapshot`'s `loro_doc_state` wipe) racing this pass would
+    // otherwise let us persist PRE-reset engine state into the freshly
+    // wiped table — the exact #779 resurrection this save exists to
+    // prevent. Re-checked before every write below.
+    let generation = registry.generation();
     let pairs = registry.snapshot_all_engines();
 
     let mut ok = 0usize;
     for (space_id, bytes_result) in pairs {
+        if registry.generation() != generation {
+            tracing::warn!(
+                space_id = %space_id,
+                "loro:save_all_engines: registry cleared mid-save (snapshot \
+                 RESET, #607); aborting — these handles predate the reset \
+                 and must not be persisted over the wiped loro_doc_state",
+            );
+            return ok;
+        }
         let bytes = match bytes_result {
             Ok(b) => b,
             Err(e) => {
@@ -512,6 +563,79 @@ mod tests {
         let mut g = registry.for_space(&space_b, "device-1").expect("b");
         let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
         assert_eq!(snap.content, "in B");
+    }
+
+    /// #607 / #779 — `reload_registry_from_db` drops stale engines and
+    /// rehydrates strictly from `loro_doc_state`. Two cases in one walk:
+    /// (a) after a snapshot RESET the table is empty, so the registry
+    /// ends up EMPTY (no pre-reset engine survives in memory, and a
+    /// follow-up `save_all_engines` persists nothing stale); (b) a space
+    /// whose snapshot IS persisted comes back, proving the reload is a
+    /// real rehydrate and not just a clear.
+    #[tokio::test]
+    async fn reload_registry_from_db_drops_stale_engines_and_rehydrates_607() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        // Live engine for A holds pre-reset content; loro_doc_state has
+        // NO row for A (the RESET wiped it). B has a persisted snapshot
+        // (simulating a future format that carries engine state).
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_PRE", "content", "pre-reset", None, 0)
+                .expect("create");
+        }
+        let mut engine_b = LoroEngine::with_peer_id("device-1").expect("engine_b");
+        engine_b
+            .apply_create_block("BLOCK_B", "content", "persisted", None, 0)
+            .expect("create");
+        save_snapshot(&pool, &space_b, &engine_b)
+            .await
+            .expect("save b");
+
+        let n = reload_registry_from_db(&pool, &registry, "device-1").await;
+        assert_eq!(n, 1, "only the persisted space must rehydrate");
+        assert_eq!(registry.len(), 1, "stale engine for A must be dropped");
+
+        // A: fresh lazy engine, pre-reset block gone.
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("a");
+            assert!(
+                g.engine_mut().read_block("BLOCK_PRE").unwrap().is_none(),
+                "pre-reset content must not survive the reload"
+            );
+        }
+        // B: rehydrated from its persisted snapshot.
+        {
+            let mut g = registry.for_space(&space_b, "device-1").expect("b");
+            let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
+            assert_eq!(snap.content, "persisted");
+        }
+
+        // (a) continued: with loro_doc_state now empty for A, a simulated
+        // exit-save persists nothing stale — the #779 boot source stays
+        // clean. (B's row is refreshed, which is fine.)
+        sqlx::query("DELETE FROM loro_doc_state")
+            .execute(&pool)
+            .await
+            .expect("wipe");
+        registry.clear();
+        let n = reload_registry_from_db(&pool, &registry, "device-1").await;
+        assert_eq!(n, 0, "empty loro_doc_state must rehydrate nothing");
+        assert_eq!(registry.len(), 0);
+        let saved = save_all_engines(&pool, &registry).await;
+        assert_eq!(saved, 0, "exit-save over an empty registry writes nothing");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(
+            rows, 0,
+            "loro_doc_state must stay empty after the simulated exit-save"
+        );
     }
 
     #[tokio::test]

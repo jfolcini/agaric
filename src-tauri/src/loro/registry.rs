@@ -29,7 +29,7 @@
 //! to per-space mutexes if benchmarks show contention.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use loro::{ExportMode, LoroDoc};
@@ -57,6 +57,19 @@ pub struct LoroEngineRegistry {
     inner: Mutex<HashMap<SpaceId, LoroEngine>>,
     /// Issue #157 sub-item I — see struct-level docstring.
     dirty_count: AtomicUsize,
+    /// #607 review: monotone counter bumped by [`clear`](Self::clear).
+    ///
+    /// `save_all_engines` collects O(1) doc handles, drops the registry
+    /// lock, then persists each export with its own awaited INSERT. A
+    /// snapshot-RESET (`apply_snapshot` + `reload_registry_from_db`) that
+    /// lands inside that collect→write span would otherwise let the saver
+    /// re-persist PRE-reset engine state into the freshly wiped
+    /// `loro_doc_state` (the #779 resurrection, via the periodic tick or
+    /// the `RunEvent::Exit` save). The saver captures this generation
+    /// before collecting handles and re-checks it before every write —
+    /// a mismatch means the handles predate a reset and must not be
+    /// persisted.
+    generation: AtomicU64,
 }
 
 impl LoroEngineRegistry {
@@ -66,7 +79,15 @@ impl LoroEngineRegistry {
         Self {
             inner: Mutex::new(HashMap::new()),
             dirty_count: AtomicUsize::new(0),
+            generation: AtomicU64::new(0),
         }
+    }
+
+    /// #607 review: current clear-generation. See the field docs —
+    /// `save_all_engines` uses this to detect a registry [`clear`](Self::clear)
+    /// (snapshot RESET) racing its collect→write span.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
     /// Issue #157 sub-item I — current dirty-engines proxy count.
@@ -176,6 +197,32 @@ impl LoroEngineRegistry {
             Err(poison) => poison.into_inner(),
         };
         guard.insert(space_id, engine);
+    }
+
+    /// Drop every registered engine (#607).
+    ///
+    /// Used by [`crate::loro::snapshot::reload_registry_from_db`] after a
+    /// snapshot RESET (`apply_snapshot`) wiped `loro_doc_state`: the live
+    /// engines still hold the pre-reset CRDT lineage and must be dropped so
+    /// neither the periodic `save_all_engines` tick nor the `RunEvent::Exit`
+    /// save can persist stale state over the post-reset SQL. Subsequent
+    /// [`for_space`](Self::for_space) calls lazy-create fresh empty engines,
+    /// exactly like a first boot.
+    ///
+    /// Holding the single registry mutex makes the swap atomic with respect
+    /// to concurrent appliers: an `engine_apply` racing this call either
+    /// lands on the pre-clear engine (whose state is dropped — same outcome
+    /// as the op arriving pre-reset) or lazy-creates a fresh post-reset one.
+    pub fn clear(&self) {
+        let mut guard = match self.inner.lock() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard.clear();
+        // Bump the generation WHILE holding the lock so any saver that
+        // collected handles before this clear observes the new value on
+        // its next check (see the `generation` field docs).
+        self.generation.fetch_add(1, Ordering::AcqRel);
     }
 
     /// Snapshot every registered engine via [`LoroEngine::export_snapshot`]
@@ -404,6 +451,36 @@ mod tests {
         let mut g = r.for_space(&space, "device-1").expect("for_space");
         assert!(g.engine_mut().read_block("BLOCK1").unwrap().is_none());
         assert!(g.engine_mut().read_block("BLOCK2").unwrap().is_some());
+    }
+
+    /// #607 — `clear` drops every engine; a subsequent `for_space`
+    /// lazy-creates a FRESH empty engine (no pre-clear content leaks).
+    #[test]
+    fn clear_drops_all_engines_and_for_space_recreates_fresh_607() {
+        let r = LoroEngineRegistry::new();
+        let a = SpaceId::from_trusted(SPACE_A);
+        let b = SpaceId::from_trusted(SPACE_B);
+        {
+            let mut g = r.for_space(&a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "pre-reset", None, 0)
+                .expect("create");
+        }
+        {
+            let _ = r.for_space(&b, "device-1").expect("b");
+        }
+        assert_eq!(r.len(), 2);
+
+        r.clear();
+        assert_eq!(r.len(), 0, "clear must drop every engine");
+        assert!(r.is_empty());
+
+        // Lazy re-creation yields a fresh engine without the old block.
+        let mut g = r.for_space(&a, "device-1").expect("a again");
+        assert!(
+            g.engine_mut().read_block("BLOCK_A").unwrap().is_none(),
+            "post-clear engine must NOT contain pre-clear content"
+        );
     }
 
     #[test]
