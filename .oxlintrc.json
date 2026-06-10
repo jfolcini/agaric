@@ -25,6 +25,7 @@
 
     "jsx-a11y/prefer-tag-over-role": "error",
     "react-hooks/exhaustive-deps": "error",
+    "react-hooks/rules-of-hooks": "error",
     "jsx-a11y/control-has-associated-label": "error",
     "jsx-a11y/no-autofocus": "error",
     "jsx-a11y/interactive-supports-focus": "error",
