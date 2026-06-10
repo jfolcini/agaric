@@ -92,6 +92,13 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 ///   cursor points past the end of the log; the `MAX()`-gated per-op advance
 ///   would then hold the cursor above freshly minted seqs and the H-4 boot
 ///   clamp is the only thing that would ever correct it.
+/// - `app_settings['loro.peer_id_epoch']` — **bumped, not wiped** (#792).
+///   Post-reset engines restart op counters at 0; reusing the old
+///   deterministic PeerID would fork the (peer, counter) space against this
+///   device's pre-reset ops still held by peers (silent outbound op drop +
+///   loro-internal causal corruption on inbound import). The epoch bump
+///   retires the old peer id atomically with the CRDT wipe; see
+///   [`crate::loro::peer_epoch`].
 ///
 /// # Caller responsibility: reload the in-memory Loro engines (#607)
 ///
@@ -194,6 +201,22 @@ pub async fn apply_snapshot<R: std::io::Read>(
     sqlx::query!("DELETE FROM loro_sync_inbox")
         .execute(&mut *tx)
         .await?;
+    // #792: retire the device's deterministic Loro PeerID atomically with
+    // the CRDT wipe above. Post-reset engines reload EMPTY and restart op
+    // counters at 0 — under the SAME peer id they would fork the
+    // (peer, counter) space against this device's pre-reset ops still held
+    // by peers (outbound: peers silently drop the new ops; inbound:
+    // importing peer history into the forked doc corrupts loro-internal's
+    // causal state). Bumping the persisted epoch in THIS tx means a crash
+    // anywhere after commit still boots onto the new epoch, and a rollback
+    // keeps epoch and loro_doc_state consistent. The caller's mandatory
+    // `reload_registry_from_db` re-reads the epoch before rehydrating.
+    let new_peer_epoch = crate::loro::peer_epoch::bump_peer_epoch(&mut tx).await?;
+    tracing::info!(
+        new_peer_epoch,
+        "apply_snapshot: peer-id epoch bumped (#792); post-reset engines \
+         will mint ops under a fresh Loro PeerID"
+    );
     let cursor_reset_at = crate::db::now_ms();
     sqlx::query!(
         "UPDATE materializer_apply_cursor \

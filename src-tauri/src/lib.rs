@@ -818,6 +818,26 @@ pub fn run() {
             // this point in boot.
             let loro_state = crate::loro::shared::get()
                 .expect("LoroState must be installed by shared::init() before recovery");
+            // #792: install the persisted peer-id epoch BEFORE any engine is
+            // constructed (rehydrate below + every lazy `for_space`). A vault
+            // that went through a snapshot RESET carries a bumped epoch in
+            // `app_settings`; deriving the Loro PeerID from it keeps this
+            // device off its retired pre-reset peer id, whose (peer, counter)
+            // ranges peers still hold. Absent row == epoch 0 == the legacy
+            // mapping, so never-reset vaults are byte-for-byte unaffected.
+            {
+                let peer_epoch = tauri::async_runtime::block_on(
+                    crate::loro::peer_epoch::load_peer_epoch(&pools.write),
+                );
+                loro_state.registry.set_peer_epoch(peer_epoch);
+                if peer_epoch > 0 {
+                    tracing::info!(
+                        peer_epoch,
+                        "loro: peer-id epoch loaded (#792); engine PeerIDs are \
+                         epoch-salted (this vault went through a snapshot RESET)",
+                    );
+                }
+            }
             {
                 let n = tauri::async_runtime::block_on(crate::loro::snapshot::rehydrate_registry(
                     &pools.write,

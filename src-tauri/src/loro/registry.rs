@@ -70,6 +70,18 @@ pub struct LoroEngineRegistry {
     /// a mismatch means the handles predate a reset and must not be
     /// persisted.
     generation: AtomicU64,
+    /// #792 — the Loro peer-id epoch every lazily-created engine derives
+    /// its `PeerID` from (see [`crate::loro::engine::peer_id_for_epoch`]).
+    ///
+    /// `0` (the constructor default and the lifetime value for any vault
+    /// that never went through a snapshot RESET) reproduces the legacy
+    /// `peer_id_from_device_id` mapping exactly. Loaded from
+    /// `app_settings` at boot (`crate::loro::peer_epoch::load_peer_epoch`)
+    /// and refreshed by `reload_registry_from_db` right after a RESET
+    /// bumps the persisted value — so post-reset engines mint ops under a
+    /// FRESH peer id instead of forking the `(peer, counter)` space
+    /// against this device's pre-reset ops still held by peers.
+    peer_epoch: AtomicU64,
 }
 
 impl LoroEngineRegistry {
@@ -80,7 +92,24 @@ impl LoroEngineRegistry {
             inner: Mutex::new(HashMap::new()),
             dirty_count: AtomicUsize::new(0),
             generation: AtomicU64::new(0),
+            peer_epoch: AtomicU64::new(0),
         }
+    }
+
+    /// #792 — current peer-id epoch. See the field docs.
+    pub fn peer_epoch(&self) -> u64 {
+        self.peer_epoch.load(Ordering::Acquire)
+    }
+
+    /// #792 — install the peer-id epoch subsequent engine constructions
+    /// derive their `PeerID` from. Called at boot (with the
+    /// `app_settings` value) and by `reload_registry_from_db` after a
+    /// snapshot RESET bumped the persisted epoch. Engines already held
+    /// by the registry are NOT re-keyed — the RESET path clears them in
+    /// the same breath, and a healthy boot sets the epoch before any
+    /// engine exists.
+    pub fn set_peer_epoch(&self, epoch: u64) {
+        self.peer_epoch.store(epoch, Ordering::Release);
     }
 
     /// #607 review: current clear-generation. See the field docs —
@@ -134,7 +163,11 @@ impl LoroEngineRegistry {
             Err(poison) => poison.into_inner(),
         };
         if !guard.contains_key(space_id) {
-            let engine = LoroEngine::with_peer_id(device_id)?;
+            // #792: salt the deterministic peer id with the registry's
+            // current epoch so an engine lazily created after a snapshot
+            // RESET never reuses the pre-reset PeerID (epoch 0 == the
+            // legacy mapping, unchanged for never-reset vaults).
+            let engine = LoroEngine::with_peer_id_epoch(device_id, self.peer_epoch())?;
             guard.insert(space_id.clone(), engine);
         }
         // Issue #157 sub-item I — `for_space` is the chokepoint
@@ -481,6 +514,44 @@ mod tests {
             g.engine_mut().read_block("BLOCK_A").unwrap().is_none(),
             "post-clear engine must NOT contain pre-clear content"
         );
+    }
+
+    /// #792 — engines lazily created by `for_space` derive their PeerID
+    /// from the registry's peer-id epoch: epoch 0 (the default) is the
+    /// legacy mapping; a bumped epoch yields a fresh peer id so a
+    /// post-snapshot-RESET engine never forks the (peer, counter) space.
+    #[test]
+    fn for_space_derives_peer_id_from_registry_epoch_792() {
+        use crate::loro::engine::{peer_id_for_epoch, peer_id_from_device_id};
+
+        let r = LoroEngineRegistry::new();
+        assert_eq!(r.peer_epoch(), 0, "fresh registry defaults to epoch 0");
+
+        // Epoch 0: byte-for-byte the legacy mapping.
+        let a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = r.for_space(&a, "device-792").expect("a");
+            assert_eq!(
+                g.engine_mut().peer_id(),
+                peer_id_from_device_id("device-792"),
+                "epoch 0 must keep the legacy peer id (existing vaults)"
+            );
+        }
+
+        // Bumped epoch (a RESET happened): the next lazily-created
+        // engine mints under the fresh, salted peer id.
+        r.set_peer_epoch(3);
+        r.clear(); // the RESET path clears in the same breath
+        {
+            let mut g = r.for_space(&a, "device-792").expect("a again");
+            let got = g.engine_mut().peer_id();
+            assert_eq!(got, peer_id_for_epoch("device-792", 3));
+            assert_ne!(
+                got,
+                peer_id_from_device_id("device-792"),
+                "the pre-reset peer id must be retired"
+            );
+        }
     }
 
     #[test]

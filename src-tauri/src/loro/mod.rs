@@ -19,6 +19,12 @@ pub mod engine;
 
 pub mod envelope;
 
+// Persisted peer-id epoch (#792): bumped inside the snapshot-RESET
+// transaction so post-reset engines mint ops under a fresh PeerID
+// instead of forking the (peer, counter) space against pre-reset
+// history still held by peers.
+pub mod peer_epoch;
+
 // Projection helpers that write SQL rows from post-apply Loro engine
 // state. Each per-op-type helper takes a `&mut SqliteConnection` and
 // a typed payload (or read-back snapshot) and writes the SQL row
