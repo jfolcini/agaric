@@ -955,6 +955,464 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // stale-capture races (#714) — mutators must commit splices against the
+  // state CURRENT at commit time, not a pre-IPC-await capture, so concurrent
+  // writes (edit flush, sync load, queued move) survive and the
+  // blocks-array / blocksById-Map invariant cannot diverge.
+  // ---------------------------------------------------------------------------
+  describe('stale-capture races (#714)', () => {
+    /** Array/Map consistency: same length, every array entry present AND identical in the Map. */
+    function expectMapMatchesArray(s: PageBlockState): void {
+      expect(s.blocksById.size).toBe(s.blocks.length)
+      for (const b of s.blocks) {
+        expect(s.blocksById.get(b.id)).toBe(b)
+      }
+    }
+
+    /** Deferred IPC: queue a promise we can resolve mid-test. */
+    function deferInvoke(): (v: unknown) => void {
+      let resolve!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((r) => {
+          resolve = r
+        }),
+      )
+      return resolve
+    }
+
+    it('createBelow: an edit() interleaved during the IPC survives in blocks AND blocksById', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', content: 'orig B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveCreate = deferInvoke()
+      const createPromise = store.getState().createBelow('A', 'new content')
+
+      // Interleave an edit flush while create_block is in flight.
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('A', 'edited mid-flight')
+
+      resolveCreate({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'new content',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await expect(createPromise).resolves.toBe('NEW')
+
+      const s = store.getState()
+      // Structural change applied: NEW inserted right after A.
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'NEW', 'B'])
+      // The interleaved write survived in BOTH the array and the Map.
+      expect(s.blocks.find((b) => b.id === 'A')?.content).toBe('edited mid-flight')
+      expect(s.blocksById.get('A')?.content).toBe('edited mid-flight')
+      expectMapMatchesArray(s)
+    })
+
+    it('createBelow: falls back to load() when the anchor disappeared mid-flight (sync reload race)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveCreate = deferInvoke()
+      const createPromise = store.getState().createBelow('A', 'x')
+
+      // Simulate a sync:complete registry-wide load() that dropped the anchor
+      // while create_block was in flight.
+      store.setState({ blocks: [makeBlock({ id: 'B', position: 0, parent_id: null, depth: 0 })] })
+
+      // The fallback load() will hit load_page_subtree — give it the backend truth.
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+      ])
+
+      resolveCreate({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await expect(createPromise).resolves.toBe('NEW')
+
+      // No blind splice against stale state — full reload instead.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'NEW'])
+      expectMapMatchesArray(s)
+    })
+
+    it('reorder: an edit() interleaved during the IPC survives in blocks AND blocksById', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', content: 'orig B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', content: 'orig C', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const reorderPromise = store.getState().reorder('C', 0)
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('B', 'edited mid-flight')
+
+      resolveMove({ block_id: 'C', new_parent_id: null, new_position: 0 })
+      await reorderPromise
+
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['C', 'A', 'B'])
+      expect(s.blocks.find((b) => b.id === 'B')?.content).toBe('edited mid-flight')
+      expect(s.blocksById.get('B')?.content).toBe('edited mid-flight')
+      expectMapMatchesArray(s)
+    })
+
+    it('moveUp: an edit() interleaved during the IPC survives in blocks AND blocksById', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', content: 'orig B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const movePromise = store.getState().moveUp('B')
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('A', 'edited mid-flight')
+
+      resolveMove({ block_id: 'B', new_parent_id: null, new_position: 0 })
+      await expect(movePromise).resolves.toBe(true)
+
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'A'])
+      expect(s.blocks.find((b) => b.id === 'A')?.content).toBe('edited mid-flight')
+      expect(s.blocksById.get('A')?.content).toBe('edited mid-flight')
+      expectMapMatchesArray(s)
+    })
+
+    it('all six mutators keep the blocks array and blocksById Map consistent', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      // createBelow: A,NEW,B,C
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await store.getState().createBelow('A', 'x')
+      expectMapMatchesArray(store.getState())
+
+      // reorder: C,A,NEW,B
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 0 })
+      await store.getState().reorder('C', 0)
+      expectMapMatchesArray(store.getState())
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'NEW', 'B'])
+
+      // moveUp: C,A,B,NEW
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 2 })
+      await store.getState().moveUp('B')
+      expectMapMatchesArray(store.getState())
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B', 'NEW'])
+
+      // moveDown: C,B,A,NEW
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+      await store.getState().moveDown('A')
+      expectMapMatchesArray(store.getState())
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'NEW'])
+
+      // indent: A becomes child of B
+      mockedInvoke.mockResolvedValueOnce(undefined)
+      await store.getState().indent('A')
+      expectMapMatchesArray(store.getState())
+      expect(store.getState().blocksById.get('A')?.parent_id).toBe('B')
+      expect(store.getState().blocksById.get('A')?.depth).toBe(1)
+
+      // dedent: A back to root, after B
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+      await store.getState().dedent('A')
+      expectMapMatchesArray(store.getState())
+      expect(store.getState().blocksById.get('A')?.parent_id).toBe(null)
+      expect(store.getState().blocksById.get('A')?.depth).toBe(0)
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'NEW'])
+    })
+
+    it('createBelow: skips the splice when an interleaved load() already delivered the new block', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveCreate = deferInvoke()
+      const createPromise = store.getState().createBelow('A', 'x')
+
+      // A sync:complete load() landed mid-flight whose snapshot already
+      // contains the freshly created block.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'NEW', content: 'x', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      resolveCreate({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await expect(createPromise).resolves.toBe('NEW')
+
+      const s = store.getState()
+      // No duplicate entry, no fallback reload — state was already reconciled.
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'NEW', 'B'])
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      expectMapMatchesArray(s)
+    })
+
+    it('createBelow: falls back to load() when the anchor was re-parented mid-flight', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveCreate = deferInvoke()
+      const createPromise = store.getState().createBelow('A', 'x')
+
+      // A was re-parented under B while create_block was in flight — the new
+      // block belongs under A's ORIGINAL parent, so a local splice after A's
+      // new location would lie about the structure.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'B', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'A', position: 0, parent_id: 'B', depth: 1 }),
+        ],
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'A', parent_id: 'B', position: 0 }),
+        makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+      ])
+
+      resolveCreate({
+        id: 'NEW',
+        block_type: 'text',
+        content: 'x',
+        parent_id: null,
+        position: 1,
+        deleted_at: null,
+      })
+      await expect(createPromise).resolves.toBe('NEW')
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expectMapMatchesArray(store.getState())
+    })
+
+    it('moveUp: falls back to load() when a sibling was inserted above mid-flight (slot drift)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      // moveUp(C) → backend slot 1 among the other siblings, anchored on B.
+      const movePromise = store.getState().moveUp('C')
+
+      // A sibling X appeared between A and B mid-flight: slot 1 among the
+      // current others is now X, not B — backend and local interpretations
+      // diverge, so the store must reload instead of splicing before B.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'X', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 3, parent_id: null, depth: 0 }),
+        ],
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
+        makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 2 }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
+      ])
+
+      resolveMove({ block_id: 'C', new_parent_id: null, new_position: 1 })
+      await expect(movePromise).resolves.toBe(true)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'C', 'X', 'B'])
+      expectMapMatchesArray(s)
+    })
+
+    it('moveDown: an edit() interleaved during the IPC survives in blocks AND blocksById', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', content: 'orig A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', content: 'orig B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const movePromise = store.getState().moveDown('A')
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('B', 'edited mid-flight')
+
+      resolveMove({ block_id: 'A', new_parent_id: null, new_position: 1 })
+      await expect(movePromise).resolves.toBe(true)
+
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'A'])
+      expect(s.blocks.find((b) => b.id === 'B')?.content).toBe('edited mid-flight')
+      expect(s.blocksById.get('B')?.content).toBe('edited mid-flight')
+      expectMapMatchesArray(s)
+    })
+
+    it('indent: falls back to load() when the new parent gained a child mid-flight (slot drift)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      // indent(B) → backend appends at slot 0 under A (A had no children).
+      const indentPromise = store.getState().indent('B')
+
+      // A gained a child K mid-flight: the backend's captured append slot no
+      // longer means "last child", so the local append must yield to load().
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'K', position: 0, parent_id: 'A', depth: 1 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'B', parent_id: 'A', position: 0 }),
+        makeBlock({ id: 'K', parent_id: 'A', position: 1 }),
+      ])
+
+      resolveMove(undefined)
+      await expect(indentPromise).resolves.toBe(true)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      const s = store.getState()
+      expect(s.blocksById.get('B')?.parent_id).toBe('A')
+      expectMapMatchesArray(s)
+    })
+
+    it('dedent: an edit() interleaved during the IPC survives in blocks AND blocksById', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'P', content: 'orig P', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', content: 'orig C', position: 0, parent_id: 'P', depth: 1 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      const dedentPromise = store.getState().dedent('C')
+
+      mockedInvoke.mockResolvedValueOnce({})
+      await store.getState().edit('P', 'edited mid-flight')
+
+      resolveMove({ block_id: 'C', new_parent_id: null, new_position: 1 })
+      await expect(dedentPromise).resolves.toBe(true)
+
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['P', 'C'])
+      expect(s.blocksById.get('C')?.parent_id).toBeNull()
+      expect(s.blocksById.get('C')?.depth).toBe(0)
+      expect(s.blocks.find((b) => b.id === 'P')?.content).toBe('edited mid-flight')
+      expect(s.blocksById.get('P')?.content).toBe('edited mid-flight')
+      expectMapMatchesArray(s)
+    })
+
+    it("dedent: falls back to load() when the parent's sibling slot changed mid-flight (slot drift)", async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 }),
+        ],
+      })
+
+      const resolveMove = deferInvoke()
+      // dedent(C) → backend slot 1 under the root (right after P at slot 0).
+      const dedentPromise = store.getState().dedent('C')
+
+      // A sibling X appeared ABOVE P mid-flight: P's slot is now 1, so the
+      // backend's captured slot 1 no longer means "right after P".
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'X', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'P', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 }),
+        ],
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'X', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 1 }),
+        makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 2 }),
+      ])
+
+      resolveMove({ block_id: 'C', new_parent_id: null, new_position: 1 })
+      await expect(dedentPromise).resolves.toBe(true)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['X', 'C', 'P'])
+      expectMapMatchesArray(s)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // dedent
   // ---------------------------------------------------------------------------
   describe('dedent', () => {
