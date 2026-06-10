@@ -38,6 +38,12 @@ import { useIsMobile } from './useIsMobile'
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
   collapsedVisible: FlatBlock[]
+  /**
+   * Parent that depth-0 drops in `collapsedVisible` resolve to. This is the
+   * page root normally, but the ZOOMED block id when a zoom is active (#712):
+   * `zoomedVisible` rebases depth to 0 at the zoomed block's children, so a
+   * depth-0 projection must reparent to the zoomed block, not the page root.
+   */
   rootParentId: string | null
   rovingEditor: { activeBlockId: string | null }
   handleFlush: () => string | null
