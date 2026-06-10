@@ -79,6 +79,12 @@ export function useJournalAutoCreate({
       getJournalPageByDate({ date: dateStr, spaceId })
         .then((page) => {
           if (page != null) return
+          // #755 — same in-flight guard as the mount path. Rapid double
+          // presses fire two probes before either resolves; both see
+          // "no page" and would each create one. First resolution claims
+          // the date; the second bails.
+          if (autoCreatedRef.current === dateStr) return
+          autoCreatedRef.current = dateStr
           handleAddBlock(dateStr)
         })
         .catch(() => {

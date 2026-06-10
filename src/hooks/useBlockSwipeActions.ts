@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 
+import { useIsTouch } from './useIsTouch'
+
 /** Minimum leftward drag to reveal the delete button (px). */
 export const REVEAL_THRESHOLD = 80
 
@@ -42,8 +44,11 @@ export function useBlockSwipeActions(onDelete: () => void) {
     swiping: false,
   })
 
-  // Only active on coarse pointer devices (touch screens)
-  const isTouch = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
+  // Only active on coarse pointer devices (touch screens). useIsTouch
+  // subscribes to the media query once instead of re-evaluating
+  // matchMedia in the render body per block per render (#755), and is
+  // reactive if the pointer mode changes (e.g. mouse attached).
+  const isTouch = useIsTouch()
 
   const onTouchStart = useCallback(
     (e: React.TouchEvent) => {

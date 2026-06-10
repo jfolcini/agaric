@@ -185,6 +185,75 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
+  // ── #755: first-commit observe gap ─────────────────────────────────────────
+
+  it('observes elements whose refs attach during the first commit, before the observer exists (#755)', () => {
+    // Ref callbacks fire during commit; the IntersectionObserver is only
+    // created in the passive effect that runs *after* commit. Elements
+    // mounted in the hook's first commit must be caught up when the
+    // observer is created.
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let root!: Root
+
+    function TestComponent(): ReturnType<typeof createElement> {
+      const viewport = useViewportObserver()
+      return createElement('div', {
+        ref: viewport.createObserveRef('FIRST_COMMIT'),
+        'data-block-id': 'FIRST_COMMIT',
+      })
+    }
+
+    act(() => {
+      root = createRoot(container)
+      root.render(createElement(TestComponent))
+    })
+
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const el = container.querySelector('[data-block-id="FIRST_COMMIT"]') as Element
+    expect(el).not.toBeNull()
+    expect(obs.observed.has(el)).toBe(true)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('re-observes tracked elements when a rootMargin change rebuilds the observer (#755)', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let root!: Root
+
+    function TestComponent({ margin }: { margin: string }): ReturnType<typeof createElement> {
+      const viewport = useViewportObserver(margin)
+      return createElement('div', {
+        ref: viewport.createObserveRef('REBUILD'),
+        'data-block-id': 'REBUILD',
+      })
+    }
+
+    act(() => {
+      root = createRoot(container)
+      root.render(createElement(TestComponent, { margin: '200px 0px' }))
+    })
+    act(() => {
+      root.render(createElement(TestComponent, { margin: '50px 0px' }))
+    })
+
+    // Old observer disconnected, new one created with the element carried over.
+    expect(MockIntersectionObserver.instances).toHaveLength(2)
+    const fresh = MockIntersectionObserver.instances[1] as MockIntersectionObserver
+    const el = container.querySelector('[data-block-id="REBUILD"]') as Element
+    expect(fresh.rootMargin).toBe('50px 0px')
+    expect(fresh.observed.has(el)).toBe(true)
+
+    act(() => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
   // ── BUG-29 regression: per-id unobserve on null transition ────────────────
 
   it('unobserves exactly the unmounted element when one of many blocks unmounts', () => {

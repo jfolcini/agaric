@@ -289,6 +289,115 @@ describe('useBlockSwipeActions', () => {
     unmount()
   })
 
+  // ── #755: useIsTouch instead of per-render matchMedia ─────────────
+  describe('pointer detection via useIsTouch (#755)', () => {
+    /**
+     * Stateful matchMedia mock that supports `change` listeners, so the
+     * test can flip pointer coarseness after mount.
+     */
+    function mockReactivePointer(initialCoarse: boolean) {
+      const listeners = new Set<(e: MediaQueryListEvent) => void>()
+      let matches = initialCoarse
+      const mql = {
+        get matches() {
+          return matches
+        },
+        media: '(pointer: coarse)',
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn((type: string, cb: (e: MediaQueryListEvent) => void) => {
+          if (type === 'change') listeners.add(cb)
+        }),
+        removeEventListener: vi.fn((type: string, cb: (e: MediaQueryListEvent) => void) => {
+          if (type === 'change') listeners.delete(cb)
+        }),
+        dispatchEvent: vi.fn(),
+      }
+      window.matchMedia = vi.fn().mockReturnValue(mql)
+      return {
+        setCoarse(next: boolean) {
+          matches = next
+          for (const cb of listeners) cb({ matches: next } as MediaQueryListEvent)
+        },
+      }
+    }
+
+    it('does not re-evaluate matchMedia on every render', () => {
+      mockCoarsePointer()
+      const { rerender, unmount } = renderHook(() => useBlockSwipeActions(vi.fn()))
+
+      const callsAfterMount = vi.mocked(window.matchMedia).mock.calls.length
+
+      rerender()
+      rerender()
+      rerender()
+
+      // useIsTouch subscribes once on mount; re-renders must not hit
+      // matchMedia again (the old code evaluated it in the render body
+      // per block per render).
+      expect(vi.mocked(window.matchMedia).mock.calls.length).toBe(callsAfterMount)
+
+      unmount()
+    })
+
+    it('activates when the pointer becomes coarse after mount', () => {
+      const media = mockReactivePointer(false)
+      const onDelete = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(onDelete))
+
+      // Fine pointer: gesture is ignored.
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      expect(result.current.translateX).toBe(0)
+
+      // Pointer mode flips to coarse (e.g. mouse detached on a 2-in-1).
+      act(() => {
+        media.setCoarse(true)
+      })
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      expect(result.current.translateX).toBe(-AUTO_DELETE_THRESHOLD)
+
+      unmount()
+    })
+
+    it('deactivates when the pointer becomes fine after mount', () => {
+      const media = mockReactivePointer(true)
+      const onDelete = vi.fn()
+      const { result, unmount } = renderHook(() => useBlockSwipeActions(onDelete))
+
+      act(() => {
+        media.setCoarse(false)
+      })
+
+      act(() => {
+        result.current.handlers.onTouchStart(touch(400, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchMove(touch(150, 100))
+      })
+      act(() => {
+        result.current.handlers.onTouchEnd()
+      })
+
+      expect(result.current.translateX).toBe(0)
+      expect(result.current.isRevealed).toBe(false)
+      expect(onDelete).not.toHaveBeenCalled()
+
+      unmount()
+    })
+  })
+
   // ── UX-304: progressive threshold-crossed cue ─────────────────────
   describe('thresholdCrossed (UX-304)', () => {
     it('stays false while swipe is between reveal and auto-delete thresholds', () => {

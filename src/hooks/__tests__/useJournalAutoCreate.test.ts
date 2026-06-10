@@ -112,14 +112,22 @@ describe('useJournalAutoCreate', () => {
     expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
   })
 
+  // The shortcut tests below run on a *past* date so the mount-effect
+  // stays inert (it only fires for today) and the keydown path is
+  // exercised in isolation. Since #755 the keydown path shares the
+  // mount path's `autoCreatedRef` guard, so a today-keypress after the
+  // mount auto-create is correctly a no-op — the old today-based
+  // variants of these tests only passed because the mock kept
+  // reporting "no page" for a date the hook had already created.
+  const pastDate = new Date(2025, 5, 15)
+  const pastDateStr = '2025-06-15'
+
   it('registers Enter keyboard shortcut in daily mode when no page exists', async () => {
-    const opts = makeOptions()
+    const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))
 
-    await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
-    })
-    vi.mocked(opts.handleAddBlock).mockClear()
+    // Mount-effect skipped (not today).
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
 
     act(() => {
       const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
@@ -127,18 +135,15 @@ describe('useJournalAutoCreate', () => {
     })
 
     await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      expect(opts.handleAddBlock).toHaveBeenCalledWith(pastDateStr)
     })
   })
 
   it('registers n keyboard shortcut in daily mode when no page exists', async () => {
-    const opts = makeOptions()
+    const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))
 
-    await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
-    })
-    vi.mocked(opts.handleAddBlock).mockClear()
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
 
     act(() => {
       const event = new KeyboardEvent('keydown', { key: 'n', bubbles: true })
@@ -146,16 +151,41 @@ describe('useJournalAutoCreate', () => {
     })
 
     await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
+      expect(opts.handleAddBlock).toHaveBeenCalledWith(pastDateStr)
     })
+  })
+
+  it('rapid double-press creates the page only once (#755)', async () => {
+    const opts = makeOptions({ currentDate: pastDate })
+    renderHook(() => useJournalAutoCreate(opts))
+
+    // Both presses land before either probe resolves, so both probes
+    // report "no page". The shared autoCreatedRef guard must collapse
+    // the two creations into one.
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }))
+    })
+
+    await waitFor(() => {
+      expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
+    })
+    expect(opts.handleAddBlock).toHaveBeenCalledWith(pastDateStr)
+
+    // The race is at the probe level — both probes fired…
+    const probes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+    expect(probes).toHaveLength(2)
+
+    // …but after every pending probe settles, still exactly one create.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(opts.handleAddBlock).toHaveBeenCalledTimes(1)
   })
 
   it('shortcut works on a past date when mount-effect did not auto-create', async () => {
     // Validates that the keyboard shortcut earns its keep after the
     // BUG-48 follow-up: it remains the only way to backfill a past
     // day's page now that the mount-effect is restricted to today.
-    const pastDate = new Date(2025, 5, 15)
-    const pastDateStr = '2025-06-15'
     const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))
 
@@ -213,13 +243,13 @@ describe('useJournalAutoCreate', () => {
   })
 
   it('does not trigger shortcut when target is a contenteditable', async () => {
-    const opts = makeOptions()
+    // Past date: the mount-effect stays inert, so if the target check
+    // failed the keypress *would* probe and create — the absence
+    // assertion below is meaningful (not masked by the #755 guard).
+    const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))
 
-    await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
-    })
-    vi.mocked(opts.handleAddBlock).mockClear()
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
 
     const editable = document.createElement('div')
     editable.contentEditable = 'true'
@@ -235,17 +265,17 @@ describe('useJournalAutoCreate', () => {
 
     await Promise.resolve()
     expect(opts.handleAddBlock).not.toHaveBeenCalled()
+    // The target check short-circuits before the IPC probe fires.
+    const probes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+    expect(probes).toHaveLength(0)
     document.body.removeChild(editable)
   })
 
   it('does not trigger shortcut when target is an input', async () => {
-    const opts = makeOptions()
+    const opts = makeOptions({ currentDate: pastDate })
     renderHook(() => useJournalAutoCreate(opts))
 
-    await waitFor(() => {
-      expect(opts.handleAddBlock).toHaveBeenCalledWith(todayStr)
-    })
-    vi.mocked(opts.handleAddBlock).mockClear()
+    expect(opts.handleAddBlock).not.toHaveBeenCalled()
 
     const input = document.createElement('input')
     document.body.appendChild(input)
@@ -256,21 +286,21 @@ describe('useJournalAutoCreate', () => {
 
     await Promise.resolve()
     expect(opts.handleAddBlock).not.toHaveBeenCalled()
+    const probes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'get_journal_page_by_date')
+    expect(probes).toHaveLength(0)
     document.body.removeChild(input)
   })
 
   it('cleans up keyboard listener on unmount', async () => {
     const spy = vi.fn()
-    const opts = makeOptions({ handleAddBlock: spy })
+    // Past date: the mount-effect never creates, so a leaked listener
+    // *would* create on the post-unmount keypress — keeps the absence
+    // assertion meaningful under the #755 autoCreatedRef guard.
+    const opts = makeOptions({ currentDate: pastDate, handleAddBlock: spy })
     const removeEventListenerSpy = vi.spyOn(document, 'removeEventListener')
     const { unmount } = renderHook(() => useJournalAutoCreate(opts))
 
-    // Hook auto-creates on mount; wait, then clear so we only observe
-    // post-unmount calls.
-    await waitFor(() => {
-      expect(spy).toHaveBeenCalled()
-    })
-    spy.mockClear()
+    expect(spy).not.toHaveBeenCalled()
 
     unmount()
 
