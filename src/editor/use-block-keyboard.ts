@@ -130,8 +130,6 @@ interface KeyRule {
   handle: (event: KeyEvent, callbacks: BlockKeyboardCallbacks, ctx: KeyContext) => void
 }
 
-const isMod = (e: KeyEvent): boolean => e.ctrlKey || e.metaKey
-
 /**
  * Ordered rule table. First match wins. Ordering matters: mod-combinations
  * must precede their plain-key equivalents (e.g. `Ctrl+Enter` before `Enter`).
@@ -139,53 +137,58 @@ const isMod = (e: KeyEvent): boolean => e.ctrlKey || e.metaKey
  * cognitive-complexity budget.
  */
 const KEY_RULES: ReadonlyArray<KeyRule> = [
-  // Ctrl/Cmd+Shift+ArrowUp: move block up among siblings
+  // The chord rules below are routed through `matchesShortcutBinding`
+  // (#724) so Settings rebinds are honoured. The positional rules further
+  // down (Enter / Backspace / boundary arrows) stay hardcoded — their
+  // semantics are inseparable from those keys and the catalog marks them
+  // `rebindable: false`.
+  // `moveBlockUp` (default Ctrl/Cmd+Shift+ArrowUp): move block up among siblings
   {
-    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowUp',
+    match: (e) => matchesShortcutBinding(e, 'moveBlockUp'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
       cb.onMoveUp?.()
     },
   },
-  // Ctrl/Cmd+Shift+ArrowDown: move block down among siblings
+  // `moveBlockDown` (default Ctrl/Cmd+Shift+ArrowDown): move block down among siblings
   {
-    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowDown',
+    match: (e) => matchesShortcutBinding(e, 'moveBlockDown'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
       cb.onMoveDown?.()
     },
   },
-  // Ctrl/Cmd+Shift+ArrowRight: indent block
+  // `indentBlock` (default Ctrl/Cmd+Shift+ArrowRight): indent block
   {
-    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowRight',
+    match: (e) => matchesShortcutBinding(e, 'indentBlock'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
       cb.onIndent()
     },
   },
-  // Ctrl/Cmd+Shift+ArrowLeft: dedent block
+  // `dedentBlock` (default Ctrl/Cmd+Shift+ArrowLeft): dedent block
   {
-    match: (e) => isMod(e) && e.shiftKey && e.key === 'ArrowLeft',
+    match: (e) => matchesShortcutBinding(e, 'dedentBlock'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onFlush()
       cb.onDedent()
     },
   },
-  // Ctrl/Cmd+Enter: toggle task state
+  // `cycleTaskState` (default Ctrl/Cmd+Enter): toggle task state
   {
-    match: (e) => isMod(e) && e.key === 'Enter',
+    match: (e) => matchesShortcutBinding(e, 'cycleTaskState'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onToggleTodo?.()
     },
   },
-  // Ctrl/Cmd+.: toggle collapse/expand children
+  // `collapseExpand` (default Ctrl/Cmd+.): toggle collapse/expand children
   {
-    match: (e) => isMod(e) && e.key === '.',
+    match: (e) => matchesShortcutBinding(e, 'collapseExpand'),
     handle: (e, cb) => {
       e.preventDefault()
       cb.onToggleCollapse?.()

@@ -4,6 +4,7 @@
  * binding string regardless of the layout quirks the user is typing on.
  */
 
+import { parseChord } from './parse'
 import { getShortcutKeys } from './storage'
 
 /**
@@ -18,7 +19,11 @@ function normalizeKey(raw: string): string {
   // otherwise collapse it to the empty string.
   const lower = raw.toLowerCase()
   if (lower === ' ' || lower === 'space' || lower === 'spacebar') return 'space'
-  const k = lower.trim()
+  // Strip internal whitespace so the catalog's spelled-out key names
+  // (`Arrow Up`, `Page Up`) compare equal to the corresponding
+  // `KeyboardEvent.key` values (`ArrowUp`, `PageUp`) — real event keys
+  // never contain spaces (the spacebar is handled above).
+  const k = lower.trim().replace(/\s+/g, '')
   if (k === '') return ''
   if (k === '←' || k === 'arrowleft' || k === 'left') return 'arrowleft'
   if (k === '→' || k === 'arrowright' || k === 'right') return 'arrowright'
@@ -74,27 +79,26 @@ function matchesSingleBinding(
   e: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey' | 'key'>,
   binding: string,
 ): boolean {
-  // Split on ` + ` (space-plus-space) so bindings whose KEY is literally
-  // `+` (e.g. `+` alone or `Ctrl + +`) round-trip correctly. Existing
-  // bindings already use the spaced form (`Ctrl + F`, `Ctrl + Shift + D`),
-  // so this is backward compatible.
-  const parts = binding.split(' + ').map((p) => p.trim().toLowerCase())
-  const needsCtrl = parts.includes('ctrl')
-  const needsShift = parts.includes('shift')
-  const needsAlt = parts.includes('alt')
-  const rawKey =
-    parts.filter((p) => p !== 'ctrl' && p !== 'shift' && p !== 'alt' && p !== 'meta')[0] ?? ''
-  const normalizedKey = normalizeKey(rawKey)
+  // #723 — parse with the SAME tokenizer the Settings validator and
+  // `setCustomShortcut` normalisation use (`parseChord`), so every format
+  // the UI accepts (`Ctrl+E`, `Cmd + K`, `Mod + K`, legacy unspaced
+  // overrides saved before normalisation existed) is honoured here.
+  // `parseChord` only treats `+`/`-`/whitespace as separators after a known
+  // modifier name, so bindings whose KEY is literally `+` (e.g. `+` alone
+  // or `Ctrl + +`) still round-trip correctly.
+  const parsed = parseChord(binding)
+  if (!parsed) return false
+  const normalizedKey = normalizeKey(parsed.key)
   const normalizedEventKey = normalizeKey(e.key)
   // Relax shift check for symbol punctuation keys — on many layouts
   // the same physical key produces different glyphs with/without shift
   // (US: `Shift+=` → `+`; `Shift+/` → `?`). Ignoring shift for symbols
   // makes these shortcuts work regardless of how the user types them.
-  const matchShift = needsShift ? e.shiftKey : isSymbolKey(normalizedKey) ? true : !e.shiftKey
+  const matchShift = parsed.shift ? e.shiftKey : isSymbolKey(normalizedKey) ? true : !e.shiftKey
   return (
-    (e.ctrlKey || e.metaKey) === needsCtrl &&
+    (e.ctrlKey || e.metaKey) === parsed.ctrl &&
     matchShift &&
-    e.altKey === needsAlt &&
+    e.altKey === parsed.alt &&
     normalizedEventKey === normalizedKey
   )
 }

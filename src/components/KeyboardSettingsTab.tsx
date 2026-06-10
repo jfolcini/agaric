@@ -21,39 +21,13 @@ import {
   type ShortcutBinding,
   setCustomShortcut,
 } from '@/lib/keyboard-config'
+// #723 — imported from the submodule (not the barrel) so the validator is
+// the SAME tokenizer the matcher parses with; the two previously drifted
+// (validator accepted `Ctrl+E`/`Cmd + K` formats the matcher saved dead).
+import { validateBindingInput } from '@/lib/keyboard-config/parse'
 import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
 import { ConfirmDialog } from './ConfirmDialog'
-
-/**
- * UX-391 — Lightweight syntactic validation for custom shortcut bindings.
- * Rejects empty input and modifier-only patterns (e.g. `Ctrl + Shift`).
- * Accepted format: optional modifiers (Ctrl/Cmd/Meta/Alt/Option/Shift)
- * separated by `+` or `-` or whitespace, followed by at least one
- * non-modifier key token.
- */
-const MODIFIER_TOKENS = new Set([
-  'Ctrl',
-  'Control',
-  'Cmd',
-  'Command',
-  'Meta',
-  'Alt',
-  'Option',
-  'Shift',
-  'Mod',
-])
-
-function validateShortcutBinding(input: string): 'empty' | 'modifierOnly' | null {
-  const trimmed = input.trim()
-  if (!trimmed) return 'empty'
-  // Tokenize on `+`, `-`, or runs of whitespace (handles "Ctrl+E", "Ctrl-E", "Ctrl + E", "Ctrl Shift E")
-  const tokens = trimmed.split(/[+\-\s]+/).filter(Boolean)
-  if (tokens.length === 0) return 'empty'
-  const nonModifiers = tokens.filter((t) => !MODIFIER_TOKENS.has(t))
-  if (nonModifiers.length === 0) return 'modifierOnly'
-  return null
-}
 
 export function KeyboardSettingsTab(): React.ReactElement {
   const { t } = useTranslation()
@@ -81,7 +55,7 @@ export function KeyboardSettingsTab(): React.ReactElement {
   // UX-391 — validate the in-progress edit value (only meaningful while editing).
   const validationError = useMemo<'empty' | 'modifierOnly' | null>(() => {
     if (!editingId) return null
-    return validateShortcutBinding(editValue)
+    return validateBindingInput(editValue)
   }, [editingId, editValue])
 
   const startEdit = useCallback((id: string, currentKeys: string) => {
@@ -252,9 +226,12 @@ export function KeyboardSettingsTab(): React.ReactElement {
                           )}
                         </div>
 
-                        {/* Actions column */}
+                        {/* Actions column — #724: documentation-only entries
+                            (rebindable: false) get NO edit affordance; their
+                            triggers are hardcoded at the consumption site and
+                            a saved override would never be honoured. */}
                         <div className="flex items-center gap-1 shrink-0">
-                          {!isEditing && (
+                          {!isEditing && shortcut.rebindable !== false && (
                             <Button
                               variant="ghost"
                               size="icon-xs"

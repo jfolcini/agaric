@@ -79,10 +79,11 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     zoomIn,
   } = options
 
-  // ── Keyboard shortcut for collapse toggle (Mod+.) ──────────────────
+  // ── Keyboard shortcut for collapse toggle (`collapseExpand`, default
+  // Mod+. — routed through matchesShortcutBinding so rebinds work, #724) ──
   useEffect(() => {
     const handleCollapseKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+      if (matchesShortcutBinding(e, 'collapseExpand')) {
         // #713 — only the tree that owns the focused block may act, and
         // `preventDefault()` must stay inside the handled branch so the
         // chord passes through when this tree doesn't handle it.
@@ -102,14 +103,16 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // selection store (no per-block IPC side effects); deliberately ungated.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ctrl+A / Cmd+A — select all blocks (only when not editing)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && !focusedBlockId) {
+      // `selectAllBlocks` (Ctrl/Cmd+A by default) — select all blocks (only
+      // when not editing). Routed through matchesShortcutBinding (#724).
+      if (matchesShortcutBinding(e, 'selectAllBlocks') && !focusedBlockId) {
         e.preventDefault()
         rawSelectAll(blocks.map((b) => b.id))
       }
-      // Escape — clear selection (when not editing and there's an active selection)
+      // `clearSelection` (Escape by default) — clear selection (when not
+      // editing and there's an active selection).
       if (
-        e.key === 'Escape' &&
+        matchesShortcutBinding(e, 'clearSelection') &&
         !e.defaultPrevented &&
         !focusedBlockId &&
         selectedBlockIds.length > 0
@@ -203,10 +206,11 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handleZoomInKey)
   }, [focusedBlockId, pageStore, hasChildrenSet, zoomIn, handleFlush, setFocused])
 
-  // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
+  // ── Keyboard shortcut for task cycling (`cycleTaskState`, default
+  // Ctrl+Enter / Cmd+Enter — routed through matchesShortcutBinding, #724) ──
   useEffect(() => {
     const handleTaskKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (matchesShortcutBinding(e, 'cycleTaskState')) {
         // #713 — without this gate every mounted tree (journal week/month)
         // fired its own `handleToggleTodo`, each computing the next state
         // from its OWN store (where the block may not exist → `current =

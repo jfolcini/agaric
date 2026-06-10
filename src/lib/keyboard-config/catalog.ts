@@ -10,16 +10,30 @@ export interface ShortcutBinding {
   category: string // i18n key
   description: string // i18n key
   condition?: string // i18n key
+  /**
+   * `false` marks a documentation-only entry: the trigger is hardcoded at
+   * its consumption site (mouse chords, TipTap input-trigger characters,
+   * structural editor keys with positional conditions) and is NOT routed
+   * through `matchesShortcutBinding`/`getShortcutKeys`. The Settings tab
+   * hides the edit affordance for these (#724 — never advertise a rebind
+   * that won't be honoured). Omitted (default) means the binding is
+   * genuinely rebindable; a drift test pins this flag against the actual
+   * consumption sites in `src/`.
+   */
+  rebindable?: false
 }
 
 export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
-  // Navigation
+  // Navigation — documentation-only (#724): positional editor keys
+  // (arrows/Enter/Backspace gated on cursor position) handled by the
+  // KEY_RULES table in `editor/use-block-keyboard.ts`, not the matcher.
   {
     id: 'prevBlock',
     keys: 'Arrow Up / Left',
     category: 'keyboard.category.navigation',
     description: 'keyboard.moveToPreviousBlock',
     condition: 'keyboard.condition.atStart',
+    rebindable: false,
   },
   {
     id: 'nextBlock',
@@ -27,6 +41,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.navigation',
     description: 'keyboard.moveToNextBlock',
     condition: 'keyboard.condition.atEnd',
+    rebindable: false,
   },
 
   // Editing
@@ -35,6 +50,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     keys: 'Enter',
     category: 'keyboard.category.editing',
     description: 'keyboard.saveBlockAndClose',
+    rebindable: false,
   },
   {
     id: 'deleteBlock',
@@ -42,6 +58,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.editing',
     description: 'keyboard.deleteBlock',
     condition: 'keyboard.condition.onEmptyBlock',
+    rebindable: false,
   },
   {
     id: 'mergeWithPrevious',
@@ -49,6 +66,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.editing',
     description: 'keyboard.mergeWithPrevious',
     condition: 'keyboard.condition.atStartOfBlock',
+    rebindable: false,
   },
   {
     id: 'indentBlock',
@@ -87,11 +105,13 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.moveBlockDown',
   },
   {
+    // Documentation-only: TipTap's built-in hard-break keymap.
     id: 'insertLineBreak',
     keys: 'Shift + Enter',
     category: 'keyboard.category.editing',
     description: 'keyboard.insertLineBreak',
     condition: 'keyboard.condition.inEditor',
+    rebindable: false,
   },
 
   // Block Tree
@@ -164,13 +184,15 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.heading6',
   },
 
-  // Pickers
+  // Pickers — documentation-only (#724): suggestion-plugin trigger
+  // CHARACTERS compiled into the TipTap extensions, not keyboard chords.
   {
     id: 'tagPicker',
     keys: '@',
     category: 'keyboard.category.pickers',
     description: 'keyboard.tagPicker',
     condition: 'keyboard.condition.inEditor',
+    rebindable: false,
   },
   {
     id: 'blockLinkPicker',
@@ -178,6 +200,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.pickers',
     description: 'keyboard.blockLinkPicker',
     condition: 'keyboard.condition.inEditor',
+    rebindable: false,
   },
   {
     id: 'blockRefPicker',
@@ -185,6 +208,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.pickers',
     description: 'keyboard.blockRefPicker',
     condition: 'keyboard.condition.inEditor',
+    rebindable: false,
   },
   {
     id: 'slashCommand',
@@ -192,6 +216,7 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.pickers',
     description: 'keyboard.slashCommandMenu',
     condition: 'keyboard.condition.inEditor',
+    rebindable: false,
   },
 
   // Journal
@@ -223,16 +248,20 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
 
   // Block Selection
   {
+    // Documentation-only: mouse chord, not a keyboard event.
     id: 'toggleBlockSelection',
     keys: 'Ctrl + Click',
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.toggleBlockSelection',
+    rebindable: false,
   },
   {
+    // Documentation-only: mouse chord, not a keyboard event.
     id: 'rangeSelectBlocks',
     keys: 'Shift + Click',
     category: 'keyboard.category.blockSelection',
     description: 'keyboard.rangeSelectBlocks',
+    rebindable: false,
   },
   {
     id: 'selectAllBlocks',
@@ -258,8 +287,12 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     condition: 'keyboard.condition.outsideEditor',
   },
   {
+    // `Ctrl + Shift + Z` is the Linux/Windows redo convention; both
+    // alternatives were always honoured by the handler — listing both
+    // keeps the catalog truthful now that the handler routes through
+    // `matchesShortcutBinding` (#724).
     id: 'redoLastUndoneOp',
-    keys: 'Ctrl + Y',
+    keys: 'Ctrl + Y / Ctrl + Shift + Z',
     category: 'keyboard.category.undoRedo',
     description: 'keyboard.redoLastUndoneOp',
     condition: 'keyboard.condition.outsideEditor',
@@ -289,10 +322,12 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
 
   // History View
   {
+    // Documentation-only: mouse chord, not a keyboard event.
     id: 'histRangeSelect',
     keys: 'Shift + Click',
     category: 'keyboard.category.historyView',
     description: 'keyboard.rangeSelect',
+    rebindable: false,
   },
   {
     id: 'histRevertSelected',
@@ -301,16 +336,22 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.revertSelected',
   },
   {
+    // Documentation-only: list navigation lives in the shared
+    // `useListKeyboardNavigation` hook (arrows/Home/End/PageUp/PageDown),
+    // which many list surfaces hardcode.
     id: 'histNavigateItems',
     keys: 'Arrow Up / Arrow Down',
     category: 'keyboard.category.historyView',
     description: 'keyboard.navigateItems',
+    rebindable: false,
   },
   {
+    // Documentation-only: vim-style aliases inside the same shared hook.
     id: 'histNavigateVim',
     keys: 'j / k',
     category: 'keyboard.category.historyView',
     description: 'keyboard.navigateItemsVim',
+    rebindable: false,
   },
 
   // Global
@@ -385,10 +426,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   // there is no recent command yet the binding falls through to
   // opening the palette in commands mode (see `useAppKeyboardShortcuts`).
   //
-  // Same chord as the editor's `collapseExpand` documentation entry,
-  // but that one is TipTap-handled inside the editor and gated on focus;
-  // this one is gated on NOT typing in a field, so the two never fire
-  // together.
+  // Same chord as the editor's `collapseExpand` entry, but that one is
+  // gated on a focused block (KEY_RULES + the BlockTree document
+  // listener); this one is gated on NOT typing in a field, so the two
+  // never fire together.
   {
     id: 'runLastCommand',
     keys: 'Ctrl + .',
@@ -525,11 +566,14 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.linkPopover',
   },
   {
+    // Documentation-only: chip-deletion semantics inside the TipTap
+    // extension, inseparable from the Backspace key.
     id: 'backspaceChip',
     keys: 'Backspace',
     category: 'keyboard.category.editorFormatting',
     description: 'keyboard.backspaceChip',
     condition: 'keyboard.condition.afterChip',
+    rebindable: false,
   },
 
   // Spaces (FEAT-3p11) — digit hotkeys for instant space switching.
@@ -539,9 +583,10 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   // digits are silent no-ops; the handler short-circuits when typing in
   // an input/textarea/contenteditable so it never steals keystrokes.
   // The `Ctrl + 1`-`Ctrl + 6` collision with `heading1`-`heading6` is
-  // benign: the heading entries are documentation-only (not wired to a
-  // global handler) and live in a different category, so `findConflicts`
-  // does not flag them.
+  // benign: the heading handlers (#713, `useBlockTreeKeyboardShortcuts`)
+  // only fire while a block is focused — exactly when the space switcher
+  // bails out — and the entries live in a different category, so
+  // `findConflicts` does not flag them.
   {
     id: 'switchSpace1',
     keys: 'Ctrl + 1',

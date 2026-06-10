@@ -10,6 +10,13 @@ export type { ShortcutBinding } from './keyboard-config/catalog'
 export { DEFAULT_SHORTCUTS } from './keyboard-config/catalog'
 export { formatChordTokens } from './keyboard-config/format-chord'
 export { matchesShortcutBinding } from './keyboard-config/match'
+export type { ParsedChord } from './keyboard-config/parse'
+export {
+  formatParsedChord,
+  normalizeBinding,
+  parseChord,
+  validateBindingInput,
+} from './keyboard-config/parse'
 export {
   findConflicts,
   getCurrentShortcuts,

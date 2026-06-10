@@ -16,6 +16,7 @@ import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 import { announce } from '../lib/announcer'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { getBlock } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 
@@ -60,9 +61,11 @@ export function useUndoShortcuts(): void {
 
       const pageId = pageStack[pageStack.length - 1]?.pageId as string
 
-      // Ctrl+Z (or Cmd+Z on Mac) — Undo
-      // Skip Ctrl+Shift+Z (that's page-level redo, handled below)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      // `undoLastPageOp` (Ctrl/Cmd+Z by default) — routed through
+      // `matchesShortcutBinding` (#724) so Settings rebinds are honoured.
+      // The default binding carries no Shift requirement, so Ctrl+Shift+Z
+      // (page-level redo, handled below) does not match it.
+      if (matchesShortcutBinding(e, 'undoLastPageOp')) {
         e.preventDefault()
         useUndoStore
           .getState()
@@ -84,11 +87,10 @@ export function useUndoShortcuts(): void {
         return
       }
 
-      // Ctrl+Y (or Cmd+Y on Mac) or Ctrl+Shift+Z (Linux/Windows convention) — Redo
-      if (
-        ((e.ctrlKey || e.metaKey) && e.key === 'y') ||
-        ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z'))
-      ) {
+      // `redoLastUndoneOp` (Ctrl+Y / Ctrl+Shift+Z by default — the catalog
+      // lists both alternatives) — routed through `matchesShortcutBinding`
+      // (#724) so Settings rebinds are honoured.
+      if (matchesShortcutBinding(e, 'redoLastUndoneOp')) {
         e.preventDefault()
         useUndoStore
           .getState()

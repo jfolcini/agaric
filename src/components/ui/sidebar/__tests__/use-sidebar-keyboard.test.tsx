@@ -9,11 +9,17 @@
  */
 
 import { fireEvent, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { setCustomShortcut } from '@/lib/keyboard-config'
 
 import { useSidebarKeyboard } from '../use-sidebar-keyboard'
 
 describe('useSidebarKeyboard', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
   it('fires toggle on Ctrl+B', () => {
     const toggle = vi.fn()
     renderHook(() => useSidebarKeyboard(toggle))
@@ -76,6 +82,20 @@ describe('useSidebarKeyboard', () => {
     expect(toggle).not.toHaveBeenCalled()
 
     document.body.removeChild(editor)
+  })
+
+  it('#724: honours a Settings rebind — new chord fires, default Ctrl+B is dead', () => {
+    setCustomShortcut('toggleSidebar', 'Ctrl + Shift + L')
+    const toggle = vi.fn()
+    renderHook(() => useSidebarKeyboard(toggle))
+
+    // Old default no longer fires once rebound.
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(toggle).not.toHaveBeenCalled()
+
+    // The new chord does.
+    fireEvent.keyDown(window, { key: 'l', ctrlKey: true, shiftKey: true })
+    expect(toggle).toHaveBeenCalledTimes(1)
   })
 
   it('removes the window listener on unmount', () => {

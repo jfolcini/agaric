@@ -92,8 +92,9 @@ export function useHistoryKeyboardNav({
         return
       }
 
-      // Enter — confirm revert (only when at least one row is selected).
-      if (e.key === 'Enter' && hasSelection) {
+      // `histRevertSelected` (Enter by default) — confirm revert (only when
+      // at least one row is selected). Routed through the matcher (#724).
+      if (matchesShortcutBinding(e, 'histRevertSelected') && hasSelection) {
         e.preventDefault()
         onConfirmRevert()
         return
