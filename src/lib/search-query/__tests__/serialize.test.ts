@@ -31,6 +31,15 @@ describe('serialize round-trip', () => {
     'prop:status="in progress"',
     'not-prop:owner="Jane Doe"',
     'tag:#urgent prop:status="in progress" leftover',
+    // #718 — path globs with whitespace round-trip via "..." quoting.
+    'path:"Meeting Notes/*"',
+    'not-path:"Old Archive/**"',
+    'path:"Meeting Notes/*" tag:#urgent leftover',
+    // #718 review — a value that is itself `"`-wrapped after one strip
+    // (`""a""` → value `"a"`) must be re-quoted on serialise, or the next
+    // parse strips the literal quotes again and the value mutates.
+    'path:""a""',
+    'prop:k=""a""',
   ]
 
   for (const s of canonicalInputs) {
@@ -95,5 +104,51 @@ describe('serialize round-trip', () => {
     expect(tokenSource({ kind: 'prop', key: 'status', value: 'done', span: [0, 0] })).toBe(
       'prop:status=done',
     )
+  })
+
+  it('#718 — tokenSource quotes a path glob that contains whitespace', () => {
+    expect(tokenSource({ kind: 'pathInclude', value: 'Meeting Notes/*', span: [0, 0] })).toBe(
+      'path:"Meeting Notes/*"',
+    )
+    expect(tokenSource({ kind: 'pathExclude', value: 'Old Archive/**', span: [0, 0] })).toBe(
+      'not-path:"Old Archive/**"',
+    )
+  })
+
+  it('#718 — tokenSource leaves whitespace-free path globs bare', () => {
+    expect(tokenSource({ kind: 'pathInclude', value: 'Journal/*', span: [0, 0] })).toBe(
+      'path:Journal/*',
+    )
+    expect(tokenSource({ kind: 'pathExclude', value: 'Archive/**', span: [0, 0] })).toBe(
+      'not-path:Archive/**',
+    )
+  })
+
+  it('#718 review — tokenSource re-quotes a value that is itself `"`-wrapped', () => {
+    // Without re-quoting, serialise emits `path:"a"` and the next parse
+    // strips the literal quotes as if they were syntax — the value would
+    // silently mutate `"a"` → `a` on every serialise→parse cycle.
+    expect(tokenSource({ kind: 'pathInclude', value: '"a"', span: [0, 0] })).toBe('path:""a""')
+    expect(tokenSource({ kind: 'prop', key: 'k', value: '"a"', span: [0, 0] })).toBe('prop:k=""a""')
+    const round = parse('path:""a""')
+    expect(round.filters[0]).toMatchObject({ kind: 'pathInclude', value: '"a"' })
+    const twice = parse(serialize(round))
+    expect(twice.filters[0]).toMatchObject({ kind: 'pathInclude', value: '"a"' })
+  })
+
+  it('#718 — a pathInclude token with spaces survives serialize → parse', () => {
+    // The FilterHelperPopover path: SearchPanel builds the token from the
+    // raw submitted glob; the serialised query must re-parse to the SAME
+    // chip instead of fragmenting into `path:Meeting` + free text.
+    const ast = addFilter(parse(''), {
+      kind: 'pathInclude',
+      value: 'Meeting Notes/*',
+      span: [0, 0],
+    })
+    expect(serialize(ast)).toBe('path:"Meeting Notes/*"')
+    const round = parse(serialize(ast))
+    expect(round.filters).toHaveLength(1)
+    expect(round.filters[0]).toMatchObject({ kind: 'pathInclude', value: 'Meeting Notes/*' })
+    expect(round.freeText).toBe('')
   })
 })

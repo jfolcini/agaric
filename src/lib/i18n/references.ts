@@ -227,10 +227,13 @@ export const references: Record<string, string> = {
   'search.filterHelper.propKeyPlaceholder': 'area',
   'search.filterHelper.propValueLabel': 'Property value',
   'search.filterHelper.propValuePlaceholder': 'value',
-  // PEND-70 CR8 MAJOR-1 — round-trip guards (the prop DSL has no quoting,
-  // so the form rejects keys/values it can't serialise back unambiguously).
+  // PEND-70 CR8 MAJOR-1 — round-trip guards: the forms reject keys/values
+  // they can't serialise back unambiguously. #152 added value quoting, so
+  // spaces are fine in VALUES; a literal `"` still has no escape syntax.
   'search.filterHelper.propKeyInvalid': "Key can't contain spaces, = or quotes",
-  'search.filterHelper.propValueInvalid': "Value can't contain spaces or quotes",
+  'search.filterHelper.propValueInvalid': "Value can't contain quotes",
+  // #718 — same rule for the path-glob form (globs quote like prop values).
+  'search.filterHelper.pathValueInvalid': "Glob can't contain quotes",
   'search.noPagesFound': 'No pages found',
   'search.aliasMatch': 'via alias: {{alias}}',
   // UX-8 — accessible name for the alias-match card region.

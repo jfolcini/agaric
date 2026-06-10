@@ -16,12 +16,29 @@
 import type { FilterToken, SearchQueryAST } from './types'
 
 /**
- * #152 — wrap a `prop:` / `not-prop:` value in `"..."` when it contains
- * any whitespace; otherwise emit it bare. The form rejects embedded
- * `"` characters, so we don't need to escape inside the quotes.
+ * #152 / #718 — wrap a filter value in `"..."` when it contains any
+ * whitespace; otherwise emit it bare. Used by `prop:` / `not-prop:`
+ * (#152) and `path:` / `not-path:` (#718) so values with spaces
+ * survive the whitespace-splitting tokeniser, and by the autocomplete
+ * insertion path (`applyAutocompleteReplacement`) so all emitters share
+ * one predicate.
+ *
+ * A value that is itself `"`-surrounded (e.g. `"a"`, parsed from
+ * `path:""a""`) is also quoted: emitting it bare would make the next
+ * parse strip the literal quotes as if they were syntax, silently
+ * mutating the value on every serialise→parse cycle.
+ *
+ * There is NO escape syntax for `"` inside the quotes. The helper-form
+ * doors reject literal `"` outright (PropFilterForm #152,
+ * FilterHelperPopover's path form #718), so every UI-built value
+ * round-trips. A hand-typed value combining `"` with whitespace (e.g.
+ * `path:a" b"`) follows the tokeniser's literal-quote rules and may not
+ * survive a re-serialise cycle — accepted limitation, documented in
+ * docs/SEARCH.md.
  */
-function quotePropValue(v: string): string {
-  return /\s/.test(v) ? `"${v}"` : v
+export function quoteValueIfNeeded(v: string): string {
+  const quoteSurrounded = v.length >= 2 && v.startsWith('"') && v.endsWith('"')
+  return /\s/.test(v) || quoteSurrounded ? `"${v}"` : v
 }
 
 /** Render a single token back to its canonical source form. */
@@ -30,9 +47,9 @@ export function tokenSource(t: FilterToken): string {
     case 'tag':
       return `tag:#${t.value}`
     case 'pathInclude':
-      return `path:${t.value}`
+      return `path:${quoteValueIfNeeded(t.value)}`
     case 'pathExclude':
-      return `not-path:${t.value}`
+      return `not-path:${quoteValueIfNeeded(t.value)}`
     case 'state':
       return `state:${t.value}`
     case 'notState':
@@ -46,9 +63,9 @@ export function tokenSource(t: FilterToken): string {
     case 'scheduled':
       return `scheduled:${t.raw}`
     case 'prop':
-      return `prop:${t.key}=${quotePropValue(t.value)}`
+      return `prop:${t.key}=${quoteValueIfNeeded(t.value)}`
     case 'notProp':
-      return `not-prop:${t.key}=${quotePropValue(t.value)}`
+      return `not-prop:${t.key}=${quoteValueIfNeeded(t.value)}`
     case 'invalid':
       return t.source
   }

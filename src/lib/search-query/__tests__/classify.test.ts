@@ -385,6 +385,72 @@ describe('classify / parse', () => {
     expect(ast.freeText).toBe('leftover words')
   })
 
+  it('parses path:"glob with spaces" (#718)', () => {
+    const ast = parse('path:"Meeting Notes/*"')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'pathInclude',
+      value: 'Meeting Notes/*',
+    })
+    expect(ast.freeText).toBe('')
+  })
+
+  it('parses not-path:"glob with spaces" (#718)', () => {
+    const ast = parse('not-path:"Old Archive/**"')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({
+      kind: 'pathExclude',
+      value: 'Old Archive/**',
+    })
+    expect(ast.freeText).toBe('')
+  })
+
+  it('strips quotes from a quoted path glob without spaces (#718)', () => {
+    const ast = parse('path:"Journal/*"')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({ kind: 'pathInclude', value: 'Journal/*' })
+  })
+
+  it('quoted path glob coexists with other tokens (#718)', () => {
+    const ast = parse('tag:#urgent path:"Meeting Notes/*" leftover words')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'urgent' })
+    expect(ast.filters[1]).toMatchObject({
+      kind: 'pathInclude',
+      value: 'Meeting Notes/*',
+    })
+    expect(ast.freeText).toBe('leftover words')
+  })
+
+  it('an UNquoted path glob still splits at the first space (#718 contract)', () => {
+    // Whitespace ends an unquoted token — quoting is the only way to
+    // carry a space inside a path: value.
+    const ast = parse('path:Meeting Notes/*')
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({ kind: 'pathInclude', value: 'Meeting' })
+    expect(ast.freeText).toBe('Notes/*')
+  })
+
+  it('an empty quoted path value is invalid (#718)', () => {
+    const ast = parse('path:""')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toContain('path: value required')
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
+  it('a quoted path glob is still glob-validated after unquoting (#718)', () => {
+    const ast = parse('path:"Meeting [unclosed"')
+    const tok = ast.filters[0]
+    if (tok && tok.kind === 'invalid') {
+      expect(tok.error).toContain('InvalidGlob')
+    } else {
+      throw new Error('expected invalid token')
+    }
+  })
+
   it('serialise round-trip preserves PEND-53 token shapes', () => {
     // Canonical form is reproduced verbatim.
     const inputs = [

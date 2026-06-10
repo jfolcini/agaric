@@ -226,4 +226,36 @@ describe('applyAutocompleteReplacement', () => {
     expect(nextValue).toBe('hello')
     expect(nextCaret).toBe(5)
   })
+
+  it('#718 — quotes a path-history glob containing spaces on insert', () => {
+    const input = 'path:Mee'
+    const anchor = detectAutocompleteAnchor(input, input.length)
+    const { nextValue, nextCaret } = applyAutocompleteReplacement(
+      input,
+      input.length,
+      anchor,
+      'Meeting Notes/*',
+    )
+    expect(nextValue).toBe('path:"Meeting Notes/*" ')
+    expect(nextCaret).toBe(nextValue.length)
+  })
+
+  it('#718 — quotes a not-path glob with spaces, leaves space-free globs bare', () => {
+    const ex = detectAutocompleteAnchor('not-path:Old', 12)
+    expect(applyAutocompleteReplacement('not-path:Old', 12, ex, 'Old Archive/**').nextValue).toBe(
+      'not-path:"Old Archive/**" ',
+    )
+    const inc = detectAutocompleteAnchor('path:J', 6)
+    expect(applyAutocompleteReplacement('path:J', 6, inc, 'Journal/*').nextValue).toBe(
+      'path:Journal/* ',
+    )
+  })
+
+  it('#718 review — re-quotes a `"`-wrapped history glob (shared serialiser predicate)', () => {
+    // A history value like `"ab"` (recorded from `path:""ab""`) must be
+    // inserted as `path:""ab""`; bare insertion would strip the literal
+    // quotes on the next parse, yielding chip `ab` ≠ history entry.
+    const anchor = detectAutocompleteAnchor('path:', 5)
+    expect(applyAutocompleteReplacement('path:', 5, anchor, '"ab"').nextValue).toBe('path:""ab"" ')
+  })
 })

@@ -19,7 +19,7 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
-import { type FilterToken, tokenSource } from '@/lib/search-query'
+import { type FilterToken, parse, serialize, tokenSource } from '@/lib/search-query'
 import type { TagCacheRow } from '@/lib/tauri'
 import { listTagsByPrefix } from '@/lib/tauri'
 
@@ -309,6 +309,51 @@ describe('FilterHelperPopover — path filters', () => {
     await user.type(screen.getByLabelText(t('search.filterCategory.pathExclude')), 'Archive/**')
     await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
     expect(onAddPathExclude).toHaveBeenCalledWith('Archive/**')
+  })
+
+  it('#718 — a glob with spaces is submitted verbatim and survives the query round-trip', async () => {
+    const user = userEvent.setup()
+    const { onAddPathInclude } = renderPopover()
+    await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+    await user.click(screen.getByText(t('search.filterCategory.pathInclude')))
+    await user.type(
+      screen.getByLabelText(t('search.filterCategory.pathInclude')),
+      'Meeting Notes/*',
+    )
+    await user.click(screen.getByRole('button', { name: t('search.filterHelper.add') }))
+    expect(onAddPathInclude).toHaveBeenCalledWith('Meeting Notes/*')
+
+    // SearchPanel builds the token from this raw glob and re-serialises the
+    // query — the serialiser must quote the value so the re-parsed query
+    // yields the same single chip, not `path:Meeting` + free text.
+    const token: FilterToken = {
+      kind: 'pathInclude',
+      value: 'Meeting Notes/*',
+      span: [0, 0],
+    }
+    expect(tokenSource(token)).toBe('path:"Meeting Notes/*"')
+    const round = parse(serialize({ filters: [token], freeText: '' }))
+    expect(round.filters).toHaveLength(1)
+    expect(round.filters[0]).toMatchObject({ kind: 'pathInclude', value: 'Meeting Notes/*' })
+    expect(round.freeText).toBe('')
+  })
+
+  it('#718 review — a glob containing a literal `"` is rejected (no round-trip without escapes)', async () => {
+    // `My "Q" Notes/*` would serialise to `path:"My "Q" Notes/*"`, which the
+    // tokeniser closes at the `" ` boundary inside the value — the query
+    // fragments into chip `My "Q` + free text on re-parse. The DSL has no
+    // escape syntax, so the form rejects the value (mirrors PropFilterForm's
+    // #152 rule).
+    const user = userEvent.setup()
+    const { onAddPathInclude } = renderPopover()
+    await user.click(screen.getByRole('button', { name: t('search.addFilter') }))
+    await user.click(screen.getByText(t('search.filterCategory.pathInclude')))
+    await user.type(screen.getByLabelText(t('search.filterCategory.pathInclude')), 'My "Q" Notes/*')
+    expect(screen.getByRole('alert')).toHaveTextContent(t('search.filterHelper.pathValueInvalid'))
+    const addButton = screen.getByRole('button', { name: t('search.filterHelper.add') })
+    expect(addButton).toBeDisabled()
+    await user.click(addButton)
+    expect(onAddPathInclude).not.toHaveBeenCalled()
   })
 })
 

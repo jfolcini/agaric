@@ -17,6 +17,20 @@ import type { DateOp, FilterToken, NamedDateRange } from './types'
 
 let registered = false
 
+/**
+ * #152 / #718 — strip one surrounding `"..."` pair from a filter value.
+ * The tokeniser keeps a mid-word quoted phrase as part of the word
+ * (e.g. `path:"Meeting Notes/*"` reaches the recogniser as a single
+ * token), so the recogniser only needs to peel the quotes. Both quotes
+ * must be present; an unmatched leading `"` stays a literal.
+ */
+function stripSurroundingQuotes(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1)
+  }
+  return value
+}
+
 /** Re-recognise an existing token (`xxx:value`) without sending it back
  * through the tokeniser — used by tests and snapshot fixtures.
  */
@@ -40,9 +54,12 @@ export function ensureRegistered(): void {
     return { kind: 'tag', value: cleaned, span }
   })
 
-  // path: — page-name glob include.
+  // path: — page-name glob include. #718 — `path:"glob with spaces"`
+  // strips the surrounding quotes (mirrors prop:'s #152 rule), so page
+  // titles containing whitespace round-trip through serialise/parse.
   registerTokenPrefix('path:', (value, span) => {
-    if (value.length === 0) {
+    const glob = stripSurroundingQuotes(value)
+    if (glob.length === 0) {
       return {
         kind: 'invalid',
         source: `path:${value}`,
@@ -50,7 +67,7 @@ export function ensureRegistered(): void {
         span,
       } satisfies FilterToken
     }
-    const err = validateGlob(value)
+    const err = validateGlob(glob)
     if (err) {
       return {
         kind: 'invalid',
@@ -59,12 +76,14 @@ export function ensureRegistered(): void {
         span,
       } satisfies FilterToken
     }
-    return { kind: 'pathInclude', value, span }
+    return { kind: 'pathInclude', value: glob, span }
   })
 
-  // not-path: — page-name glob exclude.
+  // not-path: — page-name glob exclude. #718 — quoted form accepted,
+  // same as path:.
   registerTokenPrefix('not-path:', (value, span) => {
-    if (value.length === 0) {
+    const glob = stripSurroundingQuotes(value)
+    if (glob.length === 0) {
       return {
         kind: 'invalid',
         source: `not-path:${value}`,
@@ -72,7 +91,7 @@ export function ensureRegistered(): void {
         span,
       } satisfies FilterToken
     }
-    const err = validateGlob(value)
+    const err = validateGlob(glob)
     if (err) {
       return {
         kind: 'invalid',
@@ -81,7 +100,7 @@ export function ensureRegistered(): void {
         span,
       } satisfies FilterToken
     }
-    return { kind: 'pathExclude', value, span }
+    return { kind: 'pathExclude', value: glob, span }
   })
 
   // PEND-53 — state: / not-state:
@@ -309,11 +328,7 @@ function parsePropToken(
     }
   }
   // #152 — `prop:key="value with spaces"`: strip the surrounding
-  // quotes (the tokeniser keeps a mid-word quoted phrase as part of
-  // the word so the value reaches us intact). Both quotes must be
-  // present; an unmatched leading `"` falls through as a literal.
-  if (propValue.length >= 2 && propValue.startsWith('"') && propValue.endsWith('"')) {
-    propValue = propValue.slice(1, -1)
-  }
+  // quotes (shared helper; see `stripSurroundingQuotes`).
+  propValue = stripSurroundingQuotes(propValue)
   return { kind, key, value: propValue, span }
 }
