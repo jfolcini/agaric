@@ -1,2 +1,19 @@
 [toolchain]
-channel = "stable"
+# #640: exact pin instead of floating `stable` — a floating channel lets
+# every ~6-week Rust release land new lints (clippy runs with -D warnings)
+# and break all open PRs simultaneously, and makes release binaries
+# non-reproducible across time. This repo pins everything else (GH actions
+# by SHA, specta by `=`, AGP/Gradle); the toolchain was the one unpinned
+# input. Bump deliberately via PR, keeping three places in lockstep:
+#   * this file
+#   * the `toolchain:` input on every dtolnay/rust-toolchain step
+#     (.github/workflows/{ci,release,_validate}.yml)
+#   * `rust-version` in src-tauri/Cargo.toml (MSRV documentation)
+channel = "1.95.0"
+# clippy + rustfmt are required by the prek hooks (`cargo clippy -- -D
+# warnings`, `cargo fmt --check`). With a floating `stable` they came along
+# implicitly (full-profile installs); a pinned exact version is typically a
+# fresh `--profile minimal` install (dtolnay/rust-toolchain in CI), which
+# ships NEITHER — rustup installs components listed here automatically
+# whenever this toolchain file is in effect.
+components = ["clippy", "rustfmt"]

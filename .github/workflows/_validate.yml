@@ -76,6 +76,21 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # Without an explicit `toolchain:` this SHA-pinned action
+          # installs the floating latest stable, and rustup would then
+          # re-download the rust-toolchain.toml pin at first cargo run.
+          toolchain: 1.95.0
+          # The prek hooks below run `cargo clippy -- -D warnings` and
+          # `cargo fmt --check`. dtolnay installs with `--profile minimal`,
+          # which ships neither component; the floating-`stable` setup only
+          # worked because the runner image's preinstalled full-profile
+          # stable already had them. rust-toolchain.toml also lists these
+          # (covering local dev); installing them here keeps the failure
+          # mode at setup time instead of mid-hook.
+          components: clippy,rustfmt
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -471,6 +486,13 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # Without an explicit `toolchain:` this SHA-pinned action
+          # installs the floating latest stable, and rustup would then
+          # re-download the rust-toolchain.toml pin at first cargo run.
+          toolchain: 1.95.0
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -642,6 +664,13 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # Without an explicit `toolchain:` this SHA-pinned action
+          # installs the floating latest stable, and rustup would then
+          # re-download the rust-toolchain.toml pin at first cargo run.
+          toolchain: 1.95.0
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
