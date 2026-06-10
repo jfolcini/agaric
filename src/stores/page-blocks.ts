@@ -214,6 +214,24 @@ function augmentBlocksUpdate<T extends Partial<PageBlockState> | PageBlockState 
   return { ...update, blocksById: buildBlocksById(blocks) } as T
 }
 
+/**
+ * #713 — ownership gate for document-level BlockTree listeners.
+ *
+ * Journal week/month views mount one BlockTree (and one copy of every
+ * document-level listener) per day, all sharing the GLOBAL `focusedBlockId`
+ * from `useBlockStore`. A tree's listener may only act when its OWN page
+ * store actually contains the focused block; otherwise N trees race
+ * conflicting IPCs (e.g. todo cycling computed from a store where the block
+ * doesn't exist → `current = null` → wrong next state). Non-owning trees
+ * must return WITHOUT side effects and WITHOUT `preventDefault()`.
+ */
+export function storeOwnsBlock(
+  store: StoreApi<PageBlockState>,
+  blockId: string | null,
+): blockId is string {
+  return blockId != null && store.getState().blocksById.has(blockId)
+}
+
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {

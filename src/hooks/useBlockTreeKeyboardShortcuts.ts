@@ -14,13 +14,24 @@
 
 import type { RefObject } from 'react'
 import { useEffect } from 'react'
+import type { StoreApi } from 'zustand'
 
 import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { useBlockStore } from '../stores/blocks'
+import type { PageBlockState } from '../stores/page-blocks'
+import { storeOwnsBlock } from '../stores/page-blocks'
 import type { DatePickerMode } from './useBlockDatePicker'
 
 export interface UseBlockTreeKeyboardShortcutsOptions {
   focusedBlockId: string | null
+  /**
+   * This tree's own page store — #713 ownership gate. Journal week/month
+   * views mount one BlockTree (and one copy of these document-level
+   * listeners) per day, all sharing the GLOBAL `focusedBlockId`. Handlers
+   * with block-level side effects must only act when the focused block
+   * lives in THIS store, and must not `preventDefault()` otherwise.
+   */
+  pageStore: StoreApi<PageBlockState>
   selectedBlockIds: string[]
   hasChildrenSet: Set<string>
   blocks: Array<{ id: string }>
@@ -48,6 +59,7 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
 export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShortcutsOptions): void {
   const {
     focusedBlockId,
+    pageStore,
     selectedBlockIds,
     hasChildrenSet,
     blocks,
@@ -71,17 +83,23 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   useEffect(() => {
     const handleCollapseKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+        // #713 — only the tree that owns the focused block may act, and
+        // `preventDefault()` must stay inside the handled branch so the
+        // chord passes through when this tree doesn't handle it.
+        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+        if (!hasChildrenSet.has(focusedBlockId)) return
         e.preventDefault()
-        if (focusedBlockId && hasChildrenSet.has(focusedBlockId)) {
-          toggleCollapse(focusedBlockId)
-        }
+        toggleCollapse(focusedBlockId)
       }
     }
     document.addEventListener('keydown', handleCollapseKey)
     return () => document.removeEventListener('keydown', handleCollapseKey)
-  }, [focusedBlockId, hasChildrenSet, toggleCollapse])
+  }, [focusedBlockId, pageStore, hasChildrenSet, toggleCollapse])
 
   // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────
+  // #713 note: these fire only when NO block is focused, so there is no
+  // ownership signal to gate on. Select-all/clear act on the global
+  // selection store (no per-block IPC side effects); deliberately ungated.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Ctrl+A / Cmd+A — select all blocks (only when not editing)
@@ -114,6 +132,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       if (e.key !== 'Escape' || e.defaultPrevented) return
       const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
       if (!fid) return
+      // #713 — only the tree whose store owns the focused block may flush
+      // and close; other mounted trees (journal week/month) must not touch
+      // their own idle editors.
+      if (!storeOwnsBlock(pageStore, fid)) return
       // Don't interfere when there's an active multi-selection (handled above)
       if (sel.length > 0) return
       // Only act when the TipTap editor is NOT the active element
@@ -126,7 +148,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handleUnfocusedEscape)
     return () => document.removeEventListener('keydown', handleUnfocusedEscape)
-  }, [handleFlush, setFocused])
+  }, [handleFlush, setFocused, pageStore])
 
   // ── Keyboard shortcut: Escape zooms out when zoomed in (UX-214) ──
   // Fires only when:
@@ -165,7 +187,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     const handleZoomInKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       if (!matchesShortcutBinding(e, 'zoomIn')) return
-      if (!focusedBlockId) return
+      // #713 — ownership gate (hasChildrenSet only holds this tree's ids,
+      // but the explicit check keeps the flush/zoom side effects provably
+      // scoped to the owning tree).
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
       if (!hasChildrenSet.has(focusedBlockId)) return
       e.preventDefault()
       // Flush any pending editor edits before navigating so the zoom
@@ -176,28 +201,33 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handleZoomInKey)
     return () => document.removeEventListener('keydown', handleZoomInKey)
-  }, [focusedBlockId, hasChildrenSet, zoomIn, handleFlush, setFocused])
+  }, [focusedBlockId, pageStore, hasChildrenSet, zoomIn, handleFlush, setFocused])
 
   // ── Keyboard shortcut for task cycling (Ctrl+Enter / Cmd+Enter) ────
   useEffect(() => {
     const handleTaskKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        // #713 — without this gate every mounted tree (journal week/month)
+        // fired its own `handleToggleTodo`, each computing the next state
+        // from its OWN store (where the block may not exist → `current =
+        // null` → 'TODO'), racing N conflicting `set_todo_state` IPCs.
+        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
         e.preventDefault()
-        if (focusedBlockId) {
-          handleToggleTodo(focusedBlockId)
-        }
+        handleToggleTodo(focusedBlockId)
       }
     }
     document.addEventListener('keydown', handleTaskKey)
     return () => document.removeEventListener('keydown', handleTaskKey)
-  }, [focusedBlockId, handleToggleTodo])
+  }, [focusedBlockId, pageStore, handleToggleTodo])
 
   // ── Keyboard shortcut: open date picker (configurable) ───────────────
   useEffect(() => {
     const handleDateShortcut = (e: KeyboardEvent) => {
       if (matchesShortcutBinding(e, 'openDatePicker')) {
+        // #713 — gate BEFORE preventDefault: a non-owning tree must neither
+        // open its own dialog nor swallow the chord.
+        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
         e.preventDefault()
-        if (!focusedBlockId) return
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
         setDatePickerMode('date')
         setDatePickerOpen(true)
@@ -207,6 +237,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     return () => document.removeEventListener('keydown', handleDateShortcut)
   }, [
     focusedBlockId,
+    pageStore,
     rovingEditor.editor,
     datePickerCursorPos,
     setDatePickerMode,
@@ -218,7 +249,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     const handleHeadingShortcut = (e: KeyboardEvent) => {
       for (let level = 1; level <= 6; level++) {
         if (matchesShortcutBinding(e, `heading${level}`)) {
-          if (!focusedBlockId) return
+          // #713 — a non-owning tree's slash-command path would route into
+          // `applyContentEdit` against ITS idle editor (content-overwrite
+          // risk); only the owning tree may handle the chord.
+          if (!storeOwnsBlock(pageStore, focusedBlockId)) return
           e.preventDefault()
           handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
           return
@@ -227,5 +261,5 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handleHeadingShortcut)
     return () => document.removeEventListener('keydown', handleHeadingShortcut)
-  }, [focusedBlockId, handleSlashCommand])
+  }, [focusedBlockId, pageStore, handleSlashCommand])
 }

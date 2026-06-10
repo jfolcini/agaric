@@ -12,11 +12,26 @@ import { useBlockStore } from '../../stores/blocks'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '../useBlockTreeKeyboardShortcuts'
 import { useBlockTreeKeyboardShortcuts } from '../useBlockTreeKeyboardShortcuts'
 
+/**
+ * #713 — minimal page-store stub for the ownership gate: the hook only
+ * calls `getState().blocksById.has(id)` via `storeOwnsBlock`.
+ */
+function makePageStore(ownedIds: string[]): UseBlockTreeKeyboardShortcutsOptions['pageStore'] {
+  const blocksById = new Map(ownedIds.map((id) => [id, { id }]))
+  return {
+    getState: () => ({ blocksById, blocks: [...blocksById.values()] }),
+    setState: vi.fn(),
+    getInitialState: vi.fn(),
+    subscribe: vi.fn(),
+  } as unknown as UseBlockTreeKeyboardShortcutsOptions['pageStore']
+}
+
 function makeOptions(
   overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {},
 ): UseBlockTreeKeyboardShortcutsOptions {
   return {
     focusedBlockId: 'BLOCK_1',
+    pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
     selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
     blocks: [{ id: 'BLOCK_1' }, { id: 'BLOCK_2' }],
@@ -330,6 +345,135 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: '.', ctrlKey: true })
 
       expect(opts.zoomIn).not.toHaveBeenCalled()
+    })
+  })
+
+  // #713 — journal week/month mount one BlockTree (and one copy of these
+  // document listeners) per day, all sharing the global focusedBlockId.
+  // Only the tree whose page store owns the focused block may act, and a
+  // non-handling tree must not swallow the chord via preventDefault.
+  describe('#713 — multi-tree ownership gating', () => {
+    /** Two trees with distinct page stores; the global focus is in tree A. */
+    function renderTwoTrees() {
+      const treeA = makeOptions({
+        focusedBlockId: 'BLOCK_A',
+        pageStore: makePageStore(['BLOCK_A']),
+        hasChildrenSet: new Set(['BLOCK_A']),
+      })
+      const treeB = makeOptions({
+        focusedBlockId: 'BLOCK_A', // global focus — foreign to tree B's store
+        pageStore: makePageStore(['BLOCK_B']),
+        hasChildrenSet: new Set(['BLOCK_B']),
+      })
+      renderHook(() => useBlockTreeKeyboardShortcuts(treeA))
+      renderHook(() => useBlockTreeKeyboardShortcuts(treeB))
+      return { treeA, treeB }
+    }
+
+    function dispatchKey(init: KeyboardEventInit): KeyboardEvent {
+      const e = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init })
+      document.dispatchEvent(e)
+      return e
+    }
+
+    it('Ctrl+Enter cycles the todo exactly once, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      const e = dispatchKey({ key: 'Enter', ctrlKey: true })
+
+      expect(treeA.handleToggleTodo).toHaveBeenCalledTimes(1)
+      expect(treeA.handleToggleTodo).toHaveBeenCalledWith('BLOCK_A')
+      expect(treeB.handleToggleTodo).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('Mod+. collapses exactly once, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      const e = dispatchKey({ key: '.', ctrlKey: true })
+
+      expect(treeA.toggleCollapse).toHaveBeenCalledTimes(1)
+      expect(treeA.toggleCollapse).toHaveBeenCalledWith('BLOCK_A')
+      expect(treeB.toggleCollapse).not.toHaveBeenCalled()
+      expect(e.defaultPrevented).toBe(true)
+    })
+
+    it('date-picker chord opens exactly one picker, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchKey({ key: 'D', ctrlKey: true, shiftKey: true })
+
+      expect(treeA.setDatePickerOpen).toHaveBeenCalledTimes(1)
+      expect(treeA.setDatePickerOpen).toHaveBeenCalledWith(true)
+      expect(treeB.setDatePickerOpen).not.toHaveBeenCalled()
+    })
+
+    it('heading chord routes to the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchKey({ key: '1', ctrlKey: true })
+
+      expect(treeA.handleSlashCommand).toHaveBeenCalledTimes(1)
+      expect(treeA.handleSlashCommand).toHaveBeenCalledWith({ id: 'h1', label: 'Heading 1' })
+      expect(treeB.handleSlashCommand).not.toHaveBeenCalled()
+    })
+
+    it('Alt+. zooms in exactly once, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchKey({ key: '.', altKey: true })
+
+      expect(treeA.zoomIn).toHaveBeenCalledTimes(1)
+      expect(treeA.zoomIn).toHaveBeenCalledWith('BLOCK_A')
+      expect(treeB.zoomIn).not.toHaveBeenCalled()
+      expect(treeB.handleFlush).not.toHaveBeenCalled()
+    })
+
+    it('unfocused Escape flushes only the owning tree (UX-M8)', () => {
+      useBlockStore.setState({ focusedBlockId: 'BLOCK_A', selectedBlockIds: [] })
+      const { treeA, treeB } = renderTwoTrees()
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(treeA.handleFlush).toHaveBeenCalledTimes(1)
+      expect(treeA.setFocused).toHaveBeenCalledWith(null)
+      expect(treeB.handleFlush).not.toHaveBeenCalled()
+      expect(treeB.setFocused).not.toHaveBeenCalled()
+    })
+
+    it('a non-owning tree alone performs zero side effects and never preventDefaults', () => {
+      const opts = makeOptions({
+        focusedBlockId: 'BLOCK_A', // foreign — not in this tree's store
+        pageStore: makePageStore(['BLOCK_B']),
+        hasChildrenSet: new Set(['BLOCK_B']),
+      })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const events = [
+        dispatchKey({ key: 'Enter', ctrlKey: true }),
+        dispatchKey({ key: '.', ctrlKey: true }),
+        dispatchKey({ key: '.', altKey: true }),
+        dispatchKey({ key: 'D', ctrlKey: true, shiftKey: true }),
+        dispatchKey({ key: '1', ctrlKey: true }),
+      ]
+
+      expect(opts.handleToggleTodo).not.toHaveBeenCalled()
+      expect(opts.toggleCollapse).not.toHaveBeenCalled()
+      expect(opts.zoomIn).not.toHaveBeenCalled()
+      expect(opts.setDatePickerOpen).not.toHaveBeenCalled()
+      expect(opts.handleSlashCommand).not.toHaveBeenCalled()
+      for (const e of events) expect(e.defaultPrevented).toBe(false)
+    })
+
+    it('keeps the browser default when NO block is focused (chords pass through)', () => {
+      const opts = makeOptions({ focusedBlockId: null })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      const enter = dispatchKey({ key: 'Enter', ctrlKey: true })
+      const dot = dispatchKey({ key: '.', ctrlKey: true })
+
+      expect(enter.defaultPrevented).toBe(false)
+      expect(dot.defaultPrevented).toBe(false)
     })
   })
 

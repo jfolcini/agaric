@@ -625,6 +625,7 @@ export function BlockTree({
   // ── Extracted keyboard shortcuts (document-level keydown listeners) ─
   useBlockTreeKeyboardShortcuts({
     focusedBlockId,
+    pageStore,
     selectedBlockIds,
     hasChildrenSet,
     blocks,

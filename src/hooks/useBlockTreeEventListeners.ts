@@ -25,6 +25,7 @@ import type { RovingEditorHandle } from '../editor/use-roving-editor'
 import { BLOCK_EVENTS, onBlockEvent } from '../lib/block-events'
 import { setPriority as setPriorityCmd } from '../lib/tauri'
 import type { PageBlockState } from '../stores/page-blocks'
+import { storeOwnsBlock } from '../stores/page-blocks'
 import { useUndoStore } from '../stores/undo'
 import type { DatePickerMode } from './useBlockDatePicker'
 import { applyContentEdit, readCurrentContent } from './useBlockSlashCommands/helpers'
@@ -72,28 +73,36 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
 
+  // #713 — every handler below is gated on `storeOwnsBlock(pageStore,
+  // focusedBlockId)`: journal week/month views mount one BlockTree (and one
+  // copy of each of these document-level listeners) per day, all sharing
+  // the GLOBAL `focusedBlockId`. Only the tree whose page store contains
+  // the focused block may act; otherwise N trees fire racing, conflicting
+  // side effects (duplicate IPCs, N open dialogs, wrong cycle values
+  // computed from stores where the block doesn't exist).
+
   // ── Discard button custom event (from FormattingToolbar) ───────────
   useEffect(() => {
     const handler = () => {
-      if (focusedBlockId) {
-        handleEscapeCancel()
-      }
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+      handleEscapeCancel()
     }
     return onBlockEvent(document, 'DISCARD_BLOCK_EDIT', handler)
-  }, [focusedBlockId, handleEscapeCancel])
+  }, [focusedBlockId, pageStore, handleEscapeCancel])
 
   // ── Priority cycling event listener (from FormattingToolbar) ─────────
   useEffect(() => {
     const handler = () => {
-      if (focusedBlockId) handleTogglePriority(focusedBlockId)
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+      handleTogglePriority(focusedBlockId)
     }
     return onBlockEvent(document, 'CYCLE_PRIORITY', handler)
-  }, [focusedBlockId, handleTogglePriority])
+  }, [focusedBlockId, pageStore, handleTogglePriority])
 
   // ── Direct priority set from keyboard shortcuts (Ctrl+Shift+1/2/3) ──
   useEffect(() => {
     const handleSetPriority = async (e: Event) => {
-      if (!focusedBlockId) return
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
       const priority =
         e.type === BLOCK_EVENTS.SET_PRIORITY_1
           ? '1'
@@ -132,54 +141,59 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
   // ── Listen for toolbar date picker event ────────────────────────────
   useEffect(() => {
     const handleDateEvent = () => {
-      if (!focusedBlockId) return
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
       datePickerCursorPos.current =
         rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('date')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DATE_PICKER', handleDateEvent)
-  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
+  }, [focusedBlockId, pageStore, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar due-date picker event ─────────────────────────
   useEffect(() => {
     const handler = () => {
-      if (!focusedBlockId) return
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
       datePickerCursorPos.current =
         rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('due')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_DUE_DATE_PICKER', handler)
-  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
+  }, [focusedBlockId, pageStore, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar scheduled-date picker event ──────────────────
   useEffect(() => {
     const handler = () => {
-      if (!focusedBlockId) return
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
       datePickerCursorPos.current =
         rovingEditorRef.current.editor?.state.selection.$anchor.pos ?? undefined
       setDatePickerMode('schedule')
       setDatePickerOpen(true)
     }
     return onBlockEvent(document, 'OPEN_SCHEDULED_DATE_PICKER', handler)
-  }, [focusedBlockId, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
+  }, [focusedBlockId, pageStore, datePickerCursorPos, setDatePickerMode, setDatePickerOpen])
 
   // ── Listen for toolbar toggle-todo-state event ──────────────────────
   useEffect(() => {
     const handler = () => {
-      if (focusedBlockId) handleToggleTodo(focusedBlockId)
+      // #713 — a non-owning tree's `handleToggleTodo` computes the next
+      // state from ITS store where the block doesn't exist (`current =
+      // null` → 'TODO'), racing the owning tree's correct IPC.
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+      handleToggleTodo(focusedBlockId)
     }
     return onBlockEvent(document, 'TOGGLE_TODO_STATE', handler)
-  }, [focusedBlockId, handleToggleTodo])
+  }, [focusedBlockId, pageStore, handleToggleTodo])
 
   // ── Listen for toolbar open-block-properties event ──────────────────
   useEffect(() => {
     const handler = () => {
-      if (focusedBlockId) handleShowProperties(focusedBlockId)
+      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+      handleShowProperties(focusedBlockId)
     }
     return onBlockEvent(document, 'OPEN_BLOCK_PROPERTIES', handler)
-  }, [focusedBlockId, handleShowProperties])
+  }, [focusedBlockId, pageStore, handleShowProperties])
 
   // ── Structural toolbar inserts: ordered-list / divider / callout (#253) ──
   // These toolbar buttons dispatch DOM events but previously had NO consumer,
@@ -206,14 +220,21 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       openEmojiPicker: () => {},
     })
 
+    // #713 — gate at dispatch time: a non-owning tree's `applyContentEdit`
+    // would read/write ITS idle editor (content-overwrite risk).
+    const ownsFocusedBlock = () => storeOwnsBlock(pageStore, focusedBlockId)
+
     const onOrderedList = () => {
+      if (!ownsFocusedBlock()) return
       const ctx = buildCtx()
       void applyContentEdit(ctx, `1. ${readCurrentContent(ctx)}`, 'slash.numberedListFailed')
     }
     const onDivider = () => {
+      if (!ownsFocusedBlock()) return
       void applyContentEdit(buildCtx(), '---', 'slash.dividerFailed')
     }
     const onCallout = (e: Event) => {
+      if (!ownsFocusedBlock()) return
       // #215 — the toolbar callout type picker dispatches the chosen variant in
       // `detail.type`; fall back to `info` (slash `/callout` + the plain
       // toolbar button send no detail). Validate against the known set so a
