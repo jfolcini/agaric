@@ -32,7 +32,7 @@ import {
   formatDateDisplay,
   formatWeekRange,
   getCalendarMonthRange,
-  MAX_JOURNAL_DATE,
+  getMaxJournalDate,
   MIN_JOURNAL_DATE,
 } from '../lib/date-utils'
 import { useJournalStore } from '../stores/journal'
@@ -103,7 +103,9 @@ export function JournalControls(): React.ReactElement {
   }
 
   const canGoPrev = isAfter(currentDate, MIN_JOURNAL_DATE)
-  const canGoNext = isBefore(currentDate, MAX_JOURNAL_DATE)
+  // #757 — getMaxJournalDate() is evaluated per render so the +12-month
+  // horizon tracks the wall clock instead of freezing at module load.
+  const canGoNext = isBefore(currentDate, getMaxJournalDate())
 
   function getDateDisplay(): string {
     if (mode === 'agenda') return t('journal.tasks')

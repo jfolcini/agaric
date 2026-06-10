@@ -1,4 +1,3 @@
-import { MONTH_SHORT } from './date-utils'
 import { getPriorityLevels, priorityRank } from './priority-levels'
 import type { BlockRow } from './tauri'
 
@@ -412,19 +411,29 @@ export function sortAgendaBlocksBy(
   }
 }
 
-/** Format YYYY-MM-DD for group headers. Same year -> "Mon DD", different year -> "Mon DD, YYYY". */
+/**
+ * Format YYYY-MM-DD for group headers: weekday always included, year only
+ * when it differs from the current year (e.g. "Mon, Jun 15" vs
+ * "Mon, Jun 15, 2026" in an en locale).
+ *
+ * #757 — uses the runtime locale via `toLocaleDateString(undefined, …)`
+ * (the `formatDateDisplay` convention in date-utils.ts) instead of
+ * hardcoded English weekday/month tables, so concrete date headers are
+ * localized like the special labels (Overdue/Today/…) that go through
+ * t(). Malformed inputs fall back to the raw string.
+ */
 function formatGroupDate(dateStr: string): string {
   const parts = dateStr.split('-')
   if (parts.length !== 3) return dateStr
   const [y, m, d] = parts.map(Number)
+  if (y === undefined || m === undefined || d === undefined) return dateStr
   if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) return dateStr
-  const month = MONTH_SHORT[(m ?? 1) - 1] ?? 'Jan'
-  const day = d ?? 1
-  const now = new Date()
-  // Include weekday for dates within 7 days
-  const date = new Date(y as number, (m as number) - 1, d)
-  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const weekday = WEEKDAYS[date.getDay()]
-  if (y === now.getFullYear()) return `${weekday}, ${month} ${day}`
-  return `${weekday}, ${month} ${day}, ${y}`
+  const date = new Date(y, m - 1, d)
+  const sameYear = y === new Date().getFullYear()
+  return date.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  })
 }

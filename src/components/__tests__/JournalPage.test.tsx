@@ -149,10 +149,10 @@ import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
 import {
+  getMaxJournalDate,
   GlobalDateControls,
   JournalControls,
   JournalPage,
-  MAX_JOURNAL_DATE,
   MIN_JOURNAL_DATE,
 } from '../JournalPage'
 
@@ -1464,6 +1464,20 @@ describe('JournalPage', () => {
   // ── Date navigation boundaries (#196) ───────────────────────────────
 
   describe('date navigation boundaries', () => {
+    // #757 — getMaxJournalDate() is computed from the wall clock on every
+    // call. Freeze Date (only Date — see UX-235 describe for why faking
+    // all timers deadlocks userEvent/waitFor) so the boundary computed in
+    // the test matches the one computed inside JournalControls' render to
+    // the millisecond.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2026-04-20T12:00:00'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
     it('prev button is disabled at MIN_JOURNAL_DATE', async () => {
       mockEmptyResponses()
 
@@ -1482,12 +1496,12 @@ describe('JournalPage', () => {
       expect(prevBtn).toBeDisabled()
     })
 
-    it('next button is disabled at MAX_JOURNAL_DATE', async () => {
+    it('next button is disabled at getMaxJournalDate()', async () => {
       mockEmptyResponses()
 
       useJournalStore.setState({
         mode: 'daily',
-        currentDate: MAX_JOURNAL_DATE,
+        currentDate: getMaxJournalDate(),
       })
 
       renderJournal()
@@ -1518,7 +1532,7 @@ describe('JournalPage', () => {
       expect(prevBtn).toBeEnabled()
     })
 
-    it('next button is enabled when before MAX_JOURNAL_DATE', async () => {
+    it('next button is enabled when before getMaxJournalDate()', async () => {
       mockEmptyResponses()
 
       useJournalStore.setState({

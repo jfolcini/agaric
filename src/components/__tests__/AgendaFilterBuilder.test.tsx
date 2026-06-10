@@ -19,6 +19,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { type ReactElement, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -347,7 +348,10 @@ describe('AgendaFilterBuilder', () => {
 
     await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
-    expect(onFiltersChange).toHaveBeenCalledWith([{ dimension: 'tag', values: ['work'] }])
+    // #757 — added filters carry a frontend-only `_addId` React-key stamp.
+    expect(onFiltersChange).toHaveBeenCalledWith([
+      expect.objectContaining({ dimension: 'tag', values: ['work'], _addId: expect.any(Number) }),
+    ])
   })
 
   // -----------------------------------------------------------------------
@@ -388,8 +392,13 @@ describe('AgendaFilterBuilder', () => {
     // Apply
     await user.click(screen.getByRole('button', { name: /Apply filter/i }))
 
+    // #757 — added filters carry a frontend-only `_addId` React-key stamp.
     expect(onFiltersChange).toHaveBeenCalledWith([
-      { dimension: 'status', values: ['TODO', 'DOING'] },
+      expect.objectContaining({
+        dimension: 'status',
+        values: ['TODO', 'DOING'],
+        _addId: expect.any(Number),
+      }),
     ])
   })
 
@@ -688,6 +697,108 @@ describe('AgendaFilterBuilder', () => {
 
     const editButton = screen.getByText('TODO').closest('button')
     expect(editButton).toHaveAttribute('title', `${t('agendaFilter.status')}: TODO`)
+  })
+
+  // -----------------------------------------------------------------------
+  // #757 — two property filters are a supported state (`property` is exempt
+  // from the AddFilterPopover dimension dedup), but `key={filter.dimension}`
+  // produced duplicate React keys: React warned and chip recycling could
+  // target the wrong filter after a re-render. Keys now come from the
+  // stamped `_addId` (FilterPillRow's MAINT-190 pattern).
+  // -----------------------------------------------------------------------
+  describe('duplicate property filter chips (#757)', () => {
+    const twoPropertyFilters: AgendaFilter[] = [
+      { dimension: 'property', values: ['effort:high'] },
+      { dimension: 'property', values: ['context:home'] },
+    ]
+
+    it('renders two property chips without duplicate React keys', () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      renderBuilder({ filters: twoPropertyFilters })
+
+      const list = screen.getByLabelText(t('agendaFilter.appliedFilters'))
+      expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+      expect(within(list).getByText('effort = high')).toBeInTheDocument()
+      expect(within(list).getByText('context = home')).toBeInTheDocument()
+
+      // With `key={filter.dimension}` React logged "Encountered two
+      // children with the same key" — the regression this pins against.
+      const duplicateKeyWarnings = errorSpy.mock.calls.filter((c) =>
+        String(c[0]).includes('same key'),
+      )
+      expect(duplicateKeyWarnings).toHaveLength(0)
+      errorSpy.mockRestore()
+    })
+
+    it('removing the first property chip removes that filter, not its twin', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ filters: twoPropertyFilters, onFiltersChange })
+
+      await user.click(
+        screen.getByLabelText(t('agendaFilter.removeFilterLabel', { label: 'effort = high' })),
+      )
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ dimension: 'property', values: ['context:home'] }),
+      ])
+    })
+
+    it('removing the second property chip removes that filter, not the first', async () => {
+      const user = userEvent.setup()
+      const onFiltersChange = vi.fn()
+      renderBuilder({ filters: twoPropertyFilters, onFiltersChange })
+
+      await user.click(
+        screen.getByLabelText(t('agendaFilter.removeFilterLabel', { label: 'context = home' })),
+      )
+
+      expect(onFiltersChange).toHaveBeenCalledWith([
+        expect.objectContaining({ dimension: 'property', values: ['effort:high'] }),
+      ])
+    })
+
+    it('has no a11y violations with two property filter chips', async () => {
+      const { container } = renderBuilder({ filters: twoPropertyFilters })
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('keeps the edit popover open while editing an unstamped prop-sourced filter', async () => {
+      // #757 follow-up — handleUpdate must stamp via ensureAddId before
+      // spreading: an unstamped filter (AgendaView's default status filter)
+      // replaced by a fresh object would miss the WeakMap, get a new key,
+      // and remount the chip — closing the edit popover after every value
+      // toggle. Controlled harness so onFiltersChange feeds back like
+      // AgendaView's useState does.
+      function ControlledBuilder(): ReactElement {
+        const [filters, setFilters] = useState<AgendaFilter[]>([
+          { dimension: 'status', values: ['TODO'] },
+        ])
+        return <AgendaFilterBuilder filters={filters} onFiltersChange={setFilters} />
+      }
+
+      const user = userEvent.setup()
+      render(<ControlledBuilder />)
+
+      // Open the chip's edit popover.
+      await user.click(
+        screen.getByRole('button', {
+          name: t('agendaFilter.editFilter', { label: `${t('agendaFilter.status')}: TODO` }),
+        }),
+      )
+      const doing = screen.getByRole('checkbox', { name: 'DOING' })
+      expect(doing).not.toBeChecked()
+
+      // Toggle a value: handleUpdate replaces the filter object and the
+      // parent re-renders. The chip's key must survive the round-trip so
+      // the popover (and its checkboxes) stay mounted.
+      await user.click(doing)
+
+      expect(screen.getByRole('checkbox', { name: 'DOING' })).toBeChecked()
+      expect(screen.getByRole('checkbox', { name: 'TODO' })).toBeChecked()
+      expect(screen.getByText('TODO, DOING')).toBeInTheDocument()
+    })
   })
 
   // -----------------------------------------------------------------------

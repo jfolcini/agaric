@@ -303,6 +303,101 @@ describe('UnfinishedTasks', () => {
     expect(screen.getByText('3')).toBeInTheDocument()
   })
 
+  // #757 — listUnfinishedTasks is cursor-paginated (200-row pages capped by
+  // PageRequest::new). The component previously ignored has_more/next_cursor,
+  // silently undercounting the badge and the Older group past one page.
+  describe('cursor pagination (#757)', () => {
+    it('drains has_more pages: badge and groups count tasks from every page', async () => {
+      const pageOne = [
+        makeYesterdayBlock('PG1-A', 'First page task A'),
+        makeYesterdayBlock('PG1-B', 'First page task B'),
+        makeOlderBlock('PG1-C', 'First page older task'),
+      ]
+      const pageTwo = [
+        makeBlock({
+          id: 'PG2-A',
+          content: 'Second page older task',
+          todo_state: 'TODO',
+          due_date: daysAgo(30),
+          page_id: null,
+        }),
+      ]
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_unfinished_tasks') {
+          const params = args as { cursor?: string | null }
+          if (params.cursor == null) {
+            return { items: pageOne, next_cursor: 'CURSOR-1', has_more: true }
+          }
+          return { items: pageTwo, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      const user = userEvent.setup()
+      const { container } = render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // Badge counts ALL pages: 3 + 1 = 4 (pre-#757 it showed 3).
+      expect(screen.getByText('4')).toBeInTheDocument()
+
+      // Exactly two IPC pages, the second continuing the cursor chain.
+      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')
+      expect(calls).toHaveLength(2)
+      const cursors = calls.map((c) => (c[1] as { cursor?: string | null }).cursor)
+      expect(cursors).toEqual([null, 'CURSOR-1'])
+
+      // The second-page task renders in the Older group alongside page 1's.
+      await user.click(screen.getByRole('button', { expanded: false }))
+      const olderGroup = screen.getByTestId('unfinished-group-older')
+      expect(within(olderGroup).getByText('First page older task')).toBeInTheDocument()
+      expect(within(olderGroup).getByText('Second page older task')).toBeInTheDocument()
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('stops the drain at the page cap when the backend always reports more', async () => {
+      let page = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_unfinished_tasks') {
+          page += 1
+          return {
+            items: [
+              makeBlock({
+                id: `RUNAWAY-${page}`,
+                content: `Runaway task ${page}`,
+                todo_state: 'TODO',
+                due_date: daysAgo(14),
+                page_id: null,
+              }),
+            ],
+            // Non-advancing backend bug scenario: always claims more.
+            next_cursor: `C-${page}`,
+            has_more: true,
+          }
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      render(<UnfinishedTasks />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+
+      // MAX_UNFINISHED_PAGES (25) bounds the loop instead of spinning forever.
+      const calls = mockedInvoke.mock.calls.filter((c) => c[0] === 'list_unfinished_tasks')
+      expect(calls).toHaveLength(25)
+      expect(screen.getAllByText('25').length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
   it('clicking an item navigates to page', async () => {
     const user = userEvent.setup()
     const onNavigateToPage = vi.fn()

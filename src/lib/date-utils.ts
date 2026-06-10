@@ -14,8 +14,18 @@ export function getWeekOptions(): { weekStartsOn: 0 | 1 } {
 /** Earliest navigable journal date. */
 export const MIN_JOURNAL_DATE = new Date(2020, 0, 1)
 
-/** Latest navigable journal date (1 year from today). */
-export const MAX_JOURNAL_DATE = addMonths(new Date(), 12)
+/**
+ * Latest navigable journal date (1 year from today).
+ *
+ * #757 — a function instead of a module-load constant: frozen at import
+ * time, the navigable horizon silently shrank over long-running sessions
+ * (after a month the app only allowed navigation 11 months ahead).
+ * Callers re-evaluate per render. (#739's useToday work tracks the
+ * related "today frozen at mount" class of bugs.)
+ */
+export function getMaxJournalDate(): Date {
+  return addMonths(new Date(), 12)
+}
 
 /** Format a Date as YYYY-MM-DD. */
 export function formatDate(d: Date): string {

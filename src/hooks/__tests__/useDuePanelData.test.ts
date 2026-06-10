@@ -34,6 +34,24 @@ vi.mock('../useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
 }))
 
+// #757 — the projected-agenda failure toast must not fire after unmount.
+vi.mock('@/lib/notify', () => ({
+  notify: Object.assign(vi.fn(), {
+    message: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
+  }),
+}))
+
+import { t } from '@/lib/i18n'
+import { notify } from '@/lib/notify'
+
 import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
 import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
@@ -45,6 +63,7 @@ const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedListProjectedAgenda = vi.mocked(listProjectedAgenda)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 const mockedUseBlockPropertyEvents = vi.mocked(useBlockPropertyEvents)
+const mockedNotifyError = vi.mocked(notify.error)
 
 const emptyResponse = {
   items: [],
@@ -662,5 +681,59 @@ describe('useDuePanelData', () => {
     expect(nestedCalls).toHaveLength(0)
 
     warnSpy.mockRestore()
+  })
+
+  // #757 — the outer projected-agenda .catch fired notify.error OUTSIDE the
+  // `!stale` guard, so a fetch that rejected after unmount still raised a
+  // toast (the nested handler was already fixed for exactly this, FE-M-2).
+  describe('projected agenda failure toast (#757)', () => {
+    it('shows the load-failed toast when the fetch rejects while mounted', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+      mockedListProjectedAgenda.mockRejectedValue(new Error('projected boom'))
+
+      const { result } = renderHook(() =>
+        useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
+      )
+
+      await waitFor(() => {
+        expect(result.current.projectedLoading).toBe(false)
+      })
+
+      expect(mockedNotifyError).toHaveBeenCalledWith(t('duePanel.loadAgendaFailed'), {
+        id: 'due-panel-load-failed',
+      })
+      expect(result.current.projectedEntries).toEqual([])
+      warnSpy.mockRestore()
+    })
+
+    it('skips the toast and state update when the rejection lands after unmount', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      // Hold the projected fetch pending so we can unmount before it rejects.
+      let rejectProjected!: (e: unknown) => void
+      mockedListProjectedAgenda.mockReturnValue(
+        new Promise((_, rej) => {
+          rejectProjected = rej
+        }) as ReturnType<typeof listProjectedAgenda>,
+      )
+
+      const { unmount } = renderHook(() =>
+        useDuePanelData({ date: '2025-06-15', sourceFilter: null }),
+      )
+
+      await waitFor(() => {
+        expect(mockedListProjectedAgenda).toHaveBeenCalled()
+      })
+
+      // Unmount marks stale = true; reject afterwards to fire the outer .catch.
+      unmount()
+      rejectProjected(new Error('late projected fail'))
+
+      // Flush microtasks so the rejection propagates to the .catch handler.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(mockedNotifyError).not.toHaveBeenCalled()
+      warnSpy.mockRestore()
+    })
   })
 })
