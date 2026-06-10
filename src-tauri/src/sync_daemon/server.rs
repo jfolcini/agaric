@@ -88,7 +88,9 @@ pub(crate) async fn handle_incoming_sync(
     // responder side too — defence-in-depth for the case where the
     // initiator's HeadExchange identifies a different `device_id` than
     // the cert claims (a software-bug consistency check; the cert CN
-    // alone is already verified at line ~169 below).
+    // is already checked against the heads-claimed id in the hoisted
+    // B-34 check below, and #778 derives the peer identity from the
+    // CN itself).
 
     // ── Receive the initiator's first message ─────────────────────────────
     let first_msg: SyncMessage = conn.recv_json().await?;
@@ -109,13 +111,67 @@ pub(crate) async fn handle_incoming_sync(
     // ── Per-peer mutual exclusion ─────────────────────────────────────────
     // We can only identify the peer after seeing the HeadExchange.
     let _peer_guard = if let SyncMessage::HeadExchange { ref heads } = first_msg {
-        let remote_id = heads
+        // The identity the initiator *claims* through its advertised
+        // heads. #778: heads are sync state, not identity — a fresh
+        // device (empty op_log) has no head of its own, so this can
+        // legitimately be empty and MUST NOT be treated as "self".
+        let claimed_id = heads
             .iter()
             .find(|h| h.device_id != device_id)
             .map(|h| h.device_id.clone())
             .unwrap_or_default();
 
-        if remote_id.is_empty() || remote_id == device_id {
+        // B-34, hoisted ahead of the pairing lookup (#778): when the
+        // heads claim an identity AND the connection carries a verified
+        // client cert, the two must agree — otherwise a forged
+        // HeadExchange could steer the rest of the handshake under a
+        // different identity than the cert's. Pure CN check only
+        // (no stored hash yet); B-33 runs below after the peer lock.
+        if !claimed_id.is_empty()
+            && let CertVerifyResult::CnMismatch {
+                ref remote_id,
+                ref cert_cn,
+            } = verify_peer_cert(&claimed_id, conn.peer_cert_cn(), None, None)
+        {
+            tracing::warn!(
+                peer_id = %remote_id,
+                cert_cn = %cert_cn,
+                "rejecting sync: HeadExchange device_id does not match TLS certificate CN"
+            );
+            conn.send_json(&SyncMessage::Error {
+                message: "device ID does not match certificate".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        // #778: the peer's identity is the verified TLS certificate CN
+        // (mTLS), mirroring the initiator-side BUG-27 fallback
+        // (`expected_remote_id` in `sync_protocol::orchestrator`). The
+        // heads-claimed id is only a fallback for cert-less connections
+        // (in-memory test pairs); the hoisted B-34 check above
+        // guarantees the two agree whenever both are present.
+        let remote_id = match conn.peer_cert_cn() {
+            Some(cn) => cn.to_string(),
+            None => claimed_id,
+        };
+
+        if remote_id.is_empty() {
+            // Degenerate case: no client certificate AND no foreign
+            // head — the session cannot be attributed to any peer.
+            tracing::warn!(
+                "rejecting sync: cannot identify remote device (no cert CN, no foreign head)"
+            );
+            conn.send_json(&SyncMessage::Error {
+                message: "cannot identify remote device".into(),
+            })
+            .await?;
+            let _ = conn.close().await;
+            return Ok(());
+        }
+
+        if remote_id == device_id {
             tracing::warn!("rejecting sync with self (remote_id matches local device_id)");
             conn.send_json(&SyncMessage::Error {
                 message: "cannot sync with self".into(),
@@ -161,8 +217,11 @@ pub(crate) async fn handle_incoming_sync(
             }
         };
 
-        // B-34: Verify device ID matches TLS certificate CN
-        // B-33: Verify TLS certificate hash matches stored cert_hash
+        // B-33: Verify TLS certificate hash matches stored cert_hash.
+        // (B-34's CN check is trivially satisfied here: #778 derives
+        // `remote_id` from the cert CN whenever a cert is present, and
+        // the heads-vs-CN mismatch was already rejected above. The
+        // `CnMismatch` arm below is kept as defence-in-depth.)
         let stored_hash = peer_refs::get_peer_ref(&pool_ref, &remote_id)
             .await?
             .and_then(|pr| pr.cert_hash);
