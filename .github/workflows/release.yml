@@ -120,6 +120,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # Explicit here (not just rust-toolchain.toml) so the cross
+          # `targets` below land on the pinned toolchain, not on a
+          # floating latest-stable install.
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - name: Rust cache
@@ -168,6 +174,27 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      # Secret-scoping (#815): run tauri.conf.json's `beforeBuildCommand`
+      # (`node scripts/prepare-external-bins.mjs && npm run build`) HERE,
+      # in a step whose env carries no secrets, instead of inside the
+      # tauri-action step below. tauri-action's step env holds the
+      # write-scoped GITHUB_TOKEN, so any npm dependency code executing
+      # during the frontend build would inherit it and could upload
+      # modified release assets. The tauri-action step disables the hook
+      # via `--config` (see its `args:`), so no JS runs with secrets in
+      # scope. CARGO_BUILD_TARGET is needed for the same reason as on the
+      # tauri-action step: prepare-external-bins.mjs falls back to the
+      # host triple without it and stages the externalBin placeholder
+      # under the wrong name on cross-compiled targets.
+      - name: Build frontend (no secrets in env)
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-external-bins.mjs
+          npm run build
 
       # Ensure the draft release exists before tauri-action runs.
       #
@@ -234,8 +261,15 @@ jobs:
           # same `target/<triple>/release/` output directory, even on
           # native-target builds where it is a no-op.
           CARGO_BUILD_TARGET: ${{ matrix.target }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD) are intentionally NOT in
+          # this step's env (#815). They only matter for updater-artifact
+          # signing, which is currently not produced at all
+          # (`bundle.createUpdaterArtifacts` is unset — #808), so exposing
+          # the key to everything `cargo tauri build` executes bought
+          # nothing and risked the key leaking to dependency code. When
+          # #808 enables updater artifacts, sign them in a separate
+          # minimal step (`cargo tauri signer sign`) whose env holds ONLY
+          # the key — never re-add the key here.
           # macOS code signing + notarization is intentionally NOT wired.
           # The maintainer has opted out of Apple Developer Program membership
           # (paid, recurring) for this open-source project. With no APPLE_*
@@ -260,7 +294,15 @@ jobs:
           # from `output_ok()` in tauri-bundler — no underlying error
           # text. The release matrix only fires on tag pushes, so the
           # extra log volume is acceptable for the diagnostic value.
-          args: --target ${{ matrix.target }} -v
+          # `--config .github/tauri.skip-before-build.conf.json` merges
+          # `"beforeBuildCommand": null` over tauri.conf.json (JSON Merge
+          # Patch — null deletes the key), so NO JS runs inside this
+          # secret-bearing step; the frontend was already built by the
+          # "Build frontend (no secrets in env)" step above (#815). A
+          # checked-in file rather than inline JSON because tauri-action
+          # tokenizes `args` with string-argv, which strips the quotes
+          # inline JSON needs.
+          args: --target ${{ matrix.target }} -v --config .github/tauri.skip-before-build.conf.json
 
       # UX-233: Tauri 2's AppImage bundler emits a .DirIcon symlink with an
       # absolute path into the build machine's file tree (broken on every other
@@ -458,7 +500,27 @@ jobs:
           # into source files (the much more common attack surface) are
           # already caught by the gitleaks prek hook before they ever
           # reach a release branch.
-          PATTERNS='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|gho_[0-9A-Za-z]{36}|ghu_[0-9A-Za-z]{36}|ghr_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82}|sk-[0-9A-Za-z]{48}|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----[A-Za-z0-9+/= ]+-----END (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----)'
+          #
+          # Minisign / Tauri updater key (#815): the very secret this
+          # comment block cites was previously undetectable — the
+          # patterns covered AWS/GitHub/OpenAI/PEM only. A leaked
+          # TAURI_SIGNING_PRIVATE_KEY shows up in one of two shapes:
+          # decoded, as the key file's `untrusted comment: ... secret
+          # key` header line; or as the base64 the env var actually
+          # holds, whose prefix encodes the `untrusted comment:` header.
+          # Two base64 anchors because the header text depends on the
+          # generator: the C minisign tool writes `untrusted comment:
+          # minisign encrypted secret key`, while `cargo tauri signer
+          # generate` (rust-minisign crate, SECRETKEY_DEFAULT_COMMENT)
+          # writes `untrusted comment: rsign encrypted secret key` —
+          # this repo's key is Tauri-generated, so the rsign anchor is
+          # the one that matters. Both anchors are cut at a 3-byte
+          # boundary (33/36 chars) so they are stable base64 prefixes,
+          # and both end in `...IGVuY3J5cHRl` (` encrypte`) so they can
+          # NOT match the updater *public* key (`...IHB1YmxpYyBr` =
+          # ` public k`), which is legitimately embedded in every binary
+          # via tauri.conf.json's `plugins.updater.pubkey`.
+          PATTERNS='(AKIA[0-9A-Z]{16}|ghp_[0-9A-Za-z]{36}|gho_[0-9A-Za-z]{36}|ghu_[0-9A-Za-z]{36}|ghr_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{82}|sk-[0-9A-Za-z]{48}|-----BEGIN (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----[A-Za-z0-9+/= ]+-----END (RSA |EC |DSA |OPENSSH |ENCRYPTED |)PRIVATE KEY-----|untrusted comment: [A-Za-z ]*secret key|dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIGVuY3J5cHRl|dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRl)'
           found=0
           while IFS= read -r f; do
             if strings "$f" 2>/dev/null | grep -E -m 1 "$PATTERNS" > /dev/null; then
@@ -664,6 +726,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          # Explicit here (not just rust-toolchain.toml) so the cross
+          # `targets` below land on the pinned toolchain, not on a
+          # floating latest-stable install.
+          toolchain: 1.95.0
           targets: aarch64-linux-android
 
       - name: Rust cache

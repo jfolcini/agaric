@@ -12,6 +12,11 @@ members = ["."]
 name = "agaric"
 version = "0.5.0"
 edition = "2024"
+# #640: MSRV documentation — keep in lockstep with rust-toolchain.toml and
+# the `toolchain:` inputs in .github/workflows/{ci,release,_validate}.yml.
+# cargo refuses (resolver) / warns (build) when a consumer's toolchain is
+# older than this, instead of failing with inscrutable syntax errors.
+rust-version = "1.95.0"
 license = "GPL-3.0-or-later"
 publish = false
 # Two binaries in this crate — `agaric` (the Tauri app, implicit via
