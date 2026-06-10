@@ -7,13 +7,17 @@
  *    the IPC payload rather than sent as `[]`),
  *  - non-empty arrays pass through verbatim,
  *  - `dueFilter` / `scheduledFilter` pass through (incl. `null`),
- *  - `tagIds` come from the resolver argument, not the projection.
+ *  - `tagIds` come from the resolver argument, not the projection,
+ *  - #717 — when the projection names tags but resolution settled with
+ *    fewer ids than names, the bundle carries the matches-nothing
+ *    sentinel instead of dropping the tag constraint (which would
+ *    return EVERY FTS match while the tag chip renders as active).
  */
 import { describe, expect, it } from 'vitest'
 
 import type { AstFilterProjection } from '@/lib/search-query'
 
-import { astFilterParams } from '../searchFilterParams'
+import { astFilterParams, UNRESOLVED_TAG_SENTINEL } from '../searchFilterParams'
 
 function emptyProjection(): AstFilterProjection {
   return {
@@ -73,6 +77,39 @@ describe('astFilterParams', () => {
     expect(params.excludedPriorityFilter).toEqual(['C'])
     expect(params.propertyFilters).toEqual([{ key: 'owner', value: 'me' }])
     expect(params.excludedPropertyFilters).toEqual([{ key: 'archived', value: 'true' }])
+  })
+
+  // Issue #717 — a `tag:` filter whose name resolved to no existing tag
+  // must NOT be silently dropped. `meeting tag:#typo` previously sent
+  // `tagIds: undefined` (= no tag filter) and returned all FTS matches
+  // for "meeting" while the tag chip rendered as an active filter.
+  it('projects the matches-nothing sentinel when a named tag did not resolve (#717)', () => {
+    const projection: AstFilterProjection = {
+      ...emptyProjection(),
+      tagNames: ['typo'],
+    }
+    const params = astFilterParams(projection, [])
+    expect(params.tagIds).toEqual([UNRESOLVED_TAG_SENTINEL])
+  })
+
+  it('projects the sentinel when only SOME named tags resolved (#717)', () => {
+    const projection: AstFilterProjection = {
+      ...emptyProjection(),
+      tagNames: ['wip', 'typo'],
+    }
+    // ALL semantics backend-side: one unresolvable tag means the whole
+    // conjunction can never match — the sentinel alone expresses that.
+    const params = astFilterParams(projection, ['TAG_WIP'])
+    expect(params.tagIds).toEqual([UNRESOLVED_TAG_SENTINEL])
+  })
+
+  it('passes resolved ids through verbatim when every named tag resolved', () => {
+    const projection: AstFilterProjection = {
+      ...emptyProjection(),
+      tagNames: ['wip', 'urgent'],
+    }
+    const params = astFilterParams(projection, ['TAG_WIP', 'TAG_URGENT'])
+    expect(params.tagIds).toEqual(['TAG_WIP', 'TAG_URGENT'])
   })
 
   it('forwards named and comparison-op date filters', () => {

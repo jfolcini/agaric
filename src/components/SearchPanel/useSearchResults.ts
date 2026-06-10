@@ -89,9 +89,15 @@ export function useSearchResults({
   }, [])
 
   const debouncedProjection = useMemo(() => astToFilterProjection(debouncedAst), [debouncedAst])
-  // FE-9 — tag name→id resolution (best-effort prefix lookup; FE-5
-  // space-scoped cache invalidation lives in the hook).
-  const tagIds = useTagResolution(debouncedProjection.tagNames, currentSpaceId)
+  // FE-9 — tag name→id resolution (prefix lookup; FE-5 space-scoped cache
+  // invalidation lives in the hook). #717 — `pending` gates the query below
+  // so the first debounced search can't fire before resolution settles and
+  // flash unfiltered results; a settled-but-unresolved name makes
+  // `astFilterParams` project the matches-nothing sentinel.
+  const { tagIds, pending: tagResolutionPending } = useTagResolution(
+    debouncedProjection.tagNames,
+    currentSpaceId,
+  )
 
   // DSL-A8 / UX-A4 — the two search modes are symmetric. In BOTH modes the
   // structural filters are projected and applied as SQL filters server-side;
@@ -143,7 +149,13 @@ export function useSearchResults({
   } = usePaginatedQuery(queryFn, {
     // PEND-54 / DSL-A8 / PEND-58g NEW-3 — fire when there is a free-text
     // pattern OR at least one structural filter (filter-only search).
-    enabled: spaceIsReady && (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
+    // #717 — HOLD while tag name→id resolution is in flight: firing now
+    // would send the query without the tag constraint (transient
+    // unfiltered flash, replaced when resolution settles).
+    enabled:
+      spaceIsReady &&
+      !tagResolutionPending &&
+      (debouncedAst.freeText.length > 0 || debouncedAst.filters.length > 0),
     // E2E-2 — do NOT pass `onError`; SearchPanel parses the `InvalidRegex:`
     // prefix off the raw IPC message via `regexError` below.
   })
