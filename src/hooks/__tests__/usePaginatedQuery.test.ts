@@ -323,6 +323,29 @@ describe('usePaginatedQuery', () => {
     expect(result.current.capped).toBe(true)
   })
 
+  it('hitting the cap clears hasMore so Load more stops fetch-and-discarding (#756)', async () => {
+    const queryFn = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(['a', 'b', 'c'], true, 'c1'))
+      // Backend still reports more pages — but we discard this one.
+      .mockResolvedValueOnce(makePage(['d', 'e', 'f'], true, 'c2'))
+    const { result } = renderHook(() => usePaginatedQuery(queryFn, { maxItems: 5 }))
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.hasMore).toBe(true)
+
+    await act(async () => result.current.loadMore())
+    expect(result.current.items).toEqual(['a', 'b', 'c'])
+    expect(result.current.capped).toBe(true)
+    // Without this, consumers gating "Load more" on hasMore alone keep
+    // fetching pages that are discarded forever past the cap.
+    expect(result.current.hasMore).toBe(false)
+
+    // Further loadMore() is a no-op: the cursor was cleared too.
+    await act(async () => result.current.loadMore())
+    expect(queryFn).toHaveBeenCalledTimes(2)
+  })
+
   it('capped resets when queryFn changes', async () => {
     const qf1 = vi
       .fn()

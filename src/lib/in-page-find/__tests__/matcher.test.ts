@@ -133,6 +133,69 @@ describe('compileQuery', () => {
   })
 })
 
+describe('compileQuery — Unicode correctness (#756)', () => {
+  it('literal offsets stay aligned after a length-changing case fold (İ)', () => {
+    const compiled = compileQuery('bravo', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    // 'İ' (U+0130) lowercases to 'i' + U+0307 — two code units. Computing
+    // indexOf offsets on the folded haystack used to shift every later
+    // span by +1 per preceding 'İ' ("bravo" starts at 9 in the original
+    // but at 10 in the folded string).
+    expect(compiled.matcher('İstanbul bravo')).toEqual([{ start: 9, end: 14 }])
+  })
+
+  it('literal span covers the fold-expanding character itself', () => {
+    // Needle typed with an explicit combining dot — folds identically to
+    // the single-code-unit 'İ'. The original span is 8 units, not 9.
+    const compiled = compileQuery('i̇stanbul', defaultOpts) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher('İstanbul')).toEqual([{ start: 0, end: 8 }])
+  })
+
+  it('case-sensitive literal mode is unaffected by fold expansion', () => {
+    const compiled = compileQuery('bravo', { ...defaultOpts, caseSensitive: true }) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    expect(compiled.matcher('İstanbul bravo')).toEqual([{ start: 9, end: 14 }])
+  })
+
+  it('wholeWord treats non-Latin letters as word characters', () => {
+    const compiled = compileQuery('мир', { ...defaultOpts, wholeWord: true }) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    // ASCII-only \w used to treat every Cyrillic letter as a boundary,
+    // so "мир" also matched inside "мирный".
+    expect(compiled.matcher('мир мирный')).toEqual([{ start: 0, end: 3 }])
+  })
+
+  it('wholeWord classifies astral-plane letters whole (surrogate pairs)', () => {
+    const compiled = compileQuery('x', { ...defaultOpts, wholeWord: true }) as Extract<
+      CompiledQuery,
+      { kind: 'literal' }
+    >
+    // '𝐀' (U+1D400, MATHEMATICAL BOLD CAPITAL A) is a letter; an 'x'
+    // glued to either side of it is not a whole word. Code-unit indexing
+    // saw only an unpaired surrogate half and called it a boundary.
+    expect(compiled.matcher('𝐀x y x')).toEqual([{ start: 6, end: 7 }])
+    expect(compiled.matcher('x𝐀 x')).toEqual([{ start: 4, end: 5 }])
+  })
+
+  it('wholeWord regex post-filter uses the same Unicode word classes', () => {
+    const compiled = compileQuery('мир', {
+      ...defaultOpts,
+      wholeWord: true,
+      isRegex: true,
+    }) as Extract<CompiledQuery, { kind: 'regex' }>
+    expect(compiled.matcher('мир мирный')).toEqual([{ start: 0, end: 3 }])
+  })
+})
+
 describe('walkSync', () => {
   it('collects matches across multiple text nodes', () => {
     const host = attach('<p>alpha bravo</p><p>charlie alpha delta</p>')
