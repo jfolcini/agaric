@@ -13,6 +13,7 @@
  */
 
 let cachedIsMac: boolean | null = null
+let cachedIsAndroid: boolean | null = null
 
 interface NavigatorUAData {
   platform?: string
@@ -44,7 +45,25 @@ export function modKey(): string {
   return isMac() ? '\u2318' : 'Ctrl'
 }
 
+/**
+ * Returns true when running on Android (Tauri Android WebView or a mobile
+ * browser). UA-sniff based — mirrors the coarse mobile detection in
+ * `tauri.ts` / `useUpdateCheck.ts` but narrowed to Android only, because
+ * the system back button (#716) is an Android-only navigation concept.
+ * Cached after first call (platform can't change at runtime).
+ */
+export function isAndroid(): boolean {
+  if (cachedIsAndroid !== null) return cachedIsAndroid
+  if (typeof navigator === 'undefined') {
+    cachedIsAndroid = false
+    return cachedIsAndroid
+  }
+  cachedIsAndroid = /android/i.test(navigator.userAgent ?? '')
+  return cachedIsAndroid
+}
+
 /** Test-only reset hook — lets tests swap `navigator.platform` between runs. */
 export function __resetPlatformCacheForTests(): void {
   cachedIsMac = null
+  cachedIsAndroid = null
 }

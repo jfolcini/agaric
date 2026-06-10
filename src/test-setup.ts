@@ -209,6 +209,12 @@ class MockChannel<T> {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
   Channel: MockChannel,
+  // #716: `useAndroidBackButton` imports `addPluginListener` (Android
+  // back-button plugin event). The hook never calls it under tests (the
+  // Android + `__TAURI_INTERNALS__` guards bail first), but the named
+  // export must exist on the shared mock or vitest's missing-export
+  // guard trips at import time for every test that renders App.
+  addPluginListener: vi.fn().mockResolvedValue({ unregister: vi.fn() }),
 }))
 
 // Shared mock for `@tauri-apps/plugin-clipboard-manager` — `src/lib/clipboard.ts`

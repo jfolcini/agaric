@@ -4,9 +4,24 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { __resetPlatformCacheForTests, isMac, modKey } from '../platform'
+import { __resetPlatformCacheForTests, isAndroid, isMac, modKey } from '../platform'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
+const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
+
+function setNavigatorUserAgent(value: string): void {
+  Object.defineProperty(navigator, 'userAgent', {
+    value,
+    configurable: true,
+    writable: true,
+  })
+}
+
+function restoreNavigatorUserAgent(): void {
+  if (originalUserAgent) {
+    Object.defineProperty(navigator, 'userAgent', originalUserAgent)
+  }
+}
 
 function setNavigatorPlatform(value: string): void {
   Object.defineProperty(navigator, 'platform', {
@@ -47,7 +62,40 @@ describe('platform', () => {
   afterEach(() => {
     __resetPlatformCacheForTests()
     restoreNavigatorPlatform()
+    restoreNavigatorUserAgent()
     clearUserAgentData()
+  })
+
+  describe('isAndroid (#716)', () => {
+    it('returns true for an Android WebView user agent', () => {
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36',
+      )
+      expect(isAndroid()).toBe(true)
+    })
+
+    it('returns false for a desktop Linux user agent', () => {
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
+      )
+      expect(isAndroid()).toBe(false)
+    })
+
+    it('returns false for iOS user agents', () => {
+      setNavigatorUserAgent(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+      )
+      expect(isAndroid()).toBe(false)
+    })
+
+    it('caches the result until the test reset hook runs', () => {
+      setNavigatorUserAgent('Mozilla/5.0 (X11; Linux x86_64)')
+      expect(isAndroid()).toBe(false)
+      setNavigatorUserAgent('Mozilla/5.0 (Linux; Android 15)')
+      expect(isAndroid()).toBe(false) // cached
+      __resetPlatformCacheForTests()
+      expect(isAndroid()).toBe(true)
+    })
   })
 
   describe('isMac', () => {
