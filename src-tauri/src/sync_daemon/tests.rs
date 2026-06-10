@@ -848,9 +848,13 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     materializer.shutdown();
 }
 
-/// Test 3: When the responder receives a HeadExchange whose only
-/// device_id matches the local device_id, it sends
+/// Test 3: When the connecting client's TLS certificate CN is the
+/// responder's OWN device_id, the responder sends
 /// `SyncMessage::Error("cannot sync with self")` and returns Ok.
+///
+/// #778: identity now comes from the verified cert CN, not from the
+/// advertised heads — so the self-sync case is "the cert CN IS our own
+/// device", not "the heads only mention our own device".
 ///
 /// Uses a real loopback TLS WebSocket connection pair.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -862,9 +866,12 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Generate certs for server (responder) and client (initiator)
+    // Generate certs for server (responder) and client (initiator).
+    // The client presents a cert whose CN is the responder's OWN
+    // device_id — a genuine self-sync (e.g. a device connecting to
+    // itself through a stale mDNS record).
     let server_cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
-    let client_cert = sync_net::generate_self_signed_cert("REMOTE_DEV").unwrap();
+    let client_cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
 
     // Start TLS WebSocket server; forward incoming connections via channel
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
@@ -903,8 +910,9 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
         .await
     });
 
-    // Send HeadExchange with only LOCAL_DEV (self-sync scenario).
-    // `find(|h| h.device_id != device_id)` returns None → remote_id = ""
+    // Send HeadExchange with only LOCAL_DEV. The heads claim no
+    // foreign identity, so the cert CN ("LOCAL_DEV" — our own
+    // device_id) is the identity → self-sync rejection (#778).
     client_conn
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![DeviceHead {
@@ -1447,8 +1455,9 @@ fn verify_peer_cert_cn_match_but_hash_mismatch() {
 // T-16 — In-memory WebSocket tests for handle_incoming_sync
 // ======================================================================
 
-/// T-16 Test 1: Sending a HeadExchange containing only the local device's
-/// head triggers the self-sync rejection branch.
+/// T-16 Test 1 (#778): A connection whose TLS certificate CN equals the
+/// local device_id triggers the self-sync rejection branch — identity
+/// comes from the verified cert CN, not from the advertised heads.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inmem_handle_incoming_sync_rejects_self() {
     let (pool, _dir) = test_pool().await;
@@ -1456,7 +1465,10 @@ async fn inmem_handle_incoming_sync_rejects_self() {
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    // The "remote" presents a cert whose CN is our OWN device_id.
+    server_conn.set_test_cert(Some("LOCAL_DEV".to_string()), None);
 
     let pool_clone = pool.clone();
     let mat_clone = materializer.clone();
@@ -1474,9 +1486,8 @@ async fn inmem_handle_incoming_sync_rejects_self() {
         .await
     });
 
-    // Send HeadExchange with only the local device's head → remote_id
-    // resolves to "" (no head with device_id != "LOCAL_DEV"), triggering
-    // the self-sync rejection.
+    // The heads claim no foreign identity (only the local device's
+    // head), so the cert CN "LOCAL_DEV" is the identity → self-sync.
     client_conn
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![DeviceHead {
@@ -1503,6 +1514,62 @@ async fn inmem_handle_incoming_sync_rejects_self() {
     assert!(
         result.is_ok(),
         "handle_incoming_sync should return Ok after rejecting self-sync"
+    );
+
+    materializer.shutdown();
+}
+
+/// T-16 Test 1b (#778): degenerate case — no client certificate AND no
+/// foreign head (empty heads list). The session cannot be attributed to
+/// any peer, so the responder sends `Error("cannot identify remote
+/// device")` and returns Ok. Before #778 this case was misreported as
+/// "cannot sync with self".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // In-memory pair → no TLS cert → `peer_cert_cn()` is None.
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // Empty heads (a fresh device's HeadExchange) + no cert: there is
+    // nothing to identify the peer by.
+    client_conn
+        .send_json(&SyncMessage::HeadExchange { heads: vec![] })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("cannot identify")
+        ),
+        "expected SyncMessage::Error mentioning 'cannot identify', got: {response:?}"
+    );
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting unidentifiable peer"
     );
 
     materializer.shutdown();
@@ -3818,6 +3885,183 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
     mat_b.flush_background().await.unwrap();
     mat_a.shutdown();
     mat_b.shutdown();
+}
+
+// ======================================================================
+// #778 — fresh device (empty op_log) must not be rejected as self-sync
+// ======================================================================
+
+/// #778 regression: a freshly paired device with ZERO local ops sends
+/// `HeadExchange { heads: [] }` (`get_local_heads` on an empty op_log).
+/// The responder used to derive `remote_id` from the advertised heads,
+/// got `""`, and rejected the session as "cannot sync with self" —
+/// before the BUG-27 mTLS fallback could apply. A brand-new device
+/// could not pull anything until it made a local edit.
+///
+/// This test drives a REAL fresh-device initiator orchestrator over an
+/// in-memory wire against the full `handle_incoming_sync` responder
+/// (where the rejection lived) and asserts:
+///   1. the session is NOT rejected — both sides reach `Complete`,
+///   2. data flows: the responder's seeded block lands in the
+///      initiator's DB,
+///   3. the responder records the session under the cert-CN identity
+///      (BUG-27 fallback: the heads never identified the peer).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_responder() {
+    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+
+    const RESP_DEV: &str = "RESP778";
+    const FRESH_DEV: &str = "FRESH778";
+    const BLOCK: &str = "01HZ778BLKXXXXXXXXXXXXXXXX";
+    let space = crate::space::SpaceId::from_trusted("01HZ778SPACEXXXXXXXXXXXXXX");
+
+    // ── Responder: one seeded local edit ─────────────────────────────
+    // `handle_incoming_sync` builds its orchestrator against the
+    // process-global Loro state, so the RESPONDER owns the global
+    // registry; the initiator gets its own leaked registry via the
+    // #602 `with_loro_state` test seam.
+    let resp_state = crate::loro::shared::install_for_test();
+    let (resp_pool, _resp_dir) = test_pool().await;
+    let resp_mat = Materializer::new(resp_pool.clone());
+    let resp_scheduler = Arc::new(SyncScheduler::new());
+    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    peer_refs::upsert_peer_ref(&resp_pool, FRESH_DEV)
+        .await
+        .unwrap();
+    make_local_edit_602(
+        &resp_pool,
+        &resp_mat,
+        resp_state,
+        RESP_DEV,
+        &space,
+        BLOCK,
+        "seeded on responder",
+        1_736_942_400_000,
+    )
+    .await;
+
+    // ── Initiator: completely fresh device — ZERO local ops ──────────
+    let (init_pool, _init_dir) = test_pool().await;
+    let init_mat = Materializer::new(init_pool.clone());
+    let init_state: &'static crate::loro::shared::LoroState = Box::leak(Box::default());
+    peer_refs::upsert_peer_ref(&init_pool, RESP_DEV)
+        .await
+        .unwrap();
+
+    // ── Wire the two sides together ──────────────────────────────────
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    // Production shape: the verified TLS client cert identifies the
+    // fresh initiator (its heads cannot — they are empty).
+    server_conn.set_test_cert(Some(FRESH_DEV.to_string()), None);
+
+    let resp_pool_clone = resp_pool.clone();
+    let resp_mat_clone = resp_mat.clone();
+    let resp_scheduler_clone = resp_scheduler.clone();
+    let resp_sink_clone = resp_sink.clone();
+    let server_task = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            resp_pool_clone,
+            RESP_DEV.to_string(),
+            resp_mat_clone,
+            resp_scheduler_clone,
+            resp_sink_clone,
+        )
+        .await
+    });
+
+    // ── Drive the initiator (mirrors `run_sync_session`'s loop) ──────
+    let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
+    let mut init_orch =
+        SyncOrchestrator::new(init_pool.clone(), FRESH_DEV.into(), init_mat.clone())
+            .with_loro_state(init_state)
+            .with_event_sink(init_sink_box)
+            .with_expected_remote_id(RESP_DEV.into());
+
+    let first = init_orch.start().await.expect("initiator start");
+    match &first {
+        SyncMessage::HeadExchange { heads } => {
+            assert!(
+                heads.is_empty(),
+                "#778 precondition: a fresh device's op_log yields EMPTY heads, got {heads:?}"
+            );
+        }
+        other => panic!("initiator must start with HeadExchange, got {other:?}"),
+    }
+    client_conn.send_json(&first).await.unwrap();
+
+    while !init_orch.is_terminal() {
+        let incoming: SyncMessage = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client_conn.recv_json::<SyncMessage>(),
+        )
+        .await
+        .expect("initiator timed out waiting for responder message")
+        .expect("initiator wire recv");
+        // The #778 failure signature: the responder's very first reply
+        // was `Error("cannot sync with self")`.
+        if let SyncMessage::Error { message } = &incoming {
+            panic!("responder rejected the fresh-device session: {message}");
+        }
+        if let Some(resp) = init_orch
+            .handle_message(incoming)
+            .await
+            .expect("initiator handle_message")
+        {
+            client_conn.send_json(&resp).await.unwrap();
+            while let Some(m) = init_orch.next_message() {
+                client_conn.send_json(&m).await.unwrap();
+            }
+        }
+    }
+
+    assert_eq!(
+        init_orch.session().state,
+        SyncState::Complete,
+        "#778: the fresh-device initiator must complete the session"
+    );
+
+    // The responder enters the file-transfer phase after Complete and
+    // waits for the initiator's FileRequest; closing the client side
+    // ends that sub-flow (non-fatal by design) and lets the handler
+    // return.
+    let _ = client_conn.close().await;
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), server_task)
+        .await
+        .expect("responder task timed out")
+        .expect("responder task panicked");
+    assert!(
+        resp_result.is_ok(),
+        "responder must complete the fresh-device session, got {resp_result:?}"
+    );
+
+    // ── Data flowed: responder's block landed on the fresh device ────
+    let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+        .bind(BLOCK)
+        .fetch_optional(&init_pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        content.as_deref(),
+        Some("seeded on responder"),
+        "#778: the responder's seeded block must reach the fresh initiator's DB"
+    );
+
+    // ── BUG-27 fallback: responder recorded the session under the
+    //    cert-CN identity (the heads never identified the peer) ───────
+    let peer = peer_refs::get_peer_ref(&resp_pool, FRESH_DEV)
+        .await
+        .unwrap()
+        .expect("peer_refs row for the fresh device must exist on the responder");
+    assert!(
+        peer.synced_at.is_some(),
+        "responder must record synced_at for the cert-CN-identified fresh device"
+    );
+
+    resp_mat.shutdown();
+    init_mat.shutdown();
 }
 
 // ======================================================================
