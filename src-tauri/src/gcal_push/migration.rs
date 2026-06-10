@@ -9,9 +9,13 @@
 //!
 //! - inserts (or updates, defensively) the per-space config row for
 //!   the seeded "Personal" space; and
-//! - rewrites the legacy keychain entry (`oauth_tokens`) into the
+//! - COPIES the legacy keychain entry (`oauth_tokens`) into the
 //!   per-space-suffixed entry (`oauth_tokens_<SPACE_PERSONAL_ULID>`)
-//!   via two `TokenStore` arguments wired by the caller.
+//!   via two `TokenStore` arguments wired by the caller. Copy, not
+//!   move: the legacy entry is deliberately left in place because
+//!   every production reader (connector, oauth, lease, commands) still
+//!   loads the legacy account until M2 switches them over — deleting
+//!   it here silently disconnected upgrading users (#608).
 //!
 //! The whole thing is idempotent: a `gcal_per_space_migrated` row in
 //! `gcal_settings` (TEXT, value `"true"`) gates re-runs. Crash-safe:
@@ -20,12 +24,16 @@
 //!
 //! M2 will switch the production code paths over to read/write the
 //! per-space row + per-space keychain entry. Until then the legacy
-//! `gcal_settings` row keeps working — that is the whole point of the
-//! purely-additive M1.
+//! `gcal_settings` row AND the legacy keychain entry keep working —
+//! that is the whole point of the purely-additive M1. M2 owns deleting
+//! the legacy keychain entry, and because re-auth keeps writing the
+//! legacy entry until then, M2 must re-copy (not trust) the per-space
+//! snapshot taken here, which can go stale in between.
 //!
 //! [`SPACE_PERSONAL_ULID`]: crate::spaces::bootstrap::SPACE_PERSONAL_ULID
 
 use chrono::{DateTime, Utc};
+use secrecy::ExposeSecret;
 use sqlx::SqlitePool;
 
 use crate::error::AppError;
@@ -47,9 +55,11 @@ const MIGRATION_FLAG_KEY: &str = "gcal_per_space_migrated";
 /// Idempotent: a `gcal_per_space_migrated` setting in `gcal_settings`
 /// (TEXT, value `"true"`) gates the migration so it runs at most once
 /// per device. Crash-safe: each step (DB row copy, keychain entry
-/// rewrite, flag set) is independently observable, and on partial
-/// failure the next call resumes by re-checking the flag and the
-/// already-migrated state.
+/// copy + read-back verify, flag set) is independently observable, and
+/// on partial failure the next call resumes by re-checking the flag
+/// and the already-migrated state. The legacy keychain entry is never
+/// deleted (#608) — production reads it until M2 — so a crash at any
+/// point can never strand the token in neither location.
 ///
 /// # Failure model
 ///
@@ -129,25 +139,55 @@ pub async fn migrate_legacy_gcal_to_personal_space(
         models::upsert_space_config(pool, &config).await?;
     }
 
-    // Step 5: migrate the keychain entry (if any).
+    // Step 5: COPY the keychain entry (if any) into the per-space
+    // store.
+    //
+    // #608: copy, NOT move. Every production reader — `spawn_connector`,
+    // `GcalTokenStoreState` (the five gcal commands), oauth and lease —
+    // still loads the LEGACY entry until M2 switches them over.
+    // Clearing the legacy entry here deleted the only credential
+    // production reads, silently disconnecting an upgrading user on
+    // first boot (connector loads `None` and idles; `get_gcal_status`
+    // reports connected:false). M2 owns the legacy delete, after the
+    // readers switch — and must re-copy first, because re-auth keeps
+    // writing the legacy entry until then.
+    //
+    // The copy is verified by reading the per-space entry back before
+    // we count the step done: a `store()` that returns Ok but does not
+    // persist (vault race, half-locked credential manager) would
+    // otherwise set the migration flag and never retry, stranding the
+    // per-space entry empty forever. Because the legacy entry is never
+    // touched, a crash at ANY point in this function leaves production
+    // connectivity intact and the unset flag re-runs the copy on next
+    // boot (store() overwrites, so a partial prior copy converges).
     let mut keychain_migrated = false;
     if let Some(token) = legacy_token {
         match personal_token_store.store(&token).await {
-            Ok(()) => {
-                keychain_migrated = true;
-                // Failing to delete the legacy entry is non-fatal —
-                // the per-space entry already shadows it for new
-                // call sites and the legacy entry will be cleaned up
-                // on the next disconnect (M2+).
-                if let Err(e) = legacy_token_store.clear().await {
+            Ok(()) => match personal_token_store.load().await {
+                Ok(Some(read_back))
+                    if read_back.refresh.expose_secret() == token.refresh.expose_secret() =>
+                {
+                    keychain_migrated = true;
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        target: "gcal",
+                        "FEAT-3p9 M1 migration: per-space keychain read-back \
+                         after store returned no/mismatched token; leaving \
+                         flag unset for retry"
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
                     tracing::warn!(
                         target: "gcal",
                         error = %e,
-                        "FEAT-3p9 M1 migration: failed to clear legacy \
-                         keychain entry after copying — continuing"
+                        "FEAT-3p9 M1 migration: per-space keychain read-back \
+                         failed; leaving flag unset for retry"
                     );
+                    return Ok(());
                 }
-            }
+            },
             Err(e) => {
                 tracing::warn!(
                     target: "gcal",
@@ -389,8 +429,13 @@ mod tests {
             sample_token().access.expose_secret(),
         );
 
-        // Legacy keychain is cleared.
-        assert!(legacy.load().await.unwrap().is_none());
+        // #608: legacy keychain is PRESERVED — the connector and the
+        // gcal commands still read the legacy entry until M2, so the
+        // migration must never delete it.
+        assert!(
+            legacy.load().await.unwrap().is_some(),
+            "legacy entry must survive M1 — production still reads it"
+        );
 
         // Idempotency flag is set.
         assert!(read_migration_flag(&pool).await.unwrap());
@@ -492,7 +537,8 @@ mod tests {
             migrated_token.access.expose_secret(),
             sample_token().access.expose_secret(),
         );
-        assert!(legacy.load().await.unwrap().is_none());
+        // #608: legacy entry preserved for the production readers.
+        assert!(legacy.load().await.unwrap().is_some());
         assert!(read_migration_flag(&pool).await.unwrap());
     }
 
@@ -561,8 +607,8 @@ mod tests {
         // Per-space store is empty (the simulated failure rejected the write).
         assert!(personal.load().await.unwrap().is_none());
 
-        // Legacy keychain still has the token (we only clear after a
-        // successful per-space write).
+        // Legacy keychain still has the token (M1 never clears it —
+        // #608: production reads the legacy entry until M2).
         assert!(legacy.load().await.unwrap().is_some());
 
         // Flag is NOT set — next boot retries.
@@ -582,7 +628,138 @@ mod tests {
         .unwrap();
 
         assert!(personal_retry.load().await.unwrap().is_some());
-        assert!(legacy.load().await.unwrap().is_none());
+        // #608: legacy entry preserved even after the successful retry.
+        assert!(legacy.load().await.unwrap().is_some());
+        assert!(read_migration_flag(&pool).await.unwrap());
+    }
+
+    // ── #608: upgrade preserves the production reader ───────────────
+
+    #[tokio::test]
+    async fn upgrade_keeps_legacy_entry_readable_by_production_reader() {
+        // #608 regression: `spawn_connector` / `GcalTokenStoreState`
+        // load the LEGACY store until M2. After the M1 migration runs
+        // for a connected user, that same legacy store handle must
+        // still yield the token — otherwise the user is silently
+        // disconnected on the first boot after upgrade.
+        let (pool, _dir) = test_pool().await;
+        seed_connected_legacy_settings(&pool).await;
+
+        let legacy = MockTokenStore::new();
+        legacy.store(&sample_token()).await.unwrap();
+        let personal = MockTokenStore::new();
+        let emitter = NoopEventEmitter;
+
+        migrate_legacy_gcal_to_personal_space(&pool, &legacy, &personal, &emitter, fixed_now())
+            .await
+            .unwrap();
+
+        // Production reader (legacy store) still finds the token.
+        let production_view = legacy
+            .load()
+            .await
+            .expect("legacy load must not error")
+            .expect("legacy entry must survive M1 — production reads it until M2");
+        assert_eq!(
+            production_view.refresh.expose_secret(),
+            sample_token().refresh.expose_secret(),
+        );
+
+        // Per-space copy exists too, ready for M2.
+        let migrated = personal.load().await.unwrap().expect("per-space copy");
+        assert_eq!(
+            migrated.refresh.expose_secret(),
+            sample_token().refresh.expose_secret(),
+        );
+
+        // Migration completed.
+        assert!(read_migration_flag(&pool).await.unwrap());
+    }
+
+    // ── #608: crash between per-space write and flag set ────────────
+
+    #[tokio::test]
+    async fn crash_after_personal_write_before_flag_converges_on_next_boot() {
+        // Simulate a process kill after the per-space store() landed
+        // but before `set_migration_flag` ran: personal already holds
+        // a (possibly stale) copy, flag unset, legacy intact. The next
+        // boot must converge — overwrite the per-space copy from the
+        // legacy source of truth, set the flag, and never strand the
+        // token in neither location.
+        let (pool, _dir) = test_pool().await;
+        seed_connected_legacy_settings(&pool).await;
+
+        let legacy = MockTokenStore::new();
+        legacy.store(&sample_token()).await.unwrap();
+
+        // Stale partial copy from the interrupted first run.
+        let personal = MockTokenStore::new();
+        let stale = Token {
+            access: SecretString::from("STALE-ACCESS"),
+            refresh: SecretString::from("STALE-REFRESH"),
+            expires_at: Utc.with_ymd_and_hms(2026, 4, 22, 9, 0, 0).unwrap(),
+        };
+        personal.store(&stale).await.unwrap();
+        assert!(!read_migration_flag(&pool).await.unwrap());
+
+        let emitter = NoopEventEmitter;
+        migrate_legacy_gcal_to_personal_space(&pool, &legacy, &personal, &emitter, fixed_now())
+            .await
+            .unwrap();
+
+        // Converged: per-space copy refreshed from legacy, flag set,
+        // legacy untouched. At no point was the token in neither store.
+        let converged = personal.load().await.unwrap().expect("per-space copy");
+        assert_eq!(
+            converged.refresh.expose_secret(),
+            sample_token().refresh.expose_secret(),
+            "second run must overwrite the stale partial copy"
+        );
+        assert!(legacy.load().await.unwrap().is_some());
+        assert!(read_migration_flag(&pool).await.unwrap());
+    }
+
+    // ── #608: read-back verification of the per-space write ─────────
+
+    #[tokio::test]
+    async fn personal_readback_failure_leaves_flag_unset_and_legacy_intact() {
+        // A store() that returns Ok but whose read-back fails (vault
+        // race / half-locked credential manager) must NOT set the
+        // migration flag — otherwise the per-space entry could be
+        // stranded unverified forever. Legacy stays intact throughout,
+        // and the next boot converges.
+        let (pool, _dir) = test_pool().await;
+        seed_connected_legacy_settings(&pool).await;
+
+        let legacy = MockTokenStore::new();
+        legacy.store(&sample_token()).await.unwrap();
+
+        let personal = MockTokenStore::new();
+        personal.inject_load_error("keyring.unavailable: simulated read-back failure");
+        let emitter = NoopEventEmitter;
+
+        migrate_legacy_gcal_to_personal_space(&pool, &legacy, &personal, &emitter, fixed_now())
+            .await
+            .unwrap();
+
+        // Flag unset → next boot retries; legacy untouched.
+        assert!(!read_migration_flag(&pool).await.unwrap());
+        assert!(legacy.load().await.unwrap().is_some());
+
+        // Next boot with a healthy per-space store converges.
+        let personal_retry = MockTokenStore::new();
+        migrate_legacy_gcal_to_personal_space(
+            &pool,
+            &legacy,
+            &personal_retry,
+            &emitter,
+            fixed_now(),
+        )
+        .await
+        .unwrap();
+
+        assert!(personal_retry.load().await.unwrap().is_some());
+        assert!(legacy.load().await.unwrap().is_some());
         assert!(read_migration_flag(&pool).await.unwrap());
     }
 

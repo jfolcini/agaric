@@ -580,6 +580,7 @@ impl TokenStore for KeyringTokenStore {
 pub struct MockTokenStore {
     inner: std::sync::Mutex<Option<Token>>,
     store_error: std::sync::Mutex<Option<String>>,
+    load_error: std::sync::Mutex<Option<String>>,
 }
 
 #[cfg(test)]
@@ -588,6 +589,7 @@ impl MockTokenStore {
         Self {
             inner: std::sync::Mutex::new(None),
             store_error: std::sync::Mutex::new(None),
+            load_error: std::sync::Mutex::new(None),
         }
     }
 
@@ -598,6 +600,17 @@ impl MockTokenStore {
     pub fn inject_store_error(&self, message: &str) {
         *self
             .store_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(message.to_owned());
+    }
+
+    /// Cause the next (and every subsequent) call to [`TokenStore::load`]
+    /// on this mock to return `Err(AppError::Validation(message))`. Used
+    /// by FEAT-3p9 M1 migration tests (#608) to simulate a store() that
+    /// succeeds while the read-back verification fails.
+    pub fn inject_load_error(&self, message: &str) {
+        *self
+            .load_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(message.to_owned());
     }
@@ -614,6 +627,14 @@ impl Default for MockTokenStore {
 #[async_trait]
 impl TokenStore for MockTokenStore {
     async fn load(&self) -> Result<Option<Token>, AppError> {
+        if let Some(msg) = self
+            .load_error
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            return Err(AppError::Validation(msg));
+        }
         Ok(self
             .inner
             .lock()
