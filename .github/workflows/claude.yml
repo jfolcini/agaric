@@ -16,6 +16,15 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per issue/PR (issue #814): a burst of `@claude` mentions
+# on the same thread otherwise stacks parallel agent runs, burning tokens and
+# runner minutes. `issue.number` covers issue_comment + issues (PR comments
+# arrive as issue_comment too); `pull_request.number` covers the two review
+# events.
+concurrency:
+  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude:
     if: |
@@ -24,6 +33,9 @@ jobs:
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
     runs-on: ubuntu-latest
+    # Issue #814: cap the agent run — without this a hung run holds the
+    # runner for the 360-min default.
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read

@@ -84,14 +84,17 @@ jobs:
           # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqlx-cli)
           # persist across runs.
           cache-bin: 'true'
-          # PEND-39 C6: shared key with ci.yml's Linux desktop build job
-          # and the cargo-tests sibling here (same `shared-key: rust-deps`).
-          # Swatinem segregates internally by profile (test/release) and by
-          # runner.os, so the Linux validate + Linux build slots dedupe
-          # without colliding with macOS / Windows build slots or the
-          # Android job (which uses a different shared-key for its
-          # cross-compile target).
-          shared-key: rust-deps
+          # Per-job-class key (issue #813): rust-cache keeps ONE immutable
+          # entry per (os, shared-key, lockfile), so the old `rust-deps`
+          # key shared across lint / cargo-tests / mcp-tests / ci.yml's
+          # build meant only the first finisher's `target/` tree survived
+          # and the others recompiled from scratch every run. This job's
+          # clippy/cargo-deny/sqlx-prepare tree gets its own `rust-lint`
+          # key; the siblings use `rust-cov` (llvm-cov instrumented),
+          # `rust-mcp` (release + debug smoke), and `rust-release`
+          # (ci.yml's desktop build). The Android job in ci.yml keeps its
+          # separate `rust-android` key (cross-compile targets).
+          shared-key: rust-lint
           # `save-if` gates which runs write to the cache. Only `main`
           # populates it; feature branches read from main's cache and
           # write only an ephemeral layer on top (expires at the standard
@@ -249,8 +252,10 @@ jobs:
     runs-on: ubuntu-24.04
     # PEND-41 R1 — full-suite wall-clock was ~3×2.2 min of test work split
     # across shards; run as one job that's ~6-7 min of tests + ~2 min v8
-    # instrumentation. +50% headroom → 15 min.
-    timeout-minutes: 15
+    # instrumentation, plus the ~1-2 min production build below (issue
+    # #812). ~10-11 min observed-equivalent; +50% headroom + round up to
+    # nearest 5 → 20 min.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -283,6 +288,16 @@ jobs:
             --coverage.thresholds.functions=0 \
             --coverage.thresholds.statements=0 \
             --coverage.thresholds.branches=0
+
+      - name: Production build (tsc -b && vite build)
+        # Issue #812: nothing else on the PR path runs the production
+        # bundler — Playwright uses the dev server, prek's tsc covers types
+        # only, and `cargo tauri build` is path-gated away from
+        # frontend-only diffs. Without this (~1-2 min) step, a change that
+        # breaks rolldown/lightningcss production bundling (dynamic
+        # imports, env handling, chunking) passes every PR check and
+        # surfaces first at release-tag time.
+        run: npm run build
 
       - name: Coverage summary
         if: hashFiles('coverage-merged/coverage-summary.json') != ''
@@ -386,11 +401,11 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # cargo-tests — full Rust test suite (nextest) with cargo-llvm-cov
-  # source-based coverage. Shares the `rust-deps` Swatinem cache key with
-  # the `lint` sibling, the `mcp-tests` sibling below, and the Linux
-  # desktop build job in ci.yml. MCP build + UDS smoke + externalBin
-  # verify live in their own `mcp-tests` job so a coverage-suite slowdown
-  # doesn't gate the MCP-sidecar signal (and vice versa).
+  # source-based coverage. Uses its own `rust-cov` Swatinem cache key
+  # (issue #813) — the instrumented tree shares nothing with the lint /
+  # mcp / release trees. MCP build + UDS smoke + externalBin verify live
+  # in their own `mcp-tests` job so a coverage-suite slowdown doesn't
+  # gate the MCP-sidecar signal (and vice versa).
   # ---------------------------------------------------------------------------
   cargo-tests:
     runs-on: ubuntu-24.04
@@ -462,10 +477,12 @@ jobs:
         with:
           workspaces: src-tauri
           cache-bin: 'true'
-          # PEND-39 C6: shared with the `lint` sibling and ci.yml's Linux
-          # desktop build. See the matching comment in the `lint` job for
-          # the per-OS / per-profile segregation logic.
-          shared-key: rust-deps
+          # Per-job-class key (issue #813): the llvm-cov instrumented tree
+          # (coverage RUSTFLAGS) shares no artifacts with the lint / mcp /
+          # release trees, so under the old shared `rust-deps` key it lost
+          # the single cache slot to a faster sibling and recompiled from
+          # scratch every PR. See the matching comment in the `lint` job.
+          shared-key: rust-cov
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
@@ -587,9 +604,9 @@ jobs:
   # mcp-tests — agaric-mcp sidecar build, UDS smoke test, and externalBin
   # staging verification. Split out of cargo-tests so MCP-sidecar failures
   # surface on a dedicated check (and vice versa: a flaky coverage run
-  # doesn't gate MCP signal). Shares the `rust-deps` Swatinem cache key
-  # with cargo-tests + lint so the compile of `src-tauri` is amortised
-  # across all three jobs.
+  # doesn't gate MCP signal). Uses its own `rust-mcp` Swatinem cache key
+  # (issue #813) — its release + debug-smoke tree matches neither the
+  # lint tree nor the llvm-cov instrumented tree.
   # ---------------------------------------------------------------------------
   mcp-tests:
     runs-on: ubuntu-24.04
@@ -631,10 +648,12 @@ jobs:
         with:
           workspaces: src-tauri
           cache-bin: 'true'
-          # Same `rust-deps` shared-key as the cargo-tests sibling — the
-          # compile of src-tauri's dependency graph is the same on both
-          # jobs. Swatinem dedupes inside the cache key.
-          shared-key: rust-deps
+          # Per-job-class key (issue #813): this job compiles a release
+          # `agaric-mcp` plus a debug nextest smoke tree — neither matches
+          # the lint tree nor cargo-tests' llvm-cov instrumented tree, so
+          # sharing one `rust-deps` slot just meant the first finisher
+          # evicted everyone else. See the matching comment in `lint`.
+          shared-key: rust-mcp
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
@@ -684,15 +703,34 @@ jobs:
   # validate-all — trivial aggregate. Branch protection rules and the
   # ci.yml / release.yml callers should treat this as the single "did all
   # validate work pass?" gate. Required so adding/removing a sibling job
-  # doesn't churn the protected-check list. `needs:` declares the
-  # dependency; GitHub fails this job automatically if any sibling fails
-  # (or is skipped/cancelled), so the echo only runs on full green.
+  # doesn't churn the protected-check list.
+  #
+  # `if: always()` + the explicit `needs.*.result` assertion below are
+  # load-bearing (issue #805): with a plain `needs:`, GitHub SKIPS this
+  # job when a sibling fails — and a skipped required status check counts
+  # as PASSING for branch protection, so a red lint/cargo-tests run would
+  # still yield a mergeable PR. Every sibling runs unconditionally (none
+  # is path-filtered), so anything other than `success` — failure,
+  # cancelled, or skipped — must fail the gate.
   # ---------------------------------------------------------------------------
   validate-all:
     needs: [lint, vitest, playwright, cargo-tests, mcp-tests]
+    if: always()
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — trivial echo job (~2s observed); 5-min floor for sanity.
+    # PEND-41 R1 — trivial jq assertion (~2s observed); 5-min floor for sanity.
     timeout-minutes: 5
     steps:
-      - name: All validate jobs passed
-        run: echo "all validate jobs passed"
+      - name: Assert every validate job succeeded
+        env:
+          # The full needs context, e.g. {"lint": {"result": "success"}, ...}.
+          # Passed via env (not inline interpolation) so the JSON can never
+          # be parsed as shell.
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          not_green=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$NEEDS_JSON")
+          if [ -n "$not_green" ]; then
+            echo "::error::validate jobs not green: $(echo "$not_green" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "all validate jobs passed"

@@ -44,12 +44,27 @@ jobs:
 
           # Paginated; each entry has .sha, .commit.message, .commit.author.{name,email}.
           # Compact-JSON one-commit-per-line so awk/jq can stream.
-          mapfile -t commits < <(
+          #
+          # Capture output + exit code FIRST (issue #809): a `mapfile < <(gh
+          # api ...)` process substitution swallows API failures under
+          # `set -euo pipefail` — a rate-limited/5xx response yielded an
+          # empty array, the loop never ran, and this required check went
+          # green having scanned zero commits. A PR always has >= 1 commit,
+          # so empty output is asserted as an error too.
+          if ! commits_raw=$(
             gh api -X GET \
               "repos/${REPO}/pulls/${PR_NUMBER}/commits" \
               --paginate \
               --jq '.[] | {sha, msg: .commit.message, name: .commit.author.name, email: .commit.author.email} | @base64'
-          )
+          ); then
+            echo "::error::gh api repos/${REPO}/pulls/${PR_NUMBER}/commits failed — cannot verify DCO sign-offs."
+            exit 1
+          fi
+          if [ -z "$commits_raw" ]; then
+            echo "::error::gh api returned zero commits for PR #${PR_NUMBER} — a PR always has at least one; refusing to report success."
+            exit 1
+          fi
+          mapfile -t commits <<< "$commits_raw"
 
           fail=0
           {
@@ -92,7 +107,14 @@ jobs:
               expected_email="$email"
             fi
 
-            if printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]*.+<${expected_email}>[[:space:]]*$"; then
+            # Two-stage match (issue #809 bonus): the trailer-shaped lines are
+            # selected with a fixed regex, then the email is matched with
+            # `grep -iF` — interpolating the author email into an ERE meant a
+            # `+` in a valid address became a quantifier and rejected a
+            # legitimate sign-off. `-i` preserves the original single-stage
+            # match's case-insensitivity (a trailer email differing from the
+            # author email only in case was accepted before and still is).
+            if printf '%s' "$msg" | grep -iE "^[[:space:]]*signed-off-by:[[:space:]]" | grep -qiF "<${expected_email}>"; then
               echo "| ${label} | ${name} <${email}> | ✓ signed off |" >> "$GITHUB_STEP_SUMMARY"
             elif printf '%s' "$msg" | grep -qiE "^[[:space:]]*signed-off-by:[[:space:]]"; then
               echo "::error file=PR commit ${sha}::DCO sign-off present but email does not match commit author ${email}. Re-sign with \`git commit --amend -s --no-edit && git push --force-with-lease\` (or \`git rebase --signoff <base>\` for older commits)."

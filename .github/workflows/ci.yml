@@ -128,7 +128,21 @@ jobs:
           # before an unrelated `src-tauri/` merge would spuriously match
           # `desktop_re` and run the ~24 min build. (Bug from the original
           # path-gate; fixed here.)
-          mapfile -t changed < <(git diff --name-only "$base"..."$head")
+          # Capture into a variable and check the exit code explicitly — a
+          # `mapfile < <(git diff ...)` process substitution swallows diff
+          # failures under `set -euo pipefail`, which previously converted a
+          # transient git error into an empty array and the "skip both
+          # builds" branch below. Only an empty diff that exited 0 may skip;
+          # a failed diff must fail the job (the bundle gates depend on it).
+          if ! diff_out=$(git diff --name-only "$base"..."$head"); then
+            echo "::error::git diff $base...$head failed — cannot determine changed paths."
+            exit 1
+          fi
+
+          changed=()
+          if [ -n "$diff_out" ]; then
+            mapfile -t changed <<< "$diff_out"
+          fi
 
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "Empty diff — skipping both bundle jobs."
@@ -150,11 +164,15 @@ jobs:
           # change — host-side Rust that compiles almost always cross-
           # compiles, and triggering on all backend PRs would defeat the
           # gate. Android breakage comes from the scaffold/override/conf
-          # files, the cross-compile dependency graph (`Cargo.lock`), the
-          # android multicast shim, and the patch script; `release.yml`
-          # covers the rest at tag time.
+          # files, the cross-compile dependency graph (`Cargo.toml` +
+          # `Cargo.lock` — the `[target.'cfg(target_os = "android")']` deps
+          # live in the manifest), the Rust files carrying
+          # `cfg(target_os = "android")` / `cfg(mobile)` gates (lib.rs,
+          # db.rs, lifecycle.rs, and the sync_daemon multicast shim +
+          # mod/orchestrator), and the patch script; `release.yml` covers
+          # the rest at tag time.
           desktop_re='^(src-tauri/|\.cargo/config\.toml\.example$|scripts/(fix-appimage-icons\.sh|prepare-external-bins\.mjs)$|package(-lock)?\.json$|\.github/workflows/ci\.yml$)'
-          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.lock$|src-tauri/src/sync_daemon/android_multicast\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
+          android_re='^(src-tauri/gen/android/|src-tauri/tauri\.android\.conf\.json$|src-tauri/tauri\.conf\.json$|src-tauri/Cargo\.(toml|lock)$|src-tauri/src/(lib|db|lifecycle)\.rs$|src-tauri/src/sync_daemon/(android_multicast|mod|orchestrator)\.rs$|scripts/patch-android-build\.sh$|scripts/prepare-external-bins\.mjs$|\.github/workflows/ci\.yml$)'
 
           desktop=false
           android=false
@@ -233,18 +251,19 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
-          # PEND-39 C6: shared with _validate.yml's `rust-deps` key.
-          # Swatinem segregates the cache by runner.os internally, so the
-          # Linux validate slot and the Linux desktop build slot share a
-          # cache. The Android job below uses a separate `rust-android`
-          # shared-key (different cross-compile targets).
-          shared-key: rust-deps
-          # `cache-bin: 'true'` matches the validate-side siblings — so this
-          # job's main-only `save-if` writes `~/.cargo/bin/` (incl. the
-          # cargo-installed `tauri-cli` below) consistently with `lint` /
-          # `cargo-tests` / `mcp-tests`. Without this, the build job's save
-          # would strip those bins from the shared cache and the next
-          # validate-job warm start would lose `prek` / `sqlx-cli`.
+          # Per-job-class key (issue #813): rust-cache keeps ONE immutable
+          # entry per (os, shared-key, lockfile), so sharing `rust-deps`
+          # with the validate-side jobs meant whichever job finished first
+          # on main won the save and everyone else's `target/` tree was
+          # rebuilt from scratch every run. This job's release-profile
+          # `cargo tauri build` tree gets its own `rust-release` key. The
+          # Android job below keeps its separate `rust-android` key
+          # (different cross-compile targets).
+          shared-key: rust-release
+          # `cache-bin: 'true'` so this job's main-only `save-if` writes
+          # `~/.cargo/bin/` — including the cargo-installed `tauri-cli`
+          # below — into the `rust-release` entry. Without this, every warm
+          # run would pay the ~5-6 min tauri-cli source compile again.
           cache-bin: 'true'
           # Only `main` writes to the cache (other branches read it
           # without saving) to stop feature-branch churn from evicting

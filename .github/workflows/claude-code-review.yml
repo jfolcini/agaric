@@ -16,6 +16,14 @@ on:
 permissions:
   contents: read
 
+# One in-flight review per PR (issue #814): the `synchronize` trigger fires
+# on every push, so a force-push-heavy day otherwise stacks parallel full
+# reviews of stale code, burning tokens and runner minutes. Cancelling the
+# in-flight run is safe — the new run re-reviews and re-casts the verdict.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-review:
     # Optional: Filter by PR author
@@ -25,6 +33,9 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    # Issue #814: cap the review run — without this a hung run holds the
+    # runner for the 360-min default.
+    timeout-minutes: 30
     # `secrets` can't be read from a step-level `if:`, so map the presence of the
     # reviewer-app credentials into an env var the steps below can branch on.
     env:
