@@ -9,18 +9,17 @@
 import type { ExecuteFiltersResult } from '../../lib/agenda-filters'
 import type { BlockRow, ResolvedBlock } from '../../lib/tauri'
 
-/**
- * Hard cap on the number of agenda rows rendered per fetch. Matches the
- * original inline `.slice(0, 200)` in AgendaView.
- */
-export const AGENDA_MAX_BLOCKS = 200
-
 /** Fallback title used when batch-resolve returns a null title. */
 export const FALLBACK_PAGE_TITLE = 'Untitled'
 
 /** Processed outcome of a filter execution, ready for state updates. */
 export interface AgendaFetchOutcome {
-  /** Blocks to display — capped at {@link AGENDA_MAX_BLOCKS}. */
+  /**
+   * Blocks to display. No client-side cap (#721): every fetch path is
+   * backend-windowed (≤ 200 rows per source query), so a hard slice
+   * here would silently drop rows that the pagination cursor has
+   * already moved past — unrecoverable data loss for the user.
+   */
   blocks: BlockRow[]
   /** Whether the backend indicates more pages remain. */
   hasMore: boolean
@@ -62,15 +61,37 @@ export function buildPageTitleMap(resolved: readonly ResolvedBlock[]): Map<strin
 
 /**
  * Transform an `executeAgendaFilters` result into an {@link AgendaFetchOutcome}:
- * cap the blocks at {@link AGENDA_MAX_BLOCKS} and collect the page IDs that
- * need title resolution in a single pass-friendly package.
+ * pass the blocks through untruncated (#721 — see
+ * {@link AgendaFetchOutcome.blocks}) and collect the page IDs that need
+ * title resolution in a single pass-friendly package.
  */
 export function processFilterResult(result: ExecuteFiltersResult): AgendaFetchOutcome {
-  const blocks = result.blocks.slice(0, AGENDA_MAX_BLOCKS)
   return {
-    blocks,
+    blocks: result.blocks,
     hasMore: result.hasMore,
     cursor: result.cursor,
-    pageIds: collectUniquePageIds(blocks),
+    pageIds: collectUniquePageIds(result.blocks),
   }
+}
+
+/**
+ * Append `next` onto `prev`, dropping any block whose id is already
+ * present. Load-more for the unfiltered agenda merges three windowed
+ * source queries (#721), so a block with both a due AND a scheduled
+ * date can arrive from two sources in DIFFERENT windows — a plain
+ * spread would render it twice.
+ */
+export function appendUniqueBlocks(
+  prev: readonly BlockRow[],
+  next: readonly BlockRow[],
+): BlockRow[] {
+  const seen = new Set(prev.map((b) => b.id))
+  const merged = [...prev]
+  for (const b of next) {
+    if (!seen.has(b.id)) {
+      seen.add(b.id)
+      merged.push(b)
+    }
+  }
+  return merged
 }

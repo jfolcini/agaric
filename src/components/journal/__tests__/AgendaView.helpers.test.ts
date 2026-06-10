@@ -4,7 +4,8 @@
  * Covers:
  *  1. collectUniquePageIds — dedup, null filtering, order preservation, empty
  *  2. buildPageTitleMap — null title fallback, duplicate last-wins, empty
- *  3. processFilterResult — 200-cap, pageIds derived, hasMore/cursor pass-through
+ *  3. processFilterResult — no truncation (#721), pageIds derived, hasMore/cursor pass-through
+ *  4. appendUniqueBlocks — load-more dedupe across merged source windows (#721)
  */
 
 import { describe, expect, it } from 'vitest'
@@ -13,7 +14,7 @@ import { makeBlock } from '../../../__tests__/fixtures'
 import type { ExecuteFiltersResult } from '../../../lib/agenda-filters'
 import type { ResolvedBlock } from '../../../lib/tauri'
 import {
-  AGENDA_MAX_BLOCKS,
+  appendUniqueBlocks,
   buildPageTitleMap,
   collectUniquePageIds,
   FALLBACK_PAGE_TITLE,
@@ -122,30 +123,30 @@ describe('processFilterResult', () => {
     expect(outcome.pageIds).toEqual([])
   })
 
-  it('caps blocks at AGENDA_MAX_BLOCKS (200)', () => {
-    expect(AGENDA_MAX_BLOCKS).toBe(200)
+  // #721 — the old 200-row slice silently dropped rows the pagination
+  // cursor had already moved past (merge order dropped scheduled-only
+  // and undated blocks preferentially). Every fetch path is now
+  // backend-windowed, so processFilterResult must NOT truncate.
+  it('#721: does not truncate large result windows', () => {
     const manyBlocks = Array.from({ length: 250 }, (_, i) =>
       makeBlock({ id: `B${i}`, page_id: `P${i % 5}` }),
     )
     const result: ExecuteFiltersResult = { blocks: manyBlocks, hasMore: false, cursor: null }
     const outcome = processFilterResult(result)
-    expect(outcome.blocks).toHaveLength(AGENDA_MAX_BLOCKS)
-    expect(outcome.blocks[0]?.id).toBe('B0')
-    expect(outcome.blocks[199]?.id).toBe('B199')
+    expect(outcome.blocks).toHaveLength(250)
+    expect(outcome.blocks[249]?.id).toBe('B249')
   })
 
-  it('returns unique pageIds derived from the capped block window', () => {
-    // Blocks 0..199 have page_ids P0..P4 cycling; blocks 200..249 have P5..P9
-    // that would never appear after the 200-cap.
+  it('returns unique pageIds derived from ALL blocks (#721: no capped window)', () => {
     const blocks = Array.from({ length: 250 }, (_, i) => {
       const pageIndex = i < 200 ? i % 5 : 5 + (i % 5)
       return makeBlock({ id: `B${i}`, page_id: `P${pageIndex}` })
     })
     const outcome = processFilterResult({ blocks, hasMore: false, cursor: null })
-    expect(outcome.pageIds).toEqual(['P0', 'P1', 'P2', 'P3', 'P4'])
+    expect(outcome.pageIds).toEqual(['P0', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9'])
   })
 
-  it('leaves blocks untouched when under the cap', () => {
+  it('passes small block lists through untouched', () => {
     const blocks = [
       makeBlock({ id: 'B1', page_id: 'PAGE_A' }),
       makeBlock({ id: 'B2', page_id: 'PAGE_B' }),
@@ -167,5 +168,37 @@ describe('processFilterResult', () => {
     const snapshot = JSON.stringify(blocks)
     processFilterResult({ blocks, hasMore: false, cursor: null })
     expect(JSON.stringify(blocks)).toBe(snapshot)
+  })
+})
+
+describe('appendUniqueBlocks (#721)', () => {
+  it('appends new blocks after the existing ones', () => {
+    const prev = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B2' })]
+    const next = [makeBlock({ id: 'B3' })]
+    expect(appendUniqueBlocks(prev, next).map((b) => b.id)).toEqual(['B1', 'B2', 'B3'])
+  })
+
+  it('drops blocks already present (cross-window duplicate from a second source)', () => {
+    // A block with both due AND scheduled dates can arrive from the
+    // due_date window on page 1 and the scheduled_date window on page 2.
+    const both = makeBlock({ id: 'BOTH', due_date: '2025-01-15', scheduled_date: '2025-01-10' })
+    const prev = [both, makeBlock({ id: 'B1' })]
+    const next = [makeBlock({ id: 'BOTH' }), makeBlock({ id: 'B2' })]
+    expect(appendUniqueBlocks(prev, next).map((b) => b.id)).toEqual(['BOTH', 'B1', 'B2'])
+  })
+
+  it('dedupes within the appended batch itself', () => {
+    const next = [makeBlock({ id: 'B1' }), makeBlock({ id: 'B1' })]
+    expect(appendUniqueBlocks([], next).map((b) => b.id)).toEqual(['B1'])
+  })
+
+  it('does not mutate either input', () => {
+    const prev = [makeBlock({ id: 'B1' })]
+    const next = [makeBlock({ id: 'B2' })]
+    const prevSnap = JSON.stringify(prev)
+    const nextSnap = JSON.stringify(next)
+    appendUniqueBlocks(prev, next)
+    expect(JSON.stringify(prev)).toBe(prevSnap)
+    expect(JSON.stringify(next)).toBe(nextSnap)
   })
 })
