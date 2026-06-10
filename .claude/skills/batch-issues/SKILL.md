@@ -41,15 +41,20 @@ issues. Where the work lives:
 
 ## 1. PLAN
 
-**FIRST — before picking anything new, check CI on every open PR and fix all red.**
-`gh pr list --author @me --state open`, then `gh pr checks <n>` for each. **Any red is
-yours to fix** — even a failure *inherited from `main`* (a lint/zizmor finding that landed
-on `main` and now reds every PR). "Not from my diff" is NOT a reason to skip it: a red
-check blocks otherwise-green merges and stalls the loop. Diagnose from
+**FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
+`gh pr list --author @me --state open`, then `gh pr checks <n>` for each: merge what's
+green, fix what's red. Do NOT re-poll PR CI between these checkpoints — not on every
+wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "reconciling
+PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
+until the 5-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
+even a failure *inherited from `main`* (a lint/zizmor finding that landed on `main` and
+now reds every PR). "Not from my diff" is NOT a reason to skip it: a red check blocks
+otherwise-green merges and stalls the loop. Diagnose from
 `gh run view --job <id> --log-failed`, fix the **underlying cause** (prefer a real fix over
 a suppression; suppress only with a justifying comment). If the cause lives on `main`, fix
 it in a dedicated small PR off `origin/main` so it merges first and clears every inherited
-failure. Only once the board is green (or each red has a fix pushed) do you start a batch.
+failure. Reds need a fix pushed before the new batch starts; greens just need the one
+merge sweep.
 
 Pick **one** of: a `plan` issue (group its sub-items into a 3-6 item batch), a non-`plan`
 issue (ship as its own PR), or a code-scanning/Dependabot alert. Leave the rest for later.
@@ -212,16 +217,20 @@ async over many minutes. Instead:
 2. **Immediately go back to §1 and start the next batch**, branched from the latest
    `origin/main` (prior commits may not have landed — fine; if the new batch genuinely
    depends on them, branch from the prior batch's branch and merge the chain bottom-up).
-3. **Reconcile the previous batch's PR at the END of the new batch:**
+3. **Reconcile open PRs ONLY at batch boundaries** — the §1 sweep at the start of the
+   next batch (same checkpoint as "END of the current batch"), or early only if the 5-PR
+   cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
+   per-subagent-completion (maintainer feedback 2026-06-10):
    - `gh pr checks <prevPR>`. All green + mergeable → merge
      (`gh pr merge <prevPR> --squash --delete-branch`); `Closes #NN` then fires.
    - Any failed → diagnose (`gh run view --log-failed`), fix on that branch (new commit,
-     push), leave for the *next* reconciliation pass. Don't merge red.
-   - Still running → leave it; reconcile next pass. Never spin idle.
+     push), leave for the *next* checkpoint sweep. Don't merge red.
+   - Still running → leave it; next checkpoint catches it. Never spin idle.
 4. **Keep the pending-PR list bounded** (up to **5** open PRs — maintainer preference,
    2026-06-06). `gh pr list --author @me --state open` shows what's outstanding if you lose
-   track. Note: merges may require maintainer approval (`REVIEW_REQUIRED`) — if so, ship green
-   PRs and let the maintainer merge rather than forcing `--admin`.
+   track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;
+   for own green PRs blocked only by `REVIEW_REQUIRED`, `--admin` is sanctioned — but only
+   when the required checks (`validate-all`, `dco`) are green.
 
 This pipelines batches against CI wall-clock: while batch N's CI runs, you build N+1; by
 the time N+1 is pushed, N's CI has finished and you merge it.
@@ -229,7 +238,7 @@ the time N+1 is pushed, N's CI has finished and you merge it.
 **When all planned items are PR'd and only CI-pending PRs remain, do NOT idle — pull the
 next backlog issue** (`gh issue list`, honoring the refactor-focus priorities in memory)
 and start a fresh batch in a disjoint domain. An empty planned-list is a cue to refill from
-the backlog, not to stop. Merge pending PRs when their CI lands.
+the backlog, not to stop. Pending PRs get merged at the next batch-boundary sweep.
 
 ## Principles
 
