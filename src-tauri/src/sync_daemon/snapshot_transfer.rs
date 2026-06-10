@@ -46,8 +46,16 @@
 //!    wipe + restore core tables from the compressed blob.
 //!    `apply_snapshot` uses `BEGIN IMMEDIATE` + `defer_foreign_keys`
 //!    so the restore is atomic; a decode or integrity failure leaves
-//!    the DB untouched (rolled back by transaction).
-//! 5. Record the snapshot's `up_to_hash` as the last-received hash in
+//!    the DB untouched (rolled back by transaction). The same tx wipes
+//!    the Loro sidecar state (`loro_doc_state`, `loro_sync_inbox`,
+//!    apply cursor — #607/#779).
+//! 5. Drop + reload the in-memory Loro engines
+//!    ([`crate::loro::snapshot::reload_registry_from_db`]) so the live
+//!    registry matches the post-reset SQL — there is no process
+//!    restart after a catch-up, and stale engines would otherwise be
+//!    re-exported to peers and re-persisted over the wiped
+//!    `loro_doc_state` (#607).
+//! 6. Record the snapshot's `up_to_hash` as the last-received hash in
 //!    `peer_refs` so the next scheduled sync begins a normal delta
 //!    exchange from the new frontier.
 //!
@@ -301,6 +309,23 @@ async fn send_snapshot_bytes(conn: &mut SyncConnection, compressed: &[u8]) -> Re
 // Initiator side — accept + receive + apply
 // ---------------------------------------------------------------------------
 
+/// #607: engine-reload context for the initiator-side catch-up.
+///
+/// Bundles the live engine registry with this device's id so
+/// [`try_receive_snapshot_catchup`] can drop + reload the in-memory
+/// engines right after `apply_snapshot` wipes the Loro sidecar tables
+/// (via [`crate::loro::snapshot::reload_registry_from_db`]). Callers
+/// without engine state (some unit tests) pass `None` — the snapshot
+/// still applies, with a `warn!` that any live engines keep pre-reset
+/// state until restart.
+pub(crate) struct EngineReloadCtx<'a> {
+    /// The live registry the session syncs against (override-aware in
+    /// tests, process-global in production).
+    pub(crate) registry: &'a crate::loro::registry::LoroEngineRegistry,
+    /// This device's stable id, threaded into the rehydrate path.
+    pub(crate) device_id: &'a str,
+}
+
 /// Result of an initiator-side snapshot catch-up attempt.
 #[derive(Debug, PartialEq)]
 pub(crate) enum CatchupOutcome {
@@ -351,6 +376,23 @@ pub(crate) enum CatchupOutcome {
 /// session instead of silently applying a snapshot whose origin
 /// peer cannot be remembered (the next sync would treat this peer
 /// as fully unknown again).
+///
+/// # In-process engine reload (#607 / #779)
+///
+/// `apply_snapshot` wipes the Loro sidecar tables (`loro_doc_state`,
+/// `loro_sync_inbox`, the apply cursor) atomically with the core-table
+/// swap, but the in-memory engines still hold the pre-reset CRDT
+/// lineage when it returns — and NO process restart follows this
+/// function (it applies and returns to the daemon loop). Immediately
+/// after the apply succeeds, this function calls
+/// [`crate::loro::snapshot::reload_registry_from_db`] on
+/// `engine_reload.registry` so the live engines match the post-reset
+/// SQL: stale engines are dropped (they can no longer be exported to
+/// peers or persisted back into `loro_doc_state` by the periodic /
+/// exit-time `save_all_engines`) and the registry rehydrates from the
+/// now-empty table. A `None` `engine_reload` (engine state not
+/// initialised) is logged at `warn!` — the snapshot is still applied,
+/// but any live engines keep pre-reset state until restart.
 pub(crate) async fn try_receive_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
@@ -358,6 +400,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
+    engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<CatchupOutcome, AppError> {
     let offer: SyncMessage = conn.recv_json().await?;
     let size_bytes = match offer {
@@ -448,9 +491,91 @@ pub(crate) async fn try_receive_snapshot_catchup(
             ),
         ))
     })?;
-    let data = apply_snapshot(pool, materializer, temp_file).await?;
+    // #607 / #779 ordering: flush + drop the in-memory engines BEFORE the
+    // apply commits, not after. If the registry were cleared only after
+    // `apply_snapshot` returns, a `RunEvent::Exit` (or periodic)
+    // `save_all_engines` firing in the commit→clear window would still
+    // see the pre-reset engines and persist them straight into the just-
+    // wiped `loro_doc_state` — resurrecting the old vault at next boot
+    // (the #779 race, merely narrowed). Clearing first makes that save a
+    // no-op by construction:
+    //
+    //  - exit/periodic save before the clear → writes pre-reset blobs
+    //    into the still-pre-reset table (harmless; the apply wipes it);
+    //  - after the clear → empty registry, nothing to write (and
+    //    `save_all_engines`' generation check catches the handles-
+    //    collected-before-clear interleave).
+    //
+    // The `save_all_engines` flush ahead of the clear makes the failure
+    // path lossless: a failed `apply_snapshot` rolls the whole SQL tx
+    // back (loro_doc_state intact), so the reload below restores the
+    // engines exactly as just persisted.
+    if let Some(EngineReloadCtx { registry, .. }) = &engine_reload {
+        let flushed = crate::loro::snapshot::save_all_engines(pool, registry).await;
+        registry.clear();
+        tracing::info!(
+            flushed,
+            "pre-apply engine flush + clear (#607): registry emptied before \
+             the snapshot RESET commits"
+        );
+    }
+
+    let data = match apply_snapshot(pool, materializer, temp_file).await {
+        Ok(data) => data,
+        Err(e) => {
+            // Apply failed → the SQL tx rolled back and `loro_doc_state`
+            // still holds the rows flushed above. Restore the engines so
+            // the session failure leaves the process exactly as it was.
+            if let Some(EngineReloadCtx {
+                registry,
+                device_id,
+            }) = &engine_reload
+            {
+                let rehydrated =
+                    crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id).await;
+                tracing::warn!(
+                    rehydrated,
+                    "apply_snapshot failed after the pre-apply engine clear (#607); \
+                     registry restored from the flushed loro_doc_state rows"
+                );
+            }
+            return Err(e);
+        }
+    };
     drop(temp);
     let up_to_hash = data.up_to_hash.clone();
+
+    // #607 / #779: the SQL RESET above also wiped `loro_doc_state` /
+    // `loro_sync_inbox` and zeroed the apply cursor — now reload the
+    // in-memory engines so the live registry matches the new SQL.
+    // Without this, stale engines would (a) export pre-reset content
+    // to peers on the next `prepare_outgoing` and (b) be persisted back
+    // over the wiped `loro_doc_state` by the periodic / exit-time
+    // `save_all_engines`, resurrecting the old vault at next boot.
+    // (`reload_registry_from_db` re-clears — dropping any engine a local
+    // edit lazy-created during the apply — then rehydrates from the
+    // now-empty table, so the registry ends up EMPTY by design; see the
+    // function docs for why empty is correct.)
+    match engine_reload {
+        Some(EngineReloadCtx {
+            registry,
+            device_id,
+        }) => {
+            let rehydrated =
+                crate::loro::snapshot::reload_registry_from_db(pool, registry, device_id).await;
+            tracing::info!(
+                rehydrated,
+                "post-snapshot engine reload complete (#607): dropped pre-reset \
+                 engines; registry rehydrated from loro_doc_state"
+            );
+        }
+        None => {
+            tracing::warn!(
+                "no Loro engine registry available at snapshot catch-up (#607); \
+                 any live engines keep pre-reset state until the process restarts"
+            );
+        }
+    }
 
     tracing::info!(
         peer_id = %remote_device_id,
@@ -1002,6 +1127,7 @@ mod tests {
             &event_sink,
             REMOTE_DEV,
             None,
+            None,
         )
         .await
         .expect("initiator catch-up must succeed with a valid snapshot");
@@ -1088,6 +1214,7 @@ mod tests {
             &event_sink,
             REMOTE_DEV,
             None,
+            None,
         )
         .await
         .expect("catch-up must return Ok(Rejected) for oversized offer");
@@ -1155,6 +1282,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
             None,
         )
         .await;
@@ -1250,6 +1378,7 @@ mod tests {
             &event_sink,
             REMOTE_DEV,
             None,
+            None,
         )
         .await;
 
@@ -1316,6 +1445,7 @@ mod tests {
             &event_sink,
             REMOTE_DEV,
             None,
+            None,
         )
         .await;
         assert!(result.is_err(), "unexpected message must surface as Err");
@@ -1360,6 +1490,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
             None,
         )
         .await;
@@ -1458,6 +1589,7 @@ mod tests {
             &event_sink,
             remote_device_id,
             expected_remote_id,
+            None,
         )
         .await;
 
@@ -1606,6 +1738,7 @@ mod tests {
             &event_sink,
             REMOTE_DEV,
             None,
+            None,
         )
         .await
         .expect("L-67 catch-up must succeed end-to-end");
@@ -1713,6 +1846,7 @@ mod tests {
             &materializer,
             &event_sink,
             REMOTE_DEV,
+            None,
             None,
         )
         .await;
@@ -1839,5 +1973,197 @@ mod tests {
                 .count(),
             Err(_) => 0,
         }
+    }
+
+    // -----------------------------------------------------------------
+    // #607 / #779 — same-process engine + sidecar reset on catch-up
+    // -----------------------------------------------------------------
+
+    /// #607 — the catch-up must leave the SAME process coherent: the
+    /// SQL RESET wipes `loro_doc_state` / `loro_sync_inbox` and zeroes
+    /// the apply cursor, and the in-memory engine registry is dropped +
+    /// reloaded so no pre-reset CRDT state survives. A "second session"
+    /// in the same process (a local edit + a fresh op through the
+    /// materializer) must land on the post-snapshot state: the engine
+    /// export carries the new edit and NONE of the pre-reset vault, and
+    /// the zeroed cursor tracks the fresh op_log from seq 1 (pre-fix it
+    /// stayed wedged at the stale pre-reset value via the MAX() gate).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_607() {
+        use crate::loro::registry::LoroEngineRegistry;
+        use crate::space::SpaceId;
+
+        const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+        // ── Responder DB: one materialized block + snapshot ──────────
+        let (resp_pool, _resp_dir) = test_pool().await;
+        let resp_materializer = Materializer::new(resp_pool.clone());
+        seed_one_block(&resp_pool, &resp_materializer, REMOTE_DEV).await;
+        create_snapshot(&resp_pool, REMOTE_DEV).await.unwrap();
+        let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
+        let expected_size = snap_bytes.len() as u64;
+
+        // ── Initiator: pre-reset engine + sidecar state ──────────────
+        let (init_pool, _init_dir) = test_pool().await;
+        let materializer = Materializer::new(init_pool.clone());
+        let registry = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE);
+        {
+            let mut g = registry.for_space(&space, LOCAL_DEV).unwrap();
+            g.engine_mut()
+                .apply_create_block("BLOCK_PRE_RESET", "content", "old vault", None, 0)
+                .unwrap();
+        }
+        {
+            let mut g = registry.for_space(&space, LOCAL_DEV).unwrap();
+            crate::loro::snapshot::save_snapshot(&init_pool, &space, g.engine_mut())
+                .await
+                .unwrap();
+        }
+        sqlx::query("INSERT INTO loro_sync_inbox (space_id, bytes, created_at) VALUES (?, ?, ?)")
+            .bind(SPACE)
+            .bind(vec![1u8, 2, 3])
+            .bind(1_736_942_400_000_i64)
+            .execute(&init_pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE materializer_apply_cursor SET materialized_through_seq = 42, \
+             updated_at = 1 WHERE id = 1",
+        )
+        .execute(&init_pool)
+        .await
+        .unwrap();
+
+        // ── Wire transfer ─────────────────────────────────────────────
+        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+        let bytes_clone = snap_bytes.clone();
+        let server_task = tokio::spawn(async move {
+            server_conn
+                .send_json(&SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                })
+                .await
+                .unwrap();
+            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
+                server_conn.send_binary(chunk).await.unwrap();
+            }
+        });
+
+        let outcome = try_receive_snapshot_catchup(
+            &mut client_conn,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            Some(EngineReloadCtx {
+                registry: &registry,
+                device_id: LOCAL_DEV,
+            }),
+        )
+        .await
+        .expect("catch-up must succeed");
+        server_task.await.unwrap();
+        assert!(matches!(outcome, CatchupOutcome::Applied { .. }));
+
+        // ── Sidecar SQL reset ────────────────────────────────────────
+        let doc_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(doc_rows, 0, "#607: loro_doc_state must be wiped");
+        let inbox_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(inbox_rows, 0, "#607: loro_sync_inbox must be emptied");
+        let cursor: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&init_pool)
+        .await
+        .unwrap();
+        assert_eq!(cursor, 0, "#607: apply cursor must be zeroed");
+
+        // ── In-memory engine reset ───────────────────────────────────
+        assert_eq!(
+            registry.len(),
+            0,
+            "#607: pre-reset engines must be dropped from the live registry"
+        );
+
+        // ── Same-process "second session": local edit on the engine ──
+        // The next engine access lazy-creates a fresh post-reset engine;
+        // its export (what prepare_outgoing would ship) must contain the
+        // new edit and no pre-reset content.
+        {
+            let mut g = registry.for_space(&space, LOCAL_DEV).unwrap();
+            let engine = g.engine_mut();
+            engine
+                .apply_create_block("BLOCK_POST_RESET", "content", "new edit", None, 0)
+                .unwrap();
+            assert!(
+                engine.read_block("BLOCK_PRE_RESET").unwrap().is_none(),
+                "#607: pre-reset vault must not survive into the post-reset engine"
+            );
+            let export = engine.export_snapshot().unwrap();
+            let mut probe = crate::loro::engine::LoroEngine::with_peer_id(LOCAL_DEV).unwrap();
+            probe.import(&export).unwrap();
+            assert!(
+                probe.read_block("BLOCK_POST_RESET").unwrap().is_some(),
+                "the post-reset edit must be in the engine export"
+            );
+            assert!(
+                probe.read_block("BLOCK_PRE_RESET").unwrap().is_none(),
+                "#607: the engine export must not re-ship pre-reset content"
+            );
+        }
+
+        // ── Fresh op through the materializer tracks the zeroed cursor ─
+        // Post-reset op_log is empty, so the first local op mints seq 1;
+        // the MAX()-gated cursor advance must land exactly there (pre-fix
+        // the stale cursor [42] swallowed it and stayed at 42).
+        let payload = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+            block_id: crate::ulid::BlockId::test_id("01HZ0000000000000000BLOCK2"),
+            block_type: "content".into(),
+            content: "post-snapshot op".into(),
+            parent_id: None,
+            position: Some(2),
+            index: None,
+        });
+        let record = append_local_op(&init_pool, LOCAL_DEV, payload)
+            .await
+            .unwrap();
+        assert_eq!(record.seq, 1, "post-RESET op_log must restart at seq 1");
+        materializer.dispatch_op(&record).await.unwrap();
+        materializer.flush_foreground().await.unwrap();
+        let cursor: i64 = sqlx::query_scalar(
+            "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+        )
+        .fetch_one(&init_pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            cursor, 1,
+            "#607: the zeroed cursor must track the fresh op_log (a stale \
+             pre-reset cursor would stay at 42 via the MAX() gate)"
+        );
+
+        // ── SQL state: snapshot block + the new local block ──────────
+        let blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&init_pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            blocks, 2,
+            "SQL must hold the snapshot block plus the post-reset local block"
+        );
+
+        materializer.shutdown();
+        resp_materializer.shutdown();
     }
 }

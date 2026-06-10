@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM loro_sync_inbox",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "fb7bb6a1452f39b612134d2214e4342c1f923f43d29debd8ca094666fbcc84fe"
+}

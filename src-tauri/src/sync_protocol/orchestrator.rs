@@ -201,7 +201,12 @@ impl SyncOrchestrator {
     /// Resolve the Loro engine state for this session: the test-injected
     /// override when present (#602 multi-device tests), otherwise the
     /// process-global registry installed at bootstrap.
-    fn loro_state(&self) -> Option<&'static crate::loro::shared::LoroState> {
+    ///
+    /// `pub(crate)` for the daemon layer: `run_sync_session` threads this
+    /// state into the FEAT-6 snapshot catch-up so the post-RESET engine
+    /// reload (#607) hits the same registry the session syncs against
+    /// (override-aware in tests, process-global in production).
+    pub(crate) fn loro_state(&self) -> Option<&'static crate::loro::shared::LoroState> {
         #[cfg(test)]
         if let Some(state) = self.loro_state_override {
             return Some(state);

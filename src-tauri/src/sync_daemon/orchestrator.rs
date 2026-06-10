@@ -876,6 +876,17 @@ pub(crate) async fn run_sync_session(
         // SyncComplete fallback when `peer_id` is empty (HeadExchange
         // carried only our own heads).
         let expected_remote_id = orch.expected_remote_id().map(str::to_owned);
+        // #607: thread the session's engine state (override-aware in tests,
+        // process-global in production) plus our own device id into the
+        // catch-up so it can drop + reload the in-memory engines right
+        // after `apply_snapshot` wipes the Loro sidecar tables.
+        let local_device_id = orch.session().local_device_id.clone();
+        let engine_reload = orch
+            .loro_state()
+            .map(|s| snapshot_transfer::EngineReloadCtx {
+                registry: &s.registry,
+                device_id: &local_device_id,
+            });
         match snapshot_transfer::try_receive_snapshot_catchup(
             conn,
             pool,
@@ -883,6 +894,7 @@ pub(crate) async fn run_sync_session(
             event_sink,
             &peer_id,
             expected_remote_id.as_deref(),
+            engine_reload,
         )
         .await
         {
