@@ -11,7 +11,8 @@
  *  7. Passes onNavigateToPage down to AgendaResults
  *  8. Filter changes trigger re-fetch (via AgendaFilterBuilder callback)
  *  9. Clear filters resets to empty filter array
- * 10. Load more calls queryByProperty with cursor
+ * 10. Load more routes through loadMoreAgendaFilters (active filters) /
+ *     loadMoreUnfilteredAgenda (no filters, #721)
  * 11. Sort/group controls pass through to AgendaResults
  * 12. A11y audit passes (axe)
  */
@@ -24,6 +25,7 @@ import { axe } from 'vitest-axe'
 vi.mock('../../../lib/agenda-filters', () => ({
   executeAgendaFilters: vi.fn(),
   loadMoreAgendaFilters: vi.fn(),
+  loadMoreUnfilteredAgenda: vi.fn(),
 }))
 
 // ── Mock tauri lib ──────────────────────────────────────────────────
@@ -118,12 +120,17 @@ vi.mock('../../AgendaResults', () => ({
 }))
 
 import { makeBlock as _makeBlock } from '../../../__tests__/fixtures'
-import { executeAgendaFilters, loadMoreAgendaFilters } from '../../../lib/agenda-filters'
+import {
+  executeAgendaFilters,
+  loadMoreAgendaFilters,
+  loadMoreUnfilteredAgenda,
+} from '../../../lib/agenda-filters'
 import { batchResolve, queryByProperty } from '../../../lib/tauri'
 import { AgendaView } from '../AgendaView'
 
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
+const mockedLoadMoreUnfilteredAgenda = vi.mocked(loadMoreUnfilteredAgenda)
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 
@@ -158,6 +165,11 @@ beforeEach(() => {
     total_count: null,
   })
   mockedLoadMoreAgendaFilters.mockResolvedValue({
+    blocks: [],
+    hasMore: false,
+    cursor: null,
+  })
+  mockedLoadMoreUnfilteredAgenda.mockResolvedValue({
     blocks: [],
     hasMore: false,
     cursor: null,
@@ -475,10 +487,14 @@ describe('AgendaView', () => {
   // saved filter payload + cursor, NOT query_by_property (whose keyset
   // namespace is incompatible with the filtered_blocks_query cursor).
   it('load more routes through loadMoreAgendaFilters when filters are active', async () => {
+    // #720 — page 1 reports the `today` its date translation used; the
+    // view must thread it into every load-more of the same run.
+    const page1Today = new Date('2025-03-15T12:00:00')
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [makeBlock({ id: 'B1' })],
       hasMore: true,
       cursor: 'cursor_page2',
+      today: page1Today,
     })
 
     render(<AgendaView />)
@@ -498,11 +514,12 @@ describe('AgendaView', () => {
 
     await waitFor(() => {
       // Default agenda filters (TODO + DOING) are forwarded so the backend
-      // continues the AND-intersection.
+      // continues the AND-intersection, along with page 1's `today` (#720).
       expect(mockedLoadMoreAgendaFilters).toHaveBeenCalledWith(
         [{ dimension: 'status', values: ['TODO', 'DOING'] }],
         'cursor_page2',
         null,
+        page1Today,
       )
     })
 
@@ -515,14 +532,16 @@ describe('AgendaView', () => {
     })
   })
 
-  // 10b. Load more — no filters routes through queryByProperty (cursor namespace matches).
-  it('load more routes through queryByProperty when no filters are active', async () => {
+  // 10b. Load more — no filters routes through loadMoreUnfilteredAgenda,
+  // which resumes the merged due/scheduled/undated windows from the
+  // composite cursor minted by executeAgendaFilters (#721).
+  it('load more routes through loadMoreUnfilteredAgenda when no filters are active', async () => {
     // First mount with default TODO+DOING filter, then clear it so the
     // default-unfiltered branch is exercised on load-more.
     mockedExecuteAgendaFilters.mockResolvedValue({
       blocks: [makeBlock({ id: 'B1' })],
       hasMore: true,
-      cursor: 'cursor_page2',
+      cursor: 'agenda-unfiltered:{"due":"DUE_C2"}',
     })
 
     render(<AgendaView />)
@@ -542,28 +561,30 @@ describe('AgendaView', () => {
       )
     })
 
-    mockedQueryByProperty.mockResolvedValueOnce({
-      items: [makeBlock({ id: 'B2' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
+    mockedLoadMoreUnfilteredAgenda.mockResolvedValueOnce({
+      blocks: [makeBlock({ id: 'B2' })],
+      hasMore: false,
+      cursor: null,
     })
 
     loadMoreRef.current?.()
 
     await waitFor(() => {
-      expect(mockedQueryByProperty).toHaveBeenCalledWith({
-        key: 'todo_state',
-        cursor: 'cursor_page2',
-        limit: 200,
-        // FEAT-3 Phase 4 — `currentSpaceId` is null in this fixture; the
-        // wrapper forwards it as the optional `spaceId`.
-        spaceId: null,
-      })
+      expect(mockedLoadMoreUnfilteredAgenda).toHaveBeenCalledWith(
+        'agenda-unfiltered:{"due":"DUE_C2"}',
+        null,
+      )
     })
 
-    // And the filtered helper is NOT used on the no-filter branch.
+    await waitFor(() => {
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '2')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-has-more', 'false')
+    })
+
+    // The filtered helper is NOT used on the no-filter branch, and the
+    // legacy todo_state queryByProperty fallback is gone entirely.
     expect(mockedLoadMoreAgendaFilters).not.toHaveBeenCalled()
+    expect(mockedQueryByProperty).not.toHaveBeenCalled()
   })
 
   // 11. Sort/group controls pass through to AgendaResults
@@ -632,8 +653,10 @@ describe('AgendaView', () => {
     })
   })
 
-  // 14. Blocks capped at 200
-  it('caps displayed blocks at 200', async () => {
+  // 14. #721 — no silent client-side truncation: every fetch path is
+  // backend-windowed, so a hard 200-slice would drop rows the cursor
+  // had already moved past (unrecoverable for the user).
+  it('#721: renders every fetched block without a 200-cap', async () => {
     const manyBlocks = Array.from({ length: 250 }, (_, i) =>
       makeBlock({ id: `B${i}`, parent_id: `P${i % 10}`, page_id: `P${i % 10}` }),
     )
@@ -646,7 +669,7 @@ describe('AgendaView', () => {
     render(<AgendaView />)
 
     await waitFor(() => {
-      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '200')
+      expect(screen.getByTestId('agenda-results')).toHaveAttribute('data-block-count', '250')
     })
   })
 

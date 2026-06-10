@@ -14,6 +14,7 @@ import {
   AGENDA_QUERY_LIMIT,
   executeAgendaFilters,
   loadMoreAgendaFilters,
+  loadMoreUnfilteredAgenda,
   toFutureDatePreset,
   toPastDatePreset,
 } from '../agenda-filters'
@@ -173,28 +174,79 @@ describe('executeAgendaFilters', () => {
       expect(result.blocks.map((b) => b.id)).toEqual(['due-1', 'undated-1'])
     })
 
-    it('paginates undated_tasks across multiple pages and merges all items', async () => {
-      const page1Block = makeBlock({ id: 'undated-page-1', todo_state: 'TODO' })
-      const page2Block = makeBlock({ id: 'undated-page-2', todo_state: 'TODO' })
+    // #721 — the no-filter branch previously walked every source to
+    // exhaustion (paying the full IPC cost) and returned hasMore:false,
+    // after which the view sliced to 200 rows and silently dropped the
+    // rest with no load-more. It must now fetch ONE window per source
+    // and surface the remainder via hasMore + a composite cursor.
+    it('#721: fetches one window per source and surfaces the remainder via hasMore + cursor', async () => {
+      const undatedPage1 = makeBlock({ id: 'undated-page-1', todo_state: 'TODO' })
 
       let undatedCallCount = 0
       mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
         if (cmd !== 'list_undated_tasks') return emptyPage
         undatedCallCount++
-        if (undatedCallCount === 1) {
-          expect((args as Record<string, unknown>)['cursor']).toBeNull()
-          return { items: [page1Block], next_cursor: 'CURSOR_PAGE_2', has_more: true }
-        }
-        expect((args as Record<string, unknown>)['cursor']).toBe('CURSOR_PAGE_2')
-        return { items: [page2Block], next_cursor: null, has_more: false }
+        expect((args as Record<string, unknown>)['cursor']).toBeNull()
+        return { items: [undatedPage1], next_cursor: 'CURSOR_PAGE_2', has_more: true }
       })
 
       const result = await executeAgendaFilters([], null)
 
-      expect(undatedCallCount).toBe(2)
-      expect(result.blocks.map((b) => b.id).sort()).toEqual(['undated-page-1', 'undated-page-2'])
+      // Exactly ONE window — no exhaustion walk.
+      expect(undatedCallCount).toBe(1)
+      expect(result.blocks.map((b) => b.id)).toEqual(['undated-page-1'])
+      // The >200-row remainder is NOT silently dropped: load-more is offered.
+      expect(result.hasMore).toBe(true)
+      expect(result.cursor).not.toBeNull()
+    })
+
+    it('#721: load-more resumes only non-exhausted sources from their own cursors', async () => {
+      const duePage1 = makeBlock({ id: 'due-1', due_date: '2025-01-15' })
+      const duePage2 = makeBlock({ id: 'due-2', due_date: '2025-02-15' })
+      const schedPage1 = makeBlock({ id: 'sched-1', scheduled_date: '2025-01-16' })
+
+      mockedInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+        const a = args as Record<string, unknown>
+        if (cmd === 'list_undated_tasks') return emptyPage
+        if (a['key'] === 'due_date') {
+          if (a['cursor'] === 'DUE_CURSOR_2') {
+            return { items: [duePage2], next_cursor: null, has_more: false }
+          }
+          return { items: [duePage1], next_cursor: 'DUE_CURSOR_2', has_more: true }
+        }
+        if (a['key'] === 'scheduled_date') {
+          return { items: [schedPage1], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      const page1 = await executeAgendaFilters([], null)
+      expect(page1.blocks.map((b) => b.id)).toEqual(['due-1', 'sched-1'])
+      expect(page1.hasMore).toBe(true)
+      expect(page1.cursor).not.toBeNull()
+
+      mockedInvoke.mockClear()
+      const page2 = await loadMoreUnfilteredAgenda(page1.cursor as string, null)
+
+      // Only the due_date source had more pages — the exhausted
+      // scheduled_date / undated sources are not re-queried.
+      const calls = mockedInvoke.mock.calls as Array<[string, Record<string, unknown>]>
+      expect(calls).toHaveLength(1)
+      expect(calls[0]?.[0]).toBe('query_by_property')
+      expect(calls[0]?.[1]?.['key']).toBe('due_date')
+      expect(calls[0]?.[1]?.['cursor']).toBe('DUE_CURSOR_2')
+
+      expect(page2.blocks.map((b) => b.id)).toEqual(['due-2'])
+      expect(page2.hasMore).toBe(false)
+      expect(page2.cursor).toBeNull()
+    })
+
+    it('#721: loadMoreUnfilteredAgenda rejects a foreign (non-composite) cursor', async () => {
+      const result = await loadMoreUnfilteredAgenda('SOME_BACKEND_KEYSET_CURSOR', null)
+      expect(result.blocks).toHaveLength(0)
       expect(result.hasMore).toBe(false)
       expect(result.cursor).toBeNull()
+      expect(mockedInvoke).not.toHaveBeenCalled()
     })
   })
 
@@ -398,6 +450,258 @@ describe('executeAgendaFilters', () => {
       )
       expect(result.blocks).toHaveLength(0)
       expect(filteredCalls()).toHaveLength(0)
+    })
+  })
+
+  // #720 — multi-select values within ONE date dimension previously
+  // emitted one AND filter per value: Today+Overdue became
+  // `due_date = today AND due_date < today` (provably empty) and
+  // Today+This-week silently collapsed to Today. Values within a
+  // dimension must OR (range union / residual predicate); dimensions
+  // still AND against each other.
+  describe('#720: multi-select date values OR within a dimension', () => {
+    it('Today + Overdue → single lt-filter superset, NOT an empty AND', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      const overdueTodo = makeBlock({
+        id: 'overdue-todo',
+        due_date: '2025-03-10',
+        todo_state: 'TODO',
+      })
+      const overdueDone = makeBlock({
+        id: 'overdue-done',
+        due_date: '2025-03-10',
+        todo_state: 'DONE',
+      })
+      const todayDone = makeBlock({ id: 'today-done', due_date: '2025-03-15', todo_state: 'DONE' })
+      const todayTodo = makeBlock({ id: 'today-todo', due_date: '2025-03-15', todo_state: 'TODO' })
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return {
+            items: [overdueTodo, overdueDone, todayDone, todayTodo],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
+        null,
+      )
+
+      // SQL fetches the superset `due_date < 2025-03-16` — exactly one
+      // date filter, and NO unconditional todo_state != DONE filter
+      // (that would wrongly hide DONE tasks due today).
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'due_date',
+        operator: 'lt',
+        valueDate: '2025-03-16',
+      })
+
+      // Residual union semantics client-side: overdue non-DONE and
+      // everything due today survive; an overdue DONE block (outside
+      // both the Today range and Overdue's non-DONE predicate) is dropped.
+      expect(result.blocks.map((b) => b.id)).toEqual(['overdue-todo', 'today-done', 'today-todo'])
+    })
+
+    it('Today + This week → ONE union range, not a Today-only collapse', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-12T12:00:00')) // Wednesday
+
+      await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today', 'This week'] }], null)
+
+      // Union of [03-12, 03-12] and [03-10, 03-16] = [03-10, 03-17) —
+      // a single range filter, not two AND-ed filters.
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'due_date',
+        valueDateRange: ['2025-03-10', '2025-03-17'],
+      })
+    })
+
+    it('Overdue + range presets on scheduled_date post-filters on scheduled_date', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      const overdueDone = makeBlock({
+        id: 'sched-overdue-done',
+        scheduled_date: '2025-03-01',
+        todo_state: 'DONE',
+      })
+      const inRangeDone = makeBlock({
+        id: 'sched-week-done',
+        scheduled_date: '2025-03-15',
+        todo_state: 'DONE',
+      })
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return { items: [overdueDone, inRangeDone], next_cursor: null, has_more: false }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'scheduledDate', values: ['Overdue', 'This week'] }],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({ key: 'scheduled_date', operator: 'lt' })
+      expect(result.blocks.map((b) => b.id)).toEqual(['sched-week-done'])
+    })
+
+    it('residual excludes NULL-todo_state blocks before the range start (matches single-select Overdue)', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      // Single-select Overdue compiles to `b.todo_state IS NOT NULL AND
+      // b.todo_state != 'DONE'` on the backend — a NULL-state block with
+      // a past due date is excluded. The Overdue+Today residual must
+      // reproduce that exactly, while still admitting NULL-state blocks
+      // that fall inside the range arm.
+      const nullStateOverdue = makeBlock({
+        id: 'null-state-overdue',
+        due_date: '2025-03-10',
+        todo_state: null,
+      })
+      const nullStateToday = makeBlock({
+        id: 'null-state-today',
+        due_date: '2025-03-15',
+        todo_state: null,
+      })
+
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'filtered_blocks_query') {
+          return {
+            items: [nullStateOverdue, nullStateToday],
+            next_cursor: null,
+            has_more: false,
+          }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
+        null,
+      )
+
+      expect(result.blocks.map((b) => b.id)).toEqual(['null-state-today'])
+    })
+
+    it('advances past a backend page fully consumed by the residual instead of returning an empty page with hasMore', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      // Page 1 of the SQL superset is ALL overdue-DONE rows (residual
+      // rejects every one); the survivors live on page 2. Returning
+      // `blocks: []` + `hasMore: true` would render the "no matching
+      // tasks" empty state with no LoadMoreButton — a permanent stall.
+      const overdueDone = makeBlock({
+        id: 'overdue-done',
+        due_date: '2025-03-01',
+        todo_state: 'DONE',
+      })
+      const survivor = makeBlock({ id: 'survivor', due_date: '2025-03-15', todo_state: 'DONE' })
+
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'filtered_blocks_query') {
+          const cursor = (args as Record<string, unknown>)['cursor']
+          if (cursor === 'PAGE_2') {
+            return { items: [survivor], next_cursor: 'PAGE_3', has_more: true }
+          }
+          return { items: [overdueDone], next_cursor: 'PAGE_2', has_more: true }
+        }
+        return emptyPage
+      })
+
+      const result = await executeAgendaFilters(
+        [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
+        null,
+      )
+
+      expect(filteredCalls()).toHaveLength(2)
+      expect(result.blocks.map((b) => b.id)).toEqual(['survivor'])
+      expect(result.hasMore).toBe(true)
+      expect(result.cursor).toBe('PAGE_3')
+    })
+
+    it('completedDate Today + Last 7 days → ONE union valueDateRange', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+      await executeAgendaFilters(
+        [{ dimension: 'completedDate', values: ['Today', 'Last 7 days'] }],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'completed_at',
+        valueDateRange: ['2025-03-09', '2025-03-16'],
+      })
+    })
+
+    it('date dimensions still AND against other dimensions', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2025-03-12T12:00:00'))
+
+      await executeAgendaFilters(
+        [
+          { dimension: 'status', values: ['TODO'] },
+          { dimension: 'dueDate', values: ['Today', 'This week'] },
+        ],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(2)
+      expect(propertyFilters[0]).toMatchObject({ key: 'todo_state', valueTextIn: ['TODO'] })
+      expect(propertyFilters[1]).toMatchObject({ key: 'due_date' })
+    })
+
+    it('multi-value same-key property filters collapse to ONE valueTextIn (OR)', async () => {
+      await executeAgendaFilters(
+        [{ dimension: 'property', values: ['assignee:Alice', 'assignee:Bob'] }],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({
+        key: 'assignee',
+        operator: 'eq',
+        valueTextIn: ['Alice', 'Bob'],
+      })
+    })
+
+    it('bare key subsumes valued entries for the same key (is-set OR eq = is-set)', async () => {
+      await executeAgendaFilters(
+        [{ dimension: 'property', values: ['assignee:Alice', 'assignee'] }],
+        null,
+      )
+
+      const call = filteredCalls()[0] as Record<string, unknown>
+      const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+      expect(propertyFilters).toHaveLength(1)
+      expect(propertyFilters[0]).toMatchObject({ key: 'assignee' })
+      expect(propertyFilters[0]?.['valueText']).toBeNull()
+      expect(propertyFilters[0]?.['valueTextIn']).toEqual([])
     })
   })
 
@@ -980,6 +1284,84 @@ describe('loadMoreAgendaFilters', () => {
     expect(result.hasMore).toBe(false)
     expect(result.cursor).toBeNull()
     expect(filteredCalls()).toHaveLength(0)
+  })
+
+  // #720 — page 2 must reuse page 1's `today`, not recompute `new Date()`:
+  // a load-more after midnight otherwise paginates a DIFFERENT predicate
+  // than page 1 (e.g. "Today" shifts a day mid-pagination).
+  it('#720: reuses the caller-provided today for date translation (page 2 after midnight)', async () => {
+    vi.useFakeTimers()
+    // The clock has rolled past midnight since page 1...
+    vi.setSystemTime(new Date('2025-03-16T00:30:00'))
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    // ...but the caller threads page 1's today through.
+    await loadMoreAgendaFilters(
+      [{ dimension: 'dueDate', values: ['Today'] }],
+      'CURSOR_PAGE_2',
+      null,
+      new Date('2025-03-15T12:00:00'),
+    )
+
+    const call = filteredCalls()[0] as Record<string, unknown>
+    const propertyFilters = call['propertyFilters'] as Array<Record<string, unknown>>
+    expect(propertyFilters[0]).toMatchObject({
+      key: 'due_date',
+      operator: 'eq',
+      valueDate: '2025-03-15', // page 1's today, NOT 2025-03-16
+    })
+  })
+
+  it('#720: executeAgendaFilters returns the today it used so callers can thread it', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [], next_cursor: null, has_more: true }
+      }
+      return emptyPage
+    })
+
+    const result = await executeAgendaFilters([{ dimension: 'dueDate', values: ['Today'] }], null)
+    expect(result.today).toEqual(new Date('2025-03-15T12:00:00'))
+  })
+
+  it('#720: applies the Overdue-union residual predicate to load-more pages too', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-03-15T12:00:00'))
+
+    const overdueDone = makeBlock({
+      id: 'p2-overdue-done',
+      due_date: '2025-03-01',
+      todo_state: 'DONE',
+    })
+    const overdueTodo = makeBlock({
+      id: 'p2-overdue-todo',
+      due_date: '2025-03-02',
+      todo_state: 'TODO',
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'filtered_blocks_query') {
+        return { items: [overdueDone, overdueTodo], next_cursor: null, has_more: false }
+      }
+      return emptyPage
+    })
+
+    const result = await loadMoreAgendaFilters(
+      [{ dimension: 'dueDate', values: ['Today', 'Overdue'] }],
+      'CURSOR_PAGE_2',
+      null,
+      new Date('2025-03-15T12:00:00'),
+    )
+
+    expect(result.blocks.map((b) => b.id)).toEqual(['p2-overdue-todo'])
   })
 
   it('normalizes a null spaceId to "" (FE-L-12 boundary)', async () => {

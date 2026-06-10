@@ -161,6 +161,68 @@ describe('groupByDate', () => {
     expect(groups[0]?.label).toBe('Overdue')
     expect(groups[1]?.label).toBe('Today')
   })
+
+  // #719 — date groups beyond Tomorrow were ordered alphabetically by
+  // their formatted label ("Fri, Jun 19" < "Mon, Jun 15"), not
+  // chronologically. These tests pin the relative order of concrete
+  // future-date groups, the exact gap the original suite never covered.
+  describe('#719: future date groups are chronological, not label-alphabetical', () => {
+    it('orders weekday-named groups by date (Mon, Jun 15 before Fri, Jun 19)', () => {
+      // 2026-06-15 is a Monday and 2026-06-19 a Friday — the issue's
+      // reported failure case: "Fri, ..." sorts before "Mon, ..."
+      // alphabetically, inverting the chronology.
+      const blocks = [
+        makeBlock({ id: 'fri', due_date: '2026-06-19', todo_state: 'TODO' }),
+        makeBlock({ id: 'mon', due_date: '2026-06-15', todo_state: 'TODO' }),
+      ]
+      const groups = groupByDate(blocks)
+      expect(groups.map((g) => g.label)).toEqual(['Mon, Jun 15, 2026', 'Fri, Jun 19, 2026'])
+      expect(groups[0]?.blocks[0]?.id).toBe('mon')
+      expect(groups[1]?.blocks[0]?.id).toBe('fri')
+    })
+
+    it('orders groups correctly across a month boundary', () => {
+      // 2025-07-28 (Mon) precedes 2025-08-01 (Fri); the label sort put
+      // "Fri, Aug 1" first because F < M.
+      const blocks = [
+        makeBlock({ id: 'aug', due_date: '2025-08-01', todo_state: 'TODO' }),
+        makeBlock({ id: 'jul', due_date: '2025-07-28', todo_state: 'TODO' }),
+      ]
+      const groups = groupByDate(blocks)
+      expect(groups.map((g) => g.label)).toEqual(['Mon, Jul 28', 'Fri, Aug 1'])
+    })
+
+    it('orders groups correctly across a year boundary', () => {
+      // "Fri, Jan 2, 2026" < "Wed, Dec 31" alphabetically — the label
+      // sort rendered next year's group before this year's.
+      const blocks = [
+        makeBlock({ id: 'jan', due_date: '2026-01-02', todo_state: 'TODO' }),
+        makeBlock({ id: 'dec', due_date: '2025-12-31', todo_state: 'TODO' }),
+      ]
+      const groups = groupByDate(blocks)
+      expect(groups.map((g) => g.label)).toEqual(['Wed, Dec 31', 'Fri, Jan 2, 2026'])
+    })
+
+    it('keeps special groups around chronological date groups', () => {
+      const blocks = [
+        makeBlock({ id: 'no-date' }),
+        makeBlock({ id: 'late', due_date: '2025-06-20', todo_state: 'TODO' }),
+        makeBlock({ id: 'early', due_date: '2025-02-03', todo_state: 'TODO' }),
+        makeBlock({ id: 'today', due_date: '2025-01-15', todo_state: 'TODO' }),
+        makeBlock({ id: 'tomorrow', due_date: '2025-01-16', todo_state: 'TODO' }),
+        makeBlock({ id: 'overdue', due_date: '2025-01-10', todo_state: 'TODO' }),
+      ]
+      const groups = groupByDate(blocks)
+      expect(groups.map((g) => g.label)).toEqual([
+        'Overdue',
+        'Today',
+        'Tomorrow',
+        'Mon, Feb 3',
+        'Fri, Jun 20',
+        'No date',
+      ])
+    })
+  })
 })
 
 describe('groupByPriority', () => {

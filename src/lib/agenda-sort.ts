@@ -70,22 +70,25 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
 
   for (const block of sorted) {
     const date = effectiveDate(block)
-    let label: string
+    // Map keys: the special group names plus raw YYYY-MM-DD strings for
+    // every other date. Raw-date keys keep lexicographic order ==
+    // chronological order (#719) — formatting happens at output time.
+    let key: string
     if (date === '9999-12-31') {
-      label = 'No date'
+      key = 'No date'
     } else if (date < todayStr && block.todo_state !== 'DONE') {
-      label = 'Overdue'
+      key = 'Overdue'
     } else if (date === todayStr) {
-      label = 'Today'
+      key = 'Today'
     } else if (date === tomorrowStr) {
-      label = 'Tomorrow'
+      key = 'Tomorrow'
     } else {
-      label = formatGroupDate(date)
+      key = date
     }
 
-    const existing = groups.get(label) ?? []
+    const existing = groups.get(key) ?? []
     existing.push(block)
-    groups.set(label, existing)
+    groups.set(key, existing)
   }
 
   // Sort group keys: Overdue first, then Today, Tomorrow, then chronological, No date last
@@ -103,13 +106,17 @@ export function groupByDate(blocks: BlockRow[]): AgendaGroup[] {
     }
   }
 
-  // Remaining date groups (sorted chronologically), excluding the `No date` key
+  // Remaining date groups, excluding the `No date` key. Keys are raw
+  // YYYY-MM-DD strings, so a plain string sort IS chronological (#719:
+  // sorting by formatted label compared weekday/month NAMES first —
+  // "Fri, Jun 19" rendered before "Mon, Jun 15"). Labels are formatted
+  // only after ordering.
   const noDate = groups.get('No date')
   groups.delete('No date')
 
-  const remaining = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-  for (const [label, blocks] of remaining) {
-    result.push({ label, blocks })
+  const remaining = [...groups.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  for (const [date, blocks] of remaining) {
+    result.push({ label: formatGroupDate(date), blocks })
   }
 
   // No date group at the end
