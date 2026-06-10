@@ -16,9 +16,11 @@
  *     now dense + collision-free, order matches drop intent (not ULID).
  */
 
+import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { useBlockZoom } from '../../hooks/useBlockZoom'
 import { computeDropIndex, type FlatBlock, getProjection, SENTINEL_ID } from '../tree-utils'
 
 const INDENT = 24
@@ -262,6 +264,208 @@ describe('drop pipeline — sentinel (drop after last)', () => {
 // ───────────────────────────────────────────────────────────────────────────
 // Subtree integrity
 // ───────────────────────────────────────────────────────────────────────────
+
+// ───────────────────────────────────────────────────────────────────────────
+// Zoomed view (#712)
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reproduce `useBlockZoom.zoomedVisible`: descendants of the zoomed block,
+ * depth rebased so the zoomed block's direct children sit at depth 0 while
+ * keeping their REAL `parent_id`s.
+ */
+function zoomedView(items: FlatBlock[], zoomedBlockId: string): FlatBlock[] {
+  const zoomedBlock = items.find((b) => b.id === zoomedBlockId)
+  if (!zoomedBlock) return items
+  const depthOffset = zoomedBlock.depth + 1
+  const descendantIds = collectDescendants(items, zoomedBlockId)
+  return items
+    .filter((b) => descendantIds.has(b.id))
+    .map((b) => ({ ...b, depth: b.depth - depthOffset }))
+}
+
+interface ZoomedDropResult extends DropResult {
+  /** What handleDragEnd computes: did the projected parent differ from the real one? */
+  parentChanged: boolean
+}
+
+/**
+ * Reproduce `useBlockDnD.handleDragEnd` for a drag inside a ZOOMED BlockTree.
+ * Mirrors the #712 fix: BlockTree passes `zoomedBlockId ?? rootParentId` as
+ * the projection/drop root, so depth-0 drops resolve to the zoomed block.
+ */
+function simulateZoomedDrop(
+  rows: FlatBlock[],
+  zoomedBlockId: string,
+  activeId: string,
+  overId: string,
+  offsetX = 0,
+  dropRootOverride?: string | null,
+): ZoomedDropResult {
+  const items = reflatten(rows)
+  const zoomed = zoomedView(items, zoomedBlockId)
+  const descendantIds = collectDescendants(zoomed, activeId)
+  const visibleItems = zoomed.filter((b) => !descendantIds.has(b.id))
+
+  const dropRoot = dropRootOverride === undefined ? zoomedBlockId : dropRootOverride
+  const projected = getProjection(visibleItems, activeId, overId, offsetX, INDENT, dropRoot)
+  const index = computeDropIndex(visibleItems, projected.parentId, overId, activeId)
+
+  // handleDragEnd's reorder-vs-reparent decision (real parent_id from the
+  // full block list, exactly like `blocks.find(...)` in the hook).
+  const activeBlock = items.find((b) => b.id === activeId)
+  const parentChanged = projected.parentId !== (activeBlock?.parent_id ?? dropRoot)
+
+  const moved = backendMove(rows, activeId, projected.parentId, index)
+  const flat = reflatten(moved)
+  return {
+    order: flat.map((b) => b.id),
+    parentId: projected.parentId,
+    index,
+    parentChanged,
+    depthOf: (id: string) => flat.find((b) => b.id === id)?.depth ?? -1,
+  }
+}
+
+/**
+ * Fixture for the zoom tests:
+ *   Z  (page root)
+ *     Z1
+ *       Z1a
+ *     Z2
+ *     Z3
+ *   R  (page root)
+ * Zoomed into Z, the visible view is [Z1(0), Z1a(1), Z2(0), Z3(0)].
+ */
+function zoomFixture(): FlatBlock[] {
+  return [
+    makeBlock({ id: 'Z', parent_id: null, position: 1, depth: 0 }),
+    makeBlock({ id: 'Z1', parent_id: 'Z', position: 1, depth: 1 }),
+    makeBlock({ id: 'Z1a', parent_id: 'Z1', position: 1, depth: 2 }),
+    makeBlock({ id: 'Z2', parent_id: 'Z', position: 2, depth: 1 }),
+    makeBlock({ id: 'Z3', parent_id: 'Z', position: 3, depth: 1 }),
+    makeBlock({ id: 'R', parent_id: null, position: 2, depth: 0 }),
+  ]
+}
+
+describe('drop pipeline — zoomed view (#712)', () => {
+  it('EJECTION CASE: in-place reorder among the zoomed block’s children stays inside the subtree', () => {
+    // Zoomed into Z, drag Z2 down onto Z3 — a plain same-parent reorder.
+    const { parentId, parentChanged, order, depthOf } = simulateZoomedDrop(
+      zoomFixture(),
+      'Z',
+      'Z2',
+      'Z3',
+    )
+    // The projected parent is the ZOOMED block, not the page root → the
+    // hook takes the `reorder` path instead of `moveToParent(pageRoot)`.
+    expect(parentId).toBe('Z')
+    expect(parentChanged).toBe(false)
+    expect(order).toEqual(['Z', 'Z1', 'Z1a', 'Z3', 'Z2', 'R'])
+    expect(depthOf('Z2')).toBe(1) // still a child of Z
+  })
+
+  it('regression pin: threading the PAGE root (pre-#712) ejects the block to the page root', () => {
+    // Same gesture, but with the page root as the drop root — the pre-fix
+    // wiring. getProjection resolves the depth-0 drop to the page root, the
+    // hook sees parentChanged=true, and moveToParent reparents the block OUT
+    // of the zoomed subtree (it vanishes from the zoomed view).
+    const { parentId, parentChanged, depthOf } = simulateZoomedDrop(
+      zoomFixture(),
+      'Z',
+      'Z2',
+      'Z3',
+      0,
+      null, // page rootParentId (null = top level)
+    )
+    expect(parentId).toBeNull()
+    expect(parentChanged).toBe(true)
+    expect(depthOf('Z2')).toBe(0) // ejected to the page root
+  })
+
+  it('edge: drop at the very TOP of the zoomed subtree computes slot 0 under the zoomed block', () => {
+    const { parentId, parentChanged, index, order } = simulateZoomedDrop(
+      zoomFixture(),
+      'Z',
+      'Z3',
+      'Z1',
+    )
+    expect(parentId).toBe('Z')
+    expect(parentChanged).toBe(false)
+    expect(index).toBe(0)
+    expect(order).toEqual(['Z', 'Z3', 'Z1', 'Z1a', 'Z2', 'R'])
+  })
+
+  it('edge: sentinel drop at the END of the zoomed subtree appends as the zoomed block’s last child', () => {
+    const { parentId, parentChanged, index, order, depthOf } = simulateZoomedDrop(
+      zoomFixture(),
+      'Z',
+      'Z1',
+      SENTINEL_ID,
+    )
+    // Depth-0 sentinel drop resolves to the zoomed block — NOT the page root —
+    // even though blocks (R) exist after the subtree at page level.
+    expect(parentId).toBe('Z')
+    expect(parentChanged).toBe(false)
+    expect(index).toBe(2) // after Z2 and Z3 (the block's other siblings)
+    expect(order).toEqual(['Z', 'Z2', 'Z3', 'Z1', 'Z1a', 'R'])
+    expect(depthOf('Z1')).toBe(1) // still inside Z; subtree (Z1a) intact
+  })
+
+  it('indent inside the zoomed subtree still reparents within it', () => {
+    // Drag Z2 in place with a right offset → nests under the previous visible
+    // row's level. parentChanged=true is correct (real reparent), but the new
+    // parent is INSIDE the zoomed subtree.
+    const { parentId, parentChanged, order, depthOf } = simulateZoomedDrop(
+      zoomFixture(),
+      'Z',
+      'Z2',
+      'Z2',
+      INDENT * 2,
+    )
+    expect(parentId).toBe('Z1')
+    expect(parentChanged).toBe(true)
+    expect(order).toEqual(['Z', 'Z1', 'Z1a', 'Z2', 'Z3', 'R'])
+    expect(depthOf('Z2')).toBe(2)
+  })
+
+  it('REAL useBlockZoom output drives the pipeline to the same result as the local model', () => {
+    // Anti-drift guard for the `zoomedView` helper above: render the REAL
+    // hook, zoom into Z, and (a) pin that its `zoomedVisible` matches the
+    // helper's output, (b) push that output through the same projection +
+    // slot math as the EJECTION CASE and land on the identical reorder.
+    const rows = reflatten(zoomFixture())
+    const { result } = renderHook(() => useBlockZoom(rows, rows))
+    act(() => result.current.zoomIn('Z'))
+
+    const realZoomedVisible = result.current.zoomedVisible
+    expect(realZoomedVisible).toEqual(zoomedView(rows, 'Z'))
+    expect(realZoomedVisible.map((b) => [b.id, b.depth])).toEqual([
+      ['Z1', 0],
+      ['Z1a', 1],
+      ['Z2', 0],
+      ['Z3', 0],
+    ])
+
+    // Drag Z2 onto Z3 (no descendants to filter) with the #712 drop root.
+    const projected = getProjection(realZoomedVisible, 'Z2', 'Z3', 0, INDENT, 'Z')
+    expect(projected.parentId).toBe('Z') // reorder, not reparent-to-page-root
+    const index = computeDropIndex(realZoomedVisible, projected.parentId, 'Z3', 'Z2')
+    expect(index).toBe(2)
+
+    const flat = reflatten(backendMove(rows, 'Z2', projected.parentId, index))
+    expect(flat.map((b) => b.id)).toEqual(['Z', 'Z1', 'Z1a', 'Z3', 'Z2', 'R'])
+    expect(flat.find((b) => b.id === 'Z2')?.depth).toBe(1) // still inside Z
+  })
+
+  it('unzoomed regression: depth-0 drops still resolve to the page root', () => {
+    // No zoom — the page rootParentId (null) flows through unchanged and a
+    // root-level reorder behaves exactly as before.
+    const { parentId, order } = simulateMouseDrop(zoomFixture(), 'Z', 'R')
+    expect(parentId).toBeNull()
+    expect(order).toEqual(['R', 'Z', 'Z1', 'Z1a', 'Z2', 'Z3'])
+  })
+})
 
 describe('drop pipeline — subtree moves as a unit', () => {
   it('a moved parent keeps its child adjacent and nested (subtree intact)', () => {
