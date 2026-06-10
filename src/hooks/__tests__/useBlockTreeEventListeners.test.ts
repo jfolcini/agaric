@@ -6,12 +6,33 @@
  */
 
 import { renderHook } from '@testing-library/react'
+import { createElement } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { makeBlock } from '../../__tests__/fixtures'
 import type { RovingEditorHandle } from '../../editor/use-roving-editor'
 import { dispatchBlockEvent } from '../../lib/block-events'
+import { createPageBlockStore, PageBlockContext } from '../../stores/page-blocks'
+import { useBlockProperties } from '../useBlockProperties'
 import type { UseBlockTreeEventListenersOptions } from '../useBlockTreeEventListeners'
 import { useBlockTreeEventListeners } from '../useBlockTreeEventListeners'
+
+/**
+ * #713 — minimal page-store stub that "owns" the given block ids: the
+ * ownership gate calls `getState().blocksById.has(id)` via `storeOwnsBlock`.
+ */
+function makePageStore(
+  ownedBlocks: Array<{ id: string; content?: string }>,
+): UseBlockTreeEventListenersOptions['pageStore'] {
+  const blocks = ownedBlocks.map((b) => ({ content: '', ...b }))
+  const blocksById = new Map(blocks.map((b) => [b.id, b]))
+  return {
+    setState: vi.fn(),
+    getState: () => ({ blocksById, blocks }),
+    getInitialState: vi.fn(),
+    subscribe: vi.fn(),
+  } as unknown as UseBlockTreeEventListenersOptions['pageStore']
+}
 
 function makeOptions(
   overrides: Partial<UseBlockTreeEventListenersOptions> = {},
@@ -31,12 +52,7 @@ function makeOptions(
     datePickerCursorPos: { current: undefined },
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
-    pageStore: {
-      setState: vi.fn(),
-      getState: vi.fn(),
-      getInitialState: vi.fn(),
-      subscribe: vi.fn(),
-    } as unknown as UseBlockTreeEventListenersOptions['pageStore'],
+    pageStore: makePageStore([{ id: 'BLOCK_1' }]),
     t: (key: string) => key,
     ...overrides,
   }
@@ -346,6 +362,178 @@ describe('useBlockTreeEventListeners', () => {
       dispatchBlockEvent('INSERT_DIVIDER')
 
       expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    })
+  })
+
+  // #713 — journal week/month mount one BlockTree (one copy of every
+  // listener here) per day, all sharing the global focusedBlockId. Only the
+  // tree whose page store owns the focused block may act; a non-owning tree
+  // must perform ZERO side effects.
+  describe('#713 — multi-tree ownership gating', () => {
+    /** Two trees with distinct page stores; the global focus is in tree A. */
+    function renderTwoTrees() {
+      const treeA = makeOptions({
+        focusedBlockId: 'BLOCK_A',
+        pageStore: makePageStore([{ id: 'BLOCK_A', content: 'hello' }]),
+      })
+      const treeB = makeOptions({
+        focusedBlockId: 'BLOCK_A', // global focus — foreign to tree B's store
+        pageStore: makePageStore([{ id: 'BLOCK_B', content: 'other' }]),
+      })
+      renderHook(() => useBlockTreeEventListeners(treeA))
+      renderHook(() => useBlockTreeEventListeners(treeB))
+      return { treeA, treeB }
+    }
+
+    it('TOGGLE_TODO_STATE fires exactly once, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchBlockEvent('TOGGLE_TODO_STATE')
+
+      expect(treeA.handleToggleTodo).toHaveBeenCalledTimes(1)
+      expect(treeA.handleToggleTodo).toHaveBeenCalledWith('BLOCK_A')
+      expect(treeB.handleToggleTodo).not.toHaveBeenCalled()
+    })
+
+    it('CYCLE_PRIORITY fires exactly once, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchBlockEvent('CYCLE_PRIORITY')
+
+      expect(treeA.handleTogglePriority).toHaveBeenCalledTimes(1)
+      expect(treeA.handleTogglePriority).toHaveBeenCalledWith('BLOCK_A')
+      expect(treeB.handleTogglePriority).not.toHaveBeenCalled()
+    })
+
+    it('SET_PRIORITY_1 issues exactly ONE set_priority IPC and only updates the owning store', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockClear()
+      mockedInvoke.mockResolvedValue(undefined)
+
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchBlockEvent('SET_PRIORITY_1')
+
+      await vi.waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'set_priority')
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.[1]).toEqual({ blockId: 'BLOCK_A', level: '1' })
+      })
+      // The optimistic store write lands after the awaited IPC resolves.
+      await vi.waitFor(() => expect(treeA.pageStore.setState).toHaveBeenCalled())
+      expect(treeB.pageStore.setState).not.toHaveBeenCalled()
+    })
+
+    it('OPEN_DATE_PICKER opens exactly one picker, in the owning tree only', () => {
+      const { treeA, treeB } = renderTwoTrees()
+
+      dispatchBlockEvent('OPEN_DATE_PICKER')
+
+      expect(treeA.setDatePickerOpen).toHaveBeenCalledTimes(1)
+      expect(treeA.setDatePickerOpen).toHaveBeenCalledWith(true)
+      expect(treeB.setDatePickerOpen).not.toHaveBeenCalled()
+    })
+
+    it('INSERT_DIVIDER edits the block exactly once, via the owning tree only', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockClear()
+      mockedInvoke.mockResolvedValue(undefined)
+
+      renderTwoTrees()
+
+      dispatchBlockEvent('INSERT_DIVIDER')
+
+      await vi.waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'edit_block')
+        expect(calls).toHaveLength(1)
+        expect(calls[0]?.[1]).toEqual({ blockId: 'BLOCK_A', toText: '---' })
+      })
+    })
+
+    it('a non-owning tree alone performs zero side effects', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockClear()
+
+      // The global focus points at a block that does NOT live in this store.
+      const opts = makeOptions({
+        focusedBlockId: 'BLOCK_A',
+        pageStore: makePageStore([{ id: 'BLOCK_B' }]),
+      })
+      renderHook(() => useBlockTreeEventListeners(opts))
+
+      dispatchBlockEvent('DISCARD_BLOCK_EDIT')
+      dispatchBlockEvent('CYCLE_PRIORITY')
+      dispatchBlockEvent('SET_PRIORITY_1')
+      dispatchBlockEvent('OPEN_DATE_PICKER')
+      dispatchBlockEvent('OPEN_DUE_DATE_PICKER')
+      dispatchBlockEvent('OPEN_SCHEDULED_DATE_PICKER')
+      dispatchBlockEvent('TOGGLE_TODO_STATE')
+      dispatchBlockEvent('OPEN_BLOCK_PROPERTIES')
+      dispatchBlockEvent('INSERT_DIVIDER')
+
+      // Flush the (synchronously-rejected) async handlers.
+      await Promise.resolve()
+
+      expect(opts.handleEscapeCancel).not.toHaveBeenCalled()
+      expect(opts.handleTogglePriority).not.toHaveBeenCalled()
+      expect(opts.handleToggleTodo).not.toHaveBeenCalled()
+      expect(opts.handleShowProperties).not.toHaveBeenCalled()
+      expect(opts.setDatePickerOpen).not.toHaveBeenCalled()
+      expect(opts.pageStore.setState).not.toHaveBeenCalled()
+      expect(mockedInvoke).not.toHaveBeenCalledWith('set_priority', expect.anything())
+      expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    })
+
+    it('todo toggle computes the next state from the OWNING store, not a foreign tree', async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const mockedInvoke = vi.mocked(invoke)
+      mockedInvoke.mockClear()
+      mockedInvoke.mockResolvedValue(undefined)
+
+      // Real per-page stores + the real `useBlockProperties` cycle logic.
+      // Tree A owns BLOCK_A in state DOING → next is DONE. Tree B's store
+      // doesn't contain BLOCK_A; pre-#713 its handler computed
+      // `current = null` → 'TODO' and raced a conflicting IPC.
+      const storeA = createPageBlockStore('PAGE_A')
+      storeA.setState({ blocks: [makeBlock({ id: 'BLOCK_A', todo_state: 'DOING' })] })
+      const storeB = createPageBlockStore('PAGE_B')
+      storeB.setState({ blocks: [makeBlock({ id: 'BLOCK_B' })] })
+
+      const renderTree = (store: typeof storeA) =>
+        renderHook(
+          () => {
+            const { handleToggleTodo, handleTogglePriority } = useBlockProperties()
+            useBlockTreeEventListeners(
+              makeOptions({
+                focusedBlockId: 'BLOCK_A',
+                pageStore: store,
+                handleToggleTodo,
+                handleTogglePriority,
+              }),
+            )
+          },
+          {
+            wrapper: ({ children }) =>
+              createElement(PageBlockContext.Provider, { value: store }, children),
+          },
+        )
+
+      renderTree(storeA)
+      renderTree(storeB)
+
+      dispatchBlockEvent('TOGGLE_TODO_STATE')
+
+      await vi.waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter((c: unknown[]) => c[0] === 'set_todo_state')
+        expect(calls).toHaveLength(1)
+        // DOING → DONE per the owning store; a foreign tree would send 'TODO'.
+        expect(calls[0]?.[1]).toEqual({ blockId: 'BLOCK_A', state: 'DONE' })
+      })
+      expect(storeA.getState().blocksById.get('BLOCK_A')?.todo_state).toBe('DONE')
+      expect(storeB.getState().blocksById.has('BLOCK_A')).toBe(false)
     })
   })
 })
