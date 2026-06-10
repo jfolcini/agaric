@@ -102,8 +102,16 @@ jobs:
             - Otherwise, request changes and list what must be fixed:
                 gh pr review ${{ github.event.pull_request.number }} --request-changes --body "<what to fix>"
             Only approve when you are confident the change is safe to merge.
-          # Allow Claude to submit the review verdict.
-          claude_args: '--allowed-tools "Bash(gh pr review:*)"'
+          # Least-privilege tool grant. The code-review plugin must READ the
+          # PR (gh pr view/diff, scoped gh api) and inspect the checkout
+          # (Read/Grep/Glob — local, no network), then POST its review
+          # (gh pr comment) and cast the verdict (gh pr review). The previous
+          # grant of only `gh pr review` silently lobotomized the job: every
+          # run ended "success" with ~20 permission denials and zero output
+          # (diagnosed 2026-06-10). No generic Bash, no write outside the two
+          # gh pr verbs, gh api restricted to this repo read paths.
+          claude_args: >-
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh api repos/jfolcini/agaric/*),Read,Grep,Glob"
           # claude-code-action refuses to run on bot-triggered PRs by default
           # ("Workflow initiated by non-human actor: dependabot (type: Bot)").
           # Explicitly allow `dependabot[bot]` so weekly bump PRs get the same
