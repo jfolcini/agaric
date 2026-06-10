@@ -107,8 +107,8 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 |---|---|---|
 | `tag:#name` | Block carries the tag `name`. | Repeats AND-combine. |
 | `#name` | Bare alias for `tag:#name`. | Equivalent shape. |
-| `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. |
-| `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. |
+| `path:GLOB` | Page-name glob include. | Comma-separated entries OR-combine inside one token. Quote a glob containing spaces: `path:"Meeting Notes/*"` (see *Values with spaces*). |
+| `not-path:GLOB` | Page-name glob exclude. | AND-joined with `path:`. Same quoting rule as `path:`. |
 | `state:VALUE` | Block's `todo_state` is `VALUE`. | Repeats OR-combine (`state IN (…)`). Custom states allowed. `state:none` matches `todo_state IS NULL`. |
 | `not-state:VALUE` | Block's `todo_state` is **not** `VALUE`. | NULL-inclusive inversion: `(todo_state IS NULL OR todo_state NOT IN (…))`. Repeats AND-extend the exclusion set. `not-state:none` flips to `todo_state IS NOT NULL`. |
 | `priority:VALUE` | Block's `priority` is `VALUE`. | Repeats OR-combine. `priority:none` matches `priority IS NULL`. |
@@ -119,6 +119,17 @@ The find-across-pages view supports a small filter vocabulary that mixes freely 
 | `not-prop:KEY=VALUE` | Block does NOT have that property/value. | AND-joined exclusion. |
 | `"phrase"` | Quoted phrase passed verbatim to FTS5. | Bypasses the trigram length filter. |
 | `AND` / `OR` / `NOT` | Boolean operators (uppercase, FTS5 syntax). | Outside filter tokens. |
+
+### Values with spaces
+
+The tokeniser splits the query on whitespace, so a filter value that itself contains spaces must be wrapped in `"..."`:
+
+- `prop:KEY="VALUE WITH SPACES"` — e.g. `prop:status="in progress"` (#152).
+- `path:"GLOB WITH SPACES"` / `not-path:"GLOB WITH SPACES"` — e.g. `path:"Meeting Notes/*"` (#718).
+
+The quotes are syntax, not part of the value: the parser strips one surrounding pair, and the serialiser re-adds quotes whenever the value contains whitespace (or is itself `"`-wrapped, so a stripped pair isn't stripped again on the next parse) — so chips, copy-paste, and the `+ Filter ▾` popover all round-trip exactly. Both quotes must be present; an unmatched leading `"` is kept as a literal character. An unquoted value simply ends at the first space (`path:Meeting Notes/*` is the chip `path:Meeting` plus the free text `Notes/*`). The other filter values (`tag:`, `state:`, `priority:`, `due:`, `scheduled:` and their negations) have no whitespace in their vocabularies and take no quoting.
+
+There is no escape syntax for a literal `"` *inside* a quoted value. The `+ Filter ▾` forms therefore reject values containing `"` (both the property-value form (#152) and the path-glob form (#718)). A hand-typed value that mixes `"` with whitespace (e.g. `path:a" b"`) is parsed by the tokeniser's literal-quote rules and is not guaranteed to survive a serialise → re-parse cycle.
 
 ### Autocomplete
 
@@ -225,7 +236,7 @@ Invalid chips render with destructive styling, an `aria-invalid` marker, and the
 
 ### `path:` is title-substring, not exact-page
 
-`path:` matches against the page **title** with substring semantics by default, not a single exact page. `path:Project Alpha` matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. For an exact-page filter, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
+`path:` matches against the page **title** with substring semantics by default, not a single exact page. `path:"Project Alpha"` (quoted — the title contains a space, see *Values with spaces*) matches `Project Alpha`, `Project Alpha 2`, and `Old Project Alpha`. For an exact-page filter, use the page's inline link form `[[Project Alpha]]` in the query (FTS5 matches verbatim) or pair `path:` with a unique substring.
 
 ## Toggles
 

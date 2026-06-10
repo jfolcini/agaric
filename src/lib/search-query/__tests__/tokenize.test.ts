@@ -92,6 +92,18 @@ describe('tokenize', () => {
     expect(t0.span).toEqual([0, 28])
   })
 
+  it('keeps a quoted path glob with spaces as a single word (#718)', () => {
+    // Same mid-word phrase rule as #152, glued to the `path:` prefix —
+    // `path:"Meeting Notes/*"` must reach the classifier as one token.
+    const tokens = tokenize('path:"Meeting Notes/*" tag:#x')
+    expect(tokens).toHaveLength(2)
+    const [t0, t1] = tokens
+    if (!t0 || !t1) throw new Error('expected two tokens')
+    expect(t0.kind).toBe('word')
+    expect(t0.text).toBe('path:"Meeting Notes/*"')
+    expect(t1.text).toBe('tag:#x')
+  })
+
   it('mid-word quote without a matching close still ends the word at whitespace (#152)', () => {
     // No closing `"` at a boundary — the `"` degrades to a literal,
     // and the word ends at the next whitespace.

@@ -27,7 +27,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -43,6 +43,17 @@ import { DateFilterForm } from './filter-forms/DateFilterForm'
 import { PriorityFilterForm } from './filter-forms/PriorityFilterForm'
 import { PropFilterForm } from './filter-forms/PropFilterForm'
 import { StateFilterForm } from './filter-forms/StateFilterForm'
+
+/**
+ * #718 — a path glob cannot contain a literal `"` (mirrors
+ * PropFilterForm's #152 value rule). The serialiser quotes globs with
+ * whitespace, but the DSL has no escape syntax for `"` inside the
+ * quotes, so a glob carrying its own quote characters would not survive
+ * the serialise → re-parse round-trip.
+ */
+function isPathGlobValid(glob: string): boolean {
+  return !/"/.test(glob)
+}
 
 type Mode =
   | 'menu'
@@ -97,6 +108,12 @@ export function FilterHelperPopover({
 
   // Path mode state.
   const [pathInput, setPathInput] = useState('')
+  const pathErrorId = useId()
+  const trimmedPath = pathInput.trim()
+  const pathValid = isPathGlobValid(trimmedPath)
+  // Only surface the error once the field is non-empty (same pattern as
+  // PropFilterForm — don't yell at an empty form).
+  const showPathError = trimmedPath !== '' && !pathValid
 
   function reset() {
     setMode('menu')
@@ -186,8 +203,14 @@ export function FilterHelperPopover({
   }
 
   function submitPathFilter() {
+    // #718 — the serialiser wraps a glob containing whitespace in
+    // `"..."` and the recogniser strips the quotes on parse, so values
+    // like `Meeting Notes/*` round-trip. A literal `"` inside the glob
+    // is rejected (mirrors PropFilterForm's #152 rule): the DSL has no
+    // escape syntax, so a value like `My "Q" Notes/*` would serialise
+    // to `path:"My "Q" Notes/*"` and fragment on re-parse.
     const v = pathInput.trim()
-    if (!v) return
+    if (!v || !isPathGlobValid(v)) return
     if (mode === 'pathInclude') onAddPathInclude(v)
     else if (mode === 'pathExclude') onAddPathExclude(v)
     handleOpenChange(false)
@@ -353,14 +376,21 @@ export function FilterHelperPopover({
               onChange={(e) => setPathInput(e.target.value)}
               placeholder={t('search.filterHelper.pathPlaceholder')}
               className="mt-2"
+              aria-invalid={showPathError || undefined}
+              aria-errormessage={showPathError ? pathErrorId : undefined}
               // oxlint-disable-next-line jsx-a11y/no-autofocus -- this path input renders only after the user switches into pathInclude/pathExclude mode inside the open filter popover; focusing it lets them type the path immediately without an extra click/tab
               autoFocus
             />
+            {showPathError ? (
+              <p id={pathErrorId} role="alert" className="mt-1 text-xs text-destructive">
+                {t('search.filterHelper.pathValueInvalid')}
+              </p>
+            ) : null}
             <div className="mt-2 flex gap-2 justify-end">
               <Button type="button" variant="outline" size="sm" onClick={() => setMode('menu')}>
                 {t('search.filterHelper.back')}
               </Button>
-              <Button type="submit" size="sm" disabled={!pathInput.trim()}>
+              <Button type="submit" size="sm" disabled={!trimmedPath || !pathValid}>
                 {t('search.filterHelper.add')}
               </Button>
             </div>
