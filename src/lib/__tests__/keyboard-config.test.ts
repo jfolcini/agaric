@@ -298,6 +298,115 @@ describe('keyboard-config', () => {
     expect(c).toBeUndefined()
   })
 
+  // ── #754 Pass 3: cross-category conflicts between always-on listeners ──
+
+  it('findConflicts flags a cross-category collision between two always-on listeners (#754)', () => {
+    // goToToday (journal listener) rebound onto paletteOpen's chord
+    // (global listener). Both listeners run on every keystroke, so the
+    // two bindings race — previously unflagged because the grouping was
+    // (keys, category).
+    setCustomShortcut('goToToday', 'Ctrl + K')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find((x) => x.ids.includes('goToToday') && x.ids.includes('paletteOpen'))
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + K')
+  })
+
+  it('findConflicts pass 3 matches individual chord alternatives (#754)', () => {
+    // createNewPage (global, wildcard) rebound to ONE alternative of
+    // redoLastUndoneOp's 'Ctrl + Y / Ctrl + Shift + Z' (undoRedo,
+    // conditioned). Wildcard × conditioned across always-on categories
+    // → flagged, keyed on the shared chord.
+    setCustomShortcut('createNewPage', 'Ctrl + Shift + Z')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('createNewPage') && x.ids.includes('redoLastUndoneOp'),
+    )
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + Shift + Z')
+  })
+
+  it('findConflicts pass 3 does NOT flag disjoint defined conditions across categories (#754)', () => {
+    // findInPageNext (global, condition findInPageOpen) rebound onto
+    // closeActiveTab's chord (tabs, condition desktopOnly). Both
+    // conditions are defined and differ → assumed disjoint, not flagged
+    // (UX-394 rule carried over to pass 3).
+    setCustomShortcut('findInPageNext', 'Ctrl + W')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('findInPageNext') && x.ids.includes('closeActiveTab'),
+    )
+    expect(c).toBeUndefined()
+  })
+
+  it('findConflicts pass 3 ignores editor-scoped categories (documented benign default pairs)', () => {
+    // runLastCommand (global) and collapseExpand (editing) share
+    // 'Ctrl + .' by design — the editing listener only fires with a
+    // focused block, exactly when runLastCommand bails. Editor-scoped
+    // categories are outside the always-on set, so the pair stays
+    // unflagged (and the defaults stay conflict-free, asserted above).
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('runLastCommand') && x.ids.includes('collapseExpand'),
+    )
+    expect(c).toBeUndefined()
+  })
+
+  it('findConflicts pass 3 covers the page-editor document listener (#754)', () => {
+    // PageHeader installs a document-level keydown for exportPageMarkdown
+    // whenever a page is open — it races the always-on listeners exactly
+    // like the global/journal/spaces/tabs/undoRedo set. createNewPage
+    // (global, wildcard) rebound onto its chord must be flagged.
+    setCustomShortcut('createNewPage', 'Ctrl + Shift + E')
+
+    const conflicts = findConflicts()
+    const c = conflicts.find(
+      (x) => x.ids.includes('createNewPage') && x.ids.includes('exportPageMarkdown'),
+    )
+    expect(c).toBeDefined()
+    expect(c?.keys).toBe('Ctrl + Shift + E')
+  })
+
+  // ── #754: getCustomOverrides parse cache ────────────────────────────
+
+  it('getCustomOverrides parses the blob once across repeated calls (#754 cache)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + P' }))
+    const parseSpy = vi.spyOn(JSON, 'parse')
+
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + P' })
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + P' })
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + P' })
+
+    expect(parseSpy).toHaveBeenCalledTimes(1)
+    parseSpy.mockRestore()
+  })
+
+  it('getCustomOverrides cache self-invalidates on a direct localStorage write (#754)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + 1' }))
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 1' })
+
+    // Bypass setCustomShortcut entirely — e.g. another tab's write.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ dedentBlock: 'Ctrl + Alt + 2' }))
+    expect(getCustomOverrides()).toEqual({ dedentBlock: 'Ctrl + Alt + 2' })
+  })
+
+  it('a failed setCustomShortcut write does not corrupt the cached overrides (#754)', () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ indentBlock: 'Ctrl + Alt + 3' }))
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 3' })
+
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceeded')
+    })
+    setCustomShortcut('dedentBlock', 'Ctrl + Alt + 4')
+    vi.restoreAllMocks()
+
+    // The write never landed; the cached view must still mirror storage.
+    expect(getCustomOverrides()).toEqual({ indentBlock: 'Ctrl + Alt + 3' })
+  })
+
   it('findConflicts detects conflict when two shortcuts are both set to the same custom key', () => {
     // Set two editing shortcuts to the same brand-new key combo
     setCustomShortcut('indentBlock', 'Ctrl + Shift + X')

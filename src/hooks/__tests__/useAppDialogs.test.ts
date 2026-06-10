@@ -10,11 +10,18 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../../lib/bug-report-events'
+import { setCustomShortcut } from '../../lib/keyboard-config/storage'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
 import { useAppDialogs } from '../useAppDialogs'
+
+beforeEach(() => {
+  // The #754 showShortcuts listener resolves its binding from
+  // localStorage overrides — keep each test on the defaults.
+  localStorage.clear()
+})
 
 // ---------------------------------------------------------------------------
 // 1. Initial state
@@ -164,6 +171,121 @@ describe('useAppDialogs — CLOSE_ALL_OVERLAYS_EVENT', () => {
     expect(result.current.bugReportOpen).toBe(true)
     expect(result.current.quickCaptureOpen).toBe(true)
     expect(result.current.showNoPeersDialog).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4b. Global `showShortcuts` keydown listener (#754)
+// ---------------------------------------------------------------------------
+
+describe('useAppDialogs — showShortcuts keydown listener (#754)', () => {
+  it('pressing "?" opens the shortcuts sheet', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    expect(result.current.shortcutsOpen).toBe(false)
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+    })
+
+    expect(result.current.shortcutsOpen).toBe(true)
+  })
+
+  it('ignores "?" while typing in an input', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+
+    try {
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+      })
+      expect(result.current.shortcutsOpen).toBe(false)
+    } finally {
+      document.body.removeChild(input)
+    }
+  })
+
+  it('ignores "?" while typing in a contenteditable element', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editable)
+
+    try {
+      act(() => {
+        editable.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+      })
+      expect(result.current.shortcutsOpen).toBe(false)
+    } finally {
+      document.body.removeChild(editable)
+    }
+  })
+
+  it('ignores "?" with stray modifiers (routed through matchesShortcutBinding)', () => {
+    const { result } = renderHook(() => useAppDialogs())
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '?', ctrlKey: true, bubbles: true }),
+      )
+    })
+
+    expect(result.current.shortcutsOpen).toBe(false)
+  })
+
+  it('ignores "?" while typing in a textarea', () => {
+    const { result } = renderHook(() => useAppDialogs())
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+
+    try {
+      act(() => {
+        textarea.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+      })
+      expect(result.current.shortcutsOpen).toBe(false)
+    } finally {
+      document.body.removeChild(textarea)
+    }
+  })
+
+  it('ignores unrelated keys', () => {
+    const { result } = renderHook(() => useAppDialogs())
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true }))
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+
+    expect(result.current.shortcutsOpen).toBe(false)
+  })
+
+  it('#724: honours a Settings rebind — new chord opens, default "?" is dead', () => {
+    setCustomShortcut('showShortcuts', 'Ctrl + /')
+    const { result } = renderHook(() => useAppDialogs())
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+    })
+    expect(result.current.shortcutsOpen).toBe(false)
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: '/', ctrlKey: true, bubbles: true }),
+      )
+    })
+    expect(result.current.shortcutsOpen).toBe(true)
+  })
+
+  it('removes the keydown listener on unmount', () => {
+    const { unmount } = renderHook(() => useAppDialogs())
+    unmount()
+
+    // Dispatch after unmount must be a no-op; a fresh mount starts closed.
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
+    })
+    const { result: next } = renderHook(() => useAppDialogs())
+    expect(next.current.shortcutsOpen).toBe(false)
   })
 })
 

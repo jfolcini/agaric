@@ -8,28 +8,14 @@ import { DialogBody } from '@/components/ui/dialog'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+// #754 — the onboarding flag helpers live in `@/lib/onboarding` (outside
+// this lazy chunk) so the App shell can gate-mount the modal without
+// fetching this chunk on every boot.
+import { isOnboardingDone, markOnboardingDone } from '@/lib/onboarding'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { createBlock, createPageInSpace } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 import { useSpaceStore } from '@/stores/space'
-
-const STORAGE_KEY = 'agaric-onboarding-done'
-
-function isOnboardingDone(): boolean {
-  try {
-    return !!localStorage.getItem(STORAGE_KEY)
-  } catch {
-    return false
-  }
-}
-
-function markOnboardingDone(): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, 'true')
-  } catch {
-    // localStorage may be unavailable in some environments
-  }
-}
 
 // #214 Phase 1B — three concrete workflow rows replace the earlier six
 // abstract feature blurbs. Each teaches one core gesture a new user can

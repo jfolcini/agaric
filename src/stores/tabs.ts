@@ -50,6 +50,16 @@ export interface Tab {
 // no behavioural gain.
 let nextTabId = 1
 
+/**
+ * #754 — per-tab page-stack depth cap. `navigateToPage` only dedups when
+ * the SAME page is already at the top, so a long browsing session grows
+ * the stack (and the persisted `agaric:tabs` blob) without bound. When a
+ * push would exceed the cap the OLDEST entry is dropped — the back
+ * gesture keeps its most recent 50 steps, which is far beyond any
+ * realistic back-tracking while keeping the localStorage payload small.
+ */
+export const MAX_PAGE_STACK_DEPTH = 50
+
 interface TabsStore {
   /**
    * Active-space tab list — mirrors `tabsBySpace[currentSpaceId]` after
@@ -354,7 +364,13 @@ export const useTabsStore = create<TabsStore>()(
           return
         }
 
-        const newStack = [...pageStack, { pageId, title }]
+        // #754 — drop-oldest cap so the back stack (and its persisted
+        // blob) can't grow without bound. See `MAX_PAGE_STACK_DEPTH`.
+        const pushed = [...pageStack, { pageId, title }]
+        const newStack =
+          pushed.length > MAX_PAGE_STACK_DEPTH
+            ? pushed.slice(pushed.length - MAX_PAGE_STACK_DEPTH)
+            : pushed
         const newTabs = [...tabs]
         newTabs[activeTabIndex] = {
           ...activeTab,

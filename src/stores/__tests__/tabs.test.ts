@@ -9,9 +9,11 @@
  * seam zustand uses on rehydrate.
  */
 
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useTabsStore } from '../tabs'
+import { useNavigationStore } from '../navigation'
+import { useRecentPagesStore } from '../recent-pages'
+import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '../tabs'
 
 const migrate = useTabsStore.persist.getOptions().migrate
 
@@ -118,5 +120,58 @@ describe('tabs persist migrate', () => {
     const result = run(malicious)
     expect(({} as Record<string, unknown>)['id']).toBeUndefined()
     expect(Object.hasOwn(result.tabsBySpace, '__proto__')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #754 — pageStack depth cap. `navigateToPage` only dedups the SAME page at
+// the top, so a long browsing session previously grew the stack (and the
+// persisted blob) without bound. The cap drops the OLDEST entry.
+// ---------------------------------------------------------------------------
+
+describe('pageStack depth cap (#754)', () => {
+  beforeEach(() => {
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      tabsBySpace: {},
+      activeTabIndexBySpace: {},
+    })
+    useNavigationStore.setState({ currentView: 'pages', selectedBlockId: null })
+    useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
+  })
+
+  it('caps the active tab stack at MAX_PAGE_STACK_DEPTH by dropping the oldest entries', () => {
+    const overshoot = 5
+    for (let i = 0; i < MAX_PAGE_STACK_DEPTH + overshoot; i++) {
+      useTabsStore.getState().navigateToPage(`PAGE_${i}`, `Title ${i}`)
+    }
+
+    const stack = selectPageStack(useTabsStore.getState())
+    expect(stack).toHaveLength(MAX_PAGE_STACK_DEPTH)
+    // Newest entry stays on top…
+    const last = MAX_PAGE_STACK_DEPTH + overshoot - 1
+    expect(stack[stack.length - 1]).toEqual({ pageId: `PAGE_${last}`, title: `Title ${last}` })
+    // …and the oldest entries were dropped (drop-oldest, not drop-newest).
+    expect(stack[0]).toEqual({ pageId: `PAGE_${overshoot}`, title: `Title ${overshoot}` })
+  })
+
+  it('keeps the tab label pointing at the top of the capped stack', () => {
+    for (let i = 0; i < MAX_PAGE_STACK_DEPTH + 1; i++) {
+      useTabsStore.getState().navigateToPage(`PAGE_${i}`, `Title ${i}`)
+    }
+    const state = useTabsStore.getState()
+    expect(state.tabs[state.activeTabIndex]?.label).toBe(`Title ${MAX_PAGE_STACK_DEPTH}`)
+  })
+
+  it('does not truncate a stack below the cap', () => {
+    useTabsStore.getState().navigateToPage('PAGE_A', 'A')
+    useTabsStore.getState().navigateToPage('PAGE_B', 'B')
+
+    const stack = selectPageStack(useTabsStore.getState())
+    expect(stack).toEqual([
+      { pageId: 'PAGE_A', title: 'A' },
+      { pageId: 'PAGE_B', title: 'B' },
+    ])
   })
 })

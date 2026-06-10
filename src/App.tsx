@@ -25,6 +25,7 @@ import { useDeepLinkRouter } from './hooks/useDeepLinkRouter'
 import { useIsMobile } from './hooks/useIsMobile'
 import { useOnlineStatus } from './hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from './hooks/usePrimaryFocus'
+import { useQuickCaptureShortcut } from './hooks/useQuickCaptureShortcut'
 import { useScrollRestore } from './hooks/useScrollRestore'
 import { useShouldShowMobileChrome } from './hooks/useShouldShowMobileChrome'
 import { useSyncEvents } from './hooks/useSyncEvents'
@@ -34,16 +35,8 @@ import { useUndoShortcuts } from './hooks/useUndoShortcuts'
 import { useUpdateCheck } from './hooks/useUpdateCheck'
 import { announce } from './lib/announcer'
 import { logger } from './lib/logger'
-import {
-  loadQuickCaptureShortcut,
-  QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
-} from './lib/quick-capture-shortcut'
-import {
-  createPageInSpace,
-  listPeerRefs,
-  registerGlobalShortcut,
-  unregisterGlobalShortcut,
-} from './lib/tauri'
+import { isOnboardingDone } from './lib/onboarding'
+import { createPageInSpace, listPeerRefs } from './lib/tauri'
 import { setSettingsTabInUrl } from './lib/url-state'
 import { cn } from './lib/utils'
 import { useNavigationStore } from './stores/navigation'
@@ -156,12 +149,18 @@ function App() {
     shortcutsOpen,
     setShortcutsOpen,
   } = useAppDialogs()
-  // FEAT-12: lift the chord into state so the registration effect
-  // re-runs when SettingsView changes it. Lazy-init from localStorage
-  // so we don't read on every render. The storage-event listener
-  // below feeds new chords into this state.
-  const [quickCaptureChord, setQuickCaptureChord] = useState<string>(loadQuickCaptureShortcut)
+  // #754 — first-run gate for the lazy `WelcomeModal`. Read once per
+  // session: when onboarding is already done the modal (and its chunk)
+  // never mounts; when it isn't, the modal owns its own open/dismiss
+  // lifecycle after mount.
+  const [showWelcome] = useState(() => !isOnboardingDone())
   const mainContentRef = useRef<HTMLDivElement | null>(null)
+  // #754 — the scroll viewport as STATE (alongside the ref) so effects
+  // that must re-run when the viewport mounts late (it only attaches
+  // after the boot gate resolves) actually re-fire. `useScrollRestore`
+  // consumes this; the ref alone never re-runs an effect, which left the
+  // very first view without a scroll listener until the first navigation.
+  const [mainContentEl, setMainContentEl] = useState<HTMLDivElement | null>(null)
 
   // The main content scroller is a `ScrollArea`; `mainContentRef` points at
   // the scrollable viewport. We need `id="main-content"` and `tabIndex=-1`
@@ -173,6 +172,7 @@ function App() {
   // only mounts after the boot gate resolves.
   const setMainContentViewport = useCallback((el: HTMLDivElement | null) => {
     mainContentRef.current = el
+    setMainContentEl(el)
     if (el) {
       el.id = 'main-content'
       el.tabIndex = -1
@@ -249,87 +249,11 @@ function App() {
   useAppKeyboardShortcuts({ t, isMobile })
 
   // ── FEAT-12: register the quick-capture global hotkey ─────────────
-  // Registers the user-configured chord (default Ctrl+Alt+N on Linux /
-  // Windows, Cmd+Option+N on macOS) via `tauri-plugin-global-shortcut`.
-  // When the chord fires the handler:
-  //   1. Brings the window forward (unminimize + show + setFocus) so
-  //      the dialog is visible even if the app was hidden / minimized.
-  //   2. Opens `QuickCaptureDialog` via `setQuickCaptureOpen(true)`.
-  //
-  // The effect re-runs whenever the localStorage key changes (Settings
-  // panel triggers a `storage`-event-style rerender by writing the new
-  // chord). On unmount or re-bind, we unregister the previous chord so
-  // we don't leak OS-level bindings across hot reloads.
-  //
-  // Desktop-only: `registerGlobalShortcut` itself short-circuits on
-  // mobile, so there is no platform gate here.
-  // Storage-event listener that updates the chord state, kept in its
-  // own effect so it never tears down between chord-driven re-binds.
-  // SettingsView writes the new chord to localStorage and dispatches
-  // a synthetic storage event; we re-read and feed it into state.
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key !== QUICK_CAPTURE_SHORTCUT_STORAGE_KEY) return
-      const next = loadQuickCaptureShortcut()
-      setQuickCaptureChord((prev) => (prev === next ? prev : next))
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
-
-  // Register / re-register the global chord whenever it changes.
-  // Cleanup unregisters the previous chord before the new one is
-  // registered, so the OS only ever has one binding at a time.
-  // Desktop-only: `registerGlobalShortcut` short-circuits on mobile.
-  useEffect(() => {
-    let active = true
-    const accelerator = quickCaptureChord
-
-    const handler = () => {
-      // Best-effort window focus. The IPC failures here are non-fatal —
-      // the dialog still opens; only the visibility / focus state may
-      // be wrong if the user already closed the window manually.
-      void (async () => {
-        try {
-          const { getCurrentWindow } = await import('@tauri-apps/api/window')
-          const w = getCurrentWindow()
-          // Order matters: unminimize before show before setFocus.
-          if (await w.isMinimized().catch(() => false)) {
-            await w
-              .unminimize()
-              .catch((err) =>
-                logger.warn('App', 'window operation failed', { op: 'unminimize' }, err),
-              )
-          }
-          await w
-            .show()
-            .catch((err) => logger.warn('App', 'window operation failed', { op: 'show' }, err))
-          await w
-            .setFocus()
-            .catch((err) => logger.warn('App', 'window operation failed', { op: 'setFocus' }, err))
-        } catch (err) {
-          logger.warn('App', 'quick-capture window focus failed', undefined, err)
-        }
-      })()
-      if (active) setQuickCaptureOpen(true)
-    }
-
-    registerGlobalShortcut(accelerator, handler).catch((err: unknown) => {
-      logger.warn('App', 'failed to register quick-capture global shortcut', { accelerator }, err)
-    })
-
-    return () => {
-      active = false
-      unregisterGlobalShortcut(accelerator).catch((err: unknown) => {
-        logger.warn(
-          'App',
-          'failed to unregister quick-capture global shortcut',
-          { accelerator },
-          err,
-        )
-      })
-    }
-  }, [quickCaptureChord, setQuickCaptureOpen])
+  // Chord state, the storage-event re-bind listener, and the SEQUENCED
+  // register/unregister IPC chain live in `useQuickCaptureShortcut`
+  // (#754 — extracted so StrictMode / HMR mount cycles can't interleave
+  // the async register/unregister calls and leave the chord dead).
+  useQuickCaptureShortcut(setQuickCaptureOpen)
 
   const handleNewPage = useCallback(async () => {
     // FEAT-3 Phase 2 — route through the atomic `createPageInSpace`
@@ -410,7 +334,9 @@ function App() {
     currentView === 'page-editor' && activePage ? `page-editor:${activePage.pageId}` : currentView
 
   // ── Scroll position restoration ──────────────────────────────────
-  useScrollRestore(mainContentRef, viewKey)
+  // #754 — pass the viewport ELEMENT (state) so the hook attaches as
+  // soon as the boot-gated viewport mounts, not on the first navigation.
+  useScrollRestore(mainContentEl, viewKey)
 
   // ── View transition fade ─────────────────────────────────────────
   // Uses the "set state during render" pattern to synchronously hide
@@ -583,10 +509,20 @@ function App() {
       <Suspense fallback={null}>
         <SearchSheet />
       </Suspense>
-      <Suspense fallback={null}>
-        <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-        <WelcomeModal />
-      </Suspense>
+      {/* #754 — both overlays are gate-mounted so their lazy chunks stay
+          off the boot path. The `?` / sidebar-button open path lives in
+          `useAppDialogs` (the sheet can't open itself while unmounted);
+          the welcome gate reads the onboarding flag once per session. */}
+      {shortcutsOpen && (
+        <Suspense fallback={null}>
+          <KeyboardShortcuts open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+        </Suspense>
+      )}
+      {showWelcome && (
+        <Suspense fallback={null}>
+          <WelcomeModal />
+        </Suspense>
+      )}
       {/*
        * UX-279: top-level BugReportDialog driven by `BUG_REPORT_EVENT`.
        * `initialTitle` / `initialDescription` are conditionally spread so
@@ -640,7 +576,14 @@ function App() {
           />
         </Suspense>
       )}
-      <Toaster position={isMobile ? 'top-center' : 'bottom-right'} richColors closeButton />
+      {/* #754 — sonner defaults `theme` to 'light', so without the prop
+          `richColors` toasts rendered the light palette in dark themes. */}
+      <Toaster
+        position={isMobile ? 'top-center' : 'bottom-right'}
+        theme={isDark ? 'dark' : 'light'}
+        richColors
+        closeButton
+      />
     </BootGate>
   )
 }

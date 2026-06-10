@@ -33,6 +33,7 @@ import { useEffect } from 'react'
 
 import { logger } from '@/lib/logger'
 import { getCurrentDeepLink } from '@/lib/tauri'
+import { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -48,10 +49,10 @@ export interface OpenSettingsPayload {
   tab: string
 }
 
-/** Mirrors `SettingsView.ACTIVE_TAB_KEY` — the localStorage key the
- *  panel reads on mount so a deep link selects the right tab on first
- *  render.  Kept in sync with `src/components/SettingsView.tsx`. */
-export const SETTINGS_ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
+/** The localStorage key the Settings panel reads on mount so a deep link
+ *  selects the right tab on first render. #754 — canonical definition
+ *  lives in `@/lib/url-state`; re-exported here for existing consumers. */
+export { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 
 /** Outbound event name constants — must mirror
  *  `src-tauri/src/deeplink/mod.rs`. */
