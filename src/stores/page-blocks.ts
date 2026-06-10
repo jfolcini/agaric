@@ -263,6 +263,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       set({ loading: true })
       try {
         const start = performance.now()
+        // #773 — capture the index as of load START. The backend snapshot
+        // below can only know about blocks that existed when its query ran,
+        // so "absent from the snapshot" is evidence of remote deletion ONLY
+        // for blocks that were already here before the await. A block
+        // optimistically spliced in mid-flight (createBelow committing while
+        // this SELECT is in flight, then focused via Enter) lands in the
+        // commit-time map but never in the snapshot — it must NOT trip the
+        // focus-clear branch.
+        const preLoadBlocksById = get().blocksById
         // Single-SELECT descendant load via the materializer-maintained
         // `page_id` index — replaces the recursive per-parent
         // `listBlocks` walk that silently clamped each level to 100.
@@ -277,9 +286,29 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         if (focusedBlockId) {
           const currentBlock = get().blocksById.get(focusedBlockId)
           if (currentBlock) {
-            newBlocks = newBlocks.map((b) =>
-              b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
-            )
+            if (newBlocks.some((b) => b.id === focusedBlockId)) {
+              newBlocks = newBlocks.map((b) =>
+                b.id === focusedBlockId ? { ...b, content: currentBlock.content } : b,
+              )
+            } else if (preLoadBlocksById.has(focusedBlockId)) {
+              // #773 — sync-delete focus reconciliation. The focused block
+              // lived in THIS store both when the load STARTED and now (so
+              // this store owns the focus, mirroring the storeOwnsBlock gate
+              // from #713) but is gone from the fresh backend snapshot — a
+              // remote sync deleted it. Clear the global focus, otherwise
+              // every tree fail-closes on the phantom id and block chords go
+              // dead until the user clicks. Stores that never held the block
+              // (other pages, fresh mounts where blocksById is still empty)
+              // skip this branch, so ordinary navigation loads cannot
+              // spuriously clear focus that is managed elsewhere. The
+              // load-START check (`preLoadBlocksById`) keeps blocks created
+              // and focused while this load was in flight — invisible to the
+              // backend snapshot, so their absence proves nothing — from
+              // being mistaken for remote deletions. `setFocused(null)` also
+              // clears the coupled selection state, matching every other
+              // focus-clear path in the app.
+              useBlockStore.getState().setFocused(null)
+            }
           }
         }
 
