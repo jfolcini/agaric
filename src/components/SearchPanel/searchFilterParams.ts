@@ -13,6 +13,20 @@
  */
 import type { AstFilterProjection } from '@/lib/search-query'
 
+/**
+ * Issue #717 — matches-nothing sentinel for unresolvable tag names.
+ *
+ * When the query names tags but resolution settled with fewer ids than
+ * names (typo'd / nonexistent tag), the tag constraint must NOT be
+ * silently dropped — `tagIds: undefined` would mean "no tag filter" and
+ * return every FTS match while the tag chip renders as active. Instead
+ * the bundle carries this sentinel id: real tag ids are ULIDs, so it can
+ * never collide, and the backend tag filter (ALL semantics — see
+ * `add_tags_all` in `src-tauri/src/fts/search.rs`) matches no rows for
+ * an unknown id, yielding the correct empty result.
+ */
+export const UNRESOLVED_TAG_SENTINEL = '__unresolved-tag__'
+
 export type SearchFilterParams = {
   tagIds?: string[] | undefined
   includePageGlobs?: string[] | undefined
@@ -37,8 +51,13 @@ export function astFilterParams(
   projection: AstFilterProjection,
   tagIds: string[],
 ): SearchFilterParams {
+  // #717 — `useTagResolution` yields exactly one settled entry per input
+  // name, so fewer ids than names means at least one name is definitively
+  // unresolved (callers hold the search while resolution is pending).
+  // Project the matches-nothing sentinel instead of dropping the filter.
+  const hasUnresolvedTag = projection.tagNames.length > tagIds.length
   return {
-    tagIds: tagIds.length === 0 ? undefined : tagIds,
+    tagIds: hasUnresolvedTag ? [UNRESOLVED_TAG_SENTINEL] : tagIds.length === 0 ? undefined : tagIds,
     includePageGlobs:
       projection.includePageGlobs.length === 0 ? undefined : projection.includePageGlobs,
     excludePageGlobs:
