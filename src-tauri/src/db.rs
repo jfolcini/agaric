@@ -837,12 +837,25 @@ async fn recover_blocks_from_op_log(
 /// internal literal — never user input — so it is safe to interpolate into
 /// the recovery `UPDATE` statements.
 fn reserved_key_blocks_column(key: &str) -> Option<&'static str> {
+    // #589: membership is decided by the single source of truth
+    // (`op::COLUMN_BACKED_PROPERTY_KEYS`); this function only adds the
+    // per-key column-name mapping. The four `RESERVED_PROPERTY_KEYS` map to
+    // same-named `blocks` columns; `space` maps to `space_id`.
+    if !crate::op::is_column_backed_property_key(key) {
+        return None;
+    }
     match key {
         "todo_state" => Some("todo_state"),
         "priority" => Some("priority"),
         "due_date" => Some("due_date"),
         "scheduled_date" => Some("scheduled_date"),
         "space" => Some("space_id"),
+        // A key added to COLUMN_BACKED_PROPERTY_KEYS without a mapping arm
+        // here falls through to None. That drift is caught by
+        // `reserved_key_blocks_column_covers_column_backed_set_589`; at
+        // runtime the un-mapped write would route to `block_properties`,
+        // where the migration-0088 CHECK rejects it loudly rather than
+        // silently corrupting state.
         _ => None,
     }
 }
@@ -1010,10 +1023,10 @@ async fn recover_derived_state_from_op_log(
                     // payload field that matches the column's storage.
                     let col_value: Option<&str> = match key {
                         "due_date" | "scheduled_date" => value_date,
-                        "space" => value_ref,
+                        crate::op::SPACE_PROPERTY_KEY => value_ref,
                         _ => value_text,
                     };
-                    if key == "space" {
+                    if key == crate::op::SPACE_PROPERTY_KEY {
                         // `space` fans out to the whole owning-page group, like
                         // the live projection (`blocks.space_id`).
                         // `col` is a fixed internal literal from the allowlist
@@ -1350,14 +1363,10 @@ mod tests {
         .await
         .unwrap();
 
-        // Each reserved key must be rejected by the guard.
-        for key in [
-            "todo_state",
-            "priority",
-            "due_date",
-            "scheduled_date",
-            "space",
-        ] {
+        // Each column-backed key must be rejected by the guard. #589:
+        // iterate the single source of truth so a key added to the constant
+        // without a matching CHECK migration fails this test.
+        for key in crate::op::COLUMN_BACKED_PROPERTY_KEYS {
             let res = sqlx::query(
                 "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
             )
@@ -1382,6 +1391,91 @@ mod tests {
             .execute(&pool)
             .await
             .expect("a non-reserved key must still be allowed in block_properties");
+    }
+
+    /// #589 drift guard — the key list inside the migration-0088
+    /// `key_not_reserved` CHECK on `block_properties` must be EXACTLY
+    /// `op::COLUMN_BACKED_PROPERTY_KEYS` (both directions). Extracts the
+    /// `key NOT IN (...)` list from the live schema in `sqlite_master`
+    /// and compares it as a set against the single source of truth in
+    /// `op.rs`. Fails if a key is added to either side without the other.
+    #[tokio::test]
+    async fn reserved_key_set_matches_db_check_constraint_589() {
+        use std::collections::BTreeSet;
+
+        let (pool, _dir) = test_pool().await;
+
+        let ddl: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'block_properties'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // Locate the `key_not_reserved` CHECK, then its `key NOT IN (...)`
+        // list. Parsing is anchored on the named constraint so an unrelated
+        // NOT IN elsewhere in the DDL cannot be picked up by mistake.
+        let check_start = ddl.find("key_not_reserved").expect(
+            "block_properties DDL must contain the key_not_reserved CHECK (migration 0088)",
+        );
+        let tail = &ddl[check_start..];
+        let not_in_start = tail
+            .find("NOT IN (")
+            .expect("key_not_reserved CHECK must use `key NOT IN (...)`");
+        let list_start = not_in_start + "NOT IN (".len();
+        let list_end = tail[list_start..]
+            .find(')')
+            .expect("key NOT IN list must be closed with ')'");
+        let list = &tail[list_start..list_start + list_end];
+
+        let db_keys: BTreeSet<String> = list
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').to_owned())
+            .collect();
+        let const_keys: BTreeSet<String> = crate::op::COLUMN_BACKED_PROPERTY_KEYS
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+
+        assert_eq!(
+            db_keys, const_keys,
+            "the migration-0088 key_not_reserved CHECK and op::COLUMN_BACKED_PROPERTY_KEYS \
+             must contain exactly the same keys — update them in lockstep (a new column-backed \
+             key needs BOTH a new table-rebuild migration and a constant update)"
+        );
+    }
+
+    /// #589 drift guard — `reserved_key_blocks_column` must map every key
+    /// in `op::COLUMN_BACKED_PROPERTY_KEYS` to a `blocks` column (the four
+    /// reserved keys to their same-named columns, `space` to `space_id`)
+    /// and reject everything else. Membership already delegates to
+    /// `is_column_backed_property_key`; this pins the per-key mapping arms
+    /// so a constant addition without a mapping arm fails here.
+    #[test]
+    fn reserved_key_blocks_column_covers_column_backed_set_589() {
+        for key in crate::op::COLUMN_BACKED_PROPERTY_KEYS {
+            let col = reserved_key_blocks_column(key);
+            assert!(
+                col.is_some(),
+                "column-backed key '{key}' must have a blocks-column mapping in \
+                 reserved_key_blocks_column"
+            );
+            let expected = if key == crate::op::SPACE_PROPERTY_KEY {
+                "space_id"
+            } else {
+                key
+            };
+            assert_eq!(
+                col,
+                Some(expected),
+                "'{key}' must map to blocks column '{expected}'"
+            );
+        }
+        for key in ["effort", "assignee", "space_id", "created_at", ""] {
+            assert!(
+                reserved_key_blocks_column(key).is_none(),
+                "non-column-backed key '{key}' must map to None (lives in block_properties)"
+            );
+        }
     }
 
     /// Issue #109 Phase 1 — `now_ms()` returns a plausible wall-clock

@@ -181,7 +181,7 @@ pub async fn validate_ref_property_cross_space(
 
     // The `space` property itself is exempt — this is how pages
     // move between spaces. Every other ref property is gated.
-    if property_key == "space" {
+    if property_key == crate::op::SPACE_PROPERTY_KEY {
         return Ok(());
     }
 

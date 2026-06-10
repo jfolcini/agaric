@@ -1,6 +1,8 @@
 use super::super::*;
 use super::common::*;
-use crate::op::{DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload};
+use crate::op::{
+    DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload, SetPropertyPayload,
+};
 use crate::op_log;
 
 // ======================================================================
@@ -3980,6 +3982,479 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
     assert!(
         result.is_ok(),
         "hard-deleting a nonexistent attachment should succeed (idempotent), got: {result:?}"
+    );
+}
+
+// ======================================================================
+// #604 — apply_reverse_in_tx must route column-backed property keys to
+// their `blocks` columns, never into `block_properties` (which would be
+// aborted by the migration-0088 `key_not_reserved` CHECK for reserved
+// keys, or silently desync `blocks.space_id` for `space`).
+// ======================================================================
+
+/// #604 (direct, materializer-free): drive `apply_reverse_in_tx` inside a
+/// bare transaction so the assertions pin the IN-TX routing itself — a
+/// post-commit materializer dispatch cannot mask a wrong write here.
+///
+/// Covers all three routing shapes:
+/// 1. reverse `SetProperty` of a reserved key → UPDATE the same-named
+///    `blocks` column (pre-fix: INSERT into block_properties → CHECK abort);
+/// 2. reverse `DeleteProperty` of a reserved key → NULL the column
+///    (pre-fix: 0-row DELETE no-op left the column stale);
+/// 3. reverse `SetProperty`/`DeleteProperty` of `space` → stamp/clear
+///    `blocks.space_id` for the whole owning-page group.
+#[tokio::test]
+async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
+    let (pool, _dir) = test_pool().await;
+
+    let block_id = BlockId::test_id("B604BLK");
+    insert_block(&pool, block_id.as_str(), "content", "task", None, Some(1)).await;
+    sqlx::query(
+        "UPDATE blocks SET todo_state = 'DONE', scheduled_date = '2025-05-05' WHERE id = ?",
+    )
+    .bind(block_id.as_str())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Owning-page group for the `space` fan-out checks.
+    ensure_test_space(&pool).await;
+    let page_id = BlockId::test_id("B604PAGE");
+    let child_id = BlockId::test_id("B604CHLD");
+    insert_block(&pool, page_id.as_str(), "page", "P", None, Some(1)).await;
+    insert_block(
+        &pool,
+        child_id.as_str(),
+        "content",
+        "c",
+        Some(page_id.as_str()),
+        Some(1),
+    )
+    .await;
+
+    let mut tx = pool.begin().await.unwrap();
+
+    // 1. Reverse SetProperty(todo_state="TODO") — e.g. undo of a later
+    //    set_todo_state with this prior value.
+    apply_reverse_in_tx(
+        &mut tx,
+        &OpPayload::SetProperty(SetPropertyPayload {
+            block_id: block_id.clone(),
+            key: "todo_state".into(),
+            value_text: Some("TODO".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+    )
+    .await
+    .expect("reverse SetProperty(todo_state) must not hit the 0088 CHECK");
+
+    // 2. Reverse SetProperty(due_date) — date keys carry value_date.
+    apply_reverse_in_tx(
+        &mut tx,
+        &OpPayload::SetProperty(SetPropertyPayload {
+            block_id: block_id.clone(),
+            key: "due_date".into(),
+            value_text: None,
+            value_num: None,
+            value_date: Some("2025-03-04".into()),
+            value_ref: None,
+            value_bool: None,
+        }),
+    )
+    .await
+    .expect("reverse SetProperty(due_date) must not hit the 0088 CHECK");
+
+    // 3. Reverse DeleteProperty(scheduled_date) — undo of a first-set must
+    //    NULL the column (the pre-fix DELETE on block_properties was a
+    //    silent no-op that left the column populated).
+    apply_reverse_in_tx(
+        &mut tx,
+        &OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: block_id.clone(),
+            key: "scheduled_date".into(),
+        }),
+    )
+    .await
+    .unwrap();
+
+    // 4. Reverse SetProperty(space) — stamps space_id for the page group.
+    apply_reverse_in_tx(
+        &mut tx,
+        &OpPayload::SetProperty(SetPropertyPayload {
+            block_id: page_id.clone(),
+            key: "space".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::from_trusted(TEST_SPACE_ID)),
+            value_bool: None,
+        }),
+    )
+    .await
+    .expect("reverse SetProperty(space) must not hit the 0088 CHECK");
+
+    tx.commit().await.unwrap();
+
+    let row: (Option<String>, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT todo_state, due_date, scheduled_date FROM blocks WHERE id = ?")
+            .bind(block_id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        row.0.as_deref(),
+        Some("TODO"),
+        "reverse SetProperty(todo_state) must restore blocks.todo_state"
+    );
+    assert_eq!(
+        row.1.as_deref(),
+        Some("2025-03-04"),
+        "reverse SetProperty(due_date) must restore blocks.due_date"
+    );
+    assert_eq!(
+        row.2, None,
+        "reverse DeleteProperty(scheduled_date) must NULL blocks.scheduled_date"
+    );
+
+    for id in [page_id.as_str(), child_id.as_str()] {
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            space.as_deref(),
+            Some(TEST_SPACE_ID),
+            "reverse SetProperty(space) must stamp space_id for the whole page group ({id})"
+        );
+    }
+
+    // 5. Reverse DeleteProperty(space) — undo of a first space assignment
+    //    clears space_id for the whole page group.
+    let mut tx = pool.begin().await.unwrap();
+    apply_reverse_in_tx(
+        &mut tx,
+        &OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: page_id.clone(),
+            key: "space".into(),
+        }),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    for id in [page_id.as_str(), child_id.as_str()] {
+        let space: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            space, None,
+            "reverse DeleteProperty(space) must clear space_id for the whole page group ({id})"
+        );
+    }
+
+    // No column-backed key may have leaked into block_properties.
+    let leaked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties \
+         WHERE key IN ('todo_state', 'priority', 'due_date', 'scheduled_date', 'space')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked, 0,
+        "no column-backed key may be written to block_properties by undo"
+    );
+}
+
+/// #604 (end-to-end): undoing a `set_property(todo_state)` that had a
+/// prior value must restore `blocks.todo_state` to that prior value via
+/// `revert_ops_inner`. Pre-fix this errored mid-undo: the reverse
+/// SetProperty tried to INSERT `todo_state` into `block_properties` and
+/// was aborted by the migration-0088 CHECK.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_set_todo_state_restores_blocks_column_604() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    for state in ["TODO", "DONE"] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            block.id.as_str().into(),
+            "todo_state".into(),
+            Some(state.into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+    }
+
+    // Revert the second set (the one that set "DONE").
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+    let second_set = set_ops.last().unwrap();
+    let undo_results = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: second_set.seq,
+        }],
+    )
+    .await
+    .expect("undo of set_property(todo_state) must not hit the 0088 CHECK");
+    mat.flush_background().await.unwrap();
+
+    let todo_state: Option<String> =
+        sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(block.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        todo_state.as_deref(),
+        Some("TODO"),
+        "undo must restore blocks.todo_state to the prior value"
+    );
+
+    let leaked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'todo_state'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked, 0,
+        "undo must not create a block_properties row for todo_state"
+    );
+
+    // #604 (other direction): redo of the undo flows through the same
+    // compute_reverse → apply_reverse_in_tx → projection path and must
+    // restore blocks.todo_state to "DONE" — again without leaking a
+    // block_properties row.
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo_results[0].new_op_ref.device_id.clone(),
+        undo_results[0].new_op_ref.seq,
+    )
+    .await
+    .expect("redo of undo(set_property(todo_state)) must not hit the 0088 CHECK");
+    assert!(redo.is_redo, "should be flagged as redo");
+    mat.flush_background().await.unwrap();
+
+    let todo_state: Option<String> =
+        sqlx::query_scalar("SELECT todo_state FROM blocks WHERE id = ?")
+            .bind(block.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        todo_state.as_deref(),
+        Some("DONE"),
+        "redo must restore blocks.todo_state to the undone value"
+    );
+    let leaked_after_redo: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'todo_state'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked_after_redo, 0,
+        "redo must not create a block_properties row for todo_state"
+    );
+}
+
+/// #604 (end-to-end): undoing the FIRST `set_property(due_date)` (no prior
+/// value → reverse = `delete_property`) must NULL `blocks.due_date`.
+/// Pre-fix the reverse ran a 0-row DELETE against `block_properties` and
+/// left the column populated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_first_set_due_date_clears_blocks_column_604() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "task".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        "due_date".into(),
+        None,
+        None,
+        Some("2025-06-15".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let set_op = ops.iter().find(|o| o.op_type == "set_property").unwrap();
+    let results = revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: set_op.seq,
+        }],
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assert_eq!(
+        results[0].new_op_type, "delete_property",
+        "undoing a first set_property must produce delete_property"
+    );
+
+    let due_date: Option<String> = sqlx::query_scalar("SELECT due_date FROM blocks WHERE id = ?")
+        .bind(block.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        due_date, None,
+        "undo of the first set must NULL blocks.due_date"
+    );
+
+    let leaked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'due_date'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked, 0,
+        "undo must not create a block_properties row for due_date"
+    );
+}
+
+/// #604 (end-to-end): undoing a space re-assignment must restore
+/// `blocks.space_id` to the prior space and never write a
+/// `block_properties(key='space')` row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_set_space_restores_space_id_604() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    ensure_test_space_b(&pool).await;
+    let page = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, None)
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    for space in [TEST_SPACE_ID, TEST_SPACE_B_ID] {
+        set_property_inner(
+            &pool,
+            DEV,
+            &mat,
+            page.id.as_str().into(),
+            "space".into(),
+            None,
+            None,
+            None,
+            Some(space.into()),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        mat.flush_background().await.unwrap();
+    }
+
+    // Revert the second assignment (A → B); space_id must return to A.
+    let ops = op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+        .await
+        .unwrap();
+    let set_ops: Vec<_> = ops.iter().filter(|o| o.op_type == "set_property").collect();
+    let second_set = set_ops.last().unwrap();
+    revert_ops_inner(
+        &pool,
+        DEV,
+        &mat,
+        vec![OpRef {
+            device_id: DEV.into(),
+            seq: second_set.seq,
+        }],
+    )
+    .await
+    .expect("undo of set_property(space) must not hit the 0088 CHECK");
+    mat.flush_background().await.unwrap();
+
+    let space_id: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(page.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        space_id.as_deref(),
+        Some(TEST_SPACE_ID),
+        "undo must restore blocks.space_id to the prior space"
+    );
+
+    let leaked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'space'",
+    )
+    .bind(page.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        leaked, 0,
+        "undo must not create a block_properties row for space"
     );
 }
 

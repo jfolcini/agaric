@@ -60,8 +60,9 @@ pub async fn apply_reverse_in_tx(
         //   - cascade ops (DeleteBlock, RestoreBlock) - already idempotent; the
         //     UPDATE simply finds 0 rows when the target is in the desired state
         //   - tag ops (AddTag uses INSERT OR IGNORE, RemoveTag DELETEs)
-        //   - property ops (SetProperty uses INSERT OR REPLACE, DeleteProperty
-        //     DELETEs without a rows_affected check)
+        //   - property ops (#604: routed through the forward projections —
+        //     column UPDATEs / INSERT OR REPLACE / DELETE, none of which
+        //     check rows_affected)
         //   - attachment ops (AddAttachment uses INSERT OR REPLACE to recreate the
         //     row; DeleteAttachment hard-DELETEs without a rows_affected check)
         OpPayload::DeleteBlock(p) => {
@@ -290,31 +291,29 @@ pub async fn apply_reverse_in_tx(
             .await?;
         }
         OpPayload::SetProperty(p) => {
-            // PEND-14: persist `value_bool` as INTEGER (0/1).
-            let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
-            let block_id_str = p.block_id.as_str();
-            sqlx::query!(
-                "INSERT OR REPLACE INTO block_properties (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-                block_id_str,
-                p.key,
-                p.value_text,
-                p.value_num,
-                p.value_date,
-                p.value_ref,
-                value_bool_int,
-            )
-            .execute(&mut **tx)
-            .await?;
+            // #604: route through the same projection as the forward paths.
+            // Column-backed keys (`todo_state` / `priority` / `due_date` /
+            // `scheduled_date` → same-named `blocks` columns; `space` →
+            // `blocks.space_id` with owning-page-group fan-out) must UPDATE
+            // the column, never INSERT a `block_properties` row — the
+            // migration-0088 `key_not_reserved` CHECK aborts such inserts.
+            // `project_set_property_to_sql` is the canonical SQL mirror of
+            // `set_property_in_tx`'s routing (incl. the per-key value_text /
+            // value_date / value_ref extraction) and stays idempotent on
+            // every branch (UPDATE / INSERT OR REPLACE), preserving the
+            // batch-undo idempotency policy documented above.
+            crate::loro::projection::project_set_property_to_sql(tx, p).await?;
         }
         OpPayload::DeleteProperty(p) => {
-            let block_id_str = p.block_id.as_str();
-            sqlx::query!(
-                "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
-                block_id_str,
-                p.key,
+            // #604: same routing note as SetProperty above — reserved keys
+            // NULL their `blocks` column, `space` NULLs `space_id` for the
+            // owning-page group, generic keys DELETE the `block_properties`
+            // row. All branches are idempotent (0-row UPDATE/DELETE no-ops).
+            crate::loro::projection::project_delete_property_to_sql(
+                tx,
+                p.block_id.as_str(),
+                &p.key,
             )
-            .execute(&mut **tx)
             .await?;
         }
         OpPayload::DeleteAttachment(p) => {

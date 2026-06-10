@@ -421,15 +421,45 @@ impl OpPayload {
     pub fn normalize_block_ids(&mut self) {}
 }
 
-/// Validate that a [`SetPropertyPayload`] has exactly one non-null value field
-/// and that the `key` matches the allowed format.
+/// The four "fixed" property keys that are stored as dedicated same-named
+/// columns on the `blocks` table (`todo_state`, `priority`, `due_date`,
+/// `scheduled_date`) rather than as `block_properties` rows.
 ///
+/// #589 — single source of truth for the reserved-key set. The migration-0088
+/// `key_not_reserved` CHECK on `block_properties` and `db::reserved_key_blocks_column`
+/// must stay in sync with [`COLUMN_BACKED_PROPERTY_KEYS`] (which is this set plus
+/// `space`); the drift tests in `db.rs`
+/// (`reserved_key_set_matches_db_check_constraint_589`,
+/// `reserved_key_blocks_column_covers_column_backed_set_589`,
+/// `block_properties_rejects_reserved_key_534`) fail if they drift.
+pub const RESERVED_PROPERTY_KEYS: [&str; 4] =
+    ["todo_state", "priority", "due_date", "scheduled_date"];
+
+/// The `space` property is also column-backed (`blocks.space_id`, #533) but is
+/// routed separately from the four [`RESERVED_PROPERTY_KEYS`] because it maps to
+/// a differently-named column with page-group fan-out.
+pub const SPACE_PROPERTY_KEY: &str = "space";
+
+/// Every property key that lives in a dedicated `blocks` column and is therefore
+/// FORBIDDEN as a `block_properties` row (enforced by the migration-0088 CHECK):
+/// the four [`RESERVED_PROPERTY_KEYS`] plus [`SPACE_PROPERTY_KEY`]. (#589)
+pub const COLUMN_BACKED_PROPERTY_KEYS: [&str; 5] = [
+    RESERVED_PROPERTY_KEYS[0],
+    RESERVED_PROPERTY_KEYS[1],
+    RESERVED_PROPERTY_KEYS[2],
+    RESERVED_PROPERTY_KEYS[3],
+    SPACE_PROPERTY_KEY,
+];
+
 /// Reserved property keys that map to fixed columns on the `blocks` table.
 pub fn is_reserved_property_key(key: &str) -> bool {
-    matches!(
-        key,
-        "todo_state" | "priority" | "due_date" | "scheduled_date"
-    )
+    RESERVED_PROPERTY_KEYS.contains(&key)
+}
+
+/// Whether `key` is column-backed on `blocks` and thus forbidden as a
+/// `block_properties` row (the four reserved keys plus `space`). (#589)
+pub fn is_column_backed_property_key(key: &str) -> bool {
+    COLUMN_BACKED_PROPERTY_KEYS.contains(&key)
 }
 
 /// Property keys that are system-managed and must not be deleted by users.
@@ -442,20 +472,21 @@ pub fn is_reserved_property_key(key: &str) -> bool {
 /// User-settable properties like `effort`, `assignee`, and `location` are
 /// intentionally **not** included — users must be able to remove them.
 pub fn is_builtin_property_key(key: &str) -> bool {
-    matches!(
-        key,
-        "todo_state"
-            | "priority"
-            | "due_date"
-            | "scheduled_date"
-            | "created_at"
-            | "completed_at"
-            | "repeat"
-            | "repeat-until"
-            | "repeat-count"
-            | "repeat-seq"
-            | "repeat-origin"
-    )
+    // #589: the reserved-column subset is sourced from
+    // [`RESERVED_PROPERTY_KEYS`] rather than re-spelled here, so the two
+    // sets cannot drift. The lifecycle keys are this function's own
+    // domain and stay enumerated locally.
+    is_reserved_property_key(key)
+        || matches!(
+            key,
+            "created_at"
+                | "completed_at"
+                | "repeat"
+                | "repeat-until"
+                | "repeat-count"
+                | "repeat-seq"
+                | "repeat-origin"
+        )
 }
 
 /// The schema allows multiple value columns (text, num, date, ref) but the
@@ -1799,6 +1830,52 @@ mod tests {
             !is_reserved_property_key(""),
             "empty string must not be recognized as reserved"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // is_column_backed_property_key / COLUMN_BACKED_PROPERTY_KEYS (#589)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn column_backed_set_is_reserved_plus_space_589() {
+        // COLUMN_BACKED_PROPERTY_KEYS must be exactly the four reserved
+        // keys plus `space` — both built from the same constants, so this
+        // pins the composition (no duplicates, no omissions).
+        assert_eq!(COLUMN_BACKED_PROPERTY_KEYS.len(), 5);
+        for key in RESERVED_PROPERTY_KEYS {
+            assert!(
+                COLUMN_BACKED_PROPERTY_KEYS.contains(&key),
+                "reserved key '{key}' must be in COLUMN_BACKED_PROPERTY_KEYS"
+            );
+        }
+        assert!(
+            COLUMN_BACKED_PROPERTY_KEYS.contains(&SPACE_PROPERTY_KEY),
+            "'space' must be in COLUMN_BACKED_PROPERTY_KEYS"
+        );
+    }
+
+    #[test]
+    fn is_column_backed_property_key_recognizes_all_five_589() {
+        for key in COLUMN_BACKED_PROPERTY_KEYS {
+            assert!(
+                is_column_backed_property_key(key),
+                "'{key}' must be recognized as column-backed"
+            );
+        }
+        // `space` is column-backed but NOT reserved (different column name,
+        // page-group fan-out) — the two predicates must disagree on it.
+        assert!(is_column_backed_property_key("space"));
+        assert!(!is_reserved_property_key("space"));
+    }
+
+    #[test]
+    fn is_column_backed_property_key_rejects_non_members_589() {
+        for key in ["effort", "assignee", "space_id", "created_at", ""] {
+            assert!(
+                !is_column_backed_property_key(key),
+                "'{key}' must not be recognized as column-backed"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
