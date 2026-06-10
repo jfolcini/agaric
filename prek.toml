@@ -597,6 +597,27 @@ language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
 
+# Blocks-rebuild cascade guard (#606). `DROP TABLE blocks` under
+# `foreign_keys = ON` immediately cascade-deletes every child row
+# with an ON DELETE CASCADE FK into blocks — inside the migration
+# tx, before the `_new_blocks` rename. page_aliases (no op_log
+# entries) and block_drafts (device-local) do NOT re-materialize
+# at boot, so the shipped rebuilds 0073/0080/0085 destroyed both
+# (those are exempt via a floor in the script — immutable, damage
+# done). Any NEW migration dropping blocks must reference both
+# satellites (the copy-aside/restore recipe in
+# src-tauri/migrations/AGENTS.md §Table-rebuild). Deep verification
+# lives in the db.rs seed-then-migrate harness (`*_606` tests).
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migrations-rebuild-cascade"
+name = "migrations: blocks rebuilds must preserve cascade satellites"
+entry = "node scripts/check-migrations-rebuild-cascade.mjs"
+language = "system"
+pass_filenames = true
+files = "^src-tauri/migrations/.*\\.sql$"
+
 # zizmor: GitHub Actions security audit. Complements actionlint
 # (which is style/correctness only) by catching unpinned `uses:`,
 # missing `persist-credentials: false`, env-injection in

@@ -3524,15 +3524,20 @@ mod tests {
     ///   reaching head successfully through the 0073/0080 rebuilds.
     /// * CRUCIALLY, each migration is run inside its OWN transaction, exactly
     ///   as sqlx's `Migrate::apply` does (`self.begin()` … `tx.commit()`, see
-    ///   sqlx-sqlite `migrate.rs`). This is load-bearing for the blocks
-    ///   rebuild: `DROP TABLE blocks` under `foreign_keys = ON` would
-    ///   immediately cascade-delete `attachments` children in *autocommit*
-    ///   mode, but inside a transaction SQLite defers the foreign-key
-    ///   re-validation to `COMMIT`, by which point `_new_blocks` has been
-    ///   renamed to `blocks` with the same row set so every child FK
-    ///   re-resolves and no cascade fires. Running migrations in autocommit
-    ///   here would therefore produce a FALSE positive for the #374 data
-    ///   loss. The transaction wrapper makes the harness faithful to prod.
+    ///   sqlx-sqlite `migrate.rs`), keeping the harness faithful to prod
+    ///   atomicity: an aborted rebuild rolls back wholesale. Note what the
+    ///   transaction does NOT do — it does not change FK semantics at the
+    ///   DROP. `DROP TABLE blocks` under `foreign_keys = ON` performs an
+    ///   implicit `DELETE FROM blocks` whose effects land at the end of the
+    ///   DROP statement itself, in or out of a transaction (verified against
+    ///   SQLite 3.50): every child's `ON DELETE CASCADE` fires immediately
+    ///   (the #374/#606 data loss, pinned by the `*_376` / `*_606` tests
+    ///   below), and if any NON-cascade child still holds referencing rows
+    ///   the DROP aborts with `FOREIGN KEY constraint failed`. The shipped
+    ///   rebuilds succeed because every populated child of `blocks` carries
+    ///   `ON DELETE CASCADE` — i.e. is silently wiped — NOT because of any
+    ///   commit-time FK "re-validation" (the mechanism 0085's header
+    ///   imagines; no such row re-check exists at COMMIT).
     /// * We do NOT touch sqlx's `_sqlx_migrations` bookkeeping table; this
     ///   harness is test-only and never hands the DB back to
     ///   `sqlx::migrate!`, so version tracking is irrelevant here.
@@ -3989,5 +3994,347 @@ mod tests {
             Some(expected),
             "a soft-deleted block's RFC-3339 deleted_at must backfill to chrono's {expected} ms"
         );
+    }
+
+    // ======================================================================
+    // Issue #606 — blocks rebuilds cascade-wipe AUTHORITATIVE satellites.
+    //
+    // `page_aliases.page_id` (0061) and `block_drafts.block_id` (0038) carry
+    // `REFERENCES blocks(id) ON DELETE CASCADE`. Unlike attachments /
+    // properties / tags, NEITHER re-materializes from the op log at boot:
+    // page_aliases emits no op_log entries (#110) and block_drafts is
+    // device-local. So the `DROP TABLE blocks` in each shipped rebuild
+    // (0073, 0080, 0085) permanently destroyed both tables for upgrading
+    // users — the cascade fires as part of the DROP itself, inside the
+    // migration transaction (see the #376 section above). 0085's header
+    // comment claiming the rebuild is safe for referencing FK rows is FALSE
+    // for cascade children; migrations are append-only so the correction
+    // lives in migrations/AGENTS.md §Table-rebuild and in these tests.
+    //
+    // Forward-looking contract pinned here:
+    //   * tripwire — 0085 (the last shipped rebuild) does wipe both tables
+    //     (documents the real shipped behaviour; if it ever "heals", the
+    //     harness drifted);
+    //   * drift guard — the detector below scans EVERY migration's SQL for a
+    //     `DROP TABLE blocks` statement, asserts the known-wiping set is
+    //     exactly {0073, 0080, 0085}, and for every FUTURE rebuild seeds
+    //     page_aliases + block_drafts immediately before it and asserts both
+    //     survive to head (future rebuilds must copy them aside per
+    //     migrations/AGENTS.md §Table-rebuild);
+    //   * end-to-end — rows seeded right after 0085 must survive every
+    //     later migration to head.
+    // ======================================================================
+
+    /// The last shipped blocks rebuild that cascade-wiped the authoritative
+    /// satellites. Rebuilds with a version above this MUST preserve them.
+    /// Do NOT bump this constant to silence a failing drift test — fix the
+    /// new rebuild migration to copy the satellites aside instead.
+    const LAST_WIPING_BLOCKS_REBUILD: i64 = 85;
+
+    /// Every shipped blocks rebuild that destroyed page_aliases +
+    /// block_drafts (damage is unrecoverable; list is closed).
+    const KNOWN_WIPING_BLOCKS_REBUILDS: [i64; 3] = [73, 80, 85];
+
+    /// True if `sql` contains a `DROP TABLE [IF EXISTS] blocks` STATEMENT
+    /// (line comments stripped, whitespace collapsed, case-insensitive,
+    /// `blocks` matched as a whole identifier).
+    ///
+    /// Known bounded gaps (deliberate; matching repo SQL style is enough):
+    /// a quoted (`"blocks"`) or schema-qualified (`main.blocks`) drop, a
+    /// rename-first rebuild (`ALTER TABLE blocks RENAME TO _old_blocks` —
+    /// which ALSO re-points child FKs at the renamed table before dropping
+    /// it), or a `--` inside a string literal earlier on the same line all
+    /// evade this detector. None void the protection: any future migration
+    /// that wipes the satellites — however it spells the drop — still fails
+    /// `page_aliases_and_block_drafts_survive_migrations_after_0085_606`,
+    /// which seeds at 0085 and asserts survival to head. Missing a detection
+    /// here only costs the per-rebuild diagnostic precision of the loop in
+    /// `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606`.
+    fn sql_drops_blocks_table(sql: &str) -> bool {
+        let stripped = sql
+            .lines()
+            .map(|l| l.split("--").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_uppercase();
+        let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+        let collapsed = collapsed.replace("DROP TABLE IF EXISTS ", "DROP TABLE ");
+        let needle = "DROP TABLE BLOCKS";
+        let mut start = 0;
+        while let Some(pos) = collapsed[start..].find(needle) {
+            let after = start + pos + needle.len();
+            match collapsed.as_bytes().get(after) {
+                None => return true,
+                Some(c) if !c.is_ascii_alphanumeric() && *c != b'_' => return true,
+                _ => start = after,
+            }
+        }
+        false
+    }
+
+    /// Sorted versions of every UP migration, and the subset whose SQL drops
+    /// the `blocks` table (i.e. rebuild-style migrations).
+    fn up_migration_versions() -> (Vec<i64>, Vec<i64>) {
+        let migrator = sqlx::migrate!("./migrations");
+        let mut all: Vec<(i64, bool)> = migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration())
+            .map(|m| (m.version, sql_drops_blocks_table(m.sql.as_str())))
+            .collect();
+        all.sort_by_key(|(version, _)| *version);
+        let versions: Vec<i64> = all.iter().map(|(v, _)| *v).collect();
+        let rebuilds: Vec<i64> = all
+            .iter()
+            .filter(|(_, drops)| *drops)
+            .map(|(v, _)| *v)
+            .collect();
+        (versions, rebuilds)
+    }
+
+    /// Seed one page block plus the two authoritative satellites: a
+    /// page_aliases row and a block_drafts row. Valid for any schema version
+    /// of 0084 or newer (post-0082, block_drafts.updated_at is INTEGER ms;
+    /// post-0073, the page_id_self_for_pages CHECK requires page_id = id for
+    /// pages).
+    async fn seed_page_with_alias_and_draft(pool: &SqlitePool, block_id: &str, alias: &str) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES (?, 'page', 'seeded page 606', ?)",
+        )
+        .bind(block_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+            .bind(block_id)
+            .bind(alias)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO block_drafts (block_id, content, updated_at) \
+             VALUES (?, 'draft content 606', 1755259200000)",
+        )
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// Count the seeded alias / draft rows for `block_id` after migrating.
+    async fn satellite_counts(pool: &SqlitePool, block_id: &str) -> (i64, i64) {
+        let aliases: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = ?")
+                .bind(block_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let drafts: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM block_drafts WHERE block_id = ?")
+                .bind(block_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        (aliases, drafts)
+    }
+
+    /// Tripwire pinning what actually shipped: rows seeded just before the
+    /// 0085 blocks rebuild are cascade-wiped by its `DROP TABLE blocks`
+    /// (contradicting 0085's own safety header), while the parent block
+    /// survives via the bulk copy. The damage class is permanent — neither
+    /// table re-materializes from the op log.
+    #[tokio::test]
+    async fn blocks_0085_rebuild_cascade_wipes_page_aliases_and_drafts_606() {
+        let (pool, _dir) = unmigrated_pool().await;
+        // 0084 is the last migration before the 0085 blocks rebuild.
+        apply_migrations_through(&pool, 0, 84).await;
+        seed_page_with_alias_and_draft(&pool, "BLK606A", "alias-606-a").await;
+
+        apply_migrations_to_head(&pool, 84).await;
+
+        let (aliases, drafts) = satellite_counts(&pool, "BLK606A").await;
+        assert_eq!(
+            (aliases, drafts),
+            (0, 0),
+            "the 0085 blocks rebuild's DROP TABLE cascade-wipes page_aliases and \
+             block_drafts (the shipped #606 data loss; 0085's safety header is false). \
+             If either count is now 1, the rebuild's FK behaviour changed — update \
+             migrations/AGENTS.md §Table-rebuild and this tripwire together"
+        );
+
+        let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'BLK606A'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blk, 1, "the parent block survives the rebuild's bulk copy");
+    }
+
+    /// End-to-end forward pin: page_aliases + block_drafts rows seeded right
+    /// AFTER the last wiping rebuild (0085) must survive every remaining
+    /// migration to head. Any future migration that loses them — rebuild or
+    /// otherwise — fails here.
+    #[tokio::test]
+    async fn page_aliases_and_block_drafts_survive_migrations_after_0085_606() {
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_through(&pool, 0, LAST_WIPING_BLOCKS_REBUILD).await;
+        seed_page_with_alias_and_draft(&pool, "BLK606B", "alias-606-b").await;
+
+        apply_migrations_to_head(&pool, LAST_WIPING_BLOCKS_REBUILD).await;
+
+        let (aliases, drafts) = satellite_counts(&pool, "BLK606B").await;
+        assert_eq!(
+            (aliases, drafts),
+            (1, 1),
+            "page_aliases and block_drafts are AUTHORITATIVE (no op-log recovery; \
+             #606) and must survive every migration after 0085. A future blocks \
+             rebuild must copy them aside before DROP TABLE blocks and restore them \
+             after the rename — see migrations/AGENTS.md §Table-rebuild"
+        );
+        let draft_content: String =
+            sqlx::query_scalar("SELECT content FROM block_drafts WHERE block_id = 'BLK606B'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(draft_content, "draft content 606");
+    }
+
+    /// Drift guard over the migration SOURCE: detect every rebuild-style
+    /// migration (a `DROP TABLE blocks` statement), pin the known-wiping set
+    /// exactly, and for each rebuild newer than 0085 run the full
+    /// seed-before / migrate-through / assert-survival cycle so a future
+    /// rebuild that forgets the copy-aside step fails this test the moment
+    /// it is added.
+    #[tokio::test]
+    async fn future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606() {
+        let (versions, rebuilds) = up_migration_versions();
+
+        // Detector meta-check: the shipped wiping rebuilds must be found
+        // exactly. If this fails, the detector regressed (false negatives
+        // would silently void the loop below).
+        let known: Vec<i64> = rebuilds
+            .iter()
+            .copied()
+            .filter(|v| *v <= LAST_WIPING_BLOCKS_REBUILD)
+            .collect();
+        assert_eq!(
+            known,
+            KNOWN_WIPING_BLOCKS_REBUILDS.to_vec(),
+            "rebuild detector drifted: it must find exactly the shipped blocks \
+             rebuilds 0073/0080/0085 (and never miss one)"
+        );
+
+        // Every FUTURE rebuild must preserve the authoritative satellites.
+        for rebuild in rebuilds
+            .iter()
+            .copied()
+            .filter(|v| *v > LAST_WIPING_BLOCKS_REBUILD)
+        {
+            let before = versions
+                .iter()
+                .copied()
+                .filter(|v| *v < rebuild)
+                .max()
+                .expect("a rebuild migration always has a predecessor");
+            let (pool, _dir) = unmigrated_pool().await;
+            apply_migrations_through(&pool, 0, before).await;
+            seed_page_with_alias_and_draft(&pool, "BLK606C", "alias-606-c").await;
+            apply_migrations_to_head(&pool, before).await;
+
+            let (aliases, drafts) = satellite_counts(&pool, "BLK606C").await;
+            assert_eq!(
+                (aliases, drafts),
+                (1, 1),
+                "blocks rebuild migration {rebuild} cascade-wipes page_aliases and/or \
+                 block_drafts (#606). These tables do NOT recover from the op log — \
+                 the rebuild must copy them to scratch tables before `DROP TABLE \
+                 blocks` and restore them after the rename. Recipe in \
+                 migrations/AGENTS.md §Table-rebuild"
+            );
+        }
+    }
+
+    /// Executable pin of the migrations/AGENTS.md §Table-rebuild recipe: run
+    /// the documented copy-aside / swap / restore SQL as a synthetic future
+    /// rebuild against the HEAD schema, inside a single transaction exactly
+    /// as sqlx wraps a migration, and assert the authoritative satellites
+    /// survive. The future-rebuild drift guard above runs zero iterations
+    /// until a real post-0085 rebuild lands, so without this test nothing in
+    /// CI ever executes the recipe — it could drift (FK mismatch on restore,
+    /// TEMP-table/transaction interaction, STRICT friction) and the failure
+    /// would surface only while writing the next real rebuild migration.
+    #[tokio::test]
+    async fn agents_md_table_rebuild_recipe_preserves_satellites_606() {
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_to_head(&pool, 0).await;
+        seed_page_with_alias_and_draft(&pool, "BLK606D", "alias-606-d").await;
+
+        // Recreate `blocks` verbatim from whatever schema HEAD currently has
+        // (so this test never drifts from the real schema), then run the
+        // recipe. The DDL must be FULLY redirected to `_new_blocks` — table
+        // name AND self-FKs — mirroring 0085's `REFERENCES _new_blocks(id)`
+        // pattern: a self-FK left pointing at the OLD `blocks` makes the
+        // later `DROP TABLE blocks` abort with `FOREIGN KEY constraint
+        // failed` (the copied rows still reference it; the implicit-DELETE
+        // check lands at the end of the DROP statement, tx or not). The
+        // stored DDL mixes quoted self-FKs (`REFERENCES "blocks"(id)`,
+        // rewritten by 0085's RENAME) and unquoted ones (0086's
+        // `ADD COLUMN space_id TEXT REFERENCES blocks(id)`).
+        let create_blocks: String = sqlx::query_scalar(
+            "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'blocks'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let create_new_blocks = create_blocks
+            .replace("\"blocks\"", "_new_blocks")
+            .replace("REFERENCES blocks(", "REFERENCES _new_blocks(")
+            .replace("CREATE TABLE blocks", "CREATE TABLE _new_blocks");
+        assert!(
+            create_new_blocks.starts_with("CREATE TABLE _new_blocks"),
+            "blocks DDL rewrite drifted; stored DDL was: {create_blocks}"
+        );
+        assert!(
+            !create_new_blocks.contains("REFERENCES blocks")
+                && !create_new_blocks.contains("REFERENCES \"blocks\""),
+            "a self-FK still points at the old blocks table — the synthetic \
+             rebuild's DROP would abort. Stored DDL was: {create_blocks}"
+        );
+
+        let recipe = format!(
+            "{create_new_blocks};\n\
+             INSERT INTO _new_blocks SELECT * FROM blocks;\n\
+             -- 1. Copy authoritative children aside (BEFORE the DROP).\n\
+             CREATE TEMP TABLE _keep_page_aliases AS SELECT * FROM page_aliases;\n\
+             CREATE TEMP TABLE _keep_block_drafts AS SELECT * FROM block_drafts;\n\
+             -- 2. The rebuild swap. The DROP cascade-empties the children HERE.\n\
+             DROP TABLE blocks;\n\
+             ALTER TABLE _new_blocks RENAME TO blocks;\n\
+             -- 3. Restore the children (their tables survive the cascade, emptied).\n\
+             INSERT INTO page_aliases SELECT * FROM _keep_page_aliases;\n\
+             INSERT INTO block_drafts SELECT * FROM _keep_block_drafts;\n\
+             DROP TABLE _keep_page_aliases;\n\
+             DROP TABLE _keep_block_drafts;"
+        );
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(recipe))
+            .execute(&mut *tx)
+            .await
+            .expect("the AGENTS.md §Table-rebuild recipe must apply cleanly in one tx");
+        tx.commit().await.unwrap();
+
+        let (aliases, drafts) = satellite_counts(&pool, "BLK606D").await;
+        assert_eq!(
+            (aliases, drafts),
+            (1, 1),
+            "the documented copy-aside/restore recipe must carry page_aliases and \
+             block_drafts through a blocks rebuild (migrations/AGENTS.md \
+             §Table-rebuild, #606)"
+        );
+        let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'BLK606D'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blk, 1, "the parent block survives the synthetic rebuild");
     }
 }

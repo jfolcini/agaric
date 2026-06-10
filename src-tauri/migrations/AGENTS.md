@@ -84,6 +84,44 @@ The op log (`op_log`) is the event-sourcing root. Migrations that change schema 
 
 When a table rebuild is needed (e.g. to add a `FOREIGN KEY … ON DELETE CASCADE` that SQLite cannot add via `ALTER TABLE`), create the replacement as `_new_<table>`, backfill, then rename. Two legacy migrations (0038 `block_drafts_new` and 0044 `materializer_retry_queue_new`) used a suffix form (`<table>_new`) and are exceptions to this rule. From migration 0061 onward the canonical prefix form `_new_<table>` is used; future rebuilds must follow the prefix convention.
 
+### `DROP TABLE` fires `ON DELETE CASCADE` immediately — preserve authoritative children (#606)
+
+Under `foreign_keys = ON` (every connection, including the migration transaction), the rebuild's `DROP TABLE <parent>` step **immediately cascade-deletes every row** of every child table holding an `ON DELETE CASCADE` FK into it. The cascade is part of the DROP itself, **not** a deferred FK validation, so the per-migration transaction does not protect children — only the *parent's* rows survive (via the `_new_` bulk copy). This is verified mechanically by the `*_376` and `*_606` harness tests in `src-tauri/src/db.rs` (seed-then-migrate).
+
+Two more empirically-pinned DROP facts (SQLite 3.50; see `agents_md_table_rebuild_recipe_preserves_satellites_606`):
+
+- There is **no commit-time FK row re-validation**. If a **non**-CASCADE child still holds referencing rows, the DROP aborts at the statement with `FOREIGN KEY constraint failed` — transaction or not. Rebuilds only ever "work" because every populated child either carries CASCADE (and is silently wiped) or is empty.
+- The `_new_<table>` DDL must redirect **self**-FKs to `_new_<table>` (0085 precedent: `parent_id TEXT REFERENCES _new_blocks(id)`). A self-FK left pointing at the old table makes the DROP abort the same way, because the freshly copied `_new_` rows still reference it. The post-swap `ALTER TABLE … RENAME` rewrites those references back to the real name.
+
+Most cascade children of `blocks` (attachments, properties, tags) re-materialize from the op log at next boot, so the shipped rebuilds only cost a recovery pass for them. Two do **not**:
+
+- `page_aliases` — emits no op_log entries (#110); only the user command writes it.
+- `block_drafts` — device-local, never synced or snapshotted.
+
+These are **authoritative**: the shipped blocks rebuilds (0073, 0080, 0085) permanently destroyed both for upgrading users.
+
+**Correction of record:** migration 0085's header claims the rebuild "is safe because the bulk copy is a pure `INSERT ... SELECT` (no rows deleted from `blocks`), so referencing FK rows keep pointing at valid ids throughout." That claim is **false** for cascade children — the DROP wipes them regardless of the copy. Migrations are append-only, so the comment cannot be fixed in place; this section is the correction. Do not copy that rationale into a future rebuild.
+
+**Rule for every future rebuild of a table with inbound `ON DELETE CASCADE` FKs:** copy each authoritative child table aside before the DROP and restore it after the rename. `PRAGMA foreign_keys = OFF` is *not* an option — sqlx wraps each migration in a transaction and the pragma is a no-op inside one. The recipe (`CREATE TEMP TABLE … AS SELECT` carries no type info, so STRICT does not apply; the scratch table is dropped in the same migration):
+
+```sql
+-- 1. Copy authoritative children aside (BEFORE the DROP).
+CREATE TEMP TABLE _keep_page_aliases AS SELECT * FROM page_aliases;
+CREATE TEMP TABLE _keep_block_drafts AS SELECT * FROM block_drafts;
+
+-- 2. The rebuild swap. The DROP cascade-empties the children HERE.
+DROP TABLE blocks;
+ALTER TABLE _new_blocks RENAME TO blocks;
+
+-- 3. Restore the children (their tables survive the cascade, emptied).
+INSERT INTO page_aliases SELECT * FROM _keep_page_aliases;
+INSERT INTO block_drafts SELECT * FROM _keep_block_drafts;
+DROP TABLE _keep_page_aliases;
+DROP TABLE _keep_block_drafts;
+```
+
+For `blocks`, the authoritative children are exactly `page_aliases` and `block_drafts` (everything else recovers from the op log — but re-check this list against the FK graph when writing the rebuild). Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for both table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db.rs`) seeds both tables immediately before every post-0085 rebuild and asserts the rows reach head.
+
 ## Renaming + dropping tables
 
 Renaming or dropping a column / table is destructive. Always:
