@@ -16,6 +16,7 @@ import { SidebarInset, SidebarProvider } from './components/ui/sidebar'
 import { Toaster } from './components/ui/sonner'
 import { useHeaderLabel, ViewDispatcher } from './components/ViewDispatcher'
 import { ViewHeaderOutletProvider, ViewHeaderOutletSlot } from './components/ViewHeaderOutlet'
+import { useAndroidBackButton } from './hooks/useAndroidBackButton'
 import { useAppBootRecovery } from './hooks/useAppBootRecovery'
 import { useAppDialogs } from './hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
@@ -198,6 +199,12 @@ function App() {
   // the Play Store / App Store own that distribution path. Empty-deps;
   // safe to slot adjacent to the other boot hooks.
   useUpdateCheck()
+
+  // ── Android system back button (#716) ─────────────────────────────
+  // Bridges hardware/gesture back into the in-app priority chain:
+  // overlay-close → zoom-out → page-stack/view back → exit at root.
+  // No-op on desktop and in browser dev (guards on Android + Tauri).
+  useAndroidBackButton()
 
   // ── Focus main content when view changes ──────────────────────────
   // Each view can register its preferred primary-focus element (search

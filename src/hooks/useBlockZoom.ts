@@ -8,8 +8,9 @@
  * - Visible blocks filtered and depth-adjusted for the zoomed view
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { BACK_PRIORITY_ZOOM, registerBackHandler } from '../lib/back-chain'
 import type { FlatBlock } from '../lib/tree-utils'
 import { getDragDescendants } from '../lib/tree-utils'
 
@@ -62,6 +63,20 @@ export function useBlockZoom(
   const zoomToRoot = useCallback(() => {
     setZoomedBlockId(null)
   }, [])
+
+  // #716 — while zoomed, the Android system back button should zoom out
+  // one level before any view/page navigation happens. Registering is a
+  // no-op on desktop: the chain is only ever run by the Android-only
+  // plugin listener (`useAndroidBackButton`). LIFO tie-breaking in the
+  // registry means the most recently zoomed BlockTree wins when several
+  // are mounted (journal week/month views).
+  useEffect(() => {
+    if (zoomedBlockId === null) return
+    return registerBackHandler(() => {
+      zoomOut()
+      return true
+    }, BACK_PRIORITY_ZOOM)
+  }, [zoomedBlockId, zoomOut])
 
   const breadcrumbs = useMemo<BreadcrumbItem[]>(() => {
     if (!zoomedBlockId) return []

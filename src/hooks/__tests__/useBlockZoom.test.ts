@@ -13,9 +13,10 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '../../__tests__/fixtures'
+import { __resetBackHandlersForTests, runBackChain } from '../../lib/back-chain'
 import type { FlatBlock } from '../../lib/tree-utils'
 import { useBlockZoom } from '../useBlockZoom'
 
@@ -186,6 +187,53 @@ describe('useBlockZoom', () => {
       { id: 'X', content: '' },
       { id: 'Y', content: 'Block Y' },
     ])
+  })
+
+  // ── #716: Android back-chain integration ──────────────────────────
+  describe('back-chain registration (#716)', () => {
+    beforeEach(() => {
+      __resetBackHandlersForTests()
+    })
+
+    it('registers no back handler while not zoomed', () => {
+      renderHook(() => useBlockZoom(allBlocks, allBlocks))
+      expect(runBackChain()).toBe(false)
+    })
+
+    it('back press zooms out one level while zoomed', () => {
+      const { result } = renderHook(() => useBlockZoom(allBlocks, allBlocks))
+
+      act(() => {
+        result.current.zoomIn('B')
+      })
+
+      let handled = false
+      act(() => {
+        handled = runBackChain()
+      })
+      expect(handled).toBe(true)
+      expect(result.current.zoomedBlockId).toBe('A')
+
+      act(() => {
+        handled = runBackChain()
+      })
+      expect(handled).toBe(true)
+      expect(result.current.zoomedBlockId).toBeNull()
+
+      // Fully zoomed out → handler unregistered → press not consumed.
+      expect(runBackChain()).toBe(false)
+    })
+
+    it('unmount unregisters the zoom back handler', () => {
+      const { result, unmount } = renderHook(() => useBlockZoom(allBlocks, allBlocks))
+
+      act(() => {
+        result.current.zoomIn('B')
+      })
+      unmount()
+
+      expect(runBackChain()).toBe(false)
+    })
   })
 
   it('respects collapseVisible filtering when zoomed', () => {
