@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -8,6 +8,10 @@ import { QrScanner } from '../QrScanner'
 // Configurable mock for html5-qrcode module
 let mockStartBehavior: 'error' | 'scan' | 'pending' = 'error'
 let mockScanData = ''
+// #758 item 2: number of decode callbacks fired per scan. The real library
+// keeps decoding frames (fps: 10) while the async stop() settles, so >1
+// simulates the duplicate-decode burst of a single physical scan.
+let mockScanFireCount = 1
 
 const mockStop = vi.fn().mockResolvedValue(undefined)
 
@@ -22,9 +26,11 @@ vi.mock('html5-qrcode', () => ({
       if (mockStartBehavior === 'error') {
         throw new Error('Camera access denied')
       }
-      // Simulate successful scan after a microtask
+      // Simulate successful scan(s) after a microtask
       if (mockStartBehavior === 'scan' && onSuccess) {
-        queueMicrotask(() => onSuccess(mockScanData))
+        for (let i = 0; i < mockScanFireCount; i++) {
+          queueMicrotask(() => onSuccess(mockScanData))
+        }
       }
       // 'pending': started but no scan result yet — scanner stays running
     }
@@ -38,6 +44,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockStartBehavior = 'error'
   mockScanData = ''
+  mockScanFireCount = 1
 })
 
 describe('QrScanner', () => {
@@ -203,6 +210,32 @@ describe('QrScanner', () => {
       expect(screen.getByRole('button', { name: /scan qr code/i })).toBeInTheDocument()
     })
     expect(screen.queryByText('Scanning...')).not.toBeInTheDocument()
+  })
+
+  // #758 item 2: the decode callback fires at fps:10 while the async stop()
+  // settles — without the hasScanned latch onScan fired once per duplicate
+  // decode of the same physical QR code.
+  it('fires onScan exactly once when the decode callback fires multiple times (#758 item 2)', async () => {
+    mockStartBehavior = 'scan'
+    mockScanData = 'dup-passphrase'
+    mockScanFireCount = 3
+
+    const user = userEvent.setup()
+    const onScan = vi.fn()
+
+    render(<QrScanner onScan={onScan} />)
+
+    await user.click(screen.getByRole('button', { name: /scan qr code/i }))
+
+    await waitFor(() => {
+      expect(onScan).toHaveBeenCalledWith('dup-passphrase')
+    })
+    // Let any remaining queued decode callbacks drain before asserting
+    // (React 19 external-source wait pattern — see component AGENTS.md).
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(onScan).toHaveBeenCalledTimes(1)
   })
 
   it('cleanup: stops scanner on unmount', async () => {

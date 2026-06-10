@@ -627,6 +627,256 @@ describe('PdfViewerDialog', () => {
     }
   })
 
+  // ─── #758 item 3: nav/keyboard/resize render failures route to setError ──
+  //
+  // renderPage rethrows non-cancellation errors. Previously goToPage, the
+  // keyboard shortcuts, and the ResizeObserver callback never caught that
+  // rethrow → unhandled rejection + a stale canvas behind an
+  // already-advanced page indicator. They now route to the error state.
+  describe('page render failures (#758 item 3)', () => {
+    function failPageTwo(): void {
+      mockGetPage.mockImplementation(
+        (pageNum?: unknown) =>
+          (pageNum === 2
+            ? Promise.reject(new Error('render boom'))
+            : Promise.resolve({
+                getViewport: vi.fn(() => ({ width: 600, height: 800 })),
+                render: mockRender,
+              })) as never,
+      )
+    }
+
+    it('routes a failed render on Next-button navigation to the error state', async () => {
+      failPageTwo()
+      const user = userEvent.setup()
+
+      render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="test.pdf"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Next page' }))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-error')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Error: render boom')).toBeInTheDocument()
+      // The stale canvas is gone — no half-rendered page behind the error.
+      expect(screen.queryByTestId('pdf-canvas')).not.toBeInTheDocument()
+    })
+
+    it('routes a failed render on keyboard navigation to the error state', async () => {
+      failPageTwo()
+      const user = userEvent.setup()
+
+      render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="test.pdf"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+
+      await user.keyboard('{ArrowRight}')
+
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-error')).toBeInTheDocument()
+      })
+      expect(screen.getByText('Error: render boom')).toBeInTheDocument()
+    })
+
+    it('routes a failed resize-triggered render to the error state', async () => {
+      // Controllable ResizeObserver (the shared test-setup stub is a no-op).
+      type ROCallback = (entries: ResizeObserverEntry[], observer: ResizeObserver) => void
+      class MockResizeObserver {
+        static instances: MockResizeObserver[] = []
+        callback: ROCallback
+        constructor(callback: ROCallback) {
+          this.callback = callback
+          MockResizeObserver.instances.push(this)
+        }
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+        fire(): void {
+          this.callback([] as unknown as ResizeObserverEntry[], this as unknown as ResizeObserver)
+        }
+      }
+      vi.stubGlobal('ResizeObserver', MockResizeObserver)
+
+      try {
+        render(
+          <PdfViewerDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            fileUrl="http://example.com/test.pdf"
+            filename="test.pdf"
+          />,
+        )
+
+        await waitFor(() => {
+          expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+        })
+
+        // Any getPage call from here on fails — the resize re-render of the
+        // current page hits the catch and surfaces the error.
+        mockGetPage.mockReturnValue(Promise.reject(new Error('resize boom')) as never)
+        act(() => {
+          for (const observer of MockResizeObserver.instances) observer.fire()
+        })
+
+        await waitFor(() => {
+          expect(screen.getByTestId('pdf-error')).toBeInTheDocument()
+        })
+        expect(screen.getByText('Error: resize boom')).toBeInTheDocument()
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('has no a11y violations in the nav-failure error state', async () => {
+      failPageTwo()
+      const user = userEvent.setup()
+
+      const { container } = render(
+        <PdfViewerDialog
+          open={true}
+          onOpenChange={vi.fn()}
+          fileUrl="http://example.com/test.pdf"
+          filename="test.pdf"
+        />,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { name: 'Next page' }))
+      await waitFor(() => {
+        expect(screen.getByTestId('pdf-error')).toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ─── #758 item 3: HiDPI canvas backing store ────────────────────────────
+  describe('devicePixelRatio rendering (#758 item 3)', () => {
+    it('scales the canvas backing store by devicePixelRatio capped at 2', async () => {
+      const originalDpr = window.devicePixelRatio
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 3 })
+      // test-setup stubs getContext → null which bails renderPage before the
+      // canvas sizing; return a truthy context so the sizing path runs.
+      const originalGetContext = HTMLCanvasElement.prototype.getContext
+      HTMLCanvasElement.prototype.getContext = (() =>
+        ({}) as unknown) as typeof HTMLCanvasElement.prototype.getContext
+
+      try {
+        const user = userEvent.setup()
+
+        render(
+          <PdfViewerDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            fileUrl="http://example.com/test.pdf"
+            filename="test.pdf"
+          />,
+        )
+
+        await waitFor(() => {
+          expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+        })
+
+        // Navigate so renderPage runs with the canvas committed (the
+        // ResizeObserver that drives the first render is a no-op in jsdom).
+        await user.click(screen.getByRole('button', { name: 'Next page' }))
+
+        await waitFor(() => {
+          expect(mockRender).toHaveBeenCalled()
+        })
+
+        const canvas = screen.getByTestId('pdf-canvas') as HTMLCanvasElement
+        // Mock viewport is 600×800 at any scale; dpr 3 is capped at 2.
+        expect(canvas.width).toBe(1200)
+        expect(canvas.height).toBe(1600)
+        // CSS width stays at the layout scale so the page isn't zoomed;
+        // height stays auto so the intrinsic aspect ratio holds even when
+        // `max-w-full` clamps the width below style.width.
+        expect(canvas.style.width).toBe('600px')
+        expect(canvas.style.height).toBe('auto')
+        // pdfjs renders through a device-scale transform.
+        expect(mockRender).toHaveBeenCalledWith(
+          expect.objectContaining({ transform: [2, 0, 0, 2, 0, 0] }),
+        )
+      } finally {
+        HTMLCanvasElement.prototype.getContext = originalGetContext
+        Object.defineProperty(window, 'devicePixelRatio', {
+          configurable: true,
+          value: originalDpr,
+        })
+      }
+    })
+
+    it('renders 1:1 with no transform when devicePixelRatio is 1', async () => {
+      const originalDpr = window.devicePixelRatio
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
+      const originalGetContext = HTMLCanvasElement.prototype.getContext
+      HTMLCanvasElement.prototype.getContext = (() =>
+        ({}) as unknown) as typeof HTMLCanvasElement.prototype.getContext
+
+      try {
+        const user = userEvent.setup()
+
+        render(
+          <PdfViewerDialog
+            open={true}
+            onOpenChange={vi.fn()}
+            fileUrl="http://example.com/test.pdf"
+            filename="test.pdf"
+          />,
+        )
+
+        await waitFor(() => {
+          expect(screen.getByText('Page 1 / 5')).toBeInTheDocument()
+        })
+
+        await user.click(screen.getByRole('button', { name: 'Next page' }))
+
+        await waitFor(() => {
+          expect(mockRender).toHaveBeenCalled()
+        })
+
+        const canvas = screen.getByTestId('pdf-canvas') as HTMLCanvasElement
+        expect(canvas.width).toBe(600)
+        expect(canvas.height).toBe(800)
+        const renderArgs = (mockRender.mock.calls.at(-1) as unknown[] | undefined)?.[0] as
+          | Record<string, unknown>
+          | undefined
+        expect(renderArgs).toBeDefined()
+        expect(renderArgs).not.toHaveProperty('transform')
+      } finally {
+        HTMLCanvasElement.prototype.getContext = originalGetContext
+        Object.defineProperty(window, 'devicePixelRatio', {
+          configurable: true,
+          value: originalDpr,
+        })
+      }
+    })
+  })
+
   // ─── MAINT-215: useDialogOrSheet('dialog') viewport switch ─────────────
   //
   // On phones < 768 px the outer shell renders as a bottom Sheet so the

@@ -107,15 +107,26 @@ function truncateLabel(label: string): string {
  * Listeners (click, keydown, focus, blur, mouseenter/leave,
  * pointerdown/up) are re-bound on the merged selection so handler
  * closures pick up the latest `navigateToPage`.
+ *
+ * Joins are scoped to the dedicated layer groups created by
+ * `renderGraphElements` (`g.edges-layer` / `g.nodes-layer`) so ENTERing
+ * `<line>` elements append inside the edge layer — which precedes the
+ * node layer in document order — and never paint over nodes
+ * (#758 item 4).
+ *
+ * @internal exported for direct DOM-level tests only.
  */
-function patchGraphSelections(
+export function patchGraphSelections(
   g: RenderResult['g'],
   simNodes: GraphNode[],
   simEdges: GraphEdge[],
   navigateToPage: (id: string, label: string) => void,
 ): { link: LinkSel; node: NodeSel } {
+  const edgeLayer = g.select<SVGGElement>('g.edges-layer')
+  const nodeLayer = g.select<SVGGElement>('g.nodes-layer')
+
   // ── Edges ────────────────────────────────────────────────────────
-  const link: LinkSel = g
+  const link: LinkSel = edgeLayer
     .selectAll<SVGLineElement, GraphEdge>('line')
     .data(simEdges, (d: GraphEdge) => {
       const s = typeof d.source === 'string' ? d.source : (d.source as GraphNode).id
@@ -134,7 +145,7 @@ function patchGraphSelections(
     })
 
   // ── Nodes ────────────────────────────────────────────────────────
-  const node: NodeSel = g
+  const node: NodeSel = nodeLayer
     .selectAll<SVGGElement, GraphNode>('g.node')
     .data(simNodes, (d: GraphNode) => d.id)
     .join(

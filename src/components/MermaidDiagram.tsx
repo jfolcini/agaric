@@ -13,20 +13,27 @@ import { useTranslation } from 'react-i18next'
 import { ScrollArea } from './ui/scroll-area'
 import { Spinner } from './ui/spinner'
 
-// Initialize mermaid once globally
-mermaid.initialize({
-  startOnLoad: false,
-  // SECURITY: pin the sanitizing render mode explicitly. `'strict'` is mermaid's
-  // default (it DOMPurify-sanitizes the rendered SVG — stripping scripts and
-  // event handlers), but the diagram source is user-authored block content, so
-  // make the XSS protection a hard, visible invariant rather than an implicit
-  // default that a future config tweak could silently regress.
-  securityLevel: 'strict',
-  theme:
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-      ? 'dark'
-      : 'default',
-})
+/**
+ * (Re)configure mermaid for the current app theme. Called inside the render
+ * effect (not at module load) so theme switches take effect on the next
+ * diagram render instead of staying frozen to whatever `.dark` was when the
+ * module first loaded (#758 item 1).
+ */
+function initializeMermaid(): void {
+  mermaid.initialize({
+    startOnLoad: false,
+    // SECURITY: pin the sanitizing render mode explicitly. `'strict'` is mermaid's
+    // default (it DOMPurify-sanitizes the rendered SVG — stripping scripts and
+    // event handlers), but the diagram source is user-authored block content, so
+    // make the XSS protection a hard, visible invariant rather than an implicit
+    // default that a future config tweak could silently regress.
+    securityLevel: 'strict',
+    theme:
+      typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+        ? 'dark'
+        : 'default',
+  })
+}
 
 export interface MermaidDiagramProps {
   code: string
@@ -46,6 +53,10 @@ export function MermaidDiagram({ code }: MermaidDiagramProps): React.ReactElemen
     setLoading(true)
     setSvg(null)
     setError(null)
+
+    // Re-read the theme on every render so a light/dark toggle since the
+    // last render is picked up (mermaid bakes the theme in at render time).
+    initializeMermaid()
 
     mermaid
       .render(renderId, code)

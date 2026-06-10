@@ -84,8 +84,21 @@ export function PdfViewerDialog({
 
       const viewport = page.getViewport({ scale })
 
-      canvas.height = viewport.height
-      canvas.width = viewport.width
+      // HiDPI: render the backing store at devicePixelRatio (capped at 2 —
+      // beyond that the memory cost outweighs any visible sharpness gain on
+      // a document canvas) and scale it back down via CSS so the page isn't
+      // blurry on retina/mobile displays (#758 item 3).
+      const outputScale = Math.min(window.devicePixelRatio || 1, 2)
+      canvas.height = Math.floor(viewport.height * outputScale)
+      canvas.width = Math.floor(viewport.width * outputScale)
+      canvas.style.width = `${Math.floor(viewport.width)}px`
+      // Height stays `auto`: the canvas carries `max-w-full`, and the Body we
+      // measure `scale` from is wider than the canvas's containing block (the
+      // ScrollArea's -mx-6 root vs its px-6 viewport), so the displayed width
+      // is routinely clamped below style.width. With `auto` the height follows
+      // the canvas's intrinsic aspect ratio under that clamp; a fixed pixel
+      // height would stretch the page vertically.
+      canvas.style.height = 'auto'
 
       const ctx = canvas.getContext('2d')
       if (!ctx) return
@@ -93,6 +106,7 @@ export function PdfViewerDialog({
       const renderTask = page.render({
         canvasContext: ctx,
         viewport,
+        ...(outputScale !== 1 ? { transform: [outputScale, 0, 0, outputScale, 0, 0] } : {}),
         canvas: null,
       })
       renderTaskRef.current = renderTask
@@ -133,6 +147,13 @@ export function PdfViewerDialog({
         pdfDocRef.current = pdfDoc
         setNumPages(pdfDoc.numPages)
         setLoading(false)
+        // First-page render rendezvous: at this point the <canvas> usually
+        // hasn't been committed yet (it mounts on the numPages > 0 render),
+        // so this call typically bails on the `!canvas` guard. The render
+        // that actually paints page 1 is triggered by the ResizeObserver
+        // effect below — observe() always fires an initial callback once the
+        // container is laid out. This call is kept for the path where the
+        // canvas IS already committed (e.g. re-open with a cached layout).
         await renderPage(1)
       } catch (err) {
         if (!cancelled) {
@@ -162,12 +183,24 @@ export function PdfViewerDialog({
     }
   }, [open, fileUrl, renderPage])
 
-  /** Navigate to a different page. */
+  /**
+   * Navigate to a different page.
+   *
+   * renderPage rethrows non-cancellation errors; without the catch here every
+   * caller (nav buttons, keyboard shortcuts) produced an unhandled rejection
+   * and left a stale canvas behind an already-advanced page indicator
+   * (#758 item 3). Route failures to the error state instead.
+   */
   const goToPage = useCallback(
     async (pageNum: number) => {
       if (pageNum < 1 || pageNum > numPages) return
       setCurrentPage(pageNum)
-      await renderPage(pageNum)
+      try {
+        await renderPage(pageNum)
+      } catch (err) {
+        logger.warn('PdfViewerDialog', 'page render failed', { pageNum }, err)
+        setError(err instanceof Error ? err.message : 'Failed to render page')
+      }
     },
     [numPages, renderPage],
   )
@@ -221,13 +254,26 @@ export function PdfViewerDialog({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, numPages, goToPrev, goToNext, goToPage])
 
-  /** Re-render the current page when the container resizes. */
+  /**
+   * Re-render the current page when the container resizes.
+   *
+   * NOTE: this effect also owns the FIRST page render. `observe()` always
+   * delivers an initial callback after layout, and `loadPdf`'s own
+   * `renderPage(1)` usually no-ops because the canvas isn't committed yet
+   * when it runs (see the comment in `loadPdf`). If this observer is ever
+   * removed, the first-page render needs an explicit replacement.
+   */
   useEffect(() => {
     const container = containerRef.current
     if (!container || numPages === 0) return
 
     const observer = new ResizeObserver(() => {
-      renderPage(currentPageRef.current)
+      // renderPage rethrows non-cancellation errors; surface them instead of
+      // letting the rejection escape unhandled (#758 item 3).
+      renderPage(currentPageRef.current).catch((err: unknown) => {
+        logger.warn('PdfViewerDialog', 'resize render failed', undefined, err)
+        setError(err instanceof Error ? err.message : 'Failed to render page')
+      })
     })
     observer.observe(container)
 

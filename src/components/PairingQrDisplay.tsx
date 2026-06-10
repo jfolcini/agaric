@@ -123,16 +123,15 @@ export function PairingQrDisplay({
             )}
           </p>
         )}
-        {/* #424: SR-only countdown — announces at key intervals only */}
+        {/* #424: SR-only countdown — announces at key intervals only.
+            #758 item 6: routed through t() with i18next plural keys
+            (srCountdownMinutes/srCountdownSeconds) instead of hardcoded
+            English with manual pluralization. */}
         <p className="sr-only" aria-live="polite" aria-atomic="true">
           {countdown !== null && countdown > 0 && (countdown % 60 === 0 || countdown === 30)
-            ? `Session expires in ${
-                countdown >= 60
-                  ? `${Math.floor(countdown / 60)} minute${
-                      Math.floor(countdown / 60) !== 1 ? 's' : ''
-                    }`
-                  : `${countdown} seconds`
-              }`
+            ? countdown >= 60
+              ? t('pairing.srCountdownMinutes', { count: Math.floor(countdown / 60) })
+              : t('pairing.srCountdownSeconds', { count: countdown })
             : ''}
         </p>
         {isExpired && !error && (

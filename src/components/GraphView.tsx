@@ -35,13 +35,52 @@ import { IconButton } from './ui/icon-button'
 // ── Module-level cache for stale-while-revalidate (UX-113) ────────────
 const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
-interface GraphCache {
+export interface GraphCache {
   nodes: GraphNode[]
   edges: GraphEdge[]
   timestamp: number
 }
 
+/**
+ * Maximum cached (spaceId, tagIds) entries. The map is keyed by every
+ * distinct tag-filter combination the user tries, so without a bound it
+ * grows for the whole session (each entry holds full node/edge arrays).
+ * A handful of entries covers realistic back-and-forth filter toggling;
+ * older combinations are cheap to refetch (#758 item 4).
+ *
+ * @internal exported for tests.
+ */
+export const GRAPH_CACHE_MAX_ENTRIES = 8
+
 const graphCacheMap = new Map<string, GraphCache>()
+
+/**
+ * LRU read: refresh the entry's recency (Map preserves insertion order, so
+ * delete + re-set moves it to the back of the eviction queue).
+ * @internal exported for tests.
+ */
+export function getGraphCacheEntry(key: string): GraphCache | null {
+  const entry = graphCacheMap.get(key)
+  if (!entry) return null
+  graphCacheMap.delete(key)
+  graphCacheMap.set(key, entry)
+  return entry
+}
+
+/**
+ * LRU write: insert as most-recent and evict the least-recently-used
+ * entries beyond `GRAPH_CACHE_MAX_ENTRIES`.
+ * @internal exported for tests.
+ */
+export function setGraphCacheEntry(key: string, entry: GraphCache): void {
+  graphCacheMap.delete(key)
+  graphCacheMap.set(key, entry)
+  while (graphCacheMap.size > GRAPH_CACHE_MAX_ENTRIES) {
+    const oldest = graphCacheMap.keys().next().value
+    if (oldest === undefined) break
+    graphCacheMap.delete(oldest)
+  }
+}
 
 /** Sentinel value for "all pages" (no tag filter). */
 const TAG_ALL_KEY = '__all__'
@@ -120,7 +159,7 @@ export function GraphView(): React.ReactElement {
     // "failed to load" screen until a full remount.
     setError(null)
 
-    const graphCache = graphCacheMap.get(tagCacheKey) ?? null
+    const graphCache = getGraphCacheEntry(tagCacheKey)
 
     // Serve cached data immediately if available
     if (graphCache) {
@@ -137,7 +176,7 @@ export function GraphView(): React.ReactElement {
         const result = await fetchGraphData(tagFilterIds, currentSpaceId)
         if (cancelled) return
 
-        graphCacheMap.set(tagCacheKey, {
+        setGraphCacheEntry(tagCacheKey, {
           nodes: result.nodes,
           edges: result.edges,
           timestamp: Date.now(),

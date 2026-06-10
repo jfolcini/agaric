@@ -27,6 +27,10 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
   const [error, setError] = useState<string | null>(null)
   const scannerRef = useRef<HTMLDivElement>(null)
   const scannerInstanceRef = useRef<{ stop: () => Promise<void> } | null>(null)
+  // #758 item 2: html5-qrcode keeps decoding frames (fps: 10) while the async
+  // stop() settles, so the decode callback can fire multiple times for one
+  // physical scan. Latch on the first decode and drop the rest.
+  const hasScannedRef = useRef(false)
 
   // Cleanup scanner on unmount to prevent camera leaks
   useEffect(() => {
@@ -49,6 +53,7 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
 
       const scanner = new Html5Qrcode(scannerRef.current.id)
       scannerInstanceRef.current = scanner
+      hasScannedRef.current = false
       setScanning(true)
       setError(null)
 
@@ -56,6 +61,12 @@ export function QrScanner({ onScan, onError, onCameraDenied }: QrScannerProps) {
         { facingMode: 'environment' },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
+          // Guard against duplicate decode callbacks: stop() is async, so the
+          // camera keeps decoding the same QR for a few frames after the
+          // first hit — without this latch onScan would fire repeatedly.
+          if (hasScannedRef.current) return
+          hasScannedRef.current = true
+
           scanner.stop().catch((err: unknown) => {
             logger.warn('QrScanner', 'Failed to stop scanner after successful scan', undefined, err)
           })

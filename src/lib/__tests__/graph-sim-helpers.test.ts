@@ -28,6 +28,32 @@ function makeNode(id: string, label: string): GraphNode {
   }
 }
 
+describe('renderGraphElements — dedicated paint layers (#758 item 4)', () => {
+  it('renders edges into g.edges-layer and nodes into g.nodes-layer, edges first', () => {
+    const svg = makeSvg()
+    const nodes: GraphNode[] = [makeNode('a', 'A'), makeNode('b', 'B')]
+    const edges: GraphEdge[] = [{ source: 'a', target: 'b', ref_count: 1 }]
+
+    renderGraphElements(svg, nodes, edges, () => {})
+
+    const edgeLayer = svg.querySelector('g.edges-layer')
+    const nodeLayer = svg.querySelector('g.nodes-layer')
+    expect(edgeLayer).not.toBeNull()
+    expect(nodeLayer).not.toBeNull()
+
+    // All lines live in the edge layer, all node groups in the node layer.
+    expect(edgeLayer?.querySelectorAll('line')).toHaveLength(1)
+    expect(nodeLayer?.querySelectorAll('g.node')).toHaveLength(2)
+
+    // Edge layer precedes the node layer in document order — SVG painter's
+    // order keeps every edge under every node.
+    expect(
+      (edgeLayer as Element).compareDocumentPosition(nodeLayer as Element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+})
+
 describe('renderGraphElements — UX-357 native SVG <title> tooltip', () => {
   it('appends a <title> child carrying the full label inside each node <g>', () => {
     const svg = makeSvg()
