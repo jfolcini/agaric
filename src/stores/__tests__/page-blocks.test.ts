@@ -39,9 +39,15 @@ let mockGlobalBlockState = {
   selectedBlockIds: [] as string[],
 }
 const mockGlobalSetState = vi.fn()
+// #773 — load() clears phantom focus via the store ACTION (setFocused), not
+// raw setState. Mirror the real action's semantics (clearing focus also
+// clears the coupled selection) so state assertions hold after the call.
+const mockSetFocused = vi.fn((blockId: string | null) => {
+  mockGlobalBlockState = { focusedBlockId: blockId, selectedBlockIds: [] }
+})
 vi.mock('@/stores/blocks', () => ({
   useBlockStore: {
-    getState: () => mockGlobalBlockState,
+    getState: () => ({ ...mockGlobalBlockState, setFocused: mockSetFocused }),
     setState: (...args: unknown[]) => mockGlobalSetState(...args),
   },
 }))
@@ -207,6 +213,122 @@ describe('PageBlockStore', () => {
       expect(mockedInvoke).not.toHaveBeenCalled()
       expect(store.getState().blocks).toBe(blocksBefore)
       expect(store.getState().loading).toBe(loadingBefore)
+    })
+
+    // ── #773 — sync-delete focus reconciliation ─────────────────────────
+    it('#773 — clears global focus when a sync-delete + registry reload drops the focused block', async () => {
+      // The store owns the focused block before the reload.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'focused' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'other' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+
+      // Registry-wide reload — exactly what useSyncEvents' sync:complete
+      // handler does. The fresh backend snapshot no longer contains A
+      // (a remote peer deleted it).
+      pageBlockRegistry.set('PAGE_1', store)
+      try {
+        mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'B', parent_id: 'PAGE_1' })])
+        for (const s of pageBlockRegistry.values()) {
+          await s.getState().load()
+        }
+      } finally {
+        pageBlockRegistry.delete('PAGE_1')
+      }
+
+      expect(mockSetFocused).toHaveBeenCalledWith(null)
+      expect(mockGlobalBlockState.focusedBlockId).toBeNull()
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B'])
+    })
+
+    it('#773 — retains focus when the focused block survives the reload', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'focused' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'other' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', content: 'from backend' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', content: 'from backend' }),
+      ])
+      await store.getState().load()
+
+      expect(mockSetFocused).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.focusedBlockId).toBe('A')
+    })
+
+    it('#773 — does not clear focus owned by another page when THIS store reloads (no spurious clears)', async () => {
+      // Focus belongs to a block on page A; this store is page B and has
+      // never contained that block (e.g. ordinary navigation load, or one
+      // of N journal-day trees reloading after sync). Ownership pre-check
+      // fails → focus must stay untouched even though the snapshot lacks
+      // the focused id.
+      const pageB = createPageBlockStore('PAGE_B')
+      pageB.setState({ blocks: [makeBlock({ id: 'X', parent_id: 'PAGE_B' })] })
+      mockGlobalBlockState = { focusedBlockId: 'BLOCK_ON_PAGE_A', selectedBlockIds: [] }
+
+      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'X', parent_id: 'PAGE_B' })])
+      await pageB.getState().load()
+
+      expect(mockSetFocused).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.focusedBlockId).toBe('BLOCK_ON_PAGE_A')
+    })
+
+    it('#773 — does not clear focus on a block created and focused while the load was in flight', async () => {
+      // Race: a sync-triggered load() is in flight (its backend snapshot was
+      // taken at query time) when the user presses Enter — createBelow's
+      // optimistic splice adds block N to blocksById and focus moves to N
+      // BEFORE the stale load response is processed. N is absent from the
+      // snapshot because the snapshot predates it, NOT because a remote peer
+      // deleted it. The clear guard must compare against the load-START
+      // index, so N's mid-flight arrival cannot be mistaken for a deletion.
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
+      mockGlobalBlockState = { focusedBlockId: 'A', selectedBlockIds: [] }
+
+      let resolveLoad!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLoad = resolve
+        }),
+      )
+      const loadPromise = store.getState().load()
+
+      // Mid-flight: optimistic create lands N in the store and focus moves.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+          makeBlock({ id: 'N', parent_id: 'PAGE_1', content: 'just created' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: 'N', selectedBlockIds: [] }
+
+      // Stale snapshot: predates N's insert.
+      resolveLoad([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      await loadPromise
+
+      expect(mockSetFocused).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.focusedBlockId).toBe('N')
+    })
+
+    it('#773 — fresh-mount load (empty store) never clears a focus id absent from the snapshot', async () => {
+      // Page-navigation case: a brand-new store loads while some focus id
+      // is still set globally. The store never owned the block (blocksById
+      // is empty pre-load), so it must not clear focus — that lifecycle is
+      // managed elsewhere.
+      const fresh = createPageBlockStore('PAGE_NAV')
+      mockGlobalBlockState = { focusedBlockId: 'STALE_FOCUS', selectedBlockIds: [] }
+
+      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'Y', parent_id: 'PAGE_NAV' })])
+      await fresh.getState().load()
+
+      expect(mockSetFocused).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.focusedBlockId).toBe('STALE_FOCUS')
     })
   })
 
