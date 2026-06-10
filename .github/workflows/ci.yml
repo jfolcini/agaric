@@ -204,6 +204,15 @@ jobs:
   # back the bump. Multi-maintainer projects that want PR-time signal
   # on non-Linux platforms can add a label-gated re-add or a scheduled
   # nightly job (see the README for the rationale).
+  #
+  # `needs: [validate]` is a DELIBERATE fail-fast-vs-latency choice
+  # (#819 (5)): the build consumes nothing from validate, so removing
+  # the edge would start the ~24-min slot in parallel and cut wall
+  # clock. We keep the serialization anyway — a PR that fails the
+  # cheap validate stage should not burn the expensive runner slot,
+  # and the bundle signal is not on the review critical path (logic
+  # correctness lives in `validate`). Revisit only if bundle-drift
+  # feedback latency starts hurting.
   # ---------------------------------------------------------------------------
   build:
     needs: [validate, detect-changes]
@@ -336,6 +345,11 @@ jobs:
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
+          # Smoke-build output, ~100 MB per main push — only ever
+          # inspected within days of the run. Shippable artifacts come
+          # from release.yml; the 90-day default just accumulated
+          # storage (#819 (4)).
+          retention-days: 7
 
   # ---------------------------------------------------------------------------
   # Android APK build. Skipped on `pull_request` events entirely — the

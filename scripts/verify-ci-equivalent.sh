@@ -147,6 +147,18 @@ if ! SKIP="vitest,cargo-test" prek run --all-files --hook-stage pre-commit; then
 fi
 echo "  ✓ prek --all-files"
 
+# Migrations append-only backstop (#806): the migrations-immutable hook
+# scans the STAGED index, which is empty at push time, so a commit made
+# with `--no-verify` would sail through Phase A unnoticed. Re-check the
+# whole push range for M/D/R/C/T under src-tauri/migrations/*.sql.
+if ! bash scripts/check-migrations-immutable.sh --range "$RANGE"; then
+    echo ""
+    echo "✗ Pre-push verification FAILED: shipped migration changed in range '$RANGE' (#806)."
+    echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+    exit 1
+fi
+echo "  ✓ migrations append-only over '$RANGE'"
+
 # ── Phase B: externalBin placeholder (only if Rust changed) ────────
 # Tauri's build.rs validates the externalBin path on every cargo
 # invocation; without the placeholder, `cargo nextest` in Phase D

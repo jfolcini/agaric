@@ -84,13 +84,23 @@ for (const file of files) {
   // Walk every CREATE TABLE in the file. The regex captures the
   // statement start; we then walk forward to the terminating `;`
   // (SQLite syntax does not nest `;`, so this is safe).
-  const re = /CREATE\s+(VIRTUAL\s+)?TABLE\s+(IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][\w]*)/gi
+  //
+  // The identifier class covers all four SQLite spellings — bare,
+  // "double-quoted", `backticked`, [bracketed] — plus an optional
+  // schema qualifier (`main.t`). A quoted name (`CREATE TABLE "x"`)
+  // previously failed to match at all, silently skipping the STRICT
+  // check for that table (issue #818 (1)).
+  const ident = '(?:"[^"]+"|`[^`]+`|\\[[^\\]]+\\]|[A-Za-z_][\\w]*)'
+  const re = new RegExp(
+    `CREATE\\s+(VIRTUAL\\s+)?TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?((?:${ident}\\s*\\.\\s*)?${ident})`,
+    'gi',
+  )
   for (const m of src.matchAll(re)) {
     // FTS5 / other virtual tables: STRICT is not accepted.
     if (m[1]) continue
 
     const startIdx = m.index
-    const tableName = m[3]
+    const tableName = m[2]
 
     // Find statement terminator.
     const semiIdx = src.indexOf(';', startIdx)

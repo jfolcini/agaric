@@ -15,9 +15,10 @@
 // authoritative satellites (`page_aliases`, `block_drafts`) in
 // non-comment SQL — i.e. the copy-aside/restore recipe from
 // migrations/AGENTS.md §Table-rebuild. It is a deliberately shallow
-// textual tripwire: a quoted (`"blocks"`) or schema-qualified
-// (`main.blocks`) drop, or a rename-first rebuild, evades it, and a
-// string literal mentioning the phrase false-positives it (fail-closed).
+// textual tripwire: quoted (`"blocks"`) and schema-qualified
+// (`main.blocks`) drops are covered (#818), but a rename-first rebuild
+// still evades it, and a string literal mentioning the phrase
+// false-positives it (fail-closed).
 // The real verification is the seed-then-migrate harness — any future
 // migration that actually wipes the satellites fails the `*_606` tests
 // in src-tauri/src/db.rs regardless of how the drop is spelled.
@@ -88,7 +89,13 @@ for (const file of files) {
 
   const src = stripSqlComments(readFileSync(file, 'utf8'))
 
-  if (!/\bDROP\s+TABLE\s+(IF\s+EXISTS\s+)?blocks\b/i.test(src)) continue
+  // All four SQLite identifier spellings — bare, "double-quoted",
+  // `backticked`, [bracketed] — plus an optional schema qualifier
+  // (`main.blocks`). A quoted drop (`DROP TABLE "blocks"`) previously
+  // evaded the guard entirely (issue #818 (1)).
+  const dropBlocksRe =
+    /\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:(?:"main"|`main`|\[main\]|main)\s*\.\s*)?(?:"blocks"|`blocks`|\[blocks\]|blocks\b)/i
+  if (!dropBlocksRe.test(src)) continue
 
   for (const table of AUTHORITATIVE_SATELLITES) {
     const re = new RegExp(`\\b${table}\\b`, 'i')

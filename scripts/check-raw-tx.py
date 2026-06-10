@@ -14,12 +14,17 @@ hook id `check-raw-tx`). Run manually over the whole tree with:
     python3 scripts/check-raw-tx.py $(git ls-files 'src-tauri/src/*.rs')
 
 Rules (per .rs file under src-tauri/src/):
-  * A line matching `begin_with("BEGIN IMMEDIATE")` or
+  * Any call to `begin_with(...)` (regardless of argument — a const-
+    hoisted `"BEGIN IMMEDIATE"` must not evade the guard, #818) or
     `begin_immediate_logged(` is a raw write-tx site, EXCEPT:
       - the `pub async fn begin_immediate_logged` definition and the
         `begin_with("BEGIN IMMEDIATE")` inside it (the primitive itself —
         but db.rs is allowlisted anyway), and the `CommandTx` internal
         call to `begin_immediate_logged`.
+  * The scan runs over COMMENT-STRIPPED whole-file text (#818): a call
+    split across lines (`begin_with(\n  "BEGIN IMMEDIATE")`) is caught,
+    and a mention inside a `//` or `/* */` comment never fires. Match
+    offsets map back to 1-based line numbers for reporting.
   * Lines inside a `#[cfg(test)]` module (or a whole test file) are
     skipped — test fixtures legitimately open raw transactions.
   * Files matching the ALLOWLIST globs are skipped wholesale (raw tx is
@@ -96,7 +101,13 @@ TEST_FILE_GLOBS = [
     "**/*_tests.rs",
 ]
 
-RAW_TX_RE = re.compile(r'begin_with\("BEGIN IMMEDIATE"\)|begin_immediate_logged\(')
+# Whole-file scan over comment-stripped text (#818): `\s*` tolerates a
+# call split across lines, and flagging EVERY `begin_with(` call —
+# regardless of argument — closes the const-hoisted-SQL evasion
+# (`begin_with(WRITE_SQL)`). The only production write-tx primitives
+# are these two; a legitimately-raw site uses the allowlist or the
+# `// allow-raw-tx:` marker.
+RAW_TX_RE = re.compile(r"begin_with\s*\(|begin_immediate_logged\s*\(")
 
 # Lines that are the primitive's own definition / internal plumbing, not a
 # caller. Matched anywhere (db.rs is allowlisted, but be defensive).
@@ -106,6 +117,94 @@ ALLOW_MARKER = "// allow-raw-tx:"
 
 CFG_TEST_RE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
 MOD_RE = re.compile(r"\bmod\b")
+
+
+def strip_rust_comments(text: str) -> str:
+    """Blank out comments AND literal contents for scanning purposes.
+
+    `//` line comments, (nested) `/* */` block comments, string literals
+    (incl. raw strings `r#"…"#`), and char literals are all replaced
+    with spaces (newlines preserved), so byte offsets and line numbers
+    in the result map 1:1 onto the original text. Blanking literal
+    contents means a string that merely MENTIONS `begin_with(` can never
+    fire the scan, and a `//` inside a string never truncates it.
+    Lifetimes (`'a`) are not confused with char literals because the
+    char-literal fast-path requires a closing quote.
+    """
+    out = list(text)
+    n = len(text)
+
+    def blank(start: int, end: int) -> None:
+        for k in range(start, min(end, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    i = 0
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if ch == "/" and nxt == "/":
+            j = i
+            while j < n and text[j] != "\n":
+                j += 1
+            blank(i, j)
+            i = j
+            continue
+
+        if ch == "/" and nxt == "*":
+            depth = 0
+            j = i
+            while j < n:
+                if text[j] == "/" and j + 1 < n and text[j + 1] == "*":
+                    depth += 1
+                    j += 2
+                elif text[j] == "*" and j + 1 < n and text[j + 1] == "/":
+                    depth -= 1
+                    j += 2
+                    if depth == 0:
+                        break
+                else:
+                    j += 1
+            blank(i, j)
+            i = j
+            continue
+
+        if ch == "r" and (nxt == '"' or nxt == "#"):
+            # Possible raw string r"…" / r#"…"#.
+            m = re.match(r'r(#*)"', text[i:])
+            if m:
+                closing = '"' + m.group(1)
+                end = text.find(closing, i + len(m.group(0)))
+                j = n if end == -1 else end + len(closing)
+                blank(i, j)
+                i = j
+                continue
+
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                elif text[j] == '"':
+                    j += 1
+                    break
+                else:
+                    j += 1
+            blank(i, j)
+            i = j
+            continue
+
+        if ch == "'":
+            # Char literal ('x', '\n', '"') — but NOT a lifetime ('a).
+            m = re.match(r"'(\\.|[^'\\\n])'", text[i:])
+            if m:
+                blank(i, i + len(m.group(0)))
+                i += len(m.group(0))
+                continue
+
+        i += 1
+    return "".join(out)
 
 
 def _glob_match(path: str, pattern: str) -> bool:
@@ -215,23 +314,33 @@ def check_file(path: Path, repo_root: Path) -> list[str]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
-    lines = text.splitlines()
 
-    test_lines = cfg_test_line_set(lines)
+    # Whole-file scan over comment-stripped text (#818). The stripper
+    # replaces comments with spaces (newlines kept), so offsets in
+    # `stripped` map 1:1 onto `text` — a match's line number is the
+    # newline count before its start. Comments can no longer fire the
+    # regex, and a call split across lines can no longer evade it.
+    stripped = strip_rust_comments(text)
+    lines = text.splitlines()
+    stripped_lines = stripped.splitlines()
+
+    test_lines = cfg_test_line_set(stripped_lines)
     violations: list[str] = []
 
-    for idx, line in enumerate(lines):
-        if not RAW_TX_RE.search(line):
-            continue
-        # A match inside a `//` comment (rustdoc rationale, a commented-out
-        # example) is documentation, not a real tx site — never flag it.
-        if line.lstrip().startswith("//"):
-            continue
+    for m in RAW_TX_RE.finditer(stripped):
+        idx = stripped.count("\n", 0, m.start())  # 0-based line index
+        line = lines[idx] if idx < len(lines) else ""
         if idx in test_lines:
             continue
-        if DEFINITION_RE.search(line):
+        # The definition is real CODE, so match it against the STRIPPED
+        # line — checking the original would let a trailing comment
+        # (`begin_with(W); // pub async fn begin_immediate_logged`)
+        # exempt a real call site.
+        stripped_line = stripped_lines[idx] if idx < len(stripped_lines) else ""
+        if DEFINITION_RE.search(stripped_line):
             continue
         # Per-site escape hatch on the line itself or the line above.
+        # Checked against the ORIGINAL text — the marker is a comment.
         if ALLOW_MARKER in line:
             continue
         if idx > 0 and ALLOW_MARKER in lines[idx - 1]:

@@ -130,6 +130,12 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        # Linux-only (#819 (6)): with `save-if: false` here and no other
+        # workflow saving on macOS / Windows runners (Swatinem keys per
+        # runner OS), the restore on those rows was a guaranteed miss —
+        # pure dead weight. Only the Linux row can hit ci.yml's
+        # `rust-release` entry.
+        if: matrix.platform == 'ubuntu-24.04'
         with:
           workspaces: src-tauri
           # Restore from `rust-release` — the key ci.yml's Linux desktop
@@ -138,21 +144,19 @@ jobs:
           # `rust-deps` anymore, so keeping it here would mean a permanent
           # cache miss once old entries expire). That job's profile is the
           # exact match for this matrix's Linux row (release-profile
-          # `cargo tauri build`, host triple) and its `cache-bin: 'true'`
-          # save includes the cargo-installed `cargo-tauri`, warming
-          # tauri-action past the ~5-6 min source compile. The macOS /
-          # Windows rows never hit a Linux-written entry anyway (Swatinem
-          # keys per runner OS); they restore-miss harmlessly, as before.
+          # `cargo tauri build`, host triple), warming the `target/` tree
+          # for the tauri-action build below. (The Tauri CLI itself is NOT
+          # warmed from this cache: tauri-action runs the lockfile-pinned
+          # `@tauri-apps/cli` via `tauriScript: npm run tauri` — #822.)
           shared-key: rust-release
-          # `cache-bin: true` is what makes `~/.cargo/bin/` round-trip
-          # — without it Swatinem would only cache the `target/` tree
-          # and tauri-action would still recompile `tauri-cli`.
+          # `cache-bin: true` matches the shape of the entry ci.yml's
+          # build job writes (its save includes `~/.cargo/bin/`).
           cache-bin: 'true'
           # The Windows tar.exe / release `target/` save flake (0.1.16
           # run 24999938882) is still real, and the per-tag cache key
           # makes the save itself useless on the next tag. Keep restore
-          # (free, lets us hit ci.yml's warm `rust-release` bin cache
-          # above), disable save so a flake can never block a release.
+          # (free, hits ci.yml's warm `rust-release` entry above),
+          # disable save so a flake can never block a release.
           save-if: false
 
       - name: Install system dependencies (Linux)
@@ -289,6 +293,13 @@ jobs:
           releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
+          # Run the lockfile-pinned local CLI (`@tauri-apps/cli` exact-
+          # pinned in package.json, installed by the secretless `npm ci`
+          # step above) instead of tauri-action's default behaviour of
+          # `npm install -g @tauri-apps/cli@v2` INSIDE this step — an
+          # unpinned registry fetch executing with the write-scoped
+          # GITHUB_TOKEN in env (#822).
+          tauriScript: npm run tauri
           # `-v` raises tauri-bundler's log level from Info to Debug, which
           # is the only way to surface the real stdout/stderr of the
           # external bundlers (linuxdeploy on Linux, candle/light on

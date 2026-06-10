@@ -191,10 +191,14 @@ jobs:
         # same github.com / crates.io / npm URLs from cold every time.
         # Key on the markdown file set so a doc edit invalidates as expected;
         # restore-keys lets a partial cache survive when the key misses.
+        # node_modules/ is excluded from the hash (#819 (3)): this step
+        # runs after `npm ci`, so dependency markdown churn (READMEs,
+        # CHANGELOGs) was invalidating the key on every unrelated dep
+        # bump even though lychee only ever checks tracked docs.
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: .lycheecache
-          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md') }}
+          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md', '!node_modules/**') }}
           restore-keys: |
             lychee-${{ runner.os }}-
 
@@ -213,6 +217,35 @@ jobs:
           # 5xx accepted in `lychee.toml`.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
+
+      - name: Migrations append-only backstop (#806)
+        # `prek run --all-files` cannot enforce the append-only
+        # invariant — the migrations-immutable hook's staged-index scan
+        # is empty on a fresh CI checkout, so a one-time local
+        # `--no-verify` bypass would be permanent without this. Re-run
+        # the same script in `--range` mode over the PR / push range so
+        # any M/D/R/C/T under src-tauri/migrations/*.sql fails CI.
+        # Checkout above uses fetch-depth: 0, so the base sha resolves.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          else
+            base="$PUSH_BEFORE"
+          fi
+          # New branch / tag push / orphan: nothing to diff against.
+          # The commit-time hook (always_run) remains the enforcement
+          # point; this backstop only covers ranges it can resolve.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "Base sha unresolved — skipping range backstop."
+            exit 0
+          fi
+          bash scripts/check-migrations-immutable.sh --range "$base...HEAD"
 
       - name: Cargo audit (RustSec advisory check, blocking)
         # Complements `cargo deny check` (in the prek run above) by hitting
@@ -593,11 +626,28 @@ jobs:
         # duplicate records). `--ignore-errors` keeps the merge resilient to
         # llvm-cov/lcov-2.x format strictness; this job is non-gating so a
         # merge that still fails surfaces here without blocking the gate.
+        #
+        # Glob whatever shard artifacts actually exist (#819 (2)): the
+        # shard upload step is success-gated, so when one cargo-tests
+        # shard fails its lcov never uploads and hardcoding both paths
+        # turned every shard failure into a SECOND spurious red here.
+        # Partial (or zero) coverage publishes whatever is available;
+        # the real failure signal stays on the cargo-tests shard itself.
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          shards=(rust-coverage-shards/*.lcov)
+          if [ "${#shards[@]}" -eq 0 ]; then
+            echo "No shard lcov artifacts found (all shards failed before upload) — skipping merge."
+            exit 0
+          fi
+          echo "Merging ${#shards[@]} shard lcov(s): ${shards[*]}"
+          args=()
+          for f in "${shards[@]}"; do
+            args+=(--add-tracefile "$f")
+          done
           lcov --ignore-errors inconsistent,unused,empty,format \
-            --add-tracefile rust-coverage-shards/coverage-1.lcov \
-            --add-tracefile rust-coverage-shards/coverage-2.lcov \
+            "${args[@]}" \
             --output-file coverage.lcov
 
       - name: Coverage summary (rust, merged)
