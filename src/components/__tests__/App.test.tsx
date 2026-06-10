@@ -1311,6 +1311,76 @@ describe('App', () => {
         expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
       })
     })
+
+    // #754 — the sheet is gate-mounted (`shortcutsOpen &&`) so its lazy
+    // chunk stays off the boot path; the `?` listener that opens it now
+    // lives in `useAppDialogs` (an unmounted sheet can't open itself).
+    it('keeps the sheet unmounted until opened, then opens via "?" (#754 gate)', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      expect(screen.queryByText(t('shortcuts.title'))).not.toBeInTheDocument()
+
+      fireEvent.keyDown(document, { key: '?' })
+
+      await waitFor(() => {
+        expect(screen.getByText(t('shortcuts.title'))).toBeInTheDocument()
+      })
+    })
+  })
+
+  // ── #754: WelcomeModal boot gating ───────────────────────────────────
+
+  describe('welcome modal boot gating (#754)', () => {
+    it('does NOT mount the welcome modal when onboarding is already done', async () => {
+      // beforeEach sets `agaric-onboarding-done` — the App-level gate
+      // must skip mounting the lazy chunk entirely.
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      expect(screen.queryByTestId('welcome-modal')).not.toBeInTheDocument()
+    })
+
+    it('mounts and shows the welcome modal on first run', async () => {
+      localStorage.removeItem('agaric-onboarding-done')
+      render(<App />)
+
+      expect(await screen.findByTestId('welcome-modal')).toBeInTheDocument()
+    })
+  })
+
+  // ── #754: Toaster theme ──────────────────────────────────────────────
+  // sonner defaults `theme` to 'light', so without the prop `richColors`
+  // toasts rendered the light palette in dark themes. The shared sonner
+  // mock surfaces the prop as `data-sonner-theme` — the same attribute
+  // the real sonner (2.x) stamps on its toaster element.
+
+  describe('Toaster theme (#754)', () => {
+    it('passes the dark theme to the Toaster when the app theme is dark', async () => {
+      localStorage.setItem('theme-preference', 'dark')
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('sonner-toaster-mock')).toHaveAttribute('data-sonner-theme', 'dark')
+    })
+
+    it('passes the light theme to the Toaster by default', async () => {
+      render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+      })
+
+      expect(screen.getByTestId('sonner-toaster-mock')).toHaveAttribute(
+        'data-sonner-theme',
+        'light',
+      )
+    })
   })
 
   // ── UX-228: close-all-overlays shortcut ─────────────────────────────

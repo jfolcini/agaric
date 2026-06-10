@@ -20,6 +20,17 @@ import { logger } from './logger'
 const SETTINGS_PARAM = 'settings'
 
 /**
+ * Canonical localStorage key for the Settings panel's active tab (#754).
+ * `SettingsView.readActiveTab()` reads it on mount (after the URL param
+ * above); the deep-link router and the KeyboardShortcuts sheet's
+ * "Customize" footer write it before flipping `currentView` to
+ * `'settings'` so the panel lands on the requested tab on first render.
+ * Previously defined in three files (one as a raw literal) — this is the
+ * single source of truth.
+ */
+export const SETTINGS_ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
+
+/**
  * Read the `settings` query param from the current URL and validate it
  * against the caller-supplied `allowed` list (typically `TAB_IDS`).
  * Returns the value if present and known, otherwise `null`.

@@ -29,7 +29,11 @@ import { useTranslation } from 'react-i18next'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { dispatchBugReport } from '@/lib/bug-report-events'
-import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
+import {
+  getSettingsTabFromUrl,
+  SETTINGS_ACTIVE_TAB_KEY,
+  setSettingsTabInUrl,
+} from '@/lib/url-state'
 import { cn } from '@/lib/utils'
 
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
@@ -77,7 +81,9 @@ const TAB_IDS: SettingsTab[] = [
   'help',
 ]
 
-const ACTIVE_TAB_KEY = 'agaric-settings-active-tab'
+// #754 — canonical key constant lives in `@/lib/url-state`; aliased to
+// keep the existing read/write sites readable.
+const ACTIVE_TAB_KEY = SETTINGS_ACTIVE_TAB_KEY
 
 /**
  * Load the active tab. Resolution order (UX-276):

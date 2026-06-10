@@ -23,10 +23,11 @@ import {
 } from '@/components/ui/sheet'
 import { useNavigationStore } from '@/stores/navigation'
 
-import { getCurrentShortcuts, matchesShortcutBinding } from '../lib/keyboard-config'
+import { getCurrentShortcuts } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 import { loadQuickCaptureShortcut } from '../lib/quick-capture-shortcut'
 import { renderKeys } from '../lib/render-keyboard-shortcut'
+import { SETTINGS_ACTIVE_TAB_KEY } from '../lib/url-state'
 
 interface ShortcutDef {
   keys: string
@@ -186,29 +187,11 @@ export function KeyboardShortcuts({
     [isControlled, onOpenChange],
   )
 
-  // Global `showShortcuts` listener (default `?`) — opens the sheet when no
-  // input is focused. Routed through `matchesShortcutBinding` (#724) so a
-  // Settings rebind is honoured and stray modifiers (e.g. Ctrl+Shift+/) no
-  // longer trigger the default binding.
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (!matchesShortcutBinding(e, 'showShortcuts')) return
-
-      const target = e.target as HTMLElement | null
-      if (!target) return
-
-      // Don't open when typing in an input, textarea, or contenteditable
-      const tagName = target.tagName?.toLowerCase()
-      if (tagName === 'input' || tagName === 'textarea') return
-      if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true') return
-
-      e.preventDefault()
-      setOpen(true)
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [setOpen])
+  // The global `showShortcuts` keydown listener (default `?`) lives in
+  // `useAppDialogs` (#754) — App.tsx gate-mounts this lazy sheet on
+  // `shortcutsOpen`, so an in-sheet listener could never fire while the
+  // sheet is closed (it would not be mounted). Keeping a copy here would
+  // only add a redundant document listener while the sheet is open.
 
   // UX-228: close the sheet when the global "close all overlays" shortcut
   // fires (Escape by default). Radix already handles Escape when focus is
@@ -412,7 +395,7 @@ export function KeyboardShortcuts({
             onClick={() => {
               setOpen(false)
               try {
-                window.localStorage.setItem('agaric-settings-active-tab', 'keyboard')
+                window.localStorage.setItem(SETTINGS_ACTIVE_TAB_KEY, 'keyboard')
               } catch {
                 // storage may be disabled (private mode etc.) — ignore
               }

@@ -35,9 +35,7 @@ describe('useScrollRestore', () => {
   })
 
   it('restores scroll position when returning to a previous view', () => {
-    const ref = { current: container }
-
-    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -73,9 +71,7 @@ describe('useScrollRestore', () => {
   })
 
   it('defaults to scroll position 0 for a new view', () => {
-    const ref = { current: container }
-
-    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -96,10 +92,9 @@ describe('useScrollRestore', () => {
   })
 
   it('does not modify scroll position on initial render', () => {
-    const ref = { current: container }
     container.scrollTop = 100
 
-    renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -112,9 +107,7 @@ describe('useScrollRestore', () => {
   })
 
   it('saves scroll position independently per view', () => {
-    const ref = { current: container }
-
-    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    const { rerender } = renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -159,11 +152,44 @@ describe('useScrollRestore', () => {
     expect(container.scrollTop).toBe(150)
   })
 
+  // #754 — the App shell's scroll viewport only mounts after the boot
+  // gate resolves, so the hook's first render sees `null`. Passing the
+  // element as state must re-fire the attach effect once it appears —
+  // previously (RefObject signature) the first view never got a scroll
+  // listener until the first navigation.
+  it('attaches once the container mounts after the first render (boot view)', () => {
+    const { rerender } = renderHook(
+      ({ el, viewKey }: { el: HTMLElement | null; viewKey: string }) =>
+        useScrollRestore(el, viewKey),
+      { initialProps: { el: null as HTMLElement | null, viewKey: 'journal' } },
+    )
+
+    // Boot resolves: the viewport element appears WITHOUT a viewKey change.
+    rerender({ el: container, viewKey: 'journal' })
+
+    // Scroll the boot view — the listener must already be attached.
+    act(() => {
+      container.scrollTop = 250
+      container.dispatchEvent(new Event('scroll'))
+    })
+
+    // Navigate away and back; the boot view's position is restored.
+    rerender({ el: container, viewKey: 'pages' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+    })
+    rerender({ el: container, viewKey: 'journal' })
+    act(() => {
+      vi.advanceTimersByTime(16)
+    })
+
+    expect(container.scrollTop).toBe(250)
+  })
+
   it('attaches a passive scroll listener', () => {
-    const ref = { current: container }
     const spy = vi.spyOn(container, 'addEventListener')
 
-    renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -173,10 +199,9 @@ describe('useScrollRestore', () => {
   })
 
   it('removes scroll listener on cleanup', () => {
-    const ref = { current: container }
     const spy = vi.spyOn(container, 'removeEventListener')
 
-    const { unmount } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
+    const { unmount } = renderHook(({ viewKey }) => useScrollRestore(container, viewKey), {
       initialProps: { viewKey: 'journal' },
     })
 
@@ -188,8 +213,6 @@ describe('useScrollRestore', () => {
   })
 
   it('cancels the pending restore rAF on unmount', () => {
-    const ref = { current: container }
-
     // Stub RAF/cAF so we can capture the id and assert cancellation.
     const rafMock = vi.fn((_cb: FrameRequestCallback) => 42)
     const cancelMock = vi.fn()
@@ -197,9 +220,12 @@ describe('useScrollRestore', () => {
     vi.stubGlobal('cancelAnimationFrame', cancelMock)
 
     try {
-      const { rerender, unmount } = renderHook(({ viewKey }) => useScrollRestore(ref, viewKey), {
-        initialProps: { viewKey: 'journal' },
-      })
+      const { rerender, unmount } = renderHook(
+        ({ viewKey }) => useScrollRestore(container, viewKey),
+        {
+          initialProps: { viewKey: 'journal' },
+        },
+      )
 
       // Trigger the view-change branch that schedules the rAF.
       rerender({ viewKey: 'pages' })

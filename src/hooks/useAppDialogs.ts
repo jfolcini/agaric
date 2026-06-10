@@ -13,7 +13,11 @@
  * - `showNoPeersDialog` (BUG-2) — sync-with-no-peers warning gate.
  * - `shortcutsOpen` (UX-228) — keyboard-shortcuts reference sheet.
  *
- * Also installs the two custom-event listeners that drive these dialogs:
+ * Also installs the global `showShortcuts` keydown listener (default `?`)
+ * that opens the shortcuts sheet — moved here from `KeyboardShortcuts`
+ * because App.tsx gate-mounts that lazy component on `shortcutsOpen`
+ * (#754), and an unmounted sheet can't open itself — plus the two
+ * custom-event listeners that drive these dialogs:
  * - `BUG_REPORT_EVENT` (window) — opens the bug-report dialog with the
  *   captured error message + stack pre-filled. Dispatched from
  *   `FeatureErrorBoundary`'s `t('bugReport.reportCrashTitle')` button; the boundary lives
@@ -33,6 +37,7 @@
 import { useEffect, useState } from 'react'
 
 import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../lib/bug-report-events'
+import { matchesShortcutBinding } from '../lib/keyboard-config'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '../lib/overlay-events'
 
 export interface UseAppDialogsReturn {
@@ -73,6 +78,29 @@ export function useAppDialogs(): UseAppDialogsReturn {
     }
     window.addEventListener(BUG_REPORT_EVENT, handleReportBug)
     return () => window.removeEventListener(BUG_REPORT_EVENT, handleReportBug)
+  }, [])
+
+  // ── Global `showShortcuts` listener (default `?`) ───────────────────
+  // #754 — App.tsx now gate-mounts the lazy `KeyboardShortcuts` sheet on
+  // `shortcutsOpen` so its chunk stays off the boot path. The sheet used
+  // to own this listener, but a gated component can't open itself — the
+  // always-mounted dialog-state owner listens instead. Routed through
+  // `matchesShortcutBinding` (#724) so a Settings rebind is honoured;
+  // skipped while typing in an input / textarea / contenteditable, same
+  // as the sheet's original listener.
+  useEffect(() => {
+    function handleShowShortcuts(e: KeyboardEvent) {
+      if (!matchesShortcutBinding(e, 'showShortcuts')) return
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      const tagName = target.tagName?.toLowerCase()
+      if (tagName === 'input' || tagName === 'textarea') return
+      if (target.isContentEditable || target.getAttribute?.('contenteditable') === 'true') return
+      e.preventDefault()
+      setShortcutsOpen(true)
+    }
+    document.addEventListener('keydown', handleShowShortcuts)
+    return () => document.removeEventListener('keydown', handleShowShortcuts)
   }, [])
 
   // ── Close the shortcuts sheet when "close all overlays" fires ───────

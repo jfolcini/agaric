@@ -10,14 +10,36 @@ import { normalizeBinding } from './parse'
 
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 
+// #754 — module-level parse cache. `getCustomOverrides` sits on the hot
+// path of `matchesShortcutBinding`, which the always-on keydown listeners
+// call ~10-20× per keystroke; without the cache every keydown re-runs
+// `JSON.parse` on the same blob that many times. The cache is keyed on
+// the RAW string so it self-invalidates on ANY write (same-document
+// `setCustomShortcut`, another tab's storage event, a test poking
+// `localStorage` directly) — no event plumbing required. Writers below
+// clone before mutating so the cached object stays immutable even when a
+// `localStorage.setItem` throws mid-write.
+let cachedRaw: string | null = null
+let cachedOverrides: Record<string, string> = {}
+
 export function getCustomOverrides(): Record<string, string> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return {}
-    return JSON.parse(raw) as Record<string, string>
+    if (!raw) {
+      cachedRaw = null
+      cachedOverrides = {}
+      return cachedOverrides
+    }
+    if (raw === cachedRaw) return cachedOverrides
+    const parsed = JSON.parse(raw) as Record<string, string>
+    cachedRaw = raw
+    cachedOverrides = parsed
+    return parsed
   } catch (e) {
     logger.warn('KeyboardConfig', 'failed to load custom shortcut overrides', undefined, e)
-    return {}
+    cachedRaw = null
+    cachedOverrides = {}
+    return cachedOverrides
   }
 }
 
@@ -72,7 +94,8 @@ export function getCurrentShortcuts(): (ShortcutBinding & { isCustom: boolean })
 }
 
 export function setCustomShortcut(id: string, keys: string): void {
-  const overrides = getCustomOverrides()
+  // Clone — `getCustomOverrides` may return the shared cache object (#754).
+  const overrides = { ...getCustomOverrides() }
   // #723 — normalise user-typed formats (`Ctrl+E`, `Cmd + K`, `Mod-K`…)
   // to the canonical `'Ctrl + Shift + E'` form before persisting, so the
   // saved binding is always something the matcher honours.
@@ -91,7 +114,8 @@ export function setCustomShortcut(id: string, keys: string): void {
 }
 
 export function resetShortcut(id: string): void {
-  const overrides = getCustomOverrides()
+  // Clone — `getCustomOverrides` may return the shared cache object (#754).
+  const overrides = { ...getCustomOverrides() }
   delete overrides[id]
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
@@ -107,6 +131,27 @@ export function resetAllShortcuts(): void {
     logger.warn('KeyboardConfig', 'failed to reset all keyboard shortcuts')
   }
 }
+
+/**
+ * Categories whose bindings are dispatched by document/window-level
+ * keydown listeners that coexist on ordinary views
+ * (`useAppKeyboardShortcuts`'s listeners, `useUndoShortcuts`, and
+ * `PageHeader`'s document-level `exportPageMarkdown` listener — mounted
+ * whenever a page is open, regardless of focus). Two bindings in
+ * DIFFERENT categories of this set still race for the same keystroke, so
+ * `findConflicts` must compare them cross-category (#754) — the
+ * per-category grouping below only covers surfaces whose listeners are
+ * scoped to a focused element (editor, lists, graph) and therefore can't
+ * co-fire across categories.
+ */
+const GLOBAL_LISTENER_CATEGORIES: ReadonlySet<string> = new Set([
+  'keyboard.category.global',
+  'keyboard.category.journal',
+  'keyboard.category.pageEditor',
+  'keyboard.category.spaces',
+  'keyboard.category.tabs',
+  'keyboard.category.undoRedo',
+])
 
 export function findConflicts(): Array<{ ids: string[]; keys: string; category: string }> {
   const current = getCurrentShortcuts()
@@ -153,6 +198,50 @@ export function findConflicts(): Array<{ ids: string[]; keys: string; category: 
         for (const c of conditioned) {
           conflicts.push({ ids: [w.id, c.id], keys: w.keys, category: w.category })
         }
+      }
+    }
+  }
+  // Pass 3 (#754): cross-category collisions between always-on listeners.
+  conflicts.push(...findAlwaysOnCrossCategoryConflicts(current))
+  return conflicts
+}
+
+/**
+ * Pass 3 (#754): the `GLOBAL_LISTENER_CATEGORIES` listeners (global /
+ * journal / page-editor / spaces / tabs / undo-redo) all see the same
+ * document/window keystrokes, so two bindings on the same chord in two
+ * DIFFERENT categories of that set race each other — the per-category
+ * grouping in passes 1/2 never compares them. Alternatives
+ * (`'Ctrl + Y / Ctrl + Shift + Z'`) are split so a single shared chord
+ * counts. The UX-394 condition rule carries over: two bindings whose
+ * conditions are BOTH defined and differ are assumed disjoint and not
+ * flagged.
+ */
+function findAlwaysOnCrossCategoryConflicts(
+  current: ShortcutBinding[],
+): Array<{ ids: string[]; keys: string; category: string }> {
+  const byChord = new Map<string, ShortcutBinding[]>()
+  for (const s of current) {
+    if (!GLOBAL_LISTENER_CATEGORIES.has(s.category)) continue
+    for (const chord of s.keys.split(' / ')) {
+      const arr = byChord.get(chord) ?? []
+      arr.push(s)
+      byChord.set(chord, arr)
+    }
+  }
+  const conflicts: Array<{ ids: string[]; keys: string; category: string }> = []
+  const seenPairs = new Set<string>()
+  for (const [chord, arr] of byChord.entries()) {
+    for (const [i, a] of arr.entries()) {
+      for (const b of arr.slice(i + 1)) {
+        if (a.category === b.category) continue // passes 1/2 own same-category
+        const conditionsDisjoint =
+          a.condition !== undefined && b.condition !== undefined && a.condition !== b.condition
+        if (conditionsDisjoint) continue
+        const pairKey = [a.id, b.id].sort().join('|')
+        if (seenPairs.has(pairKey)) continue
+        seenPairs.add(pairKey)
+        conflicts.push({ ids: [a.id, b.id], keys: chord, category: a.category })
       }
     }
   }

@@ -86,6 +86,12 @@ export const Toaster = ({
       domProps[key] = props[key]
     }
   }
+  // #754 — surface `theme` the same way the real sonner does (sonner 2.x
+  // stamps `data-sonner-theme` on its toaster element) so tests can assert
+  // the app passes the active theme through.
+  if (typeof props['theme'] === 'string') {
+    domProps['data-sonner-theme'] = props['theme']
+  }
   return createElement('section', {
     ref,
     'data-testid': 'sonner-toaster-mock',

@@ -166,92 +166,18 @@ describe('KeyboardShortcuts', () => {
     expect(screen.getByText(t('keyboard.syntax.blockReference'))).toBeInTheDocument()
   })
 
-  it('opens sheet when ? key is pressed on document', () => {
+  // #754 — the global `showShortcuts` keydown listener (default `?`) moved
+  // to `useAppDialogs`: App.tsx gate-mounts this lazy sheet on
+  // `shortcutsOpen`, so an unmounted sheet could never open itself. The
+  // open-via-`?` coverage (input/textarea/contenteditable guards, stray
+  // modifiers, Settings rebind) lives in `useAppDialogs.test.ts`.
+  it('does not install its own `?` listener (#754 — useAppDialogs owns it)', () => {
     const onOpenChange = vi.fn()
     render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
 
     fireEvent.keyDown(document, { key: '?' })
 
-    expect(onOpenChange).toHaveBeenCalledWith(true)
-  })
-
-  it('does NOT open when ? is pressed inside an input', () => {
-    const onOpenChange = vi.fn()
-    const { container } = render(
-      <div>
-        <input aria-label="Test input" data-testid="test-input" />
-        <KeyboardShortcuts open={false} onOpenChange={onOpenChange} />
-      </div>,
-    )
-
-    const input = container.querySelector('input') as HTMLInputElement
-    fireEvent.keyDown(input, { key: '?' })
-
     expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('does NOT open when ? is pressed inside a textarea', () => {
-    const onOpenChange = vi.fn()
-    const { container } = render(
-      <div>
-        <textarea aria-label="Test textarea" data-testid="test-textarea" />
-        <KeyboardShortcuts open={false} onOpenChange={onOpenChange} />
-      </div>,
-    )
-
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    fireEvent.keyDown(textarea, { key: '?' })
-
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('does NOT open when ? is pressed inside a contenteditable', () => {
-    const onOpenChange = vi.fn()
-    const { container } = render(
-      <div>
-        <div contentEditable="true" data-testid="test-editable" />
-        <KeyboardShortcuts open={false} onOpenChange={onOpenChange} />
-      </div>,
-    )
-
-    const editable = container.querySelector('[contenteditable]') as HTMLElement
-    fireEvent.keyDown(editable, { key: '?' })
-
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('does not react to non-? keys', () => {
-    const onOpenChange = vi.fn()
-    render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
-
-    fireEvent.keyDown(document, { key: 'a' })
-    fireEvent.keyDown(document, { key: 'Escape' })
-
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('#724: stray modifiers do not trigger the default ? binding (Ctrl+Shift+/)', () => {
-    const onOpenChange = vi.fn()
-    render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
-
-    // On US layouts Ctrl+Shift+/ produces `key: '?'` — the old hardcoded
-    // listener ignored modifiers and opened the sheet anyway.
-    fireEvent.keyDown(document, { key: '?', ctrlKey: true, shiftKey: true })
-    fireEvent.keyDown(document, { key: '?', altKey: true })
-
-    expect(onOpenChange).not.toHaveBeenCalled()
-  })
-
-  it('#724: honours a Settings rebind — new chord opens, default ? is dead', () => {
-    setCustomShortcut('showShortcuts', 'Ctrl + /')
-    const onOpenChange = vi.fn()
-    render(<KeyboardShortcuts open={false} onOpenChange={onOpenChange} />)
-
-    fireEvent.keyDown(document, { key: '?' })
-    expect(onOpenChange).not.toHaveBeenCalled()
-
-    fireEvent.keyDown(document, { key: '/', ctrlKey: true })
-    expect(onOpenChange).toHaveBeenCalledWith(true)
   })
 
   it('has no a11y violations when open', async () => {
