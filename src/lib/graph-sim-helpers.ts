@@ -237,6 +237,14 @@ export function renderGraphElements(
   svgSel.selectAll('*').remove()
   const g: GSel = svgSel.append('g')
 
+  // Dedicated paint layers (#758 item 4): edges always render in a group that
+  // precedes the node group in document order, so SVG painter's-order keeps
+  // every edge under every node. Without the layers, a later data-join that
+  // ENTERs new <line> elements (the patch path in useGraphSimulation) would
+  // append them after the node <g>s and paint them over the nodes.
+  const edgeLayer: GSel = g.append('g').attr('class', 'edges-layer')
+  const nodeLayer: GSel = g.append('g').attr('class', 'nodes-layer')
+
   // Clone nodes/edges so d3 can mutate them without React state issues.
   const simNodes: GraphNode[] = nodes.map((n) => ({ ...n }))
   const simEdges: GraphEdge[] = edges.map((e) => ({ ...e }))
@@ -246,8 +254,8 @@ export function renderGraphElements(
     nodeById.set(n.id, n)
   }
 
-  const link = drawEdges(g, simEdges)
-  const node = drawNodes(g, simNodes)
+  const link = drawEdges(edgeLayer, simEdges)
+  const node = drawNodes(nodeLayer, simNodes)
 
   attachNodeClickAndKeyboard(node, navigateToPage)
   attachNodeFocusStyles(node)

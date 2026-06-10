@@ -14,7 +14,7 @@
 
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { AttachmentRow } from '../../lib/tauri'
@@ -105,9 +105,36 @@ const MIX_TAG = '01MRZ3NDEKTSV4RRFFQ69G5FAV'
 const REF_BLOCK = '01NRZ3NDEKTSV4RRFFQ69G5FAV'
 const REF_BLOCK_2 = '01PRZ3NDEKTSV4RRFFQ69G5FAV'
 
+/**
+ * Auto-entering IntersectionObserver (#758 item 5).
+ *
+ * AttachmentRenderer viewport-gates its IPC byte read; the shared
+ * test-setup stub never reports intersection, so images would stay on the
+ * loading placeholder forever. Report intersection synchronously on
+ * observe() so the image render path behaves as before.
+ */
+class AutoEnterIntersectionObserver {
+  callback: IntersectionObserverCallback
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback
+  }
+  observe(el: Element): void {
+    this.callback(
+      [{ target: el, isIntersecting: true } as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    )
+  }
+  unobserve(): void {}
+  disconnect(): void {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+}
+
 describe('StaticBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('IntersectionObserver', AutoEnterIntersectionObserver)
     // Restore default behavior for mocked tauri functions.
     // PEND-35 Tier 2.4c — `getProperty` returns the single row (or
     // null) from the backend's `block_properties` PK lookup.
@@ -120,6 +147,10 @@ describe('StaticBlock', () => {
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     mockBatchAttachments([])
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('renders plain text', () => {

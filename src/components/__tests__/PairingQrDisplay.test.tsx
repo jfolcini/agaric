@@ -20,6 +20,7 @@ import { axe } from 'vitest-axe'
 
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
+import { t } from '@/lib/i18n'
 
 import { PairingQrDisplay } from '../PairingQrDisplay'
 
@@ -157,6 +158,28 @@ describe('PairingQrDisplay', () => {
     const srOnly = container.querySelector('.sr-only[aria-live="polite"]')
     expect(srOnly).toBeTruthy()
     expect(srOnly?.textContent).toContain('Session expires in 30 seconds')
+  })
+
+  // #758 item 6: the SR-only countdown is routed through t() with i18next
+  // plural keys instead of hardcoded English + manual pluralization.
+  it('SR-only countdown text comes from the i18n catalog with plural handling (#758 item 6)', () => {
+    const { container, rerender } = render(
+      <PairingQrDisplay {...defaultProps} countdown={120} countdownDisplay="2:00" />,
+    )
+
+    const srOnly = container.querySelector('.sr-only[aria-live="polite"]')
+    expect(srOnly?.textContent).toBe(t('pairing.srCountdownMinutes', { count: 2 }))
+    expect(srOnly?.textContent).toBe('Session expires in 2 minutes')
+
+    // Singular form via the i18n plural rules, not manual 's' suffixing.
+    rerender(<PairingQrDisplay {...defaultProps} countdown={60} countdownDisplay="1:00" />)
+    expect(srOnly?.textContent).toBe(t('pairing.srCountdownMinutes', { count: 1 }))
+    expect(srOnly?.textContent).toBe('Session expires in 1 minute')
+
+    // Seconds branch at the 30s key interval.
+    rerender(<PairingQrDisplay {...defaultProps} countdown={30} countdownDisplay="0:30" />)
+    expect(srOnly?.textContent).toBe(t('pairing.srCountdownSeconds', { count: 30 }))
+    expect(srOnly?.textContent).toBe('Session expires in 30 seconds')
   })
 
   it('SR-only countdown is empty at non-key intervals', () => {

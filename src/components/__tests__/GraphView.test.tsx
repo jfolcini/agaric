@@ -27,7 +27,13 @@ import { logger } from '../../lib/logger'
 import { useNavigationStore } from '../../stores/navigation'
 import { useSpaceStore } from '../../stores/space'
 import { useTabsStore } from '../../stores/tabs'
-import { clearGraphCache, GraphView } from '../GraphView'
+import {
+  clearGraphCache,
+  getGraphCacheEntry,
+  GRAPH_CACHE_MAX_ENTRIES,
+  GraphView,
+  setGraphCacheEntry,
+} from '../GraphView'
 
 vi.mock('../../lib/logger', () => ({
   logger: {
@@ -1513,5 +1519,69 @@ describe('GraphView', () => {
       )
       expect(startMsg).toBeDefined()
     })
+  })
+})
+
+// ── #758 item 4: graph cache LRU ─────────────────────────────────────
+//
+// The module-level cache is keyed by every distinct (spaceId, tagIds)
+// combination the user tries, so without a bound it accumulated full
+// node/edge arrays for the whole session. It is now a small LRU.
+describe('graph cache LRU (#758 item 4)', () => {
+  function makeEntry(timestamp: number) {
+    return { nodes: [], edges: [], timestamp }
+  }
+
+  beforeEach(() => {
+    clearGraphCache()
+  })
+
+  it('returns null for a missing key', () => {
+    expect(getGraphCacheEntry('missing')).toBeNull()
+  })
+
+  it('stores and returns entries up to the cap', () => {
+    for (let i = 0; i < GRAPH_CACHE_MAX_ENTRIES; i++) {
+      setGraphCacheEntry(`k${i}`, makeEntry(i))
+    }
+    for (let i = 0; i < GRAPH_CACHE_MAX_ENTRIES; i++) {
+      expect(getGraphCacheEntry(`k${i}`)).toEqual(makeEntry(i))
+    }
+  })
+
+  it('evicts the least-recently-used entry beyond the cap', () => {
+    for (let i = 0; i < GRAPH_CACHE_MAX_ENTRIES + 1; i++) {
+      setGraphCacheEntry(`k${i}`, makeEntry(i))
+    }
+    // Oldest insertion is gone; the newest survives.
+    expect(getGraphCacheEntry('k0')).toBeNull()
+    expect(getGraphCacheEntry(`k${GRAPH_CACHE_MAX_ENTRIES}`)).toEqual(
+      makeEntry(GRAPH_CACHE_MAX_ENTRIES),
+    )
+  })
+
+  it('a read refreshes recency so the read entry survives the next eviction', () => {
+    for (let i = 0; i < GRAPH_CACHE_MAX_ENTRIES; i++) {
+      setGraphCacheEntry(`k${i}`, makeEntry(i))
+    }
+    // Touch the oldest entry, then insert one more (forcing an eviction).
+    expect(getGraphCacheEntry('k0')).toEqual(makeEntry(0))
+    setGraphCacheEntry('extra', makeEntry(99))
+
+    // k0 was refreshed → k1 is now the LRU and gets evicted instead.
+    expect(getGraphCacheEntry('k0')).toEqual(makeEntry(0))
+    expect(getGraphCacheEntry('k1')).toBeNull()
+    expect(getGraphCacheEntry('extra')).toEqual(makeEntry(99))
+  })
+
+  it('overwriting an existing key does not evict anything', () => {
+    for (let i = 0; i < GRAPH_CACHE_MAX_ENTRIES; i++) {
+      setGraphCacheEntry(`k${i}`, makeEntry(i))
+    }
+    setGraphCacheEntry('k0', makeEntry(100))
+    for (let i = 1; i < GRAPH_CACHE_MAX_ENTRIES; i++) {
+      expect(getGraphCacheEntry(`k${i}`)).toEqual(makeEntry(i))
+    }
+    expect(getGraphCacheEntry('k0')).toEqual(makeEntry(100))
   })
 })

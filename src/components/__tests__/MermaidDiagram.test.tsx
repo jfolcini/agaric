@@ -8,8 +8,8 @@
  *  - a11y compliance
  */
 
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 vi.mock('mermaid', () => ({
@@ -21,11 +21,46 @@ vi.mock('mermaid', () => ({
 
 const mermaid = (await import('mermaid')).default
 const mockedRender = vi.mocked(mermaid.render)
+const mockedInitialize = vi.mocked(mermaid.initialize)
 
 // Import after mocks are set up
 const { MermaidDiagram } = await import('../MermaidDiagram')
 
 describe('MermaidDiagram', () => {
+  afterEach(() => {
+    document.documentElement.classList.remove('dark')
+  })
+
+  // #758 item 1: mermaid.initialize used to run once at module load, freezing
+  // the theme to whatever `.dark` was at startup. It now runs inside the
+  // render effect so each render picks up the current theme.
+  it('re-reads the dark theme on each render instead of freezing it at module load (#758 item 1)', async () => {
+    mockedRender.mockResolvedValue({
+      svg: '<svg><text>X</text></svg>',
+      diagramType: 'flowchart',
+      bindFunctions: vi.fn(),
+    })
+
+    document.documentElement.classList.add('dark')
+    const { rerender } = render(<MermaidDiagram code="graph TD; A-->B;" />)
+    await screen.findByTestId('mermaid-diagram')
+
+    expect(mockedInitialize).toHaveBeenLastCalledWith(
+      expect.objectContaining({ theme: 'dark', securityLevel: 'strict', startOnLoad: false }),
+    )
+
+    // Flip back to light and trigger a new render via a code change — the
+    // effect must re-initialize with the now-current theme.
+    document.documentElement.classList.remove('dark')
+    rerender(<MermaidDiagram code="graph TD; B-->C;" />)
+
+    await waitFor(() => {
+      expect(mockedInitialize).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: 'default', securityLevel: 'strict' }),
+      )
+    })
+  })
+
   it('shows loading state initially', () => {
     // Make render hang by never resolving
     mockedRender.mockReturnValue(new Promise(() => {}))

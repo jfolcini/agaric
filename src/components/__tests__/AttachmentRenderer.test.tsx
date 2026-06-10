@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -43,6 +43,57 @@ function makeAttachment(
   }
 }
 
+/**
+ * Controllable IntersectionObserver mock (#758 item 5).
+ *
+ * The shared test-setup.ts stub is a no-op that never reports intersection.
+ * AttachmentImage now viewport-gates its IPC byte read, so images would
+ * never load under the no-op stub. Default `autoEnter = true` reports
+ * intersection synchronously on observe() (existing tests behave as
+ * before); the viewport-gate tests flip it off and call `enterAll()`.
+ */
+type IOCallback = (entries: IntersectionObserverEntry[], observer: IntersectionObserver) => void
+
+class MockIntersectionObserver {
+  static instances: MockIntersectionObserver[] = []
+  static autoEnter = true
+  callback: IOCallback
+  rootMargin: string
+  observed: Set<Element> = new Set()
+
+  constructor(callback: IOCallback, options?: IntersectionObserverInit) {
+    this.callback = callback
+    this.rootMargin = typeof options?.rootMargin === 'string' ? options.rootMargin : '0px'
+    MockIntersectionObserver.instances.push(this)
+  }
+
+  observe(el: Element): void {
+    this.observed.add(el)
+    if (MockIntersectionObserver.autoEnter) this.fireFor([el])
+  }
+  unobserve(el: Element): void {
+    this.observed.delete(el)
+  }
+  disconnect(): void {
+    this.observed.clear()
+  }
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+
+  fireFor(targets: Element[]): void {
+    const entries = targets.map(
+      (target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry,
+    )
+    this.callback(entries, this as unknown as IntersectionObserver)
+  }
+
+  /** Report `isIntersecting: true` for every observed element. */
+  enterAll(): void {
+    this.fireFor(Array.from(this.observed))
+  }
+}
+
 const baseProps = {
   blockId: 'B1',
   imageWidth: '100',
@@ -70,11 +121,17 @@ describe('AttachmentRenderer', () => {
       .mockImplementation(() => `blob:mock/${++urlCounter}`)
     revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
     mockedReadAttachment.mockResolvedValue(new Uint8Array([137, 80, 78, 71]))
+    // #758 item 5: the image byte read is viewport-gated. Auto-report
+    // intersection so the pre-existing tests see images load immediately.
+    MockIntersectionObserver.instances = []
+    MockIntersectionObserver.autoEnter = true
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
   })
 
   afterEach(() => {
     createSpy.mockRestore()
     revokeSpy.mockRestore()
+    vi.unstubAllGlobals()
   })
 
   it('returns null when attachments array is empty', () => {
@@ -633,6 +690,53 @@ describe('AttachmentRenderer', () => {
     )
     const row = container.querySelector('[data-testid="attachment-section"]') as HTMLElement
     expect(row.style.justifyContent).toBe('flex-start')
+  })
+
+  // ---- #758 item 5: viewport-gated byte read ----
+
+  describe('viewport-gated image loading (#758 item 5)', () => {
+    it('does not read attachment bytes before the placeholder enters the viewport', () => {
+      MockIntersectionObserver.autoEnter = false
+
+      render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+
+      // Placeholder is shown and observed, but no IPC read has fired.
+      expect(screen.getByTestId('attachment-image-loading')).toBeInTheDocument()
+      expect(screen.queryByRole('img')).not.toBeInTheDocument()
+      expect(mockedReadAttachment).not.toHaveBeenCalled()
+
+      const observed = MockIntersectionObserver.instances.flatMap((o) => Array.from(o.observed))
+      expect(observed).toHaveLength(1)
+      expect(observed[0]).toBe(screen.getByTestId('attachment-image-loading'))
+    })
+
+    it('starts the byte read once the placeholder enters the viewport', async () => {
+      MockIntersectionObserver.autoEnter = false
+
+      render(<AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />)
+      expect(mockedReadAttachment).not.toHaveBeenCalled()
+
+      act(() => {
+        for (const observer of MockIntersectionObserver.instances) observer.enterAll()
+      })
+
+      const img = await screen.findByRole('img')
+      expect(img.getAttribute('src')).toMatch(/^blob:/)
+      expect(mockedReadAttachment).toHaveBeenCalledWith('att-1')
+      expect(mockedReadAttachment).toHaveBeenCalledTimes(1)
+    })
+
+    it('has no a11y violations in the gated placeholder state', async () => {
+      MockIntersectionObserver.autoEnter = false
+
+      const { container } = render(
+        <AttachmentRenderer {...baseProps} attachments={[makeAttachment()]} />,
+      )
+      expect(screen.getByTestId('attachment-image-loading')).toBeInTheDocument()
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   it('has no a11y violations with a caption present', async () => {

@@ -44,6 +44,48 @@ function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
   return new Blob([new Uint8Array(bytes)], { type: mimeType })
 }
 
+/**
+ * One-shot viewport gate (#758 item 5) — returns `true` once the referenced
+ * element has entered the viewport (+ rootMargin buffer), then stays `true`.
+ *
+ * `loading="lazy"` on the `<img>` was decorative: the full attachment bytes
+ * were fetched over IPC in the mount effect regardless of visibility, which
+ * hurts mobile memory on long pages. Gate the IPC read on actual viewport
+ * entry instead. Mirrors `DaySection`'s `useEnteredViewport` pattern.
+ */
+function useEnteredViewport<T extends HTMLElement>(
+  rootMargin = '200px 0px',
+): [boolean, React.RefObject<T | null>] {
+  const [entered, setEntered] = useState(false)
+  const ref = useRef<T | null>(null)
+
+  useEffect(() => {
+    if (entered) return
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      // Defensive: older runtimes — load eagerly.
+      setEntered(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setEntered(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin },
+    )
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [entered, rootMargin])
+
+  return [entered, ref]
+}
+
 export interface LightboxImage {
   src: string
   alt: string
@@ -114,6 +156,9 @@ function AttachmentImage({
   const { t } = useTranslation()
   const [url, setUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
+  // Viewport gate (#758 item 5): don't read the attachment bytes over IPC
+  // until the placeholder actually approaches the viewport.
+  const [inView, viewGateRef] = useEnteredViewport<HTMLSpanElement>()
 
   // Inline drag-to-resize (#294 item 6). The corner handle drives a live width
   // preview (`dragWidth`, a percent); on release we snap to the nearest preset
@@ -239,6 +284,11 @@ function AttachmentImage({
   )
 
   useEffect(() => {
+    // Viewport gate (#758 item 5): defer the IPC byte read until the
+    // placeholder enters the viewport (+200px buffer). Once `inView` flips
+    // it never flips back, so the load is one-shot per attachment id.
+    if (!inView) return
+
     let cancelled = false
     let objectUrl: string | null = null
     setUrl(null)
@@ -263,7 +313,7 @@ function AttachmentImage({
       onUrlChange(att.id, null)
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [att.id, att.mime_type, onUrlChange])
+  }, [att.id, att.mime_type, onUrlChange, inView])
 
   if (error) {
     return (
@@ -275,7 +325,13 @@ function AttachmentImage({
 
   if (!url) {
     return (
-      <span className="text-xs text-muted-foreground" data-testid="attachment-image-loading">
+      <span
+        // The viewport gate observes this placeholder; the byte read starts
+        // once it approaches the viewport (#758 item 5).
+        ref={viewGateRef}
+        className="text-xs text-muted-foreground"
+        data-testid="attachment-image-loading"
+      >
         {t('attachment.loadingImage')}
       </span>
     )
