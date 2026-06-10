@@ -202,6 +202,8 @@ export const common: Record<string, string> = {
   'common.untitled': 'Untitled',
   'accessibility.skipToMain': 'Skip to main content',
   'sidebar.label': 'Sidebar',
+  'sidebar.mobileDescription': 'Displays the mobile sidebar.',
+  'breadcrumb.showHidden': 'Show hidden breadcrumbs',
   'ui.close': 'Close',
   'sidebar.toggleTheme': 'Toggle theme',
   'sidebar.toggleThemeWithCurrent': 'Theme: {{current}} — click to cycle',

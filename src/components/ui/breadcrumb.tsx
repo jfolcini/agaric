@@ -29,6 +29,11 @@
  * - ArrowLeft / ArrowRight move focus across breadcrumb buttons.
  * - Home / End jump to the first / last button.
  * - The container has `role="toolbar"` so AT announces the grouping.
+ * - Inside the overflow popover (#759): the list is a `role="menu"` per the
+ *   APG menu pattern — focus moves to the first `menuitem` on open, and
+ *   ArrowDown / ArrowUp (wrapping) + Home / End rove focus across the
+ *   menuitems (the toolbar's roving handler only queries
+ *   `data-breadcrumb-crumb`, so the portaled popover needs its own).
  *
  * Tokens: only `--muted-foreground` / `--foreground` from `index.css`. No
  * hardcoded Tailwind colour classes (AGENTS.md anti-pattern).
@@ -59,6 +64,7 @@
 import { ChevronRight, Home, MoreHorizontal } from 'lucide-react'
 import type * as React from 'react'
 import { Fragment, useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
@@ -101,7 +107,10 @@ export interface BreadcrumbProps {
   home?: BreadcrumbHomeConfig | undefined
   /** Forwarded to the `<nav>` wrapper. */
   className?: string | undefined
-  /** Accessible label for the overflow `…` popover trigger (i18n). */
+  /**
+   * Accessible label for the overflow `…` popover trigger (i18n).
+   * Defaults to `t('breadcrumb.showHidden')`.
+   */
   overflowAriaLabel?: string | undefined
 }
 
@@ -246,6 +255,7 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
   // up the matching item, and dispatches its `onSelect`.
   const itemsRef = useRef(items)
   itemsRef.current = items
+  const listRef = useRef<HTMLDivElement | null>(null)
   const handleListClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null
     const button = target?.closest<HTMLElement>('[data-breadcrumb-overflow-item]')
@@ -256,6 +266,57 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
     item?.onSelect?.()
     setOpen(false)
   }, [])
+  const getMenuItems = useCallback((): HTMLButtonElement[] => {
+    const list = listRef.current
+    if (!list) return []
+    return Array.from(
+      list.querySelectorAll<HTMLButtonElement>('button[data-breadcrumb-overflow-item]'),
+    )
+  }, [])
+  // APG menu pattern (#759): focus moves to the first menuitem when the menu
+  // opens (Radix would otherwise focus the first tabbable inside the content).
+  const handleOpenAutoFocus = useCallback(
+    (event: Event) => {
+      event.preventDefault()
+      getMenuItems()[0]?.focus()
+    },
+    [getMenuItems],
+  )
+  // APG menu pattern (#759): ArrowDown / ArrowUp rove focus across the
+  // menuitems (wrapping); Home / End jump to the first / last. The toolbar's
+  // ArrowLeft/ArrowRight handler can't reach these — the popover content is
+  // portaled and it only queries `data-breadcrumb-crumb` anyway.
+  const handleListKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const buttons = getMenuItems()
+      if (buttons.length === 0) return
+      const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+      let next: number
+      switch (event.key) {
+        case 'ArrowDown':
+          next = current < 0 ? 0 : (current + 1) % buttons.length
+          break
+        case 'ArrowUp':
+          next = current < 0 ? buttons.length - 1 : (current - 1 + buttons.length) % buttons.length
+          break
+        case 'Home':
+          next = 0
+          break
+        case 'End':
+          next = buttons.length - 1
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+      // React portals bubble events through the REACT tree, not the DOM tree
+      // — without this, Home/End would also reach the toolbar's roving-focus
+      // handler and yank focus back out to a toolbar crumb.
+      event.stopPropagation()
+      buttons[next]?.focus()
+    },
+    [getMenuItems],
+  )
   return (
     <div className="flex shrink-0 items-center" data-slot="breadcrumb-overflow">
       <Popover open={open} onOpenChange={setOpen}>
@@ -264,26 +325,38 @@ function OverflowPopover({ items, ariaLabel }: OverflowPopoverProps): React.Reac
             type="button"
             data-breadcrumb-crumb="overflow"
             aria-label={ariaLabel}
+            aria-haspopup="menu"
             aria-expanded={open}
             className={overflowTriggerClass}
           >
             <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto min-w-[180px] max-w-[320px] p-1">
+        <PopoverContent
+          align="start"
+          className="w-auto min-w-[180px] max-w-[320px] p-1"
+          // Radix popover content is an implicit `role="dialog"` — it needs
+          // an accessible name of its own (axe `aria-dialog-name`).
+          aria-label={ariaLabel}
+          onOpenAutoFocus={handleOpenAutoFocus}
+        >
           {/* oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- keyboard activation of the inner <button>s dispatches a synthetic click that bubbles to this delegated handler */}
           <div
+            ref={listRef}
             data-slot="breadcrumb-overflow-list"
             className="flex flex-col gap-0.5"
             role="menu"
+            aria-label={ariaLabel}
             tabIndex={-1}
             onClick={handleListClick}
+            onKeyDown={handleListKeyDown}
           >
             {items.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 role="menuitem"
+                tabIndex={-1}
                 data-breadcrumb-overflow-item={item.testId ?? item.id}
                 className={cn(
                   'flex w-full items-center truncate rounded-sm px-2 py-1 text-left text-xs',
@@ -310,6 +383,7 @@ export function Breadcrumb({
   className,
   overflowAriaLabel,
 }: BreadcrumbProps): React.ReactElement | null {
+  const { t } = useTranslation()
   const toolbarRef = useRef<HTMLDivElement | null>(null)
 
   const focusIndex = useCallback((index: number) => {
@@ -327,6 +401,12 @@ export function Breadcrumb({
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       const root = toolbarRef.current
       if (!root) return
+      // The overflow popover's content is portaled to `document.body`, but
+      // React portals bubble events through the REACT tree — so keydowns on
+      // the popover's menuitems reach this handler too. Without this guard,
+      // any key the popover doesn't swallow (e.g. ArrowLeft/ArrowRight) would
+      // yank focus out to a toolbar crumb and dismiss the menu (#759).
+      if (!root.contains(e.target as Node)) return
       const buttons = Array.from(
         root.querySelectorAll<HTMLButtonElement>('button[data-breadcrumb-crumb]'),
       )
@@ -411,7 +491,7 @@ export function Breadcrumb({
             <BreadcrumbSeparator />
             <OverflowPopover
               items={middleItems}
-              ariaLabel={overflowAriaLabel ?? 'Show hidden breadcrumbs'}
+              ariaLabel={overflowAriaLabel ?? t('breadcrumb.showHidden')}
             />
           </Fragment>
         ) : null}

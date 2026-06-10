@@ -26,6 +26,8 @@
 import type { ExternalToast } from 'sonner'
 import { toast } from 'sonner'
 
+import { t } from '@/lib/i18n'
+
 /** Re-export sonner's option shape so callers don't need to import it from sonner directly. */
 export type NotifyOptions = ExternalToast
 
@@ -82,8 +84,9 @@ function notifyDefault(message: NotifyMessage, ...rest: OptionalOpts): string | 
  * dedupes by `id`). Pass an explicit `id` to scope dedup more
  * narrowly (e.g., one per failing endpoint).
  *
- * `label` defaults to `'Retry'`; pass `opts.action.label` to override
- * (callers can route through `t('common.retry')` etc.).
+ * `label` defaults to `t('action.retry')` (evaluated per call, not at
+ * module load); pass `opts.action.label` to override with a more
+ * specific i18n string.
  */
 function notifyRetry(
   messageOrError: string | number | Error,
@@ -91,7 +94,7 @@ function notifyRetry(
   opts?: Omit<ExternalToast, 'action'> & { action?: { label?: string } },
 ): string | number {
   const { action: actionOverride, id, ...rest } = opts ?? {}
-  const label = actionOverride?.label ?? 'Retry'
+  const label = actionOverride?.label ?? t('action.retry')
   return methods.error(messageOrError, {
     id: id ?? 'retry',
     action: { label, onClick: onRetry },

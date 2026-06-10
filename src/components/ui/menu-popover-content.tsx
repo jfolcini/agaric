@@ -1,4 +1,4 @@
-import type * as PopoverPrimitive from '@radix-ui/react-popover'
+import type { Popover as PopoverPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { PopoverContent } from '@/components/ui/popover'
