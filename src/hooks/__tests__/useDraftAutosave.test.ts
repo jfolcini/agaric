@@ -8,6 +8,8 @@
  * - Race condition fix: version counter prevents stale save after discard
  * - Cleanup flushes draft on unmount
  * - Null blockId produces no saves
+ * - Issue #715: flushDraft never fires per keystroke — only on block
+ *   change / unmount-while-focused; blur (blockId → null) never flushes
  */
 
 import { act, renderHook } from '@testing-library/react'
@@ -178,6 +180,126 @@ describe('useDraftAutosave', () => {
     })
 
     expect(mockedSaveDraft).not.toHaveBeenCalled()
+  })
+
+  // Issue #715 — the flush effect is keyed on `blockId` alone. Before the
+  // fix the single effect was keyed `[blockId, content]` and its cleanup
+  // unconditionally flushed, firing one write-lock-acquiring `flush_draft`
+  // IPC per keystroke and — after a >2s pause — flushing a STALE persisted
+  // draft as a real `edit_block` op mid-edit.
+  describe('issue #715 — no flushDraft per keystroke', () => {
+    it('rapid content changes within the debounce window fire ZERO flushDraft calls', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'h' } },
+      )
+
+      // Five keystrokes, each well inside the 2000ms debounce window.
+      for (const content of ['he', 'hel', 'hell', 'hello']) {
+        act(() => {
+          vi.advanceTimersByTime(300)
+        })
+        rerender({ blockId: 'BLOCK_1', content })
+      }
+
+      // No flush per keystroke, and the debounce kept resetting so no
+      // save has fired yet either.
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+      expect(mockedSaveDraft).not.toHaveBeenCalled()
+
+      // Letting the debounce expire produces exactly the one trailing
+      // save (the debounced cadence) — still zero flushes.
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'hello')
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+    })
+
+    it('pause past the debounce (draft persists) then resume typing — still ZERO flushDraft', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'hello' } },
+      )
+
+      // Pause >2s: the debounced saveDraft persists a draft row.
+      act(() => {
+        vi.advanceTimersByTime(2500)
+      })
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(1)
+      expect(mockedSaveDraft).toHaveBeenCalledWith('BLOCK_1', 'hello')
+
+      // Resume typing. Pre-fix, the first keystroke's cleanup flushed the
+      // stale persisted draft as a real edit_block op mid-edit.
+      rerender({ blockId: 'BLOCK_1', content: 'hello w' })
+      rerender({ blockId: 'BLOCK_1', content: 'hello wo' })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+
+      // The stale row is superseded by the later save — never flushed.
+      expect(mockedSaveDraft).toHaveBeenCalledTimes(2)
+      expect(mockedSaveDraft).toHaveBeenLastCalledWith('BLOCK_1', 'hello wo')
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+    })
+
+    it('blockId change flushes exactly once, for the OLD block', () => {
+      const { rerender } = renderHook(
+        ({ blockId, content }) => useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1', content: 'old block content' } },
+      )
+
+      rerender({ blockId: 'BLOCK_2', content: 'new block content' })
+
+      expect(mockedFlushDraft).toHaveBeenCalledTimes(1)
+      expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    it('blur then refocus of the SAME block (A → null → A) never flushes; later unmount flushes once', () => {
+      const { rerender, unmount } = renderHook(
+        ({ blockId, content }: { blockId: string | null; content: string }) =>
+          useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1' as string | null, content: 'typed content' } },
+      )
+
+      // Blur: EditableBlock passes null and resets liveContent to ''.
+      rerender({ blockId: null, content: '' })
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+
+      // Refocus the same block. The flush effect re-registers for BLOCK_1;
+      // the null→A transition itself must not flush either.
+      rerender({ blockId: 'BLOCK_1', content: '' })
+      rerender({ blockId: 'BLOCK_1', content: 'typed more' })
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+
+      // Unmount while focused → exactly one flush, for the refocused block.
+      unmount()
+      expect(mockedFlushDraft).toHaveBeenCalledTimes(1)
+      expect(mockedFlushDraft).toHaveBeenCalledWith('BLOCK_1')
+    })
+
+    it('blur (blockId → null) does NOT flush — useEditorBlur discardDraft owns that path', () => {
+      const { rerender, unmount } = renderHook(
+        ({ blockId, content }: { blockId: string | null; content: string }) =>
+          useDraftAutosave(blockId, content),
+        { initialProps: { blockId: 'BLOCK_1' as string | null, content: 'typed content' } },
+      )
+
+      // EditableBlock passes `isFocused ? blockId : null`; blur is this
+      // transition. The blur handler saves via edit_block + discardDraft —
+      // a flush here would race that delete.
+      rerender({ blockId: null, content: '' })
+
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+
+      // And unmounting after blur still must not flush.
+      act(() => {
+        vi.advanceTimersByTime(3000)
+      })
+      unmount()
+      expect(mockedFlushDraft).not.toHaveBeenCalled()
+    })
   })
 
   // Issue #106 — autosave is the canonical `pool_busy` consumer: a
