@@ -30,6 +30,11 @@ src-tauri/gen/
 # scripts/prepare-external-bins.mjs + tauri.conf.json → externalBin).
 src-tauri/binaries/
 
+# Python bytecode cache — appears whenever a hook script under
+# scripts/ gets imported (e.g. ad-hoc instrumentation of
+# check-raw-tx.py); must never ride along on a `git add -A`.
+__pycache__/
+
 # SQLx dev database (offline cache .sqlx/ is tracked)
 src-tauri/dev.db
 src-tauri/dev.db-*

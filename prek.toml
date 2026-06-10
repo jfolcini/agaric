@@ -1,6 +1,14 @@
 # Configuration file for `prek`, a git hook framework written in Rust.
 # See https://prek.j178.dev for more information.
 
+# All four git shims this config relies on (#819 (7)): a plain
+# `prek install` only writes `.git/hooks/pre-commit` by default, so
+# without this list the prepare-commit-msg (dco-signoff), pre-push
+# (verify-ci-equivalent), and post-commit (commit-sentinel) stages
+# would silently never fire on a fresh clone. Verified against
+# prek 0.3.8: `prek install` with this key writes all four shims.
+default_install_hook_types = ["pre-commit", "prepare-commit-msg", "pre-push", "post-commit"]
+
 [[repos]]
 repo = "builtin"
 hooks = [
@@ -570,6 +578,14 @@ files = "^scripts/.*\\.sh$"
 # next app boot; this hook fails fast at commit time. Allows
 # additions only; modifications, deletions, renames, copies, and
 # type changes under src-tauri/migrations/ are rejected.
+# `always_run = true` (#806): prek's changed-file set EXCLUDES
+# deletions, so a staged `git rm migrations/0001*.sql` alone would
+# never match a `files` filter and the hook would silently skip.
+# The script (~10ms) rescans the staged index itself, so running it
+# unconditionally costs nothing. The `--all-files` vacuousness
+# (staged index is empty in CI / pre-push) is backstopped by the
+# script's `--range` mode, invoked from _validate.yml's lint job and
+# scripts/verify-ci-equivalent.sh Phase A.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -578,7 +594,7 @@ name = "migrations append-only"
 entry = "bash scripts/check-migrations-immutable.sh"
 language = "system"
 pass_filenames = false
-files = "^src-tauri/migrations/.*\\.sql$"
+always_run = true
 
 # STRICT tables policy (PEND-07). Every new `CREATE TABLE` in a
 # SQLite migration must use STRICT mode (SQLite 3.37+) so silent
@@ -714,3 +730,36 @@ entry = "bash scripts/verify-ci-equivalent.sh"
 language = "system"
 pass_filenames = false
 stages = ["pre-push"]
+
+# ─── post-commit ──────────────────────────────────────────────────
+#
+# Loud commit sentinel (#819 (7)). rtk's git-commit filter prints
+# "ok N files changed" even when a pre-commit hook ABORTS the commit
+# (HEAD does not move), which has repeatedly masked failed commits.
+# Until rtk checks git's exit status upstream, this post-commit hook
+# prints an unmistakable `COMMITTED <sha>` line that only appears
+# when a commit actually landed — its absence after a commit attempt
+# means the commit was rejected. Re-run `prek install` once so the
+# post-commit git shim gets installed (`default_install_hook_types`
+# at the top of this file makes plain `prek install` write it).
+#
+# `verbose = true` is load-bearing: prek swallows a PASSING hook's
+# stdout, so without it only the static hook name prints and the
+# actual sha never appears (verified against prek 0.3.8).
+#
+# Known limit (verified): `rtk git commit` collapses SUCCESS output
+# to "ok N files changed", swallowing this line too — the sentinel
+# is visible via bare `git commit` / `rtk proxy git commit`. On a
+# hook ABORT, rtk passes the raw Failed output through and exits 1,
+# so absence-of-COMMITTED plus exit status still disambiguates.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "commit-sentinel"
+name = "commit sentinel (COMMITTED <sha>)"
+entry = "bash -c 'echo \"COMMITTED $(git rev-parse --short=12 HEAD)\"'"
+language = "system"
+stages = ["post-commit"]
+always_run = true
+pass_filenames = false
+verbose = true

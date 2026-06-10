@@ -24,6 +24,7 @@
     "postinstall": "playwright install chromium",
     "android:dev": "cargo tauri android dev",
     "android:build": "cargo tauri android build",
+    "tauri": "tauri",
     "tauri:build": "cargo tauri build && [ \"$(uname)\" = Linux ] && bash scripts/fix-appimage-icons.sh || true"
   },
   "dependencies": {
@@ -98,6 +99,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@tauri-apps/cli": "2.11.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

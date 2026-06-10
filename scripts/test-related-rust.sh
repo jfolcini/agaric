@@ -80,11 +80,21 @@ done
 
 # ── Build per-module filter expressions ──────────────────────────────
 FILTERS=()
+NEED_SPECTA=0
 for file in $STAGED_RS; do
   # Only process files under src-tauri/src/
   case "$file" in
     src-tauri/src/*) ;;
     *) continue ;;
+  esac
+
+  # Any commands/*.rs change can alter the specta surface; the
+  # checked-in src/lib/bindings.ts must be regenerated in the same
+  # commit or `specta_tests::ts_bindings_up_to_date` (src-tauri/src/
+  # lib.rs) fails in CI ~15 min later. Pull that test into the
+  # related-set here so the drift surfaces at commit time (#818).
+  case "$file" in
+    src-tauri/src/commands/*) NEED_SPECTA=1 ;;
   esac
 
   basename=$(basename "$file")
@@ -102,6 +112,12 @@ for file in $STAGED_RS; do
 
   FILTERS+=("$module")
 done
+
+# Bindings-drift guard (#818): commands/ changed → also run the
+# specta bindings-up-to-date test.
+if [ "$NEED_SPECTA" = "1" ]; then
+  FILTERS+=("specta_tests")
+fi
 
 if [ ${#FILTERS[@]} -eq 0 ]; then
   echo "No filterable Rust modules staged — skipping"

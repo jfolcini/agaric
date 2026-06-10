@@ -9,18 +9,42 @@
 # checksum drift via `_sqlx_migrations`, but that only fires the
 # next time the app boots; this hook fails fast at commit time.
 #
-# Behavior:
-#   - Looks at the staged index only (`git diff --cached --name-status`).
-#   - Allows additions (A); rejects modifications (M), deletions (D),
-#     renames (R*), copies (C*), and type changes (T).
-#   - When run via `prek run --all-files` with nothing staged under
-#     src-tauri/migrations/ this exits 0 — the invariant is enforced
-#     at commit, not retroactively walked through history.
+# Modes (#806):
+#   (default)        — pre-commit: inspect the staged index
+#                      (`git diff --cached --name-status`). The prek
+#                      hook sets `always_run = true` so a staged
+#                      DELETION still triggers this script (prek's
+#                      changed-file set excludes deletions, so a
+#                      `files`-filtered hook would silently skip).
+#   --range REVSPEC  — CI / pre-push backstop: inspect a commit range
+#                      (e.g. `base...HEAD` for a PR, `@{upstream}..HEAD`
+#                      for a push). Catches a one-time `--no-verify`
+#                      bypass that the staged-index mode can never see
+#                      retroactively.
 #
-# Usage: scripts/check-migrations-immutable.sh
-# Exit:  0 = clean, 1 = at least one shipped migration was changed.
+# Allows additions (A); rejects modifications (M), deletions (D),
+# renames (R*), copies (C*), and type changes (T).
+#
+# Usage: scripts/check-migrations-immutable.sh [--range REVSPEC]
+# Exit:  0 = clean, 1 = at least one shipped migration was changed,
+#        2 = usage error.
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
+
+RANGE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --range)
+      RANGE="${2:-}"
+      shift 2 || true
+      [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; }
+      ;;
+    *)
+      echo "ERROR: unknown arg: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 # git diff status letters:
 #   A = added,     M = modified, D = deleted,
@@ -29,16 +53,25 @@ set -euo pipefail
 # invariant covers the *.sql migration files themselves — docs that
 # live alongside them (AGENTS.md) are editable and excluded here
 # (the prek `files` filter is also .sql-scoped, but this script
-# rescans the index itself, so it must apply the same scope).
-violations=$(
-  git diff --cached --name-status -- 'src-tauri/migrations/*.sql' \
-    | awk '$1 != "" && $1 !~ /^A/ {print}'
-)
+# rescans the diff itself, so it must apply the same scope).
+if [ -n "$RANGE" ]; then
+  violations=$(
+    git diff "$RANGE" --name-status -- 'src-tauri/migrations/*.sql' \
+      | awk '$1 != "" && $1 !~ /^A/ {print}'
+  )
+  scope_label="range $RANGE"
+else
+  violations=$(
+    git diff --cached --name-status -- 'src-tauri/migrations/*.sql' \
+      | awk '$1 != "" && $1 !~ /^A/ {print}'
+  )
+  scope_label="staged"
+fi
 
 if [ -n "$violations" ]; then
   echo "ERROR: shipped migration files are append-only (AGENTS.md invariant)." >&2
   echo "" >&2
-  echo "The following staged changes modify, delete, rename, or copy a" >&2
+  echo "The following $scope_label changes modify, delete, rename, or copy a" >&2
   echo "previously-shipped migration under src-tauri/migrations/:" >&2
   echo "" >&2
   while IFS= read -r line; do

@@ -125,11 +125,16 @@ function* iterCommandFns(src) {
 }
 
 /**
- * Match `Result<…, AppError>` returns. Tolerates whitespace and
- * generic-argument variations like `Result<crate::error::AppError>`.
+ * Match `Result<…, AppError>` returns. Anchors on the ERROR position —
+ * a `, AppError>` immediately before the trailing `>` — instead of
+ * trying to match the Ok-type with `[^>]*`, which cannot cross the
+ * first `>` of a nested generic. The old pattern silently exempted
+ * every `Result<Vec<…>, AppError>` / `Result<Option<…>, AppError>` /
+ * `Result<HashMap<…, …>, AppError>` command from the sanitize rules
+ * (52 of 131 commands at the time of the fix — issue #807).
  */
 function returnsResultAppError(returnType) {
-  return /Result<[^>]*,\s*(?:crate::error::)?AppError\s*>/.test(returnType)
+  return /,\s*(?:crate::error::)?AppError\s*>\s*$/.test(returnType.trim())
 }
 
 /**

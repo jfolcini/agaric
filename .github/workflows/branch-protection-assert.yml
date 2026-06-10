@@ -10,8 +10,12 @@
 #   ["deletion", "non_fast_forward", "pull_request", "required_linear_history",
 #    "required_signatures", "required_status_checks"]
 #
-# If a maintainer intentionally changes the ruleset, update the EXPECTED list
-# below in the same PR that adjusts the ruleset.
+# Beyond rule types, the job also asserts the required status-check
+# CONTEXTS (`dco`, `validate-all`) and the strict up-to-date-branch flag
+# (#819 (1)) — type-only asserting passed even after a context removal.
+#
+# If a maintainer intentionally changes the ruleset, update the EXPECTED
+# lists below in the same PR that adjusts the ruleset.
 name: Branch Protection Assert
 
 on:
@@ -43,21 +47,49 @@ jobs:
           set -euo pipefail
 
           EXPECTED='["deletion","non_fast_forward","pull_request","required_linear_history","required_signatures","required_status_checks"]'
-          ACTUAL="$(gh api "repos/${REPO}/rules/branches/main" --jq '[.[] | .type] | sort | tostring')"
+          # Required status-check CONTEXTS + the strict (up-to-date-branch)
+          # flag are asserted too (#819 (1), pairs with #805): asserting
+          # rule TYPES alone would still pass after someone removed
+          # `validate-all` from the required contexts or flipped strict
+          # off — exactly the silent-weakening drift this job exists to
+          # catch.
+          EXPECTED_CONTEXTS='["dco","validate-all"]'
+
+          RULES="$(gh api "repos/${REPO}/rules/branches/main")"
+          ACTUAL="$(jq -c '[.[] | .type] | sort' <<<"${RULES}")"
+          ACTUAL_CONTEXTS="$(jq -c '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context] | sort' <<<"${RULES}")"
+          ACTUAL_STRICT="$(jq -c '[.[] | select(.type == "required_status_checks") | .parameters.strict_required_status_checks_policy] | first' <<<"${RULES}")"
+
+          failed=0
 
           if [ "${ACTUAL}" = "${EXPECTED}" ]; then
-            echo "OK: main-branch ruleset matches expected shape: ${EXPECTED}"
-            exit 0
+            echo "OK: main-branch ruleset rule types match: ${EXPECTED}"
+          else
+            failed=1
+            echo "ERROR: main-branch ruleset rule types have drifted." >&2
+            echo "  expected: ${EXPECTED}" >&2
+            echo "  actual:   ${ACTUAL}" >&2
+            # Compute missing / extra rule types for a clearer error message.
+            missing="$(jq -cn --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$e - $a')"
+            extra="$(jq -cn   --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$a - $e')"
+            echo "  missing rules: ${missing}" >&2
+            echo "  extra rules:   ${extra}" >&2
           fi
 
-          echo "ERROR: main-branch ruleset has drifted." >&2
-          echo "  expected: ${EXPECTED}" >&2
-          echo "  actual:   ${ACTUAL}" >&2
+          if [ "${ACTUAL_CONTEXTS}" = "${EXPECTED_CONTEXTS}" ]; then
+            echo "OK: required status-check contexts match: ${EXPECTED_CONTEXTS}"
+          else
+            failed=1
+            echo "ERROR: required status-check contexts have drifted." >&2
+            echo "  expected: ${EXPECTED_CONTEXTS}" >&2
+            echo "  actual:   ${ACTUAL_CONTEXTS}" >&2
+          fi
 
-          # Compute missing / extra rule types for a clearer error message.
-          missing="$(jq -cn --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$e - $a')"
-          extra="$(jq -cn   --argjson e "${EXPECTED}" --argjson a "${ACTUAL}" '$a - $e')"
-          echo "  missing rules: ${missing}" >&2
-          echo "  extra rules:   ${extra}" >&2
+          if [ "${ACTUAL_STRICT}" = "true" ]; then
+            echo "OK: strict_required_status_checks_policy is true"
+          else
+            failed=1
+            echo "ERROR: strict_required_status_checks_policy drifted (expected true, got ${ACTUAL_STRICT})." >&2
+          fi
 
-          exit 1
+          exit "${failed}"
