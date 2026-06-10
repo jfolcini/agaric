@@ -25,9 +25,13 @@ set -euo pipefail
 # git diff status letters:
 #   A = added,     M = modified, D = deleted,
 #   R = renamed,   C = copied,   T = type changed.
-# Only A is allowed under src-tauri/migrations/.
+# Only A is allowed under src-tauri/migrations/. The append-only
+# invariant covers the *.sql migration files themselves — docs that
+# live alongside them (AGENTS.md) are editable and excluded here
+# (the prek `files` filter is also .sql-scoped, but this script
+# rescans the index itself, so it must apply the same scope).
 violations=$(
-  git diff --cached --name-status -- src-tauri/migrations/ \
+  git diff --cached --name-status -- 'src-tauri/migrations/*.sql' \
     | awk '$1 != "" && $1 !~ /^A/ {print}'
 )
 

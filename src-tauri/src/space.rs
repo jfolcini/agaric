@@ -484,6 +484,14 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        // #708: register in the `spaces` table (production does this via
+        // the is_space property -> 0089 trigger); `blocks.space_id` now
+        // REFERENCES spaces(id), so unregistered targets fail FK 787.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
     }
 
     /// Insert a page belonging to `space_id` with the given soft-delete

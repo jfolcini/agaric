@@ -3814,7 +3814,20 @@ async fn apply_snapshot_round_trips_space_id_533() {
                 mk(blk_b, Some(space)),
             ],
             block_tags: vec![],
-            block_properties: vec![],
+            // #708: real snapshots carry the space's `is_space = 'true'`
+            // property row (written atomically at space creation); during
+            // restore it re-registers the space in the `spaces` table via
+            // the 0089 trigger, which the restored `blocks.space_id`
+            // values now require (FK to spaces(id)).
+            block_properties: vec![crate::snapshot::types::BlockPropertySnapshot {
+                block_id: BlockId::test_id(space),
+                key: "is_space".to_string(),
+                value_text: Some("true".to_string()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }],
             block_links: vec![],
             attachments: vec![],
             property_definitions: vec![],
@@ -3846,6 +3859,78 @@ async fn apply_snapshot_round_trips_space_id_533() {
     assert_eq!(
         prop_rows, 0,
         "restore must not create block_properties space rows"
+    );
+
+    // #708: the restore re-registered the space in the `spaces` registry
+    // via the 0089 trigger (the wipe emptied it).
+    let registered: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = ?")
+        .bind(space)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        registered, 1,
+        "restore must re-register the space via the is_space property (#708)"
+    );
+
+    mat.shutdown();
+}
+
+/// #708: a snapshot carrying a `blocks.space_id` that points at a block
+/// with NO `is_space` flag (an old-build or #612-class mis-stamped
+/// snapshot) must not abort the restore at the commit-time FK check —
+/// the orphan membership is NULLed instead and the boot backfill
+/// reassigns it later.
+#[tokio::test]
+async fn apply_snapshot_repairs_unregistered_space_refs_708() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let not_a_space = "01HQ708NOTASPACEAAAAAAAAAA";
+    let blk = "01HQ708MEMBERAAAAAAAAAAAAA";
+    let mk = |id: &str, space_id: Option<&str>| BlockSnapshot {
+        id: BlockId::test_id(id),
+        block_type: "content".to_string(),
+        content: Some("c".to_string()),
+        parent_id: None,
+        position: Some(1),
+        deleted_at: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
+        scheduled_date: None,
+        space_id: space_id.map(BlockId::test_id),
+    };
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-708".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "space-708".to_string(),
+        tables: SnapshotTables {
+            // No is_space property anywhere — the target never registers.
+            blocks: vec![mk(not_a_space, None), mk(blk, Some(not_a_space))],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("restore must not abort on an unregistered space ref (#708)");
+
+    let sid: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(blk)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sid, None,
+        "mis-stamped membership must be NULLed by the restore repair (#708)"
     );
 
     mat.shutdown();

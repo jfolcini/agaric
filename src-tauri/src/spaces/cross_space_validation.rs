@@ -224,6 +224,13 @@ mod tests {
                 id, name, id,
             )
             .execute(pool).await.unwrap();
+            // #708: register in the `spaces` table — `blocks.space_id`
+            // REFERENCES spaces(id) since migration 0089 (production
+            // registers via the is_space property -> trigger).
+            sqlx::query!("INSERT OR IGNORE INTO spaces (id) VALUES (?)", id)
+                .execute(pool)
+                .await
+                .unwrap();
         }
     }
 

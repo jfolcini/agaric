@@ -3223,6 +3223,13 @@ mod restore_cascade_tests {
         .execute(pool)
         .await
         .unwrap();
+        // #708: register in the `spaces` table — `blocks.space_id`
+        // REFERENCES spaces(id) since migration 0089.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(SPACE)
+            .execute(pool)
+            .await
+            .unwrap();
         // Page (no parent, page_id = self).
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
@@ -3477,6 +3484,13 @@ mod delete_cascade_tests {
         .execute(pool)
         .await
         .expect("seed space block");
+        // #708: register in the `spaces` table — `blocks.space_id`
+        // REFERENCES spaces(id) since migration 0089.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(SPACE)
+            .execute(pool)
+            .await
+            .expect("register space (#708)");
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
              VALUES (?, 'page', 'P', NULL, 0, ?)",
@@ -3728,6 +3742,13 @@ mod sibling_order_full_apply_603_tests {
         .execute(pool)
         .await
         .expect("seed space block");
+        // #708: `blocks.space_id` REFERENCES spaces(id) since migration 0089 —
+        // register the space before stamping memberships.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(SPACE)
+            .execute(pool)
+            .await
+            .expect("register space");
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id, \
                                  space_id) \
@@ -3941,6 +3962,13 @@ mod engine_path_tests {
         .execute(&pool)
         .await
         .unwrap();
+        // #708: register in the `spaces` table — `blocks.space_id`
+        // REFERENCES spaces(id) since migration 0089.
+        sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+            .bind(SPACE_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
              VALUES (?, 'page', 'page-content', NULL, 0, ?)",

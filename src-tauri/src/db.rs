@@ -1036,9 +1036,8 @@ async fn recover_derived_state_from_op_log(
                         _ => value_text,
                     };
                     if key == crate::op::SPACE_PROPERTY_KEY {
-                        // #605: `blocks.space_id` is `TEXT REFERENCES blocks(id)`
-                        // (migration 0086) and recovery runs with
-                        // `foreign_keys=ON`, so an op whose target space block
+                        // #605: `blocks.space_id` carries an FK and recovery
+                        // runs with `foreign_keys=ON`, so an op whose target
                         // is absent (purged locally, or created on another
                         // device and never present in the local op_log) would
                         // trip FK 787 — and because recovery re-runs on every
@@ -1046,13 +1045,23 @@ async fn recover_derived_state_from_op_log(
                         // becomes a PERMANENT boot failure. Skip the op
                         // instead, exactly like the generic value_ref branch
                         // below: a dead ref means the assignment is dead.
+                        // #708: the FK target is now `spaces(id)` (migration
+                        // 0089), so the guard checks the registry — a target
+                        // that exists as a block but was never flagged
+                        // `is_space` (the #612 mis-stamp class) is skipped
+                        // too. Replay order keeps legitimate targets
+                        // registered before they are referenced: the
+                        // `SetProperty(is_space)` op precedes any
+                        // `SetProperty(space)` pointing at it, and its
+                        // `block_properties` INSERT fires the 0089
+                        // `spaces_register_is_space` trigger.
                         // The block keeps its prior (NULL/unchanged) space_id;
                         // a later import / rebuild reconciles once the space
                         // block exists (same degrade contract as
                         // `project_block_full_to_sql`'s subquery stamp).
                         if let Some(target) = col_value {
                             let target_exists: i64 = sqlx::query_scalar(
-                                "SELECT EXISTS(SELECT 1 FROM blocks WHERE id = ?)",
+                                "SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)",
                             )
                             .bind(target)
                             .fetch_one(&mut *tx)
@@ -1061,8 +1070,9 @@ async fn recover_derived_state_from_op_log(
                                 tracing::warn!(
                                     block_id,
                                     space_id = target,
-                                    "recovery: set_property(space) references a missing \
-                                     space block — skipping (dangling value_ref, #605)"
+                                    "recovery: set_property(space) references a block that \
+                                     is not a registered space — skipping (dangling or \
+                                     mis-stamped value_ref, #605/#708)"
                                 );
                                 continue;
                             }
@@ -2697,6 +2707,16 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // #708: `blocks.space_id` REFERENCES `spaces(id)` (0089), and the
+        // recovery `space` arm skips targets missing from the registry.
+        // Register SPACE1 directly (not via an `is_space` property row —
+        // that would close the derived-recovery gate, which requires
+        // `block_properties` empty). Registry rows are NOT derived state:
+        // on a real recovery they survive, exactly as seeded here.
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SPACE1')")
+            .execute(&pool)
+            .await
+            .unwrap();
         let ts = chrono::Utc::now().timestamp_millis();
         for (seq, op, payload) in ops {
             sqlx::query(
@@ -2835,6 +2855,42 @@ mod tests {
         );
     }
 
+    /// #708: a `set_property(space)` op whose target EXISTS as a block but
+    /// was never flagged as a space (the #612 mis-stamp class) must also be
+    /// skipped — the rebuilt `blocks.space_id REFERENCES spaces(id)` FK
+    /// would otherwise abort recovery (permanent boot failure), exactly
+    /// like the #605 dangling case.
+    #[tokio::test]
+    async fn recovery_set_space_unregistered_target_skips_708() {
+        let (pool, _dir) = seed_space_recovery_pool(&[
+            (
+                1,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1","value_text":null,"value_num":null,"value_date":null}"#,
+            ),
+            // CHILD1 exists as a block but is NOT in the `spaces` registry —
+            // must be skipped, leaving the prior valid assignment intact.
+            (
+                2,
+                "set_property",
+                r#"{"block_id":"PAGE1","key":"space","value_ref":"CHILD1","value_text":null,"value_num":null,"value_date":null}"#,
+            ),
+        ])
+        .await;
+
+        assert_eq!(
+            space_id_of(&pool, "PAGE1").await.as_deref(),
+            Some("SPACE1"),
+            "an existing-but-unregistered target must be skipped (#708), \
+             leaving the prior valid space"
+        );
+        assert_eq!(
+            space_id_of(&pool, "CHILD1").await.as_deref(),
+            Some("SPACE1"),
+            "fan-out member must also keep the prior valid space (#708)"
+        );
+    }
+
     /// #605 regression, full boot path (BUG-73 DROP-TABLE corruption): the
     /// recreated temp `blocks` table must carry `space_id` (no later
     /// migration re-runs to add it — `_sqlx_migrations` already records
@@ -2868,15 +2924,25 @@ mod tests {
                 "create_block",
                 r#"{"block_id":"PAGE2","block_type":"page","content":"Page B","parent_id":null,"position":3}"#,
             ),
-            // Valid target — must apply onto the temp table's space_id column.
+            // #708: flag SPACE1 as a space, exactly as `create_space` logs it.
+            // Replaying this property INSERT fires the 0089
+            // `spaces_register_is_space` trigger, registering SPACE1 in the
+            // `spaces` table — which the `space` arm's registry guard (and
+            // the rebuilt `blocks.space_id` FK) now requires.
             (
                 4,
+                "set_property",
+                r#"{"block_id":"SPACE1","key":"is_space","value_text":"true"}"#,
+            ),
+            // Valid target — must apply onto the temp table's space_id column.
+            (
+                5,
                 "set_property",
                 r#"{"block_id":"PAGE1","key":"space","value_ref":"SPACE1"}"#,
             ),
             // GHOST_SPACE has no create_block op — absent after recovery.
             (
-                5,
+                6,
                 "set_property",
                 r#"{"block_id":"PAGE2","key":"space","value_ref":"GHOST_SPACE"}"#,
             ),
@@ -2931,9 +2997,11 @@ mod tests {
         };
         assert_space_ids(pool).await;
 
-        // Boot 2: with block_properties / block_tags still empty the
-        // derived-state gate stays open and recovery replays again — a
-        // permanent-boot-failure regression would also re-fail here.
+        // Boot 2: must also succeed, and the recovered space assignments
+        // must persist. (#708 note: boot 1's replay re-inserted the
+        // `is_space` property row, so the derived-state gate is closed on
+        // this boot and recovery is skipped — the boot must simply not
+        // re-fail and the state must be stable.)
         let pool = init_pool(&db_path)
             .await
             .expect("recovery must stay idempotent across boots (#605)");
@@ -3851,6 +3919,258 @@ mod tests {
         assert_eq!(
             op_count, 1,
             "the op-log recovery source must survive the 0080 rebuild"
+        );
+    }
+
+    // ----------------------------------------------------------------------
+    // Issue #708 — the 0089 `spaces` registry + `blocks` rebuild.
+    //
+    // 0089 is the FIRST blocks rebuild after the #606 lesson (DROP TABLE
+    // blocks under foreign_keys=ON cascade-wipes children immediately —
+    // pinned by the #376 tests above), so these tests assert the new
+    // contract: the authoritative satellites `page_aliases` / `block_drafts`
+    // are PRESERVED across the rebuild, the registry is backfilled from
+    // `is_space = 'true'` property rows (live AND soft-deleted), valid
+    // memberships survive, and mis-stamped memberships (#612 class) are
+    // NULLed rather than aborting the migration.
+    // ----------------------------------------------------------------------
+
+    /// Seed a representative pre-0089 (v88) database and migrate to head.
+    #[tokio::test]
+    async fn spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708() {
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_through(&pool, 0, 88).await;
+
+        // Two space blocks: S1 live, S2 soft-deleted (#681 shape) — both
+        // flagged `is_space = 'true'`.
+        for (id, deleted) in [("S1708", "NULL"), ("S2708", "1700000000000")] {
+            let sql = format!(
+                "INSERT INTO blocks (id, block_type, content, page_id, deleted_at) \
+                 VALUES (?, 'page', 'Space', ?, {deleted})"
+            );
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .bind(id)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) \
+                 VALUES (?, 'is_space', 'true')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        // P1: page legitimately in S1 (+ a content child, fan-out shape).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES ('P1708', 'page', 'Page', 'P1708', 'S1708')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, page_id, space_id) \
+             VALUES ('C1708', 'content', 'c', 'P1708', 'P1708', 'S1708')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // P2: mis-stamped membership (#612 class) — `space_id` points at
+        // P1, a block that is NOT a space. Legal under the pre-0089
+        // `REFERENCES blocks(id)`.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES ('P2708', 'page', 'Page', 'P2708', 'P1708')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The #606 satellites — authoritative, NOT op-log-recoverable.
+        sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES ('P1708', 'alias-708')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO block_drafts (block_id, content, updated_at) \
+             VALUES ('P1708', 'draft body', 1700000000123)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_migrations_to_head(&pool, 88).await;
+
+        // Registry backfilled from the `is_space` rows — INCLUDING the
+        // soft-deleted space (the registry mirrors the flag, not liveness).
+        let registered: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            registered,
+            vec!["S1708".to_string(), "S2708".to_string()],
+            "registry must contain exactly the is_space-flagged blocks (live + tombstoned)"
+        );
+
+        // Valid memberships survive the rebuild; the mis-stamp is NULLed.
+        let p1: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'P1708'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(p1.as_deref(), Some("S1708"), "valid membership preserved");
+        let c1: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'C1708'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(c1.as_deref(), Some("S1708"), "child membership preserved");
+        let p2: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'P2708'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            p2, None,
+            "mis-stamped space_id (#612 class) must be NULLed, not abort the migration"
+        );
+
+        // #606: the satellites SURVIVE this rebuild (unlike 0073/0080/0085,
+        // which cascade-wiped them — the behaviour the #376 tests pin).
+        let alias: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM page_aliases WHERE page_id = 'P1708' AND alias = 'alias-708'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            alias, 1,
+            "page_aliases must survive the 0089 rebuild (#606)"
+        );
+        let draft: Option<(String, i64)> =
+            sqlx::query_as("SELECT content, updated_at FROM block_drafts WHERE block_id = 'P1708'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            draft,
+            Some(("draft body".to_string(), 1700000000123)),
+            "block_drafts must survive the 0089 rebuild byte-for-byte (#606)"
+        );
+
+        // No scratch tables left behind.
+        let scratch: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '\\_preserve\\_%' ESCAPE '\\' \
+             OR name = '_spaces_backfill'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(scratch, 0, "0089 must drop its scratch tables");
+    }
+
+    /// Fresh-DB (head) contract: the `spaces_register_is_space` trigger
+    /// registers a block the moment its `is_space = 'true'` property row
+    /// lands, and the rebuilt FK rejects stamping `blocks.space_id` with
+    /// anything that is not registered — the #612 bug class made
+    /// unrepresentable.
+    #[tokio::test]
+    async fn spaces_0089_trigger_registers_and_fk_rejects_non_spaces_708() {
+        let (pool, _dir) = unmigrated_pool().await;
+        apply_migrations_to_head(&pool, 0).await;
+
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES ('SREG708', 'page', 'Space', 'SREG708')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES ('PREG708', 'page', 'Page', 'PREG708')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Not yet registered → stamping the FK fails for BOTH a plain block
+        // and the not-yet-flagged space block.
+        for target in ["PREG708", "SREG708"] {
+            let res = sqlx::query("UPDATE blocks SET space_id = ? WHERE id = 'PREG708'")
+                .bind(target)
+                .execute(&pool)
+                .await;
+            assert!(
+                res.is_err(),
+                "space_id = '{target}' must violate the spaces(id) FK before registration"
+            );
+        }
+
+        // Flag it — the trigger registers it.
+        sqlx::query(
+            "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES ('SREG708', 'is_space', 'true')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let registered: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = 'SREG708'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            registered, 1,
+            "is_space INSERT must register the block via the 0089 trigger"
+        );
+
+        // Now the stamp succeeds.
+        sqlx::query("UPDATE blocks SET space_id = 'SREG708' WHERE id = 'PREG708'")
+            .execute(&pool)
+            .await
+            .expect("registered space must be a valid space_id FK target");
+
+        // Re-flagging is idempotent (INSERT OR REPLACE shape re-fires the
+        // trigger; INSERT OR IGNORE absorbs it).
+        sqlx::query(
+            "INSERT OR REPLACE INTO block_properties (block_id, key, value_text) \
+             VALUES ('SREG708', 'is_space', 'true')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let still_one: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = 'SREG708'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(still_one, 1, "re-flagging must not duplicate registry rows");
+
+        // Purging the space block cascades the registry row away and
+        // SET-NULLs the surviving membership (graceful degrade; the boot
+        // backfill reassigns).
+        sqlx::query("DELETE FROM blocks WHERE id = 'SREG708'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let gone: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces WHERE id = 'SREG708'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(gone, 0, "purging the block must cascade the registry row");
+        let nulled: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'PREG708'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            nulled, None,
+            "ON DELETE SET NULL must clear surviving memberships on space purge"
         );
     }
 

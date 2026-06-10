@@ -267,6 +267,18 @@ async fn bootstrap_skips_pages_that_already_have_space_property() {
     .execute(&pool)
     .await
     .unwrap();
+    // #708: register Work in the `spaces` table so the membership stamp
+    // below satisfies the 0089 `blocks.space_id REFERENCES spaces(id)` FK.
+    // (A registry row without the `is_space` property mirrors a
+    // post-recovery mid-state: registry rows persist while property rows
+    // are re-derived.)
+    sqlx::query!(
+        "INSERT OR IGNORE INTO spaces (id) VALUES (?)",
+        SPACE_WORK_ULID
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     insert_page(&pool, "01JABCD0000000000000000001", "Already Scoped").await;
     // Simulate a page that was previously assigned to the Work space

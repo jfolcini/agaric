@@ -80,6 +80,14 @@ pub async fn ensure_test_space(pool: &SqlitePool) {
     .execute(pool)
     .await
     .unwrap();
+    // #708: register in the `spaces` table — `blocks.space_id` REFERENCES
+    // spaces(id) since migration 0089 (production registers via the
+    // `is_space = 'true'` property write → 0089 trigger).
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(TEST_SPACE_ID)
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 /// Assign a block to [`TEST_SPACE_ID`] by stamping the denormalized
