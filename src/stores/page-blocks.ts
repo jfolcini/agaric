@@ -303,37 +303,69 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           index: afterSlot + 1,
         })
 
-        // Insert the new block into the local array at the right position.
-        // In a flat tree, the new sibling goes right after the afterBlock
-        // and all its descendants.
-        const descendants = getDragDescendants(blocks, afterBlockId)
-        let insertIdx = idx + 1
-        while (insertIdx < blocks.length && descendants.has((blocks[insertIdx] as FlatBlock).id)) {
-          insertIdx++
-        }
+        // #714 — recompute the insertion splice INSIDE the functional updater
+        // from `state.blocks` (current at commit time), never from the
+        // pre-await capture: a concurrent write (edit flush, sync load,
+        // queued move) that landed while the IPC was in flight must survive.
+        // The anchor (`afterBlockId`) is re-located in current state; if it
+        // vanished or moved mid-flight the splice context is invalid, so we
+        // fall back to a full load() to reconcile with the backend.
+        let needsReload = false
+        set((state) => {
+          const cur = state.blocks
+          const curIdx = cur.findIndex((b) => b.id === afterBlockId)
+          const curAfter = cur[curIdx]
+          if (!curAfter) {
+            needsReload = true
+            return {}
+          }
+          // If an interleaved sync load() already delivered the freshly
+          // created block (the backend committed it before the snapshot
+          // query ran), splicing it again would duplicate the array entry
+          // and break the blocks/blocksById size invariant. State is
+          // already reconciled — commit nothing.
+          if (state.blocksById.has(result.id)) return {}
+          // The anchor was re-parented mid-flight (or the backend echoed an
+          // unexpected parent): the new block belongs under the anchor's
+          // ORIGINAL parent, so splicing it after the anchor's new location
+          // would break array-order/parent_id consistency. Reload instead.
+          if ((result.parent_id ?? null) !== (curAfter.parent_id ?? null)) {
+            needsReload = true
+            return {}
+          }
+          // Insert the new block into the local array at the right position.
+          // In a flat tree, the new sibling goes right after the afterBlock
+          // and all its descendants.
+          const descendants = getDragDescendants(cur, afterBlockId)
+          let insertIdx = curIdx + 1
+          while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
+            insertIdx++
+          }
 
-        const newBlock: FlatBlock = {
-          id: result.id,
-          block_type: result.block_type,
-          content: result.content,
-          parent_id: result.parent_id,
-          position: result.position,
-          deleted_at: null,
-          todo_state: null,
-          priority: null,
-          due_date: null,
-          scheduled_date: null,
-          page_id: afterBlock.page_id,
-          depth: afterBlock.depth,
-        }
-        const newBlocks = [...blocks]
-        newBlocks.splice(insertIdx, 0, newBlock)
-        // Single-block insert (perf invariant): derive the new Map from the
-        // current one with one `.set()` instead of an O(n) rebuild.
-        set((state) => ({
-          blocks: newBlocks,
-          blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
-        }))
+          const newBlock: FlatBlock = {
+            id: result.id,
+            block_type: result.block_type,
+            content: result.content,
+            parent_id: result.parent_id,
+            position: result.position,
+            deleted_at: null,
+            todo_state: null,
+            priority: null,
+            due_date: null,
+            scheduled_date: null,
+            page_id: curAfter.page_id,
+            depth: curAfter.depth,
+          }
+          const newBlocks = [...cur]
+          newBlocks.splice(insertIdx, 0, newBlock)
+          // Single-block insert (perf invariant): derive the new Map from the
+          // current one with one `.set()` instead of an O(n) rebuild.
+          return {
+            blocks: newBlocks,
+            blocksById: cloneBlocksByIdWith(state.blocksById, [newBlock]),
+          }
+        })
+        if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId)
         return result.id
       } catch (err) {
@@ -491,55 +523,70 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           return
         }
 
-        // Splice the moved subtree to its new slot among the siblings in the
-        // flat tree. Build moved + remaining, then locate the insertion anchor
-        // from the target sibling slot.
-        const descendants = getDragDescendants(blocks, blockId)
-        const movedSet = new Set([blockId, ...descendants])
-        const movedItems = blocks
-          .filter((b) => movedSet.has(b.id))
-          .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
-        const remaining = blocks.filter((b) => !movedSet.has(b.id))
+        // #714 — recompute the splice INSIDE the functional updater from
+        // `state.blocks` (current at commit time), never from the pre-await
+        // capture: a concurrent write that landed while the IPC was in
+        // flight must survive. If the block vanished or was re-parented
+        // mid-flight, the splice context is invalid → fall back to load().
+        let needsReload = false
+        set((state) => {
+          const cur = state.blocks
+          const curBlock = cur.find((b) => b.id === blockId)
+          if (!curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null)) {
+            needsReload = true
+            return {}
+          }
+          // Splice the moved subtree to its new slot among the siblings in the
+          // flat tree. Build moved + remaining, then locate the insertion anchor
+          // from the target sibling slot.
+          const descendants = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...descendants])
+          const movedItems = cur
+            .filter((b) => movedSet.has(b.id))
+            .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
 
-        // The flat index in `remaining` of the (newIndex)-th same-parent
-        // sibling; if newIndex is past the last sibling, insert after the last
-        // sibling's subtree. parentDepth+1 is the sibling depth.
-        const siblingsRemaining = remaining.filter(
-          (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === block.depth,
-        )
-        let insertAt: number
-        if (newIndex >= siblingsRemaining.length) {
-          const lastSib = siblingsRemaining[siblingsRemaining.length - 1]
-          if (lastSib) {
-            const lastSibDesc = getDragDescendants(remaining, lastSib.id)
-            insertAt = remaining.findIndex((b) => b.id === lastSib.id) + 1
-            while (
-              insertAt < remaining.length &&
-              lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
-            ) {
-              insertAt++
+          // The flat index in `remaining` of the (newIndex)-th same-parent
+          // sibling; if newIndex is past the last sibling, insert after the last
+          // sibling's subtree. parentDepth+1 is the sibling depth.
+          const siblingsRemaining = remaining.filter(
+            (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
+          )
+          let insertAt: number
+          if (newIndex >= siblingsRemaining.length) {
+            const lastSib = siblingsRemaining[siblingsRemaining.length - 1]
+            if (lastSib) {
+              const lastSibDesc = getDragDescendants(remaining, lastSib.id)
+              insertAt = remaining.findIndex((b) => b.id === lastSib.id) + 1
+              while (
+                insertAt < remaining.length &&
+                lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
+              ) {
+                insertAt++
+              }
+            } else {
+              // No remaining siblings — insert right after the parent, or at the
+              // start of the list when at root level.
+              insertAt = parentId == null ? 0 : remaining.findIndex((b) => b.id === parentId) + 1
             }
           } else {
-            // No remaining siblings — insert right after the parent, or at the
-            // start of the list when at root level.
-            insertAt = parentId == null ? 0 : remaining.findIndex((b) => b.id === parentId) + 1
+            const anchor = siblingsRemaining[newIndex] as FlatBlock
+            insertAt = remaining.findIndex((b) => b.id === anchor.id)
           }
-        } else {
-          const anchor = siblingsRemaining[newIndex] as FlatBlock
-          insertAt = remaining.findIndex((b) => b.id === anchor.id)
-        }
 
-        const newBlocks = [...remaining]
-        newBlocks.splice(insertAt, 0, ...movedItems)
-        // Subtree-touch (perf invariant): only the moved block's `position`
-        // field changed; descendants are reused as-is.
-        set((state) => ({
-          blocks: newBlocks,
-          blocksById: cloneBlocksByIdWith(
-            state.blocksById,
-            movedItems.filter((b) => b.id === blockId),
-          ),
-        }))
+          const newBlocks = [...remaining]
+          newBlocks.splice(insertAt, 0, ...movedItems)
+          // Subtree-touch (perf invariant): only the moved block's `position`
+          // field changed; descendants are reused as-is.
+          return {
+            blocks: newBlocks,
+            blocksById: cloneBlocksByIdWith(
+              state.blocksById,
+              movedItems.filter((b) => b.id === blockId),
+            ),
+          }
+        })
+        if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId)
       } catch (err) {
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
@@ -580,16 +627,47 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
 
       try {
         await moveBlock(blockId, prevSibling.id, prevChildCount)
-        const newBlocks = computeIndentedBlocks(blocks, blockId, prevSibling)
-        // Subtree-touch (perf invariant): only the indented block and its
-        // descendants got new references; reuse the rest of the prior Map.
-        const descendantIds = getDragDescendants(blocks, blockId)
-        const touchedIds = new Set<string>([blockId, ...descendantIds])
-        const touched = newBlocks.filter((b) => touchedIds.has(b.id))
-        set((state) => ({
-          blocks: newBlocks,
-          blocksById: cloneBlocksByIdWith(state.blocksById, touched),
-        }))
+        // #714 — recompute the indent splice INSIDE the functional updater
+        // from `state.blocks` (current at commit time), never from the
+        // pre-await capture: a concurrent write that landed while the IPC
+        // was in flight must survive. If either block vanished or the pair
+        // is no longer a valid indent target (same parent + depth — e.g. an
+        // interleaved structural move), fall back to a full load().
+        let needsReload = false
+        set((state) => {
+          const cur = state.blocks
+          const curBlock = cur.find((b) => b.id === blockId)
+          const curPrev = cur.find((b) => b.id === prevSibling.id)
+          if (
+            !curBlock ||
+            !curPrev ||
+            (curBlock.parent_id ?? null) !== (curPrev.parent_id ?? null) ||
+            curBlock.depth !== curPrev.depth
+          ) {
+            needsReload = true
+            return {}
+          }
+          // The backend appended at slot `prevChildCount` (captured
+          // pre-await). If the new parent's child set changed mid-flight,
+          // the local "append as last child" no longer matches that slot —
+          // reload instead of diverging silently from the backend order.
+          const curChildCount = cur.filter((b) => (b.parent_id ?? null) === curPrev.id).length
+          if (curChildCount !== prevChildCount) {
+            needsReload = true
+            return {}
+          }
+          const newBlocks = computeIndentedBlocks(cur, blockId, curPrev)
+          // Subtree-touch (perf invariant): only the indented block and its
+          // descendants got new references; reuse the rest of the prior Map.
+          const descendantIds = getDragDescendants(cur, blockId)
+          const touchedIds = new Set<string>([blockId, ...descendantIds])
+          const touched = newBlocks.filter((b) => touchedIds.has(b.id))
+          return {
+            blocks: newBlocks,
+            blocksById: cloneBlocksByIdWith(state.blocksById, touched),
+          }
+        })
+        if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId)
         return true
       } catch (err) {
@@ -614,33 +692,62 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       try {
         const resp = await moveBlock(blockId, newParentId, newIndex)
 
-        const descendantIds = getDragDescendants(blocks, blockId)
-        const movedSet = new Set([blockId, ...descendantIds])
+        // #714 — recompute the dedent splice INSIDE the functional updater
+        // from `state.blocks` (current at commit time), never from the
+        // pre-await capture: a concurrent write that landed while the IPC
+        // was in flight must survive. If the block or its parent vanished,
+        // or the block was re-parented mid-flight, fall back to load().
+        let needsReload = false
+        set((state) => {
+          const cur = state.blocks
+          const curBlock = cur.find((b) => b.id === blockId)
+          const curParent = cur.find((b) => b.id === parent.id)
+          if (!curBlock || !curParent || (curBlock.parent_id ?? null) !== parent.id) {
+            needsReload = true
+            return {}
+          }
+          // The backend placed the block under `newParentId` at slot
+          // `newIndex` (the parent's sibling slot + 1, captured pre-await).
+          // If the parent was itself re-parented mid-flight, or its sibling
+          // slot changed (a sibling inserted/removed above it), "insert
+          // right after the parent's subtree" no longer matches the
+          // backend's slot — reload instead of diverging silently.
+          if (
+            (curParent.parent_id ?? null) !== (newParentId ?? null) ||
+            siblingSlot(cur, curParent) + 1 !== newIndex
+          ) {
+            needsReload = true
+            return {}
+          }
+          const descendantIds = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...descendantIds])
 
-        const movedItems: FlatBlock[] = blocks
-          .filter((b) => movedSet.has(b.id))
-          .map((b) => ({
-            ...b,
-            depth: b.depth - 1,
-            ...(b.id === blockId ? { parent_id: newParentId, position: resp.new_position } : {}),
-          }))
+          const movedItems: FlatBlock[] = cur
+            .filter((b) => movedSet.has(b.id))
+            .map((b) => ({
+              ...b,
+              depth: b.depth - 1,
+              ...(b.id === blockId ? { parent_id: newParentId, position: resp.new_position } : {}),
+            }))
 
-        const remaining = blocks.filter((b) => !movedSet.has(b.id))
-        const parentDescendants = getDragDescendants(remaining, parent.id)
-        let insertAt = remaining.findIndex((b) => b.id === parent.id) + 1
-        while (
-          insertAt < remaining.length &&
-          parentDescendants.has((remaining[insertAt] as FlatBlock).id)
-        ) {
-          insertAt++
-        }
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
+          const parentDescendants = getDragDescendants(remaining, parent.id)
+          let insertAt = remaining.findIndex((b) => b.id === parent.id) + 1
+          while (
+            insertAt < remaining.length &&
+            parentDescendants.has((remaining[insertAt] as FlatBlock).id)
+          ) {
+            insertAt++
+          }
 
-        remaining.splice(insertAt, 0, ...movedItems)
-        // Subtree-touch (perf invariant): only `movedItems` got new references.
-        set((state) => ({
-          blocks: remaining,
-          blocksById: cloneBlocksByIdWith(state.blocksById, movedItems),
-        }))
+          remaining.splice(insertAt, 0, ...movedItems)
+          // Subtree-touch (perf invariant): only `movedItems` got new references.
+          return {
+            blocks: remaining,
+            blocksById: cloneBlocksByIdWith(state.blocksById, movedItems),
+          }
+        })
+        if (needsReload) await get().load()
         notifyUndoNewAction(rootParentId)
         return true
       } catch (err) {
@@ -682,21 +789,45 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
           await get().load()
         } else {
-          // Locate the moved block and its predecessor in the flat tree
-          // (which may include descendants between them). Swap the two
-          // sibling subtrees so visual order matches the new positions.
-          const oldIndex = blocks.findIndex((b) => b.id === blockId)
-          const prevIndex = blocks.findIndex((b) => b.id === prevSibling.id)
-          if (oldIndex < 0 || prevIndex < 0) {
-            // Shouldn't happen — fall back to full reload.
-            await get().load()
-          } else {
-            const movedDescendants = getDragDescendants(blocks, blockId)
+          // #714 — recompute the swap splice INSIDE the functional updater
+          // from `state.blocks` (current at commit time), never from the
+          // pre-await capture: a concurrent write that landed while the IPC
+          // was in flight must survive. If the block or its predecessor
+          // vanished or the block was re-parented mid-flight, fall back to
+          // a full load().
+          let needsReload = false
+          set((state) => {
+            const cur = state.blocks
+            // Locate the moved block and its predecessor in the flat tree
+            // (which may include descendants between them). Swap the two
+            // sibling subtrees so visual order matches the new positions.
+            const curBlock = cur.find((b) => b.id === blockId)
+            if (!curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null)) {
+              needsReload = true
+              return {}
+            }
+            // Backend semantics: the block lands at slot `newIndex` among its
+            // OTHER same-parent siblings (captured pre-await). If the sibling
+            // set changed mid-flight (insert/remove/re-parent above the
+            // block), "insert before the captured prevSibling" no longer
+            // equals that slot — reload instead of diverging silently. This
+            // also covers prevSibling vanishing or being re-parented.
+            const siblingsRemaining = cur.filter(
+              (b) =>
+                b.id !== blockId &&
+                (b.parent_id ?? null) === (parentId ?? null) &&
+                b.depth === curBlock.depth,
+            )
+            if (siblingsRemaining[newIndex]?.id !== prevSibling.id) {
+              needsReload = true
+              return {}
+            }
+            const movedDescendants = getDragDescendants(cur, blockId)
             const movedSet = new Set([blockId, ...movedDescendants])
-            const movedItems = blocks
+            const movedItems = cur
               .filter((b) => movedSet.has(b.id))
               .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
-            const remaining = blocks.filter((b) => !movedSet.has(b.id))
+            const remaining = cur.filter((b) => !movedSet.has(b.id))
             const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
             const newBlocks = [...remaining]
             newBlocks.splice(insertAt, 0, ...movedItems)
@@ -704,14 +835,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             // `position` was rewritten) actually got a new reference; the
             // descendants are reused as-is. Update only that key on the
             // prior Map.
-            set((state) => ({
+            return {
               blocks: newBlocks,
               blocksById: cloneBlocksByIdWith(
                 state.blocksById,
                 movedItems.filter((b) => b.id === blockId),
               ),
-            }))
-          }
+            }
+          })
+          if (needsReload) await get().load()
         }
         notifyUndoNewAction(rootParentId)
         return true
@@ -751,20 +883,45 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
           await get().load()
         } else {
-          const oldIndex = blocks.findIndex((b) => b.id === blockId)
-          const nextIndex = blocks.findIndex((b) => b.id === nextSibling.id)
-          if (oldIndex < 0 || nextIndex < 0) {
-            await get().load()
-          } else {
+          // #714 — recompute the swap splice INSIDE the functional updater
+          // from `state.blocks` (current at commit time), never from the
+          // pre-await capture: a concurrent write that landed while the IPC
+          // was in flight must survive. If the block or its successor
+          // vanished or the block was re-parented mid-flight, fall back to
+          // a full load().
+          let needsReload = false
+          set((state) => {
+            const cur = state.blocks
+            const curBlock = cur.find((b) => b.id === blockId)
+            if (!curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null)) {
+              needsReload = true
+              return {}
+            }
+            // Backend semantics: the block lands at slot `newIndex` among its
+            // OTHER same-parent siblings (captured pre-await), i.e. right
+            // after the captured nextSibling only while that sibling still
+            // sits at slot `newIndex - 1`. If the sibling set changed
+            // mid-flight, reload instead of diverging silently. This also
+            // covers nextSibling vanishing or being re-parented.
+            const siblingsRemaining = cur.filter(
+              (b) =>
+                b.id !== blockId &&
+                (b.parent_id ?? null) === (parentId ?? null) &&
+                b.depth === curBlock.depth,
+            )
+            if (siblingsRemaining[newIndex - 1]?.id !== nextSibling.id) {
+              needsReload = true
+              return {}
+            }
             // Move the block AND its descendants past nextSibling AND its
             // descendants. Build moved + remaining, then re-insert moved
             // right after nextSibling's last descendant in `remaining`.
-            const movedDescendants = getDragDescendants(blocks, blockId)
+            const movedDescendants = getDragDescendants(cur, blockId)
             const movedSet = new Set([blockId, ...movedDescendants])
-            const movedItems = blocks
+            const movedItems = cur
               .filter((b) => movedSet.has(b.id))
               .map((b) => (b.id === blockId ? { ...b, position: resp.new_position } : b))
-            const remaining = blocks.filter((b) => !movedSet.has(b.id))
+            const remaining = cur.filter((b) => !movedSet.has(b.id))
             const nextDescendants = getDragDescendants(remaining, nextSibling.id)
             let insertAt = remaining.findIndex((b) => b.id === nextSibling.id) + 1
             while (
@@ -777,14 +934,15 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
             newBlocks.splice(insertAt, 0, ...movedItems)
             // Subtree-touch (perf invariant): only the moved block's
             // `position` field changed; the descendants are reused as-is.
-            set((state) => ({
+            return {
               blocks: newBlocks,
               blocksById: cloneBlocksByIdWith(
                 state.blocksById,
                 movedItems.filter((b) => b.id === blockId),
               ),
-            }))
-          }
+            }
+          })
+          if (needsReload) await get().load()
         }
         notifyUndoNewAction(rootParentId)
         return true
