@@ -238,6 +238,21 @@ specta bindings) and verify with `cargo check --all-targets` (benches aren't cov
 After pushing, open a PR against `main` (`gh pr create --base main --head <branch>`) with
 `Closes #NN` in the body so the merge auto-closes the issue.
 
+**Issue-closing hygiene (maintainer instruction, 2026-06-11 — #804 left #783/#612/#681
+dangling):**
+
+- One explicit `Closes #NNN` per issue the PR FULLY fixes. Verify GitHub parsed them
+  before relying on auto-close:
+  `gh api graphql -f query='{repository(owner:"jfolcini",name:"agaric"){pullRequest(number:<PR>){closingIssuesReferences(first:10){nodes{number state}}}}'`
+- **Partial fix → never `Closes`.** Instead post a re-scope comment on the issue
+  ("#PR fixed X; this issue is now only Y") so the remainder stays accurately scoped.
+- At the batch-boundary sweep, after merging: confirm the linked issues actually flipped
+  to CLOSED (auto-close fires only on merge to the default branch).
+- If you discover a merged PR fixed an issue without linking it: verify the fix in
+  current `main` (file:line), then `gh issue close NNN --comment` citing the PR and the
+  evidence. Audit query — recent merged PRs with still-OPEN linked issues should return
+  empty.
+
 **Do NOT wait for CI on this PR.** The pre-push hook is your local gate; remote CI runs
 async over many minutes. Instead:
 
