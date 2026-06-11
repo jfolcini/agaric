@@ -31,6 +31,137 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # detect-docs-only (#833) — docs-only fast-path classifier.
+  #
+  # Emits a single boolean output `docs_only`. It is `true` ONLY when EVERY
+  # path changed by this branch matches the conservative docs allowlist
+  # below; ANY non-docs path (a `.rs`/`.ts`, a lockfile, a non-doc workflow
+  # change, etc.) forces `docs_only=false` and the full validate suite runs.
+  #
+  # SECURITY CONTRACT (co-designed with #805's strict gate — read this with
+  # the `validate-all` job at the bottom of the file):
+  #   - This classifier is the ONLY thing that lets a `skipped` sibling job
+  #     pass `validate-all`. If it is wrong in the `true` direction, a code
+  #     change could ride in with its heavy jobs skipped. So it is:
+  #       * allowlist-based: a path must AFFIRMATIVELY match a docs pattern;
+  #         the default for any unmatched path is "not docs" → docs_only=false.
+  #       * FAIL-CLOSED (#810 contract): on ANY inability to compute the diff
+  #         (unresolved/unreachable base sha, a failed `git diff`), it emits
+  #         `docs_only=false` so the full suite runs. A classifier error can
+  #         only ever cost extra CI minutes, never weaken the gate.
+  #   - `validate-all` ALSO independently fails-closed: if this job itself
+  #     does not succeed, its result != 'success' trips the #805 assertion.
+  #
+  # Mirrors the fail-closed `git diff` shape of ci.yml's `detect-changes`.
+  # ---------------------------------------------------------------------------
+  detect-docs-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # Full history so the three-dot `base...head` diff can resolve the
+          # merge-base for PRs whose head sits behind `main` (same rationale
+          # as ci.yml's detect-changes).
+          fetch-depth: 0
+          persist-credentials: false
+      - id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Helper: emit docs_only=false and exit 0. Used for every
+          # fail-closed branch so the full suite runs whenever we are not
+          # 100% certain the diff is docs-only.
+          full_suite() {
+            echo "$1"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          else
+            # push (feature branch / main) or tag (release.yml). The
+            # release tag path almost never resolves a meaningful `before`
+            # and is never docs-only anyway — fail-closed handles it.
+            base="$PUSH_BEFORE"
+            head="$PUSH_AFTER"
+          fi
+
+          # New-branch / orphan-push: github.event.before is all-zeros and
+          # there is nothing to diff against → fail closed (full suite).
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            full_suite "Base sha unresolved — running full validate suite (fail-closed)."
+          fi
+
+          # Force-push rewrote the old tip out of the runner clone, or a tag
+          # push has no reachable predecessor → fail closed (full suite).
+          if ! git cat-file -e "$base" 2>/dev/null; then
+            full_suite "Base sha $base unreachable — running full validate suite (fail-closed)."
+          fi
+
+          # Three-dot (symmetric-difference) diff: ONLY the files this branch
+          # changed relative to the merge-base, never files where `main`
+          # moved ahead while the branch sat behind. A two-dot diff would
+          # report those base-side changes too and could mislabel a real
+          # code PR as docs-only when main had unrelated doc churn — exactly
+          # the bypass we must avoid. Capture into a variable and check the
+          # exit code explicitly: a failed diff MUST fail closed, not be
+          # swallowed by a process substitution under `set -euo pipefail`.
+          if ! diff_out=$(git diff --name-only "$base"..."$head"); then
+            full_suite "::warning::git diff $base...$head failed — running full validate suite (fail-closed)."
+          fi
+
+          changed=()
+          if [ -n "$diff_out" ]; then
+            mapfile -t changed <<< "$diff_out"
+          fi
+
+          # An empty diff is NOT treated as docs-only. There is nothing to
+          # fast-path (no docs changed either) and a zero-file diff is more
+          # likely a base/head confusion than an intentional no-op PR, so we
+          # fail closed and run the full suite.
+          if [ "${#changed[@]}" -eq 0 ]; then
+            full_suite "Empty diff — running full validate suite (fail-closed)."
+          fi
+
+          echo "Changed files:"
+          printf '  %s\n' "${changed[@]}"
+
+          # Conservative docs allowlist, anchored at repo root. A path is
+          # "docs" iff it matches one of these. Deliberately narrow — when in
+          # doubt, a path is NOT docs and the full suite runs.
+          #   - any Markdown file anywhere (READMEs, session logs, **/*.md)
+          #   - anything under docs/
+          #   - the LICENSE / NOTICE / AUTHORS / CHANGELOG text files
+          # NOT included (intentionally): lockfiles, .toml/.yml/.yaml config,
+          # source under src/ or src-tauri/, workflow YAML, prek.toml, AGENTS.md
+          # changes that also touch code, etc. ANY of those ⇒ docs_only=false.
+          docs_re='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
+
+          docs_only=true
+          for f in "${changed[@]}"; do
+            if [[ ! "$f" =~ $docs_re ]]; then
+              echo "Non-docs path detected: $f → docs_only=false (full suite)."
+              docs_only=false
+              break
+            fi
+          done
+
+          echo "docs_only=$docs_only"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
   # npm audit signatures (warn-only), cargo audit (blocking — see PEND-41 R5), and the sqlx
   # offline-cache drift check. Needs the full Node + Rust + mold + cargo
@@ -38,6 +169,14 @@ jobs:
   # zizmor, etc.
   # ---------------------------------------------------------------------------
   lint:
+    needs: detect-docs-only
+    # #833: the FULL lint job (clippy, cargo-deny, cargo-audit, sqlx-prepare,
+    # zizmor, the whole prek suite + the heavy Rust/Node toolchain it needs)
+    # is skipped on a provably docs-only diff. Docs are still linted by the
+    # lightweight `docs-lint` job below, which runs the cheap doc-only hooks
+    # (typos, markdownlint, lychee) with no toolchain. Fail-closed: an
+    # uncertain classification ⇒ docs_only=false ⇒ this full job runs.
+    if: needs.detect-docs-only.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 11.2 min (run 25966040732, 2026-05-16,
     # n=1 post-PEND-39-split). +50% headroom + round up to nearest 5 → 20 min.
@@ -287,6 +426,95 @@ jobs:
           cargo sqlx prepare --check -- --tests
 
   # ---------------------------------------------------------------------------
+  # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
+  # provably docs-only diff (the full `lint` job is skipped then) and runs
+  # just the cheap doc-relevant prek hooks — markdownlint, the markdown
+  # link/citation checks, typos, and lychee — with no Rust toolchain,
+  # clippy, cargo-deny, cargo-audit, or sqlx-prepare. This keeps docs
+  # actually linted on the fast path instead of waving them through.
+  #
+  # EXACTLY ONE of {lint, docs-lint} runs per PR (they have opposite
+  # docs_only conditions). validate-all requires BOTH (a skipped sibling is
+  # accepted only under docs_only — see that job), so whichever one ran must
+  # have succeeded for the gate to pass. The prek config is NOT modified:
+  # the reduced set is selected by passing hook ids on the command line.
+  # ---------------------------------------------------------------------------
+  docs-lint:
+    needs: detect-docs-only
+    if: needs.detect-docs-only.outputs.docs_only == 'true'
+    runs-on: ubuntu-24.04
+    # Cheap: Node + three prebuilt binaries + a handful of doc hooks. No
+    # Rust compile. Generous 10-min ceiling (lychee hits the network).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # markdownlint/typos/lychee only need the working tree, but keep a
+          # full clone so prek's local hooks behave identically to the `lint`
+          # job (no shallow-clone surprises).
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        # markdownlint runs via `npx markdownlint-cli2`; the md-link-targets
+        # and doc-vs-code-paths hooks are node scripts. All resolve from
+        # node_modules, so `npm ci` is required.
+        run: npm ci
+
+      - name: Install prek + typos via prebuilt binaries
+        # Only the tools the reduced doc-hook set needs — no cargo-deny /
+        # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
+        # docs-only diff does not touch).
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        with:
+          tool: prek,typos-cli
+
+      - name: Install lychee (prebuilt binary)
+        # The `lychee` prek hook is a `local` hook calling the system
+        # binary; install it the same way the full `lint` job does.
+        run: |
+          set -euo pipefail
+          VERSION=lychee-v0.24.2
+          DIR=lychee-x86_64-unknown-linux-gnu
+          TARBALL="${DIR}.tar.gz"
+          curl -fsSL -o /tmp/lychee.tar.gz \
+            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
+          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/lychee" --version
+
+      - name: Restore lychee link-check cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        with:
+          path: .lycheecache
+          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md', '!node_modules/**') }}
+          restore-keys: |
+            lychee-${{ runner.os }}-
+
+      - name: Run doc-only prek hooks (markdownlint, link/citation, typos)
+        # Pass the hook ids positionally so prek runs ONLY this reduced set —
+        # the prek.toml config itself is untouched (#833 constraint).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: prek run --all-files markdownlint md-link-targets doc-vs-code-paths typos
+
+      - name: Run lychee link check (pre-push-staged hook)
+        # lychee is staged `pre-push` in prek.toml, so it needs the explicit
+        # `--hook-stage pre-push` selector (the run above is the default
+        # pre-commit stage). GITHUB_TOKEN avoids github.com rate-limiting.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: prek run --all-files --hook-stage pre-push lychee
+
+  # ---------------------------------------------------------------------------
   # vitest — frontend unit + integration suite (PEND-86: single job).
   # Previously a 3-shard matrix + a separate merge job; consolidated into one
   # full-suite run. Three ~3-min shards in parallel cost three runner slots and
@@ -297,6 +525,11 @@ jobs:
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
+    needs: detect-docs-only
+    # #833: skip the frontend suite when the diff is provably docs-only.
+    # Fail-open is impossible here — the classifier fails CLOSED, so an
+    # uncertain classification yields docs_only=false and this job runs.
+    if: needs.detect-docs-only.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — full-suite wall-clock was ~3×2.2 min of test work split
     # across shards; run as one job that's ~6-7 min of tests + ~2 min v8
@@ -404,6 +637,10 @@ jobs:
   # the two shards don't collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
   playwright:
+    needs: detect-docs-only
+    # #833: skip the E2E suite on a provably docs-only diff (fail-closed
+    # classifier — see detect-docs-only).
+    if: needs.detect-docs-only.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — per-shard wall-clock 7.9 min max (run 25966040732, n=1
     # post-PEND-39-split). +50% headroom + round up → 15 min.
@@ -477,6 +714,12 @@ jobs:
   # gate the MCP-sidecar signal (and vice versa).
   # ---------------------------------------------------------------------------
   cargo-tests:
+    needs: detect-docs-only
+    # #833: skip the Rust nextest+coverage suite on a provably docs-only
+    # diff (fail-closed classifier — see detect-docs-only). cargo-coverage
+    # `needs: cargo-tests`, so it skips transitively; that job is already
+    # informational/non-gating (not in validate-all's needs).
+    if: needs.detect-docs-only.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # PEND-86: split into a 2-shard matrix via nextest `--partition count:N/2`.
     # The single-job full suite + llvm-cov was the ~16-min critical-path long
@@ -624,7 +867,13 @@ jobs:
   cargo-coverage:
     runs-on: ubuntu-24.04
     needs: cargo-tests
-    if: ${{ !cancelled() && needs.cargo-tests.result != 'cancelled' }}
+    # `success() || failure()` (i.e. cargo-tests actually ran) — NOT
+    # `!cancelled()`, because a docs-only diff (#833) SKIPS cargo-tests, and
+    # a skipped upstream would otherwise let this job run and then fail
+    # downloading shard artifacts that were never produced. Skipping
+    # coverage on docs-only is correct (no Rust changed) and harmless: this
+    # job is informational and not in validate-all's needs.
+    if: ${{ (success() || failure()) && needs.cargo-tests.result != 'cancelled' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -719,6 +968,10 @@ jobs:
   # lint tree nor the llvm-cov instrumented tree.
   # ---------------------------------------------------------------------------
   mcp-tests:
+    needs: detect-docs-only
+    # #833: skip the MCP sidecar build + UDS smoke on a provably docs-only
+    # diff (fail-closed classifier — see detect-docs-only).
+    if: needs.detect-docs-only.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
     # run on cargo-tests. 20 min covers the cold-cache compile of
@@ -817,37 +1070,129 @@ jobs:
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
 
   # ---------------------------------------------------------------------------
-  # validate-all — trivial aggregate. Branch protection rules and the
-  # ci.yml / release.yml callers should treat this as the single "did all
-  # validate work pass?" gate. Required so adding/removing a sibling job
-  # doesn't churn the protected-check list.
+  # validate-all — the single aggregate gate. Branch protection and the
+  # ci.yml / release.yml callers treat this as "did all validate work pass?".
+  # Required so adding/removing a sibling job doesn't churn the protected-
+  # check list.
   #
-  # `if: always()` + the explicit `needs.*.result` assertion below are
-  # load-bearing (issue #805): with a plain `needs:`, GitHub SKIPS this
-  # job when a sibling fails — and a skipped required status check counts
-  # as PASSING for branch protection, so a red lint/cargo-tests run would
-  # still yield a mergeable PR. Every sibling runs unconditionally (none
-  # is path-filtered), so anything other than `success` — failure,
-  # cancelled, or skipped — must fail the gate.
+  # ===========================================================================
+  # SECURITY-SENSITIVE LOGIC (#805 strict gate + #833 docs fast-path).
+  # This is the part the maintainer reviews. Read it slowly.
+  # ===========================================================================
+  #
+  # `if: always()` is load-bearing (#805): with a plain `needs:`, GitHub
+  # SKIPS this job when a sibling fails — and a skipped REQUIRED status check
+  # counts as PASSING for branch protection, so a red sibling would still
+  # yield a mergeable PR. So this job ALWAYS runs and ALWAYS makes an explicit
+  # pass/fail decision from the sibling `result`s.
+  #
+  # #805's original rule was simply: every sibling must be `success`; anything
+  # else (failure/cancelled/skipped) fails the gate. That rule assumed NO
+  # sibling is ever path-filtered. #833 introduces a docs-only fast path that
+  # DOES skip siblings — so we relax the rule in exactly one controlled way,
+  # and ONLY when the fail-closed classifier proves the diff is docs-only:
+  #
+  #   * detect-docs-only must itself have SUCCEEDED. If the classifier did not
+  #     succeed we cannot trust `docs_only`, so we fall through to the strict
+  #     full-suite rule (fail-closed). The classifier already emits
+  #     docs_only=false on any internal git error, so "classifier succeeded
+  #     but couldn't compute a diff" already means full-suite.
+  #
+  #   * HEAVY jobs (lint, vitest, playwright, cargo-tests, mcp-tests) run on
+  #     code PRs and are skipped on docs-only PRs. They may be `skipped` ONLY
+  #     when docs_only == true; otherwise they MUST be `success` (#805 intact).
+  #     A `failure`/`cancelled` is NEVER acceptable, even on docs-only.
+  #
+  #   * docs-lint is the COMPLEMENT: it runs on docs-only PRs and is skipped on
+  #     code PRs. So its allowed states are mirrored — `success` when
+  #     docs_only, `skipped` when not.
+  #
+  # Net effect (proved by the truth table in the PR):
+  #   - code PR  → docs_only=false → every heavy job must be success, docs-lint
+  #                skipped. Identical to the pre-#833 #805 gate. No bypass.
+  #   - docs PR  → docs_only=true  → heavy jobs skipped (OK), docs-lint must be
+  #                success. A docs PR passes; a broken docs PR (markdownlint /
+  #                lychee red) fails.
+  #   - any classifier/diff error → docs_only=false (fail-closed) → strict rule.
+  #
+  # A code change cannot ride in under docs_only=true: the classifier is
+  # allowlist-based + fail-closed (any .rs/.ts/lockfile/non-doc-workflow path
+  # ⇒ docs_only=false), so the heavy jobs are never legitimately skippable for
+  # a code diff.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [lint, vitest, playwright, cargo-tests, mcp-tests]
+    needs: [detect-docs-only, lint, docs-lint, vitest, playwright, cargo-tests, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — trivial jq assertion (~2s observed); 5-min floor for sanity.
+    # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
     timeout-minutes: 5
     steps:
-      - name: Assert every validate job succeeded
+      - name: Assert validate gate (docs-only-aware, fail-closed)
         env:
           # The full needs context, e.g. {"lint": {"result": "success"}, ...}.
           # Passed via env (not inline interpolation) so the JSON can never
           # be parsed as shell.
           NEEDS_JSON: ${{ toJSON(needs) }}
+          # Read the classifier output directly (NOT from NEEDS_JSON — outputs
+          # live under .outputs there, but reading the resolved value here is
+          # clearer). Empty/anything-but-"true" is treated as NOT docs-only.
+          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
         run: |
           set -euo pipefail
-          not_green=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key)=\(.value.result)"' <<< "$NEEDS_JSON")
-          if [ -n "$not_green" ]; then
-            echo "::error::validate jobs not green: $(echo "$not_green" | tr '\n' ' ')"
+
+          fail=0
+          gate_fail() { echo "::error::$1"; fail=1; }
+
+          result_of() { jq -r --arg k "$1" '.[$k].result // "missing"' <<< "$NEEDS_JSON"; }
+
+          classifier="$(result_of detect-docs-only)"
+          echo "detect-docs-only result=$classifier docs_only=${DOCS_ONLY:-<empty>}"
+
+          # ---- Fail-closed on the classifier itself -------------------------
+          # If the classifier did not succeed we cannot trust DOCS_ONLY; force
+          # the strict full-suite rule by pinning docs_only to "false".
+          docs_only="false"
+          if [ "$classifier" = "success" ] && [ "$DOCS_ONLY" = "true" ]; then
+            docs_only="true"
+          fi
+          if [ "$classifier" != "success" ]; then
+            gate_fail "detect-docs-only did not succeed (result=$classifier) — failing gate (fail-closed)."
+          fi
+
+          # ---- Heavy jobs: skip-allowed ONLY under docs_only ----------------
+          # success            → always OK
+          # skipped            → OK iff docs_only == true (#833 fast path)
+          # failure/cancelled  → NEVER OK
+          # anything else      → NEVER OK
+          heavy="lint vitest playwright cargo-tests mcp-tests"
+          for j in $heavy; do
+            r="$(result_of "$j")"
+            if [ "$r" = "success" ]; then
+              continue
+            elif [ "$r" = "skipped" ] && [ "$docs_only" = "true" ]; then
+              echo "$j skipped (allowed under docs_only)."
+              continue
+            else
+              gate_fail "heavy job '$j' result=$r is not acceptable (docs_only=$docs_only)."
+            fi
+          done
+
+          # ---- docs-lint: the complement (runs on docs-only PRs) ------------
+          # success → OK only under docs_only (it should have run)
+          # skipped → OK only under !docs_only (it is path-gated off)
+          dl="$(result_of docs-lint)"
+          if [ "$docs_only" = "true" ]; then
+            if [ "$dl" != "success" ]; then
+              gate_fail "docs-lint result=$dl but a docs-only PR requires it to pass."
+            fi
+          else
+            if [ "$dl" != "skipped" ]; then
+              gate_fail "docs-lint result=$dl but a non-docs PR expects it skipped."
+            fi
+          fi
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::validate-all gate FAILED (see above)."
             exit 1
           fi
-          echo "all validate jobs passed"
+          echo "validate-all gate PASSED (docs_only=$docs_only)."
