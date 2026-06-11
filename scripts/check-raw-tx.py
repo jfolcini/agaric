@@ -59,8 +59,12 @@ ISSUE_HINT = (
 # audit). Globs are matched against the path relative to the repo root,
 # using fnmatch semantics where `**` is normalised to span path segments.
 ALLOWLIST_GLOBS = [
-    # The begin_immediate_logged / CommandTx primitive itself.
+    # The begin_immediate_logged / CommandTx primitive itself
+    # (db.rs was split into the db/ directory in #644).
     "src-tauri/src/db.rs",
+    "src-tauri/src/db/**",
+    # The materializer was split into materializer/handlers/ in #644.
+    "src-tauri/src/materializer/handlers/**",
     # Cache rebuilds — pure consumers of op_log, never producers.
     "src-tauri/src/cache/**",
     # FTS index — derived data, no op_log.
