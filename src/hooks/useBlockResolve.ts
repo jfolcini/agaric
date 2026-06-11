@@ -12,7 +12,7 @@
 
 import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { notify } from '@/lib/notify'
@@ -51,7 +51,9 @@ export interface UseBlockResolveReturn {
   searchBlockRefs: (query: string) => Promise<PickerItem[]>
   onCreatePage: (label: string) => Promise<string>
   onCreateTag: (name: string) => Promise<string>
-  /** Ref to the pages list cache for search. Updated by the preload effect. */
+  /** Ref to the pages list cache for search. Lazily filled by
+   *  `searchPagesViaCache`, appended to by `onCreatePage` and the date
+   *  picker, and cleared on space switch (#732). */
   pagesListRef: React.RefObject<Array<{ id: string; title: string }>>
 }
 
@@ -113,7 +115,14 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     const spaceId = useSpaceStore.getState().currentSpaceId ?? ''
     const pages = await listAllPagesInSpace(spaceId)
     source = pages.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
-    pagesListRef.current = source
+    // #732 — only persist the lazy fill while the active space is still
+    // the one the fetch was issued for. A space switch mid-flight would
+    // otherwise re-seed the just-invalidated cache with the OLD space's
+    // pages (the hook-level subscriber clears the ref on switch, but it
+    // cannot see this in-flight promise).
+    if ((useSpaceStore.getState().currentSpaceId ?? '') === spaceId) {
+      pagesListRef.current = source
+    }
   }
   const filtered = q ? matchSorter(source, q, { keys: ['title'] }) : source
   return filtered.slice(0, 20).map((p) => makePagePickerItem(p.id, p.title))
@@ -251,10 +260,32 @@ export function useBlockResolve(): UseBlockResolveReturn {
   const cacheRef = useRef(cache)
   cacheRef.current = cache
 
-  // Local ref for pagesListRef used in searchPages caching.
-  // This mirrors the old BlockTree behavior where pagesListRef was used
-  // for short-query caching. Updated by the preload effect in BlockTree.
+  // Local ref for pagesListRef used in searchPages caching. Lazily
+  // filled by `searchPagesViaCache` (scoped to the space active at
+  // call-time) and appended to by `onCreatePage` and the date picker.
   const pagesListRef = useRef<Array<{ id: string; title: string }>>([])
+
+  // #732 — the cache holds space-scoped data in a space-agnostic
+  // container, and the hook instance SURVIVES page-editor→page-editor
+  // space switches (ViewDispatcher renders PageEditor without a key and
+  // PageEditor renders BlockTree without a key). Without invalidation, a
+  // list lazily filled in space A keeps serving ≤2-char `[[` picker
+  // queries after the user switches to space B — cross-space results in
+  // the picker. Clear the ref the moment the active space changes; the
+  // next short query refetches for the new space via the lazy fallback
+  // in `searchPagesViaCache`. The space store carries
+  // `subscribeWithSelector`, so the listener only wakes on real
+  // `currentSpaceId` changes (not `availableSpaces` / `isReady` writes).
+  useEffect(
+    () =>
+      useSpaceStore.subscribe(
+        (s) => s.currentSpaceId,
+        () => {
+          pagesListRef.current = []
+        },
+      ),
+    [],
+  )
 
   // FEAT-3p7 — every cache lookup is composed against the active
   // space's id so a chip resolved in space A is invisible from space B.

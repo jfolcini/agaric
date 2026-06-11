@@ -115,6 +115,75 @@ test.describe('Search results — grouping + interaction (PEND-58f E2E-8)', () =
   })
 })
 
+// #737 — the per-group `<ul role="listbox">` is simultaneously the scroll
+// container and the virtualizer's size element. The old `height: totalSize`
+// inline style could not make the element overflow ITSELF, so once totalSize
+// exceeded the `max-h` cap, `scrollHeight` collapsed to the mounted
+// window+overscan rows: the scrollbar thumb lied and far scroll offsets were
+// unreachable. The fix reserves totalSize with an in-flow `::before` spacer
+// (height fed by the `--vrl-total-size` custom property). jsdom has no
+// scroll geometry, so this is the only layer that can verify it for real.
+test.describe('Tall search group — scroll geometry via ::before spacer (#737)', () => {
+  const SEEDED = 60
+
+  test('scrollHeight equals totalSize and the last row is reachable', async ({ page }) => {
+    await openSearchView(page)
+    // Bulk-seed 60 content blocks under PAGE_PROJECTS — one group far
+    // taller than the listbox's `max-h` viewport cap.
+    await page.evaluate((n) => {
+      ;(
+        window as unknown as { __addMockAgendaItems: (c: number) => string[] }
+      ).__addMockAgendaItems(n)
+    }, SEEDED)
+    const region = await runSearch(page, 'Agenda load item')
+    const listbox = region.locator('[role="listbox"]').first()
+    await expect(listbox).toBeVisible()
+    await expect(listbox.locator('[role="option"]').first()).toBeVisible()
+
+    // Virtualization sanity: only a window of the 60 rows is mounted.
+    const mounted = await listbox.locator('[role="option"]').count()
+    expect(mounted).toBeGreaterThan(0)
+    expect(mounted).toBeLessThan(SEEDED)
+
+    // The load-bearing geometry: the ::before spacer makes the scroll
+    // container's scrollHeight track the virtualizer's totalSize even
+    // though only the window is mounted. Poll — `measureElement` refines
+    // row heights (and thus totalSize) shortly after first paint.
+    await expect
+      .poll(async () =>
+        listbox.evaluate((el) => {
+          const totalSize = Number.parseFloat(
+            (el as HTMLElement).style.getPropertyValue('--vrl-total-size'),
+          )
+          return Math.abs(el.scrollHeight - totalSize)
+        }),
+      )
+      .toBeLessThanOrEqual(2)
+    const geo = await listbox.evaluate((el) => ({
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+    }))
+    // The group genuinely overflows its max-h cap (the bug's trigger).
+    expect(geo.scrollHeight).toBeGreaterThan(geo.clientHeight)
+
+    // Far scroll: every offset must be reachable, mounting the final row.
+    // Under the old collapsed-scrollHeight geometry this clamped well
+    // short of the end and the last rows could never mount.
+    await listbox.evaluate((el) => {
+      el.scrollTop = el.scrollHeight
+    })
+    await expect
+      .poll(async () =>
+        listbox
+          .locator('[role="option"]')
+          .evaluateAll((els) =>
+            Math.max(...els.map((el) => Number(el.getAttribute('data-index') ?? -1))),
+          ),
+      )
+      .toBe(SEEDED - 1)
+  })
+})
+
 test.describe('Search alias-match card (PEND-58f E2E-9)', () => {
   test.beforeEach(async ({ page }) => {
     await openSearchView(page)

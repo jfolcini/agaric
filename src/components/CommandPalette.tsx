@@ -554,11 +554,33 @@ export function PaletteBody({
   // `searchBlocks({ blockTypeFilter: 'page' })` round-trip. linkMode
   // simply asks for zero blocks and reads the pages partition.
   useEffect(() => {
-    if (mode !== 'search') return
+    if (mode !== 'search') {
+      // #736 hardening — leaving search mode (typing the `>`/`#`/`?`
+      // prefix) mid-flight is the same race as clearing the input: no
+      // new IPC fires, so without a bump the in-flight response still
+      // passes `isCurrent` and silently updates pages/blocks while the
+      // commands/tags/help body is shown — then flashes as stale groups
+      // when the user toggles back to search (the restored query is
+      // empty, so the clear below only runs AFTER the first paint).
+      // Palette close needs no equivalent: `CommandPalette` unmounts
+      // `PaletteBody` entirely (`if (!open) return null`).
+      searchGen.next()
+      setLoading(false)
+      return
+    }
     if (!spaceIsReady) return
     if (effectiveQuery.length === 0) {
+      // #736 — also invalidate any in-flight search and drop the loading
+      // shimmer. Without the bump, the previous keystroke's
+      // `searchBlocksPartitioned` response still passes `isCurrent` below
+      // and repopulates pages/blocks UNDER the recents/welcome empty state
+      // (groups render regardless of query length). Mirrors the FE-1
+      // invalidation in `usePaginatedQuery` for the same clear-mid-flight
+      // race.
+      searchGen.next()
       setPages([])
       setBlocks([])
+      setLoading(false)
       return
     }
     const gen = searchGen.next()

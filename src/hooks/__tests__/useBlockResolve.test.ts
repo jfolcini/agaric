@@ -1378,6 +1378,121 @@ describe('pagesListRef', () => {
   })
 })
 
+// ── pagesListRef space-switch invalidation (#732) ───────────────────────
+//
+// The hook instance survives page-editor→page-editor space switches
+// (ViewDispatcher → PageEditor → BlockTree mount without keys), so the
+// lazily-filled cache must be dropped when `currentSpaceId` changes —
+// otherwise ≤2-char `[[` picker queries keep serving the PREVIOUS
+// space's pages.
+
+describe('pagesListRef — space-switch invalidation (#732)', () => {
+  function pageRow(id: string, content: string) {
+    return {
+      id,
+      content,
+      todo_state: null,
+      priority: null,
+      due_date: null,
+      scheduled_date: null,
+    }
+  }
+
+  it('clears the lazily-filled cache when the active space changes', async () => {
+    mockedListAllPagesInSpace.mockResolvedValueOnce([pageRow('PA', 'Alpha')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Short query lazily fills the cache for SPACE_TEST.
+    await act(async () => {
+      await result.current.searchPages('al')
+    })
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'PA', title: 'Alpha' }])
+
+    // Space switch → the cache must be invalidated.
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+    expect(result.current.pagesListRef.current).toEqual([])
+  })
+
+  it('refetches from the NEW space on the next short query after a switch', async () => {
+    mockedListAllPagesInSpace
+      .mockResolvedValueOnce([pageRow('PA', 'Alpha A')])
+      .mockResolvedValueOnce([pageRow('PB', 'Alpha B')])
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    await act(async () => {
+      await result.current.searchPages('al')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith('SPACE_TEST')
+
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    // Cache was cleared, so the next short query falls back to the IPC,
+    // scoped to the NEW space — and serves the new space's pages only.
+    let items: Awaited<ReturnType<typeof result.current.searchPages>> = []
+    await act(async () => {
+      items = await result.current.searchPages('al')
+    })
+    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith('SPACE_B')
+    const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
+    expect(ids).toContain('PB')
+    expect(ids).not.toContain('PA')
+  })
+
+  it('does not persist a lazy fill that resolves after a mid-flight space switch', async () => {
+    let resolveFetch: (rows: Array<ReturnType<typeof pageRow>>) => void = () => {}
+    mockedListAllPagesInSpace.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+
+    const { result } = renderHook(() => useBlockResolve())
+
+    // Start a short-query fill for SPACE_TEST, but don't let it resolve.
+    let inFlight: Promise<unknown> = Promise.resolve()
+    act(() => {
+      inFlight = result.current.searchPages('al')
+    })
+
+    // Switch spaces while the fetch is in flight…
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+
+    // …then let the OLD space's response land. It must not re-seed the
+    // just-invalidated cache.
+    await act(async () => {
+      resolveFetch([pageRow('PA', 'Alpha')])
+      await inFlight
+    })
+    expect(result.current.pagesListRef.current).toEqual([])
+  })
+
+  it('does NOT clear the cache on unrelated space-store writes', () => {
+    const { result } = renderHook(() => useBlockResolve())
+
+    act(() => {
+      result.current.pagesListRef.current = [{ id: 'P1', title: 'Kept' }]
+      useSpaceStore.setState({
+        isReady: true,
+        availableSpaces: [
+          { id: 'SPACE_TEST', name: 'Test', accent_color: null },
+          { id: 'SPACE_B', name: 'B', accent_color: null },
+        ],
+      })
+    })
+
+    expect(result.current.pagesListRef.current).toEqual([{ id: 'P1', title: 'Kept' }])
+  })
+})
+
 // ── searchPages alias matching (PEND-34) ────────────────────────────────
 //
 // PEND-34 replaced the exact-match `resolvePageByAlias` call with the
