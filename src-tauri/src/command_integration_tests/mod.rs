@@ -11,6 +11,8 @@
 mod backlink_integration;
 mod block_integration;
 mod common;
+mod conformance;
+mod conformance_snapshot;
 mod lifecycle_integration;
 mod page_integration;
 mod pages_cache_counts;
