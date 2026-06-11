@@ -15,6 +15,23 @@ pub(crate) enum CertVerifyResult {
     CnMismatch { remote_id: String, cert_cn: String },
     /// B-33: TLS certificate hash doesn't match the stored cert_hash.
     HashMismatch { remote_id: String },
+    /// #800: the claimed peer is already cert-pinned (it has a stored
+    /// `cert_hash` from a prior authenticated connection) but THIS
+    /// connection presented no client certificate (`observed_hash` is
+    /// `None`).
+    ///
+    /// The acceptor uses `AllowAnyCert` (`client_auth_mandatory = false`)
+    /// so an anonymous, cert-less socket can complete the TLS handshake —
+    /// deliberate, so initial pairing can connect. But B-33's hash check
+    /// requires BOTH an observed AND a stored hash; with no cert the
+    /// observed hash is `None`, so the check was silently *skipped*. That
+    /// let a cert-less connection claim a paired device id and run a full
+    /// session under a stolen identity. A cert-pinned peer must always
+    /// prove possession of its certificate, so a missing client cert on a
+    /// pinned identity is a hard rejection. The only legitimate anonymous
+    /// flow is initial pairing, which never claims an already-paired id
+    /// (no stored `cert_hash` exists for it yet).
+    MissingCert { remote_id: String },
 }
 
 /// Verify the peer's TLS certificate CN matches the claimed device ID (B-34)
@@ -34,6 +51,21 @@ pub(crate) fn verify_peer_cert(
         return CertVerifyResult::CnMismatch {
             remote_id: remote_id.to_string(),
             cert_cn: cn.to_string(),
+        };
+    }
+
+    // #800: A cert-pinned peer (stored_hash present, from a prior
+    // authenticated connection) MUST present a client certificate. With no
+    // observed hash the B-33 pin check below cannot run at all — and
+    // treating "no observed hash" as "skip" let a cert-less connection
+    // claim a paired identity and bypass pinning entirely. Reject before
+    // B-33 so the missing-cert case is reported precisely rather than
+    // sliding through as `Ok`. (When stored_hash is `None` the peer is not
+    // yet pinned — initial pairing / pre-TOFU first connect — so an absent
+    // cert is allowed here, preserving the only legitimate anonymous flow.)
+    if stored_hash.is_some() && observed_hash.is_none() {
+        return CertVerifyResult::MissingCert {
+            remote_id: remote_id.to_string(),
         };
     }
 
@@ -275,6 +307,22 @@ pub(crate) async fn handle_incoming_sync(
                 );
                 conn.send_json(&SyncMessage::Error {
                     message: "certificate hash mismatch".into(),
+                })
+                .await?;
+                let _ = conn.close().await;
+                return Ok(());
+            }
+            CertVerifyResult::MissingCert { ref remote_id } => {
+                // #800: a cert-less connection claimed a cert-pinned device
+                // id. B-33 pinning cannot be verified without a presented
+                // certificate, so refuse rather than fall through under a
+                // potentially stolen identity.
+                tracing::warn!(
+                    peer_id = %remote_id,
+                    "rejecting sync: cert-less connection claimed a cert-pinned device id (#800)"
+                );
+                conn.send_json(&SyncMessage::Error {
+                    message: "client certificate required for paired device".into(),
                 })
                 .await?;
                 let _ = conn.close().await;

@@ -346,18 +346,61 @@ fn b33_no_stored_hash_accepted() {
 }
 
 #[test]
-fn b33_no_observed_hash_accepted() {
-    // No observed hash (anonymous/pairing connection) — skip hash check
+fn issue800_certless_claim_of_pinned_peer_rejected() {
+    // #800: a cert-less connection (no cert CN, no observed hash) claiming
+    // a peer that IS already cert-pinned (stored hash exists) must be
+    // rejected — not silently accepted. Pre-#800 this returned `Ok`
+    // because B-33's hash check requires BOTH observed AND stored, so the
+    // absent observed hash skipped the pin entirely, granting a full
+    // session under a stolen identity.
     let result = verify_peer_cert(
         "device-A",
-        None,         // no cert CN (anonymous)
-        None,         // no observed hash
-        Some("aaaa"), // stored hash exists
+        None,         // no cert CN (cert-less / anonymous)
+        None,         // no observed hash (no client cert presented)
+        Some("aaaa"), // stored hash exists → peer is cert-pinned
+    );
+    assert_eq!(
+        result,
+        CertVerifyResult::MissingCert {
+            remote_id: "device-A".into()
+        },
+        "#800: cert-less connection claiming a cert-pinned peer must be rejected"
+    );
+}
+
+#[test]
+fn issue800_no_stored_hash_allows_certless_pairing() {
+    // #800 control: when the peer is NOT yet pinned (no stored hash —
+    // initial pairing / pre-TOFU first connect), a cert-less connection is
+    // still allowed through the cert gate. This is the only legitimate
+    // anonymous flow and must not be broken by the #800 rejection.
+    let result = verify_peer_cert(
+        "device-A", None, // no cert CN
+        None, // no observed hash
+        None, // NOT pinned yet
     );
     assert_eq!(
         result,
         CertVerifyResult::Ok,
-        "B-33: no observed hash means hash check is skipped"
+        "#800: a not-yet-pinned peer may connect anonymously (pairing / TOFU first connect)"
+    );
+}
+
+#[test]
+fn issue800_pinned_peer_with_matching_cert_accepted() {
+    // #800 control: an existing paired device that DOES present its cert
+    // (observed hash matches the pinned stored hash) is accepted — the
+    // rejection targets *missing* certs, never legitimate reconnections.
+    let result = verify_peer_cert(
+        "device-A",
+        Some("device-A"),
+        Some("aaaa"), // observed cert hash present
+        Some("aaaa"), // matches the pinned stored hash
+    );
+    assert_eq!(
+        result,
+        CertVerifyResult::Ok,
+        "#800: a pinned peer presenting its matching cert must still be accepted"
     );
 }
 
@@ -1901,6 +1944,93 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
     assert!(
         result.is_ok(),
         "handle_incoming_sync should return Ok after rejecting hash mismatch"
+    );
+
+    materializer.shutdown();
+}
+
+/// #800 (security): a connection presenting NO client certificate
+/// (cert-less / anonymous) that claims a paired device id whose
+/// `cert_hash` is already pinned must be rejected before any session
+/// runs.
+///
+/// Attack shape (pre-#800): the acceptor allows anonymous TLS
+/// (`client_auth_mandatory = false`), so a cert-less socket reaches
+/// `handle_incoming_sync`. Identity falls back to the heads-claimed
+/// device id; the pairing lookup passes (it IS a paired peer), and
+/// B-33's hash check is silently skipped because the *observed* hash is
+/// `None` without a cert — even though a `cert_hash` is stored. Result:
+/// a full session under a stolen identity.
+///
+/// This drives the REAL `handle_incoming_sync` responder over an
+/// in-memory wire with `set_test_cert(None, None)` — exactly the
+/// `peer_cert_cn() == None` / `peer_cert_hash() == None` shape that
+/// `SyncServer` produces for a genuinely cert-less TLS connection (see
+/// `sync_net::tests::mtls_server_extracts_peer_cert_hash` for the real
+/// extraction) — and asserts the responder refuses with a "client
+/// certificate required" error instead of proceeding.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // The victim peer is fully paired AND cert-pinned (a stored cert_hash
+    // exists from a prior authenticated connection).
+    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", "victim_pinned_hash")
+        .await
+        .unwrap();
+
+    // Cert-less attacker: no client cert → both CN and hash are None,
+    // exactly as `SyncServer` reports for an anonymous TLS socket.
+    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    server_conn.set_test_cert(None, None);
+
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+        )
+        .await
+    });
+
+    // The attacker claims the victim's paired identity through the heads.
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "REMOTE_PAIRED".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+        })
+        .await
+        .unwrap();
+
+    // Must be rejected — pre-#800 this returned an `OpBatch`/`Snapshot`
+    // (a live session), bypassing pinning.
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("client certificate required")
+        ),
+        "#800: cert-less claim of a pinned peer must be rejected with a \
+         'client certificate required' error, got: {response:?}"
+    );
+
+    let result = handle.await.unwrap();
+    assert!(
+        result.is_ok(),
+        "handle_incoming_sync should return Ok after rejecting the cert-less claim"
     );
 
     materializer.shutdown();
