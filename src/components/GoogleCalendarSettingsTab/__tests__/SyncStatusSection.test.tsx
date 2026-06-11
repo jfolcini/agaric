@@ -23,6 +23,7 @@ function makeStatus(overrides: Partial<GcalStatus> = {}): GcalStatus {
     privacy_mode: 'full',
     last_push_at: new Date(Date.now() - 2 * 60_000).toISOString(),
     last_error: null,
+    reauth_required: false,
     push_lease: {
       held_by_this_device: true,
       device_id: 'this-device',

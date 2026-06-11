@@ -292,7 +292,12 @@ impl GcalApi {
     /// Any [`GcalErrorKind`] variant.  404 here is
     /// [`GcalErrorKind::CalendarGone`] — the dedicated calendar was
     /// deleted externally and the connector must recover.
-    #[tracing::instrument(skip(self, token), err)]
+    // #632: `event` must be in `skip(...)` — `Event` derives `Debug`
+    // and its `description` carries the rendered agenda digest (the
+    // user's note text + page titles). Recording it as a span field
+    // would flow note content into agaric.log whenever gcal spans are
+    // enabled — the same channel L-129/L-130 scrubbed token bytes from.
+    #[tracing::instrument(skip(self, token, event), err)]
     pub async fn insert_event(
         &self,
         token: &Token,
@@ -323,7 +328,11 @@ impl GcalApi {
     /// [`GcalErrorKind::EventGone`] — the event was deleted externally
     /// (e.g. the user removed it in GCal's UI); the connector drops
     /// its map row and re-creates on next push.
-    #[tracing::instrument(skip(self, token), err)]
+    // #632: `patch` must be in `skip(...)` for the same reason as
+    // `insert_event`'s `event` — `EventPatch::description` is the
+    // rendered digest (user note content) and must not become a
+    // recorded span field.
+    #[tracing::instrument(skip(self, token, patch), err)]
     pub async fn patch_event(
         &self,
         token: &Token,
@@ -343,6 +352,65 @@ impl GcalApi {
             )
             .await?;
         body.into_event_response()
+    }
+
+    /// List the events on the dedicated calendar that overlap the given
+    /// local date (`[date T00:00:00Z, date+1 T00:00:00Z)`).
+    ///
+    /// #631 — used by the connector's lookup-before-insert
+    /// reconciliation: a crash between a successful `insert_event` and
+    /// the local `upsert_event_map` leaves an untracked remote event;
+    /// blindly re-inserting on the next cycle would duplicate it.  The
+    /// connector lists first and adopts a matching orphan instead.
+    ///
+    /// The UTC day-window is intentionally generous for an all-day
+    /// event (GCal interprets `timeMin`/`timeMax` against the event's
+    /// calendar-local span), so callers MUST re-filter the returned
+    /// events by `event.start.date` — neighbours from adjacent days can
+    /// appear at timezone boundaries.
+    ///
+    /// # Errors
+    /// Any [`GcalErrorKind`] variant.  404 here targets the calendar
+    /// collection path → [`GcalErrorKind::CalendarGone`].
+    #[tracing::instrument(skip(self, token), err)]
+    pub async fn list_events_for_day(
+        &self,
+        token: &Token,
+        calendar_id: &str,
+        date: NaiveDate,
+    ) -> Result<Vec<EventResponse>, AppError> {
+        let base = join_calendar_path(&self.base_url, calendar_id, &["events"])?;
+        let next = date.checked_add_days(Days::new(1)).ok_or_else(|| {
+            AppError::Validation(format!("gcal.api.date_arithmetic_overflow: {date} + 1"))
+        })?;
+        let mut url = url::Url::parse(&base)
+            .map_err(|e| AppError::Validation(format!("gcal.api.invalid_base_url: {e}")))?;
+        url.query_pairs_mut()
+            .append_pair("timeMin", &format!("{}T00:00:00Z", date.format("%Y-%m-%d")))
+            .append_pair("timeMax", &format!("{}T00:00:00Z", next.format("%Y-%m-%d")))
+            .append_pair("singleEvents", "true")
+            // The dedicated calendar holds at most one digest event per
+            // date; 50 gives ample headroom for pathological duplicate
+            // pile-ups while keeping the response bounded.
+            .append_pair("maxResults", "50");
+        let body: WireEventListResponse = self
+            .send_json(
+                reqwest::Method::GET,
+                url.as_str(),
+                token,
+                None::<&()>,
+                NotFoundMeans::CalendarGone,
+            )
+            .await?;
+        // Drop non-all-day items (timed/recurring events a user may have
+        // added to the dedicated calendar); only all-day events can be
+        // adoption candidates.  `filter_map` over `Result<Option<_>>`:
+        // keep the `Ok(Some)`s, skip the `Ok(None)`s, surface the first
+        // `Err` (a malformed all-day date) for the caller to classify.
+        body.items
+            .into_iter()
+            .filter_map(|item| item.into_all_day_event_response().transpose())
+            .collect()
     }
 
     /// Delete a single event.  Idempotent-ish — if the event was
@@ -648,6 +716,105 @@ impl WireEventResponse {
                 },
             },
         })
+    }
+}
+
+/// Wire-format response body returned by `events.list`.  Only `items`
+/// is consumed — `nextPageToken` is deliberately ignored because the
+/// connector caps the request at `maxResults=50` and only needs to know
+/// whether ANY digest event already exists for the date (#631).
+///
+/// Items deserialise into [`WireListItem`], whose `start`/`end` reuse
+/// the tolerant [`WireEventTime`] shape (#687): a user-added **timed**
+/// event on the dedicated calendar serialises `start.dateTime` (no
+/// `start.date`), and a recurring master can omit them entirely.
+/// Modelling those as a required all-day `EventDate` would fail the
+/// WHOLE listing's JSON decode — and because the adoption caller maps
+/// that decode error to `DateFailure::Other`, a single stray timed
+/// event would abort the entire push cycle, blocking every date's
+/// digest until the user removed it.  All-day-only items are the only
+/// adoption candidates, so non-all-day items are simply dropped.
+#[derive(Debug, Deserialize)]
+struct WireEventListResponse {
+    #[serde(default)]
+    items: Vec<WireListItem>,
+}
+
+/// One `events.list` item, tolerant of the non-all-day shapes a
+/// user-managed calendar can contain (timed events, recurring masters).
+/// Only items carrying both `start.date` and `end.date` round-trip into
+/// an [`EventResponse`]; the rest are skipped by
+/// [`WireListItem::into_all_day_event_response`].
+#[derive(Debug, Deserialize)]
+struct WireListItem {
+    id: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    description: String,
+    // #687 + #631 — reuse the tolerant [`WireEventTime`] decode (date OR
+    // dateTime OR absent) introduced for the single-event response path.
+    // A user-converted timed event echoes `start.dateTime`; modelling
+    // `start`/`end` as a required all-day `EventDate` would fail the
+    // WHOLE listing's JSON decode and wedge the connector.  Sharing the
+    // primitive keeps both paths tolerant of the same shapes.
+    #[serde(default)]
+    start: WireEventTime,
+    #[serde(default)]
+    end: WireEventTime,
+    #[serde(default)]
+    transparency: String,
+}
+
+impl WireListItem {
+    /// Convert to an [`EventResponse`] iff this is an **all-day** event
+    /// (both `start` and `end` decode from the all-day `date` field).
+    /// Returns `Ok(None)` for every non-adoption shape so the caller
+    /// drops it without failing the batch:
+    ///
+    ///   * a **timed** event (`start.dateTime`) — a digest event the
+    ///     user converted to timed in the GCal UI, or any user-created
+    ///     timed event on the dedicated calendar.  Its `dateTime`
+    ///     decodes to a real calendar date, but it is [`WireTimeKind::Timed`]
+    ///     and must be SKIPPED for adoption, never matched/overwritten
+    ///     (#631);
+    ///   * a recurring master / placeholder with no usable dates.
+    ///
+    /// `Err` only on a genuinely malformed all-day `end.date` (the
+    /// exclusive→inclusive shim can't parse it).
+    fn into_all_day_event_response(self) -> Result<Option<EventResponse>, AppError> {
+        // `into_date` already classifies the shape; tolerate its
+        // per-item failures (no usable date) as "skip", not "abort the
+        // whole listing".
+        let Ok((start_date, start_kind)) = self.start.into_date("start") else {
+            return Ok(None);
+        };
+        let Ok((end_date, end_kind)) = self.end.into_date("end") else {
+            return Ok(None);
+        };
+        // Only all-day events are adoption candidates.  A timed event on
+        // either endpoint is skipped (its `dateTime` prefix must NOT be
+        // matched against the digest date).
+        if start_kind != WireTimeKind::AllDay || end_kind != WireTimeKind::AllDay {
+            return Ok(None);
+        }
+        let inclusive_end = shift_date_forward(&end_date, -1)?;
+        Ok(Some(EventResponse {
+            id: self.id,
+            event: Event {
+                summary: self.summary,
+                description: self.description,
+                start: EventDate { date: start_date },
+                end: EventDate {
+                    date: inclusive_end,
+                },
+                transparency: if self.transparency.is_empty() {
+                    "transparent".to_owned()
+                } else {
+                    self.transparency
+                },
+            },
+        }))
     }
 }
 
@@ -1800,5 +1967,267 @@ mod tests {
         api.delete_calendar(&make_token(), google_id)
             .await
             .expect("delete_calendar must succeed for a Google-shaped id");
+    }
+
+    // ── list_events_for_day (#631) ─────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_events_for_day_returns_translated_events_and_day_window_query() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .and(wiremock::matchers::query_param(
+                "timeMin",
+                "2026-04-22T00:00:00Z",
+            ))
+            .and(wiremock::matchers::query_param(
+                "timeMax",
+                "2026-04-23T00:00:00Z",
+            ))
+            .and(wiremock::matchers::query_param("singleEvents", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [{
+                    "id": "evt_orphan",
+                    "summary": "Agaric Agenda — Wed Apr 22",
+                    "description": "stale digest",
+                    "start": { "date": "2026-04-22" },
+                    "end":   { "date": "2026-04-23" },
+                    "transparency": "transparent",
+                }],
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        let events = api
+            .list_events_for_day(&make_token(), TEST_CAL_ID, date)
+            .await
+            .expect("list must succeed");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "evt_orphan");
+        // Exclusive-end shim applied on the way back in.
+        assert_eq!(events[0].event.end.date, "2026-04-22");
+        assert_eq!(events[0].event.start.date, "2026-04-22");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_events_for_day_empty_items_yields_empty_vec() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        let events = api
+            .list_events_for_day(&make_token(), TEST_CAL_ID, date)
+            .await
+            .expect("empty list must succeed");
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_events_for_day_404_is_calendar_gone() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        let result = api
+            .list_events_for_day(&make_token(), TEST_CAL_ID, date)
+            .await;
+        assert!(
+            matches!(result, Err(AppError::Gcal(GcalErrorKind::CalendarGone))),
+            "404 on the events collection must map to CalendarGone, got {result:?}"
+        );
+    }
+
+    /// A user-added **timed** event (`start.dateTime`, no `start.date`)
+    /// on the dedicated calendar must NOT fail the whole listing's
+    /// decode — that error propagated to `DateFailure::Other` and would
+    /// abort the entire push cycle (#631 robustness).  Non-all-day items
+    /// are silently dropped; the all-day digest event still comes back.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_events_for_day_skips_non_all_day_items_without_failing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [
+                    {
+                        // User-added timed event — no `start.date`.
+                        "id": "evt_timed",
+                        "summary": "Stand-up",
+                        "start": { "dateTime": "2026-04-22T09:00:00Z" },
+                        "end":   { "dateTime": "2026-04-22T09:30:00Z" },
+                    },
+                    {
+                        // The all-day digest orphan we actually care about.
+                        "id": "evt_orphan",
+                        "summary": "Agaric Agenda — Wed Apr 22",
+                        "description": "stale digest",
+                        "start": { "date": "2026-04-22" },
+                        "end":   { "date": "2026-04-23" },
+                    },
+                ],
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let date = NaiveDate::from_ymd_opt(2026, 4, 22).unwrap();
+        let events = api
+            .list_events_for_day(&make_token(), TEST_CAL_ID, date)
+            .await
+            .expect("a timed event must not fail the listing");
+        assert_eq!(
+            events.len(),
+            1,
+            "only the all-day digest event survives; the timed event is dropped"
+        );
+        assert_eq!(events[0].id, "evt_orphan");
+        assert_eq!(events[0].event.start.date, "2026-04-22");
+    }
+
+    // ── #632 — span fields must not record event bodies ────────────
+
+    /// Thread-safe buffered writer usable as a `tracing_subscriber::fmt`
+    /// writer so the privacy tests can capture emitted span/log output
+    /// in-process.  Mirrors the helper in `db.rs::tests`.
+    #[derive(Clone, Default)]
+    struct LogCapture(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogCapture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCapture;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    impl LogCapture {
+        fn contents(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+        }
+    }
+
+    /// Install a thread-local trace-level subscriber that records every
+    /// span (including its captured fields) into the returned buffer.
+    /// `set_default` is thread-local, so the tests below run on the
+    /// current-thread tokio flavour to keep span creation on this
+    /// thread.
+    fn capture_trace_logs() -> (LogCapture, tracing::subscriber::DefaultGuard) {
+        use tracing_subscriber::layer::SubscriberExt;
+        let writer = LogCapture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new("trace"))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(writer.clone())
+                    .with_ansi(false)
+                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NEW),
+            );
+        let guard = tracing::subscriber::set_default(subscriber);
+        (writer, guard)
+    }
+
+    /// #632 — `insert_event`'s instrument macro must skip the `event`
+    /// argument: `Event::description` is the rendered agenda digest
+    /// (user note content) and recording it as a Debug span field
+    /// would leak it into agaric.log.
+    #[tokio::test]
+    async fn insert_event_span_does_not_record_event_body_632() {
+        const MARKER: &str = "PRIVATE-NOTE-CONTENT-632";
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": TEST_EVENT_ID,
+                "summary": "Agaric Agenda — 2026-04-22",
+                "description": MARKER,
+                "start": { "date": "2026-04-22" },
+                "end":   { "date": "2026-04-23" },
+                "transparency": "transparent",
+            })))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let mut event = make_event("2026-04-22");
+        event.description = format!("· TODO {MARKER}");
+
+        let (writer, _guard) = capture_trace_logs();
+        api.insert_event(&make_token(), TEST_CAL_ID, &event)
+            .await
+            .expect("insert must succeed");
+
+        let logs = writer.contents();
+        assert!(
+            logs.contains("insert_event"),
+            "positive control: the insert_event span must have been captured; got: {logs:?}"
+        );
+        assert!(
+            !logs.contains(MARKER),
+            "event.description (user note content) must NOT appear in span fields (#632); \
+             got: {logs}"
+        );
+    }
+
+    /// #632 — `patch_event` must skip the `patch` argument for the same
+    /// reason; also covers the error path (`err` on the instrument
+    /// records the failure event — which must not carry the body
+    /// either).
+    #[tokio::test]
+    async fn patch_event_span_does_not_record_patch_body_even_on_error_632() {
+        const MARKER: &str = "PRIVATE-PATCH-CONTENT-632";
+
+        let server = MockServer::start().await;
+        Mock::given(method("PATCH"))
+            .and(path(format!(
+                "/calendars/{TEST_CAL_ID}/events/{TEST_EVENT_ID}"
+            )))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server.uri());
+        let patch = EventPatch::new()
+            .with_summary("Agaric Agenda — Wed Apr 22")
+            .with_description(format!("· TODO {MARKER}"));
+
+        let (writer, _guard) = capture_trace_logs();
+        let result = api
+            .patch_event(&make_token(), TEST_CAL_ID, TEST_EVENT_ID, &patch)
+            .await;
+        assert!(result.is_err(), "500 must surface as an error");
+
+        let logs = writer.contents();
+        assert!(
+            logs.contains("patch_event"),
+            "positive control: the patch_event span must have been captured; got: {logs:?}"
+        );
+        assert!(
+            !logs.contains(MARKER),
+            "patch.description (user note content) must NOT appear in span fields or the \
+             err event (#632); got: {logs}"
+        );
     }
 }
