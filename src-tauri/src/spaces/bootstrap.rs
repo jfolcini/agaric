@@ -237,11 +237,19 @@ async fn is_bootstrap_complete(pool: &SqlitePool) -> Result<bool, AppError> {
     Ok(row.n == 2)
 }
 
-/// Ensure the block row for a seeded space exists. Appends a
-/// `CreateBlock` op and inserts the row via `INSERT OR IGNORE` so
-/// prior-sync convergence (another device already landed the block) is a
-/// silent no-op. Returns `true` when a fresh op was appended, `false`
-/// when the block already existed and the step was skipped.
+/// Ensure the block row for a seeded space exists **and is live**. Appends
+/// a `CreateBlock` op and upserts the row, clearing `deleted_at` so a
+/// soft-deleted seed space is restored. Returns `true` when a fresh op was
+/// appended, `false` when the block already existed (live) and the step was
+/// skipped.
+///
+/// #681: the existence check filters `deleted_at IS NULL` to match
+/// [`is_bootstrap_complete`]. A seeded Personal/Work space is undeletable
+/// state — if it has been soft-deleted, bootstrap must restore it rather
+/// than (a) treat bootstrap as incomplete forever (slow transactional path
+/// every boot) while (b) never re-creating the block. Restoring also lets
+/// the downstream `ensure_is_space_property` / `set_property_in_tx` steps
+/// satisfy their "block exists and is not deleted" TOCTOU checks.
 async fn ensure_space_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     device_id: &str,
@@ -249,10 +257,13 @@ async fn ensure_space_block(
     name: &str,
     records: &mut Vec<OpRecord>,
 ) -> Result<bool, AppError> {
-    let exists = sqlx::query_scalar!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, block_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .is_some();
+    let exists = sqlx::query_scalar!(
+        r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        block_id
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .is_some();
     if exists {
         return Ok(false);
     }
@@ -278,14 +289,20 @@ async fn ensure_space_block(
 
     // Materialize the block row immediately so downstream steps in this
     // same transaction (ensure_is_space_property, set_property_in_tx for
-    // migration) can satisfy their "block exists" TOCTOU checks. Mirrors
-    // the materializer's `apply_op_tx` CreateBlock arm (INSERT OR IGNORE
-    // so peer-synced rows don't collide). `page_id` is set to self to
-    // match the command path's behaviour for page blocks.
+    // migration) can satisfy their "block exists and is not deleted"
+    // TOCTOU checks. Mirrors the materializer's `apply_op_tx` CreateBlock
+    // arm but as an UPSERT: #681 — when the seed block already exists but
+    // was soft-deleted, clear `deleted_at` to RESTORE it (a plain
+    // `INSERT OR IGNORE` would silently no-op on the existing tombstoned
+    // row, leaving bootstrap stuck). The conflict target is the primary
+    // key, so a fresh insert and a restore both converge to a live row.
+    // `page_id` is set to self to match the command path's behaviour for
+    // page blocks.
     sqlx::query!(
-        "INSERT OR IGNORE INTO blocks \
+        "INSERT INTO blocks \
              (id, block_type, content, parent_id, position, page_id) \
-         VALUES (?, 'page', ?, NULL, 1, ?)",
+         VALUES (?, 'page', ?, NULL, 1, ?) \
+         ON CONFLICT(id) DO UPDATE SET deleted_at = NULL",
         block_id,
         name,
         block_id,
@@ -970,6 +987,66 @@ mod tests {
         assert_eq!(
             count, 2,
             "re-running bootstrap must not duplicate registry rows"
+        );
+    }
+
+    /// #681 — a soft-deleted seeded space block makes `is_bootstrap_complete`
+    /// report `false` forever (slow transactional path every boot) while
+    /// `ensure_space_block`'s bare-existence check never re-creates it. The
+    /// fix aligns the predicates (`deleted_at IS NULL`) and restores the
+    /// tombstoned block, so bootstrap completes fast again on the next boot.
+    #[tokio::test]
+    async fn soft_deleted_seeded_space_is_restored_and_bootstrap_completes_681() {
+        let tmp = TempDir::new().unwrap();
+        let db_path: PathBuf = tmp.path().join("test.db");
+        let pool = init_pool(&db_path).await.unwrap();
+
+        // First boot: both seeded spaces created + flagged + registered.
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+        assert!(
+            is_bootstrap_complete(&pool).await.unwrap(),
+            "bootstrap must report complete after a clean first boot"
+        );
+
+        // Soft-delete the seeded Personal space block (its `is_space`
+        // property and `spaces` registry row survive, mirroring the
+        // user-facing delete-space flow / migration-0089 semantics).
+        let now = crate::db::now_ms();
+        sqlx::query!(
+            "UPDATE blocks SET deleted_at = ? WHERE id = ?",
+            now,
+            SPACE_PERSONAL_ULID,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Now the fast path correctly reports incomplete (the regression:
+        // it would stay incomplete forever without the restore).
+        assert!(
+            !is_bootstrap_complete(&pool).await.unwrap(),
+            "a soft-deleted seeded space must make bootstrap report incomplete"
+        );
+
+        // Re-boot: bootstrap must RESTORE the soft-deleted seed block.
+        bootstrap_spaces_for_test(&pool, DEV).await.unwrap();
+
+        let deleted_at: Option<i64> = sqlx::query_scalar!(
+            r#"SELECT deleted_at FROM blocks WHERE id = ?"#,
+            SPACE_PERSONAL_ULID,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            deleted_at.is_none(),
+            "the soft-deleted seeded space block must be restored (deleted_at NULL)"
+        );
+
+        // And the fast path is honest again — next boot takes the cheap path.
+        assert!(
+            is_bootstrap_complete(&pool).await.unwrap(),
+            "after restore, bootstrap must report complete (fast path)"
         );
     }
 

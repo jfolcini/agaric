@@ -2388,24 +2388,26 @@ pub async fn create_blocks_batch_inner(
         .await?;
         tx.enqueue_background(block_op);
 
-        // Properties — same shape as `import_markdown_inner`
-        // (`pages.rs:622-637`). Each (key, value_text) pair becomes one
-        // `SetProperty` op inside this same transaction. Reserved keys
-        // (`todo_state` / `priority` / `due_date` / `scheduled_date`)
-        // route through the column-write branch of `set_property_in_tx`
-        // automatically — the helper handles the dispatch, the wire
-        // shape stays a flat `value_text`.
+        // Properties — same shape as `import_markdown_inner`. Each
+        // (key, value) pair becomes one `SetProperty` op inside this same
+        // transaction. Reserved keys (`todo_state` / `priority` /
+        // `due_date` / `scheduled_date`) route through the column-write
+        // branch of `set_property_in_tx`, but the date reserved keys need
+        // the `value_date` field shape (not `value_text`) to validate —
+        // #623. The helper types the flat string value per key.
         for (key, value) in &spec.properties {
+            let (value_text, value_num, value_date, value_ref, value_bool) =
+                crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
                 device_id,
                 block.id.clone().into_string(),
                 key,
-                Some(value.clone()),
-                None,
-                None,
-                None,
-                None,
+                value_text,
+                value_num,
+                value_date,
+                value_ref,
+                value_bool,
             )
             .await?;
             tx.enqueue_background(prop_op);

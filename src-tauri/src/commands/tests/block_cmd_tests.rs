@@ -6112,6 +6112,66 @@ async fn create_blocks_batch_with_properties() {
     );
 }
 
+/// #623 — a `due_date` property in a batch spec must be stored/validated
+/// as a date on `blocks.due_date`, not rejected. Before the fix the caller
+/// passed the value as `value_text`, which `validate_property_value` step 3
+/// rejects ("requires value_date"), aborting the whole all-or-nothing tx.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_blocks_batch_with_due_date_stores_as_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let mut props: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    props.insert("due_date".into(), "2026-01-01".into());
+    props.insert("scheduled_date".into(), "2026-02-02".into());
+
+    let specs = vec![crate::commands::CreateBlockSpec {
+        block_type: "content".into(),
+        content: "dated task".into(),
+        parent_id: None,
+        position: None,
+        properties: props,
+    }];
+
+    let created = crate::commands::create_blocks_batch_inner(&pool, DEV, &mat, specs)
+        .await
+        .expect("batch with a due_date must NOT abort the whole import (#623)");
+    assert_eq!(created.len(), 1);
+    let id = &created[0].id;
+
+    // The dates must land on the native blocks columns (date shape), not in
+    // block_properties as text.
+    let (due, scheduled): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT due_date, scheduled_date FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        due,
+        Some("2026-01-01".into()),
+        "due_date must materialize to blocks.due_date as a date"
+    );
+    assert_eq!(
+        scheduled,
+        Some("2026-02-02".into()),
+        "scheduled_date must materialize to blocks.scheduled_date as a date"
+    );
+
+    // And NOT be mis-stored as a block_properties text row.
+    let prop_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key IN ('due_date', 'scheduled_date')",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        prop_rows, 0,
+        "reserved date keys are column-backed, never block_properties rows"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn edit_block_cross_space_content_rejected() {
     // PEND-76 F5: editing a block to reference a block in a different

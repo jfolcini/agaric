@@ -1789,6 +1789,67 @@ async fn move_block_reparents_and_updates_position() {
     assert_eq!(row.position, Some(6), "provisional rank in DB");
 }
 
+/// #627 — a cross-page move of a link-bearing block must invalidate
+/// `page_link_cache` so the page-level link attribution follows the block
+/// to its new source page. Before the fix the move dispatch never enqueued
+/// `RebuildPageLinkCache`, leaving the OLD page's edge over-counted and the
+/// NEW page's edge missing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_block_across_pages_reattributes_page_link_cache() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Two source pages and a link target page.
+    insert_block(&pool, "PLC_PAGE_A", "page", "Page A", None, Some(1)).await;
+    insert_block(&pool, "PLC_PAGE_B", "page", "Page B", None, Some(2)).await;
+    insert_block(&pool, "PLC_TARGET", "page", "Target", None, Some(3)).await;
+    // A link-bearing content block living on Page A.
+    insert_block(
+        &pool,
+        "PLC_CHILD",
+        "content",
+        "links to [[Target]]",
+        Some("PLC_PAGE_A"),
+        Some(1),
+    )
+    .await;
+    // Seed the block→block edge directly (mirrors ReindexBlockLinks output).
+    sqlx::query("INSERT INTO block_links (source_id, target_id) VALUES (?, ?)")
+        .bind("PLC_CHILD")
+        .bind("PLC_TARGET")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Move the child from Page A to Page B and let the materializer settle.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "PLC_CHILD".into(),
+        Some("PLC_PAGE_B".into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The page-link roll-up must now attribute the edge to Page B, not A.
+    let attribution: Vec<(String, String)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id FROM page_link_cache \
+         WHERE target_page_id = 'PLC_TARGET' ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        attribution,
+        vec![("PLC_PAGE_B".to_string(), "PLC_TARGET".to_string())],
+        "after a cross-page move, page_link_cache must attribute the edge to \
+         the NEW source page (B) and drop the stale OLD page (A) row (#627)"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn move_block_to_root_clears_parent() {
     let (pool, _dir) = test_pool().await;
