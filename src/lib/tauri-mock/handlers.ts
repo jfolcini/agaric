@@ -3411,13 +3411,92 @@ export const HANDLERS: Record<string, Handler> = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// Plugin commands (`plugin:<name>|<command>`) — #760
+// ---------------------------------------------------------------------------
+//
+// `mockIPC` routes EVERY invoke through `dispatch`, including the
+// `plugin:*`-prefixed commands emitted by the `@tauri-apps/plugin-*` JS
+// APIs. The real runtime REJECTS an invoke against an unregistered
+// plugin ("plugin <name> not found"), so the mock must not silently
+// resolve `null` for them — that response is neither a desktop success
+// nor a mobile rejection, and it left the designed degradation branches
+// (AutostartRow's rejection→hide, `ensureNotificationPermission`'s
+// catch→`false`) unexercised in browser dev / Playwright.
+//
+// The map below is the explicit allowlist of plugin commands the mock
+// DOES model — plugins that are registered unconditionally in
+// `src-tauri/src/lib.rs` (or are part of Tauri core) and whose success
+// response the browser harness depends on. Everything else
+// `plugin:`-prefixed throws from `dispatch`, mirroring the real
+// runtime's rejection so callers exercise their catch paths.
+//
+// Deliberately NOT modeled (the rejection IS the designed behavior):
+//   - `plugin:autostart|*` — AutostartRow hides the row on rejection
+//     (mobile / browser-dev path; see `src/components/settings/AutostartRow.tsx`).
+//   - `plugin:notification|*` — `ensureNotificationPermission` resolves
+//     `false` when the plugin is unavailable.
+//   - `plugin:updater|*` — `runUpdateCheckInner` logs and bails; a `null`
+//     response would instead fake a successful "no update" round-trip.
+//   - `plugin:process|*` — `relaunchApp` degrades to
+//     `window.location.reload()`, the correct browser-mode analog.
+
+/** Monotonic id for `plugin:event|listen` — the real handler returns an event id. */
+let nextEventListenerId = 1
+
+export const PLUGIN_HANDLERS: Record<string, Handler> = {
+  // Core event system — `listen()` / `emit()` from `@tauri-apps/api/event`
+  // back every frontend event hook; the real runtime always has them.
+  'plugin:event|listen': () => nextEventListenerId++,
+  'plugin:event|unlisten': returnNull,
+  'plugin:event|emit': returnNull,
+  'plugin:event|emit_to': returnNull,
+  // Core app plugin — `addPluginListener('app', 'back-button', …)` in
+  // `useAndroidBackButton` (allowed by `core:app:default` everywhere).
+  'plugin:app|register_listener': returnNull,
+  'plugin:app|remove_listener': returnNull,
+  // Core window plugin — `setWindowTitle` re-stamps the OS title on every
+  // space switch.
+  'plugin:window|set_title': returnNull,
+  // Deep-link is registered on desktop AND mobile; `null` is the real
+  // "launched normally, no pending URL" response for `getCurrent()`.
+  'plugin:deep-link|get_current': returnNull,
+  // Clipboard / opener / shell are registered on desktop AND mobile;
+  // copy-link and external-link e2e flows rely on the success path.
+  'plugin:clipboard-manager|write_text': returnNull,
+  'plugin:shell|open': returnNull,
+  'plugin:opener|open_url': returnNull,
+  // Global-shortcut is desktop-only but the browser harness emulates a
+  // desktop UA, where registration succeeds — modeling success keeps the
+  // Settings quick-capture chord probe (`QuickCaptureRow`) usable in
+  // browser dev.
+  'plugin:global-shortcut|register': returnNull,
+  'plugin:global-shortcut|unregister': returnNull,
+  'plugin:global-shortcut|is_registered': () => false,
+}
+
 /**
- * Dispatch an IPC command to its handler. Unknown commands log a warning via
- * the structured logger and return `null`.
+ * Dispatch an IPC command to its handler.
+ *
+ * Resolution order:
+ *  1. `HANDLERS` — the mocked app-command surface (parity-checked against
+ *     `src/lib/bindings.ts` by `scripts/check-tauri-mock-parity.mjs`).
+ *  2. `PLUGIN_HANDLERS` — explicitly modeled `plugin:*` commands.
+ *  3. Any other `plugin:*` command THROWS, mirroring the real runtime's
+ *     "plugin <name> not found" rejection for unregistered plugins (#760).
+ *  4. Any other unknown command logs a warning via the structured logger
+ *     and returns `null` (mock-drift signal, FE-H-13).
  */
 export function dispatch(cmd: string, args: unknown): unknown {
-  const handler = HANDLERS[cmd]
+  const handler = HANDLERS[cmd] ?? PLUGIN_HANDLERS[cmd]
   if (!handler) {
+    if (cmd.startsWith('plugin:')) {
+      const pluginName = cmd.slice('plugin:'.length).split('|')[0] ?? cmd
+      logger.warn('TauriMock', 'unmodeled plugin command — rejecting like the real runtime', {
+        command: cmd,
+      })
+      throw new Error(`plugin ${pluginName} not found`)
+    }
     logger.warn('TauriMock', 'unhandled command', { command: cmd })
     return null
   }

@@ -96,17 +96,6 @@ tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
-# MAINT-106: prevent two SQLite pools racing on the same DB if the user
-# double-launches.  Desktop-only (Android/iOS enforce single-instance via
-# the OS task model) — registration is gated `#[cfg(desktop)]` in lib.rs.
-# Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
-# Dependency Updates" — move in lockstep with the rest of the
-# tauri-plugin-* crates.
-tauri-plugin-single-instance = "2"
-# MAINT-108: remember window size / position / monitor / maximized state
-# across launches.  Desktop-only — registration is gated `#[cfg(desktop)]`
-# in lib.rs.  Part of the Tauri plugin coupled stack.
-tauri-plugin-window-state = "2"
 # MAINT-109: cross-platform platform/version/arch/locale/hostname API.
 # Used by the bug-report metadata collector (see commands/bug_report.rs).
 # Works on desktop and mobile.  Part of the Tauri plugin coupled stack.
@@ -119,17 +108,6 @@ tauri-plugin-os = "2"
 # Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency Updates"
 # — move in lockstep with the rest of the tauri-plugin-* crates.
 tauri-plugin-notification = "2"
-# FEAT-13: launch-on-login support.  Settings → General → "Launch on
-# login" toggle drives the plugin's `enable()` / `disable()` /
-# `isEnabled()` IPC.  Plumbing per OS lives upstream (XDG autostart
-# `.desktop` files on Linux, macOS `LaunchAgents`, Windows registry).
-# Desktop-only — Android/iOS handle "start at boot" via the OS task
-# model (foreground service / background fetch entitlements), so the
-# plugin is gated behind `#[cfg(desktop)]` in lib.rs.  Part of the
-# Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency
-# Updates" — move in lockstep with the rest of the tauri-plugin-*
-# crates.
-tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
@@ -175,7 +153,6 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 sha2 = "0.11"
 rand = "0.10"
 x509-parser = "0.18.1"
-tauri-plugin-updater = "2.10.0"
 tracing-appender = "0.2.4"
 # FEAT-5c / MAINT-91 — align `reqwest 0.13` to the repo's rustls-everywhere
 # posture (same TLS stack as `tokio-tungstenite` / `tokio-rustls` / sqlx on
@@ -240,13 +217,6 @@ tauri-plugin-deep-link = "2"
 # parse inbound `agaric://…` strings without depending on transitive
 # resolution of an indirect dependency.
 url = "2"
-# FEAT-12 — global hotkey for "quick capture" (drop a line into today's
-# journal from anywhere). Desktop-only — Android / iOS have no
-# global-shortcut concept, so registration is gated `#[cfg(desktop)]` in
-# lib.rs.  Part of the Tauri plugin coupled stack per AGENTS.md §"Coupled
-# Dependency Updates" — move in lockstep with the rest of the
-# tauri-plugin-* crates.
-tauri-plugin-global-shortcut = "2"
 dirs = { version = "6.0.0", default-features = false }
 
 # MAINT-111 spike: official Rust MCP SDK. Optional + feature-gated so
@@ -301,6 +271,41 @@ ndk-context = "0.1"
 # silently emits no D-Bus call on Linux. Same crate/version the plugin pulls.
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = "4"
+
+# Desktop-only Tauri plugins (#760).  Every registration is gated behind
+# `#[cfg(desktop)]` / `#[cfg(not(mobile))]` in lib.rs (Tauri's `desktop`
+# cfg = not(android | iOS), which is exactly this target expression), so
+# the crates were dead weight + needless permission surface in the
+# Android APK while they sat in the unconditional [dependencies] table.
+# Their JS-facing permissions live in `capabilities/desktop.json`
+# (platform-scoped to linux/macOS/windows) — keep the two in sync.
+# All five are part of the Tauri plugin coupled stack per AGENTS.md
+# §"Coupled Dependency Updates" — move in lockstep with the rest of the
+# tauri-plugin-* crates.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# MAINT-106: prevent two SQLite pools racing on the same DB if the user
+# double-launches.  Android/iOS enforce single-instance via the OS task
+# model.  MUST stay the first plugin registered in lib.rs.
+tauri-plugin-single-instance = "2"
+# MAINT-108: remember window size / position / monitor / maximized state
+# across launches.  Android/iOS handle window state via the OS task
+# lifecycle.
+tauri-plugin-window-state = "2"
+# FEAT-13: launch-on-login support.  Settings → General → "Launch on
+# login" toggle drives the plugin's `enable()` / `disable()` /
+# `isEnabled()` IPC.  Plumbing per OS lives upstream (XDG autostart
+# `.desktop` files on Linux, macOS `LaunchAgents`, Windows registry).
+# Android/iOS handle "start at boot" via the OS task model (foreground
+# service / background fetch entitlements).
+tauri-plugin-autostart = "2"
+# Desktop auto-update (minisign-signed bundles; see release.yml +
+# tauri.conf.json).  Android updates flow through the Play Store /
+# sideloaded APK, not Tauri's updater path.
+tauri-plugin-updater = "2.10.0"
+# FEAT-12 — global hotkey for "quick capture" (drop a line into today's
+# journal from anywhere).  Android / iOS have no global-shortcut
+# concept (the `global-hotkey` crate doesn't compile there).
+tauri-plugin-global-shortcut = "2"
 
 [profile.release]
 lto = "thin"

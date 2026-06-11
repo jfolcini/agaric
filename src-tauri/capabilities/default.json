@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/capabilities.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Cross-platform capability for the main window. Desktop-only plugin permissions (global-shortcut, autostart, updater) live in desktop.json so mobile builds neither grant nor try to resolve them (#760).",
   "windows": ["main"],
   "permissions": [
     "core:default",
@@ -12,11 +12,6 @@
     "os:default",
     "notification:default",
     "core:window:allow-set-title",
-    "global-shortcut:default",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "deep-link:default",
-    "autostart:default",
-    "updater:default"
+    "deep-link:default"
   ]
 }
