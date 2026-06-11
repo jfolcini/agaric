@@ -125,8 +125,10 @@ fn notify_task_inner<R: tauri::Runtime>(
     //
     // Running the blocking call on a plain `std::thread` makes dispatch
     // independent of the surrounding runtime (verified to emit the `Notify`
-    // and land in the center), and we join + propagate the error instead of
-    // swallowing it so any real failure surfaces to the caller / logs.
+    // and land in the center). #702: the thread is detached and its result
+    // collected over a bounded channel (`recv_timeout`) so a hung daemon
+    // can't park a tokio worker; a real failure still surfaces to the
+    // caller / logs, and a timeout is logged and returned as an error.
     #[cfg(target_os = "linux")]
     {
         let _ = app; // plugin handle unused on this path
@@ -146,35 +148,85 @@ fn notify_task_inner<R: tauri::Runtime>(
     }
 }
 
+/// Upper bound on how long we wait for the dedicated notification thread to
+/// finish before giving up. #702: a hung D-Bus / FDO daemon can leave
+/// `notify-rust`'s blocking `show()` parked forever; a synchronous
+/// `JoinHandle::join()` inside the async command would then pin a tokio
+/// worker indefinitely. We wait at most this long, then return without
+/// blocking. 5s is generously above a healthy daemon's sub-millisecond
+/// `Notify` round-trip while still bounding the worst case.
+#[cfg(target_os = "linux")]
+const LINUX_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Dispatch an OS notification on Linux via `notify-rust`, off the tokio
 /// runtime. See [`notify_task_inner`] for why the plugin path is bypassed.
+///
+/// #702: the dedicated-thread workaround is kept (it's what makes the
+/// blocking `show()` independent of the surrounding async runtime), but the
+/// thread is **detached** and its result delivered over a bounded
+/// `mpsc::recv_timeout`. A hung notification daemon can therefore no longer
+/// park the calling tokio worker: on timeout we log and return, leaving the
+/// orphaned thread to drain on its own.
 #[cfg(target_os = "linux")]
 fn dispatch_linux_notification(title: String, body: Option<String>) -> Result<(), AppError> {
-    let handle = std::thread::Builder::new()
+    spawn_and_wait_notification(LINUX_NOTIFY_TIMEOUT, move || {
+        let mut n = notify_rust::Notification::new();
+        n.summary(&title);
+        if let Some(body) = &body {
+            n.body(body);
+        }
+        // Associate with the installed `agaric.desktop` so GNOME shows the
+        // app icon, lists it under per-app notification settings, and
+        // retains it in the notification center.
+        n.hint(notify_rust::Hint::DesktopEntry("agaric".to_string()));
+        n.show().map(|_| ()).map_err(|e| e.to_string())
+    })
+}
+
+/// Run `work` on a dedicated, **detached** OS thread and wait at most
+/// `timeout` for its result over a bounded channel.
+///
+/// Split from [`dispatch_linux_notification`] so the timeout / hang-guard
+/// behaviour (#702) is unit-testable without a live D-Bus daemon: a test can
+/// pass a `work` closure that sleeps past `timeout` and assert the call
+/// returns promptly with an error instead of blocking forever.
+///
+/// On timeout the worker thread is left running (detached); it will finish
+/// and drop its send half harmlessly once the underlying call unblocks.
+#[cfg(target_os = "linux")]
+fn spawn_and_wait_notification<F>(timeout: std::time::Duration, work: F) -> Result<(), AppError>
+where
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+    std::thread::Builder::new()
         .name("os-notify".into())
-        .spawn(move || -> Result<(), String> {
-            let mut n = notify_rust::Notification::new();
-            n.summary(&title);
-            if let Some(body) = &body {
-                n.body(body);
-            }
-            // Associate with the installed `agaric.desktop` so GNOME shows the
-            // app icon, lists it under per-app notification settings, and
-            // retains it in the notification center.
-            n.hint(notify_rust::Hint::DesktopEntry("agaric".to_string()));
-            n.show().map(|_| ()).map_err(|e| e.to_string())
+        .spawn(move || {
+            // If the receiver has already given up (timeout), the send fails
+            // and we simply drop the result — the thread exits cleanly.
+            let _ = tx.send(work());
         })
         .map_err(|e| {
             AppError::InvalidOperation(format!("failed to spawn notification thread: {e}"))
         })?;
 
-    match handle.join() {
+    match rx.recv_timeout(timeout) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(e)) => Err(AppError::InvalidOperation(format!(
             "failed to dispatch OS notification: {e}"
         ))),
-        Err(_) => Err(AppError::InvalidOperation(
-            "notification dispatch thread panicked".into(),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            tracing::warn!(
+                timeout_secs = timeout.as_secs(),
+                "OS notification dispatch timed out (notification daemon unresponsive); \
+                 abandoning the attempt without blocking the async runtime"
+            );
+            Err(AppError::InvalidOperation(
+                "notification dispatch timed out".into(),
+            ))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(AppError::InvalidOperation(
+            "notification dispatch thread exited without a result".into(),
         )),
     }
 }
@@ -246,5 +298,59 @@ mod tests {
         let parsed: TaskNotification = serde_json::from_str(json).expect("deserialize");
         assert_eq!(parsed.body, None);
         assert_eq!(parsed.block_id, None);
+    }
+
+    // -- #702: bounded-wait hang guard -----------------------------------
+
+    /// #702: a hung notification daemon must NOT park the caller. With a
+    /// short timeout and a worker that sleeps well past it, the call returns
+    /// promptly (an error), proving the blocking `join()` was replaced by a
+    /// bounded `recv_timeout`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn notify_dispatch_times_out_instead_of_blocking() {
+        use std::time::{Duration, Instant};
+
+        let timeout = Duration::from_millis(50);
+        let start = Instant::now();
+        let result = spawn_and_wait_notification(timeout, || {
+            // Simulate a wedged D-Bus call that never returns in time.
+            std::thread::sleep(Duration::from_secs(30));
+            Ok(())
+        });
+        let elapsed = start.elapsed();
+
+        assert!(
+            matches!(result, Err(AppError::InvalidOperation(_))),
+            "hung dispatch must return an error, got {result:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "call must return shortly after the {timeout:?} timeout, took {elapsed:?}"
+        );
+    }
+
+    /// #702 happy path: a fast worker's result is delivered before the
+    /// timeout and propagated faithfully (success and failure).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn notify_dispatch_returns_worker_result_when_fast() {
+        use std::time::Duration;
+
+        let ok = spawn_and_wait_notification(Duration::from_secs(5), || Ok(()));
+        assert!(ok.is_ok(), "fast success must propagate, got {ok:?}");
+
+        let err = spawn_and_wait_notification(Duration::from_secs(5), || {
+            Err("daemon said no".to_string())
+        });
+        match err {
+            Err(AppError::InvalidOperation(msg)) => {
+                assert!(
+                    msg.contains("daemon said no"),
+                    "error text propagated: {msg}"
+                );
+            }
+            other => panic!("fast failure must propagate as InvalidOperation, got {other:?}"),
+        }
     }
 }

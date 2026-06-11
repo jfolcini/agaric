@@ -409,37 +409,18 @@ use std::sync::atomic::AtomicBool;
 /// daemon hasn't started yet.
 pub struct SyncCancelFlag(pub Arc<AtomicBool>);
 
-/// Shutdown flag for the `materializer::retry_queue` sweeper (BUG-22).
-///
-/// The sweeper runs every 60s and polls this flag on each tick. Stored in
-/// Tauri managed state for the rare case a shutdown handler wants to stop
-/// it cleanly; the flag is a no-op in most graceful-exit paths.
-pub struct RetryQueueSweeperShutdown(pub Arc<AtomicBool>);
-
-/// Shutdown flag for the `draft::spawn_orphan_drafts_sweeper` task
-/// (PEND-28a M1).
-///
-/// The sweeper runs once at boot and then every
-/// [`draft::ORPHAN_DRAFTS_SWEEP_INTERVAL`] (1 hour) and polls this flag
-/// on each tick. Stored in Tauri managed state for the rare case a
-/// shutdown handler wants to stop it cleanly; the flag is a no-op in
-/// most graceful-exit paths.
-pub struct OrphanDraftsSweeperShutdown(pub Arc<AtomicBool>);
-
-/// Shutdown flag for the [`maintenance::spawn_daemon`] task (issue #157
-/// sub-item B). The daemon walks its job vector on a
-/// [`maintenance::TICK_INTERVAL`] (60 s) cadence and polls this flag at
-/// the top of each tick. Stored in Tauri managed state so a clean-exit
-/// path can stop it; a no-op in most graceful-exit paths.
-pub struct MaintenanceDaemonShutdown(pub Arc<AtomicBool>);
-
-/// Shutdown flag for the periodic Loro snapshot task.
-///
-/// The task persists every engine's snapshot into `loro_doc_state` on a
-/// [`crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS`] cadence and polls
-/// this flag on each tick. Stored in managed state so a clean-exit path
-/// can stop it; a no-op in most graceful-exit paths.
-pub struct SnapshotTaskShutdown(pub Arc<AtomicBool>);
+// #703: the per-sweeper shutdown flags were previously also wrapped in
+// dedicated managed-state newtypes (`RetryQueueSweeperShutdown`,
+// `OrphanDraftsSweeperShutdown`, `MaintenanceDaemonShutdown`,
+// `SnapshotTaskShutdown`) "for the rare case a shutdown handler wants to
+// stop them cleanly". Nothing ever called `.store(true)` on any of them
+// and `RunEvent::Exit` only persists snapshots, so the newtypes were dead
+// speculative machinery. They were removed. The background tasks still
+// receive an `Arc<AtomicBool>` flag (always observed `false`), so their
+// behaviour is unchanged — crash-safety-by-design (each tick is its own
+// transaction) is what makes an abrupt exit correct, not a shutdown
+// signal. Re-introducing an exit-time purge is deliberately out of scope
+// (it risks the M-69 single-transaction invariant).
 
 /// Keeps the tracing-appender non-blocking worker alive for the
 /// application lifetime.
@@ -457,6 +438,57 @@ pub struct LogGuard(pub tracing_appender::non_blocking::WorkerGuard);
 /// the on-disk log files cannot diverge across platforms. See BUG-34.
 pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("logs")
+}
+
+/// #635: try to prepare the on-disk log directory and build the rolling
+/// file appender, degrading gracefully instead of aborting the process.
+///
+/// The previous code did `let _ = create_dir_all(..)` (silent) followed by
+/// `.build(..).expect("logging directory must be writable")`. That `expect`
+/// ran BEFORE the tracing subscriber was installed and AFTER the panic hook
+/// was replaced with one that logs via tracing (a no-op pre-subscriber), so
+/// on a read-only / full disk the app died with no log, no stderr, and no
+/// dialog (the abort profile produces nothing).
+///
+/// This helper instead:
+///   - reports a `create_dir_all` failure to stderr (non-silent), and
+///   - returns `None` when the appender can't be built, signalling the
+///     caller to fall back to stderr-only logging so the app stays usable.
+///
+/// Returning `None` (rather than `Err`) keeps the app running with at least
+/// stderr logging, which is strictly better than dying on a transient or
+/// permanent disk problem. Factored out so the degrade path is unit-testable
+/// without standing up a Tauri `AppHandle`.
+fn build_log_file_appender(
+    log_dir: &std::path::Path,
+) -> Option<tracing_appender::rolling::RollingFileAppender> {
+    if let Err(e) = std::fs::create_dir_all(log_dir) {
+        // Pre-subscriber: tracing is a no-op here, so write to stderr
+        // directly so the failure is never silent.
+        eprintln!(
+            "agaric: could not create log directory {}: {e}; \
+             falling back to stderr-only logging",
+            log_dir.display()
+        );
+        return None;
+    }
+
+    match tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .max_log_files(14)
+        .filename_prefix("agaric.log")
+        .build(log_dir)
+    {
+        Ok(appender) => Some(appender),
+        Err(e) => {
+            eprintln!(
+                "agaric: could not open log file in {}: {e}; \
+                 falling back to stderr-only logging",
+                log_dir.display()
+            );
+            None
+        }
+    }
 }
 
 // Linux: WebKitGTK's DMABUF renderer hangs the webview on a blank,
@@ -664,7 +696,6 @@ pub fn run() {
             // and the on-disk log files resolve to the same path on every
             // platform (Linux, macOS, Windows, Android).
             let log_dir = log_dir_for_app_data(&app_data_dir);
-            let _ = std::fs::create_dir_all(&log_dir);
 
             // Issue #157 sub-item A — size-bounded daily rotation with a
             // hard cap on retained files. Replaces the pre-#157 setup that
@@ -681,13 +712,19 @@ pub fn run() {
             // single bad day can spike a file beyond expectations. See
             // #157 sub-item D's `retry_queue_giveup` job for the upstream
             // root-cause fix that prevents the noisy-warn-storm class.
-            let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
-                .rotation(tracing_appender::rolling::Rotation::DAILY)
-                .max_log_files(14)
-                .filename_prefix("agaric.log")
-                .build(&log_dir)
-                .expect("logging directory must be writable");
-            let (non_blocking, log_guard) = tracing_appender::non_blocking(file_appender);
+            //
+            // #635: a read-only / full disk used to abort here (silent
+            // create_dir_all + `.expect()` before the subscriber existed).
+            // `build_log_file_appender` now degrades to `None`, and the
+            // file layer below is simply omitted so the app keeps running
+            // with stderr-only logging.
+            let (non_blocking, log_guard) = match build_log_file_appender(&log_dir) {
+                Some(file_appender) => {
+                    let (nb, guard) = tracing_appender::non_blocking(file_appender);
+                    (Some(nb), Some(guard))
+                }
+                None => (None, None),
+            };
 
             // Preserve any user-provided `RUST_LOG` directives for
             // `agaric` / `frontend` (BUG-40).
@@ -707,18 +744,30 @@ pub fn run() {
             // Note: `agaric.log` is now JSON-per-line. Read it with `jq`:
             //   tail -f agaric.log | jq
             // or any structured-log viewer.
+            // #635: the JSON file layer is present only when the on-disk
+            // appender was successfully built; `Option<Layer>` is a no-op
+            // layer when `None`, so the stderr layer always runs and the
+            // app stays usable on a read-only / full disk.
+            let file_layer = non_blocking.map(|nb| {
+                tracing_subscriber::fmt::layer()
+                    .json()
+                    .with_writer(nb)
+                    .with_ansi(false)
+            });
             tracing_subscriber::registry()
                 .with(env_filter)
                 .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .json()
-                        .with_writer(non_blocking)
-                        .with_ansi(false),
-                )
+                .with(file_layer)
                 .init();
 
-            tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+            if log_guard.is_some() {
+                tracing::info!(log_dir = %log_dir.display(), "log directory initialized");
+            } else {
+                tracing::warn!(
+                    log_dir = %log_dir.display(),
+                    "log directory unwritable — logging to stderr only"
+                );
+            }
 
             // Issue #157 sub-item A — retention is now enforced by the
             // RollingFileAppender::builder().max_log_files(14) call above,
@@ -727,8 +776,12 @@ pub fn run() {
             // tests.
 
             // Keep the non-blocking appender's worker guard alive for the
-            // lifetime of the app so buffered writes are never lost.
-            app.manage(LogGuard(log_guard));
+            // lifetime of the app so buffered writes are never lost. #635:
+            // only present when the file appender was built; on the
+            // stderr-only degrade path there is nothing to flush.
+            if let Some(log_guard) = log_guard {
+                app.manage(LogGuard(log_guard));
+            }
 
             // PEND-79: AppImage first-run desktop self-integration (Linux).
             // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
@@ -1061,14 +1114,16 @@ pub fn run() {
             // one) get drained on a 60-second cadence. The sweeper uses
             // its own shutdown flag; it dies when this flag is set and
             // re-enqueues rows that have reached their `next_attempt_at`.
+            // #703: the flag is never set (no exit handler signals it), so
+            // the sweeper observes a constant `false`; it remains a
+            // parameter only to keep the spawn signature stable.
             let retry_shutdown = Arc::new(AtomicBool::new(false));
             materializer::retry_queue::spawn_sweeper(
                 pools.read.clone(),
                 pools.write.clone(),
                 materializer.clone(),
-                retry_shutdown.clone(),
+                retry_shutdown,
             );
-            app.manage(RetryQueueSweeperShutdown(retry_shutdown));
 
             // PEND-28a M1: Spawn the orphan-drafts sweeper. Drafts whose
             // parent block has been *soft-deleted* survive the M-93 FK
@@ -1078,13 +1133,13 @@ pub fn run() {
             // task runs once at boot and then every hour for the
             // process lifetime; cancellation is via the managed
             // shutdown flag, mirroring the retry-queue sweeper above.
+            // #703: flag never set; sweeper observes constant `false`.
             let orphan_drafts_shutdown = Arc::new(AtomicBool::new(false));
             draft::spawn_orphan_drafts_sweeper(
                 pools.write.clone(),
                 draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
-                orphan_drafts_shutdown.clone(),
+                orphan_drafts_shutdown,
             );
-            app.manage(OrphanDraftsSweeperShutdown(orphan_drafts_shutdown));
 
             // Issue #157 sub-item B — MaintenanceDaemon skeleton seeded
             // with the wal_checkpoint_truncate job (1 h cadence, idle
@@ -1260,8 +1315,8 @@ pub fn run() {
                     }),
                 },
             ];
-            maintenance::spawn_daemon(jobs, maintenance_shutdown.clone());
-            app.manage(MaintenanceDaemonShutdown(maintenance_shutdown));
+            // #703: flag never set; daemon observes constant `false`.
+            maintenance::spawn_daemon(jobs, maintenance_shutdown);
 
             // Periodic Loro snapshot persistence. Re-instated after the
             // PEND-09 parity flush task (which hosted the snapshot save
@@ -1272,13 +1327,13 @@ pub fn run() {
             // engine's snapshot every SNAPSHOT_INTERVAL_SECS so the next
             // boot rehydrates without a full op-log replay; cancellation
             // is via the managed flag, mirroring the sweepers above.
+            // #703: flag never set; snapshot task observes constant `false`.
             let snapshot_shutdown = Arc::new(AtomicBool::new(false));
             crate::loro::snapshot::spawn_periodic_snapshot(
                 pools.write.clone(),
-                snapshot_shutdown.clone(),
+                snapshot_shutdown,
                 crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
             );
-            app.manage(SnapshotTaskShutdown(snapshot_shutdown));
 
             // Create scheduler wrapped in Arc for sharing with the SyncDaemon
             let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
@@ -2026,8 +2081,58 @@ mod log_directives_tests {
 
 #[cfg(test)]
 mod log_dir_tests {
-    use super::log_dir_for_app_data;
+    use super::{build_log_file_appender, log_dir_for_app_data};
     use std::path::Path;
+    use tempfile::TempDir;
+
+    /// #635: a writable log dir yields a real appender (the happy path
+    /// that keeps file logging on).
+    #[test]
+    fn writable_log_dir_builds_appender() {
+        let tmp = TempDir::new().expect("temp dir");
+        let log_dir = tmp.path().join("logs");
+        let appender = build_log_file_appender(&log_dir);
+        assert!(
+            appender.is_some(),
+            "a writable log dir must yield a file appender"
+        );
+        assert!(log_dir.exists(), "create_dir_all must have run");
+    }
+
+    /// #635: an unwritable log dir must DEGRADE (return `None`) rather than
+    /// panic/abort. Pre-#635 this path hit `.expect(..)` before the tracing
+    /// subscriber existed, killing the app silently under the abort profile.
+    ///
+    /// We make the PARENT read-only so `create_dir_all(parent/logs)` fails,
+    /// then assert the helper returns `None` instead of unwinding.
+    #[cfg(unix)]
+    #[test]
+    fn unwritable_log_dir_degrades_without_panic() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().expect("temp dir");
+        let parent = tmp.path().join("readonly");
+        std::fs::create_dir(&parent).expect("create parent");
+
+        // 0o500 = r-x------ : the parent can be traversed but not written,
+        // so creating a child `logs/` subdirectory is denied.
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o500);
+        std::fs::set_permissions(&parent, perms).expect("chmod readonly");
+
+        let log_dir = parent.join("logs");
+        let appender = build_log_file_appender(&log_dir);
+
+        // Restore write perms so TempDir cleanup can remove the dir.
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o700);
+        let _ = std::fs::set_permissions(&parent, perms);
+
+        assert!(
+            appender.is_none(),
+            "an unwritable log dir must degrade to None, not panic"
+        );
+    }
 
     #[test]
     fn log_dir_for_app_data_appends_logs_subdir() {

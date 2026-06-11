@@ -6,7 +6,10 @@
   "permissions": [
     "core:default",
     "shell:allow-open",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*" }]
+    },
     "process:default",
     "clipboard-manager:allow-write-text",
     "os:default",
