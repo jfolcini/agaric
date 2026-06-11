@@ -39,6 +39,17 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
     // UX-250: inline `#[ULID]` tag-ref cache. Purely derived — repopulated
     // by `RebuildBlockTagRefsCache` below.
     ("block_tag_refs", MaterializeTask::RebuildBlockTagRefsCache),
+    // #617/#794: the page-level link roll-up (migration 0065). Both of its
+    // columns carry `REFERENCES blocks(id) ON DELETE CASCADE`, so the
+    // `DELETE FROM blocks` below wiped it IMPLICITLY — defeating this
+    // inventory's "a cache table cannot be wiped without a matching
+    // rebuild" guarantee: after a RESET the links/backlinks UI stayed
+    // empty until an unrelated delete/restore/purge triggered the next
+    // full fan-out. Listing it here makes the wipe explicit (idempotent
+    // with the cascade) and pairs it with its rebuild task. The rebuild
+    // consults `blocks.page_id`, which is why `RebuildPageIds` is
+    // enqueued ahead of this list (see the note above).
+    ("page_link_cache", MaterializeTask::RebuildPageLinkCache),
 ];
 
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
@@ -92,6 +103,13 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 ///   cursor points past the end of the log; the `MAX()`-gated per-op advance
 ///   would then hold the cursor above freshly minted seqs and the H-4 boot
 ///   clamp is the only thing that would ever correct it.
+/// - `log_snapshots` — wiped (#793). Local snapshots taken before the RESET
+///   describe the pre-reset lineage; left in place,
+///   `try_offer_snapshot_catchup` would keep serving them via
+///   `get_latest_snapshot`, and a third device still on the OLD lineage
+///   passes the M-58 covering check — so this device could re-ship the
+///   pre-reset vault AFTER itself moving to the new lineage. A post-reset
+///   device has nothing valid to offer until it snapshots its new state.
 /// - `app_settings['loro.peer_id_epoch']` — **bumped, not wiped** (#792).
 ///   Post-reset engines restart op counters at 0; reusing the old
 ///   deterministic PeerID would fork the (peer, counter) space against this
@@ -199,6 +217,19 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .execute(&mut *tx)
         .await?;
     sqlx::query!("DELETE FROM loro_sync_inbox")
+        .execute(&mut *tx)
+        .await?;
+    // #793: stale local snapshots must die with the lineage they describe.
+    // `try_offer_snapshot_catchup` serves `get_latest_snapshot` to any
+    // behind peer, and the M-58 covering check only compares the
+    // requester's heads against the snapshot's `up_to_seqs` — a third
+    // device still on the OLD lineage is "covered" by a pre-reset
+    // snapshot, so leaving these rows in place lets this device re-ship
+    // the pre-reset vault after it has itself moved to the new lineage.
+    // Wiped in the SAME tx as the core swap: a rollback keeps the old
+    // snapshots offerable alongside the old data (consistent), a commit
+    // leaves nothing to offer until this device snapshots the new state.
+    sqlx::query!("DELETE FROM log_snapshots")
         .execute(&mut *tx)
         .await?;
     // #792: retire the device's deterministic Loro PeerID atomically with

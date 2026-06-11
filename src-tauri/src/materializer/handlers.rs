@@ -10,7 +10,7 @@ use crate::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
     PurgeBlockPayload, RemoveTagPayload, RenameAttachmentPayload, RestoreBlockPayload,
-    SetPropertyPayload, is_reserved_property_key,
+    SetPropertyPayload,
 };
 use crate::op_log::OpRecord;
 use crate::tag_inheritance;
@@ -2463,120 +2463,38 @@ async fn apply_remove_tag_sql_only(
 }
 
 /// SQL-only SetProperty fallback (formerly `apply_set_property_tx`).
+///
+/// #802: delegates to [`crate::loro::projection::project_set_property_to_sql`]
+/// — the exact projection the via-loro path runs after its engine apply.
+/// This function used to re-spell the reserved-key routing inline and had
+/// NO arm for the column-backed `space` key (#533): an engine-less replay
+/// of a `SetProperty(space)` op fell into the generic `block_properties`
+/// INSERT and aborted on migration 0088's `key_not_reserved` CHECK.
+/// Delegating makes the fallback's routing identical to the projection's
+/// by construction (reserved columns, `space` → `blocks.space_id` with the
+/// #708 registered-space guard, generic rows), so the two can never drift
+/// again.
 async fn apply_set_property_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: SetPropertyPayload,
 ) -> Result<(), AppError> {
-    if is_reserved_property_key(&p.key) {
-        let block_id = p.block_id.as_str();
-        match p.key.as_str() {
-            "todo_state" => {
-                sqlx::query!(
-                    "UPDATE blocks SET todo_state = ? WHERE id = ?",
-                    p.value_text,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "priority" => {
-                sqlx::query!(
-                    "UPDATE blocks SET priority = ? WHERE id = ?",
-                    p.value_text,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "due_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET due_date = ? WHERE id = ?",
-                    p.value_date,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = ? WHERE id = ?",
-                    p.value_date,
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            other => unreachable!(
-                "is_reserved_property_key('{other}') returned true for an unrecognised key"
-            ),
-        }
-    } else {
-        let value_bool_int: Option<i64> = p.value_bool.map(|b| b as i64);
-        let block_id_str = p.block_id.as_str();
-        sqlx::query!(
-            "INSERT OR REPLACE INTO block_properties \
-                 (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            block_id_str,
-            p.key,
-            p.value_text,
-            p.value_num,
-            p.value_date,
-            p.value_ref,
-            value_bool_int,
-        )
-        .execute(&mut *conn)
-        .await?;
-    }
-    Ok(())
+    crate::loro::projection::project_set_property_to_sql(conn, &p).await
 }
 
 /// SQL-only DeleteProperty fallback (formerly `apply_delete_property_tx`).
+///
+/// #802 (parity with [`apply_set_property_sql_only`]): delegates to
+/// [`crate::loro::projection::project_delete_property_to_sql`]. The inline
+/// body it replaces also lacked a `space` arm — a `DeleteProperty(space)`
+/// replayed engine-less issued a no-op `block_properties` DELETE (no 0088
+/// abort, but `blocks.space_id` silently stayed set). The projection
+/// clears the column for the whole owning-page group, matching the
+/// via-loro path.
 async fn apply_delete_property_sql_only(
     conn: &mut sqlx::SqliteConnection,
     p: DeletePropertyPayload,
 ) -> Result<(), AppError> {
-    if is_reserved_property_key(&p.key) {
-        let block_id = p.block_id.as_str();
-        match p.key.as_str() {
-            "todo_state" => {
-                sqlx::query!("UPDATE blocks SET todo_state = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "priority" => {
-                sqlx::query!("UPDATE blocks SET priority = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "due_date" => {
-                sqlx::query!("UPDATE blocks SET due_date = NULL WHERE id = ?", block_id)
-                    .execute(&mut *conn)
-                    .await?;
-            }
-            "scheduled_date" => {
-                sqlx::query!(
-                    "UPDATE blocks SET scheduled_date = NULL WHERE id = ?",
-                    block_id
-                )
-                .execute(&mut *conn)
-                .await?;
-            }
-            other => unreachable!(
-                "is_reserved_property_key('{other}') returned true for an unrecognised key"
-            ),
-        }
-    } else {
-        let block_id_str = p.block_id.as_str();
-        sqlx::query!(
-            "DELETE FROM block_properties WHERE block_id = ? AND key = ?",
-            block_id_str,
-            p.key,
-        )
-        .execute(&mut *conn)
-        .await?;
-    }
-    Ok(())
+    crate::loro::projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await
 }
 
 /// PEND-28a H2: per-variant body for [`OpType::AddAttachment`].

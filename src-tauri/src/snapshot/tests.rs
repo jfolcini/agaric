@@ -4869,3 +4869,226 @@ async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
 
     mat_a.shutdown();
 }
+
+// ===========================================================================
+// #617 / #794 — page_link_cache must be rebuilt after a RESET
+// ===========================================================================
+
+/// #617/#794 regression: `page_link_cache` (migration 0065) is wiped by
+/// the `DELETE FROM blocks` FK cascade during `apply_snapshot`, but was
+/// absent from the `CACHE_TABLES` rebuild inventory — so after a snapshot
+/// catch-up the page-links/backlinks roll-up stayed EMPTY until some
+/// unrelated delete/restore/purge triggered the next full fan-out
+/// (exactly the BUG-42 stale-cache class the inventory exists to prevent).
+///
+/// Pre-fix: the final assertion fails — the cache stays empty after
+/// `flush_background()` because no `RebuildPageLinkCache` task was ever
+/// enqueued. Post-fix the table is in `CACHE_TABLES`, so the wipe is
+/// explicit and the rebuild repopulates the roll-up from the restored
+/// `block_links`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_rebuilds_page_link_cache_617() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Snapshot: PAGE-A holds CHILD-A, which links to PAGE-B.
+    let mk = |id: &str, block_type: &str, parent: Option<&str>| BlockSnapshot {
+        id: BlockId::test_id(id),
+        block_type: block_type.to_string(),
+        content: Some(id.to_lowercase()),
+        parent_id: parent.map(BlockId::test_id),
+        position: Some(1),
+        deleted_at: None,
+        todo_state: None,
+        priority: None,
+        due_date: None,
+        scheduled_date: None,
+        space_id: None,
+    };
+    let data = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-617".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "links-617".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![
+                mk("PAGE-A", "page", None),
+                mk("PAGE-B", "page", None),
+                mk("CHILD-A", "content", Some("PAGE-A")),
+            ],
+            block_tags: vec![],
+            block_properties: vec![],
+            block_links: vec![BlockLinkSnapshot {
+                source_id: BlockId::test_id("CHILD-A"),
+                target_id: BlockId::test_id("PAGE-B"),
+            }],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+
+    // Pre-populate page_link_cache with a STALE edge between pre-reset
+    // blocks. A correct RESET must not let it survive.
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content) VALUES \
+         ('stale-src', 'page', 'src'), ('stale-tgt', 'page', 'tgt')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count) \
+         VALUES ('stale-src', 'stale-tgt', 3)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    // The wipe (inventory DELETE + blocks cascade) removed the stale edge
+    // synchronously with the restore tx.
+    let stale: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM page_link_cache WHERE source_page_id = 'stale-src'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        stale, 0,
+        "stale page_link_cache edge must die with the RESET"
+    );
+
+    // Drain the rebuild fan-out: `RebuildPageIds` first (populates
+    // CHILD-A.page_id), then the CACHE_TABLES tasks including
+    // `RebuildPageLinkCache`.
+    mat.flush_background().await.unwrap();
+
+    let edges: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT source_page_id, target_page_id, edge_count FROM page_link_cache \
+         ORDER BY source_page_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        edges,
+        vec![("PAGE-A".to_string(), "PAGE-B".to_string(), 1)],
+        "#617/#794: after the RESET fan-out the page-link roll-up must be \
+         rebuilt from the restored block_links — pre-fix it stayed empty \
+         until an unrelated full-fanout op"
+    );
+
+    mat.shutdown();
+}
+
+// ===========================================================================
+// #793 — RESET must clear stale local snapshots in the same tx
+// ===========================================================================
+
+/// #793 regression: `apply_snapshot` wipes the CRDT sidecar but left
+/// `log_snapshots` intact — pre-reset local snapshots remained offerable
+/// via `get_latest_snapshot`, so `try_offer_snapshot_catchup` could serve
+/// the PRE-RESET vault to a device still on the old lineage (M-58 only
+/// checks seq coverage of the requester's heads, which the old snapshot
+/// trivially satisfies). A post-reset device has nothing valid to offer
+/// until it snapshots its new state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_clears_stale_log_snapshots_793() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Take a local snapshot on the pre-reset lineage.
+    insert_block(&pool, "block-793-1", "pre-reset content").await;
+    insert_op_at(&pool, "dev-793", "block-793-1", 1_735_689_600_000).await;
+    create_snapshot(&pool, "dev-793")
+        .await
+        .expect("create_snapshot on the pre-reset lineage");
+    assert!(
+        get_latest_snapshot(&pool).await.unwrap().is_some(),
+        "pre-condition: the pre-reset snapshot is offerable"
+    );
+
+    // RESET onto a peer-provided snapshot (a different lineage). Satellite
+    // tables are cleared because the sample data's rows reference blocks
+    // outside the snapshot (same shape as the #792 tests).
+    let mut data = sample_snapshot_data();
+    data.tables.block_tags.clear();
+    data.tables.block_properties.clear();
+    data.tables.block_links.clear();
+    data.tables.attachments.clear();
+    let encoded = encode_snapshot(&data).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect("RESET must succeed");
+
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "#793: the RESET must wipe log_snapshots — pre-reset snapshots \
+         describe a retired lineage and must not remain offerable"
+    );
+    assert!(
+        get_latest_snapshot(&pool).await.unwrap().is_none(),
+        "#793: get_latest_snapshot must return None after a RESET"
+    );
+
+    mat.shutdown();
+}
+
+/// #793 atomicity: the `log_snapshots` wipe rides the same RESET
+/// transaction as the core-table swap. A FAILED apply (commit-time FK
+/// violation) must roll the wipe back too — the local snapshot stays
+/// offerable alongside the data it describes, never "wiped snapshots but
+/// kept old data" (or vice versa).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn failed_apply_snapshot_keeps_log_snapshots_793() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "block-793-2", "content").await;
+    insert_op_at(&pool, "dev-793", "block-793-2", 1_735_689_600_000).await;
+    create_snapshot(&pool, "dev-793").await.unwrap();
+
+    // FK-violating snapshot: a block_tags row referencing a block that is
+    // not in the snapshot → the deferred FK check aborts the COMMIT.
+    let bad = SnapshotData {
+        schema_version: SCHEMA_VERSION,
+        snapshot_device_id: "dev-bad".to_string(),
+        up_to_seqs: BTreeMap::new(),
+        up_to_hash: "bad".to_string(),
+        tables: SnapshotTables {
+            blocks: vec![],
+            block_tags: vec![BlockTagSnapshot {
+                block_id: BlockId::test_id("NONEXISTENT-BLOCK"),
+                tag_id: "also-nonexistent".to_string(),
+            }],
+            block_properties: vec![],
+            block_links: vec![],
+            attachments: vec![],
+            property_definitions: vec![],
+            page_aliases: vec![],
+        },
+    };
+    let encoded = encode_snapshot(&bad).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..])
+        .await
+        .expect_err("FK-violating snapshot must abort the RESET");
+
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM log_snapshots")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "#793: a rolled-back RESET must keep the local snapshot — the wipe \
+         must be atomic with the core swap"
+    );
+
+    mat.shutdown();
+}
