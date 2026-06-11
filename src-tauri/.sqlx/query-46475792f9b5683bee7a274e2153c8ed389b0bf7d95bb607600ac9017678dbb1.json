@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM _sqlx_migrations",
+  "query": "SELECT IFNULL(MAX(version), 0) AS \"v!: i64\" FROM _sqlx_migrations",
   "describe": {
     "columns": [
       {
-        "name": "COUNT(*)",
+        "name": "v!: i64",
         "ordinal": 0,
         "type_info": "Integer",
         "origin": "Expression"
@@ -17,5 +17,5 @@
       false
     ]
   },
-  "hash": "2171153ad6701f4468ee404aec55cc2c0597e3ee158b0c6937eecfcba2eb79a0"
+  "hash": "46475792f9b5683bee7a274e2153c8ed389b0bf7d95bb607600ac9017678dbb1"
 }
