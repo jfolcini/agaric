@@ -13,18 +13,48 @@ import { useBlockStore } from '../../stores/blocks'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '../useBlockTreeKeyboardShortcuts'
 import { useBlockTreeKeyboardShortcuts } from '../useBlockTreeKeyboardShortcuts'
 
+// #913 — block cut/copy/paste reads/writes the system clipboard via the
+// app's wrapper. Mock it so the tests assert the serialized markdown without
+// touching a real clipboard.
+const mockWriteText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+const mockReadText = vi.fn<() => Promise<string>>().mockResolvedValue('')
+vi.mock('../../lib/clipboard', () => ({
+  writeText: (text: string) => mockWriteText(text),
+  readText: () => mockReadText(),
+}))
+
+/** A FlatBlock-shaped row for the page-store stub. */
+interface StubRow {
+  id: string
+  depth: number
+  parent_id: string | null
+  content: string
+}
+
 /**
- * #713 — minimal page-store stub for the ownership gate: the hook only
- * calls `getState().blocksById.has(id)` via `storeOwnsBlock`.
+ * #713 — page-store stub for the ownership gate and the #913 cut/copy/paste
+ * actions. `getState()` exposes `blocksById` (for `storeOwnsBlock`), `blocks`
+ * (for serialization), and the `remove` / `pasteBlocks` action spies.
  */
-function makePageStore(ownedIds: string[]): UseBlockTreeKeyboardShortcutsOptions['pageStore'] {
-  const blocksById = new Map(ownedIds.map((id) => [id, { id }]))
-  return {
-    getState: () => ({ blocksById, blocks: [...blocksById.values()] }),
+function makePageStore(
+  rows: Array<string | StubRow> = [],
+): UseBlockTreeKeyboardShortcutsOptions['pageStore'] & {
+  __remove: ReturnType<typeof vi.fn>
+  __pasteBlocks: ReturnType<typeof vi.fn>
+} {
+  const blocks: StubRow[] = rows.map((r) =>
+    typeof r === 'string' ? { id: r, depth: 0, parent_id: null, content: r } : r,
+  )
+  const blocksById = new Map(blocks.map((b) => [b.id, b]))
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const pasteBlocks = vi.fn().mockResolvedValue([])
+  const store = {
+    getState: () => ({ blocksById, blocks, remove, pasteBlocks }),
     setState: vi.fn(),
     getInitialState: vi.fn(),
     subscribe: vi.fn(),
   } as unknown as UseBlockTreeKeyboardShortcutsOptions['pageStore']
+  return Object.assign(store, { __remove: remove, __pasteBlocks: pasteBlocks })
 }
 
 function makeOptions(
@@ -56,6 +86,8 @@ function makeOptions(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockWriteText.mockResolvedValue(undefined)
+  mockReadText.mockResolvedValue('')
   useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
   // #774 — clear the last-interacted-tree registry between tests so a
   // marker from a prior test can't leak into the tie-break assertions.
@@ -132,6 +164,96 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'Escape' })
 
       expect(opts.clearSelected).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('Block cut/copy/paste (#913)', () => {
+    /** Two top-level blocks + one child, owned by this store. */
+    function clipboardOpts(overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {}) {
+      const pageStore = makePageStore([
+        { id: 'A', depth: 0, parent_id: 'PAGE_1', content: 'alpha' },
+        { id: 'A1', depth: 1, parent_id: 'A', content: 'alpha-child' },
+        { id: 'B', depth: 0, parent_id: 'PAGE_1', content: 'beta' },
+      ])
+      return {
+        opts: makeOptions({ pageStore, focusedBlockId: null, ...overrides }),
+        pageStore,
+      }
+    }
+
+    it('Ctrl+C copies the selected roots + subtrees as indented markdown', () => {
+      const { opts } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+
+      expect(mockWriteText).toHaveBeenCalledWith('alpha\n  alpha-child\nbeta')
+    })
+
+    it('Ctrl+X copies then removes the selection roots and clears selection', () => {
+      const { opts, pageStore } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+      expect(mockWriteText).toHaveBeenCalledWith('alpha\n  alpha-child\nbeta')
+      // Only the roots A and B are removed (A1 cascades with A).
+      expect(pageStore.__remove).toHaveBeenCalledWith('A')
+      expect(pageStore.__remove).toHaveBeenCalledWith('B')
+      expect(pageStore.__remove).not.toHaveBeenCalledWith('A1')
+      expect(opts.clearSelected).toHaveBeenCalled()
+    })
+
+    it('Ctrl+V reads the clipboard and inserts after the last selected block', async () => {
+      mockReadText.mockResolvedValue('pasted\n  nested')
+      const { opts, pageStore } = clipboardOpts({ selectedBlockIds: ['A', 'B'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'v', ctrlKey: true })
+      // The async readText().then(pasteBlocks) chain resolves on a microtask.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(mockReadText).toHaveBeenCalled()
+      // Anchor = last selected owned block (B).
+      expect(pageStore.__pasteBlocks).toHaveBeenCalledWith('B', 'pasted\n  nested')
+    })
+
+    it('does not copy/cut when no blocks are selected', () => {
+      const { opts } = clipboardOpts({ selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+      fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+
+      expect(mockWriteText).not.toHaveBeenCalled()
+    })
+
+    it('does not fire when a block is focused (editor active — browser owns the chord)', async () => {
+      const { opts, pageStore } = clipboardOpts({
+        selectedBlockIds: ['A'],
+        focusedBlockId: 'A',
+      })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+      fireEvent.keyDown(document, { key: 'x', ctrlKey: true })
+      fireEvent.keyDown(document, { key: 'v', ctrlKey: true })
+      await Promise.resolve()
+
+      expect(mockWriteText).not.toHaveBeenCalled()
+      expect(mockReadText).not.toHaveBeenCalled()
+      expect(pageStore.__pasteBlocks).not.toHaveBeenCalled()
+    })
+
+    it('does not act when the selection belongs to another store (ownership gate)', () => {
+      // Selected ids are NOT in this store's blocksById.
+      const { opts } = clipboardOpts({ selectedBlockIds: ['OTHER_1', 'OTHER_2'] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'c', ctrlKey: true })
+
+      expect(mockWriteText).not.toHaveBeenCalled()
     })
   })
 

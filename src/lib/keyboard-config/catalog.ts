@@ -277,6 +277,31 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     description: 'keyboard.clearSelection',
     condition: 'keyboard.condition.withSelection',
   },
+  // #913 — block cut/copy/paste as indented-markdown subtrees. Gated on a
+  // block selection with NO editor focused (otherwise the browser owns the
+  // native text copy/cut/paste), so they never collide with in-editor Ctrl+C/
+  // X/V despite sharing the conventional chords.
+  {
+    id: 'copyBlocks',
+    keys: 'Ctrl + C',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.copyBlocks',
+    condition: 'keyboard.condition.withSelection',
+  },
+  {
+    id: 'cutBlocks',
+    keys: 'Ctrl + X',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.cutBlocks',
+    condition: 'keyboard.condition.withSelection',
+  },
+  {
+    id: 'pasteBlocks',
+    keys: 'Ctrl + V',
+    category: 'keyboard.category.blockSelection',
+    description: 'keyboard.pasteBlocks',
+    condition: 'keyboard.condition.withSelection',
+  },
 
   // Undo/Redo
   {

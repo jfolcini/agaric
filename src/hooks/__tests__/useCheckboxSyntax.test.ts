@@ -113,6 +113,7 @@ describe('useCheckboxSyntax', () => {
       dedent: vi.fn(),
       moveUp: vi.fn(),
       moveDown: vi.fn(),
+      pasteBlocks: vi.fn(),
       appendBlock: vi.fn(),
     })) as StoreApi<PageBlockState>
 
