@@ -1184,3 +1184,96 @@ describe('PEND-30 L-4 host-unmount popup sweep', () => {
     expect(document.querySelectorAll('.suggestion-popup').length).toBe(0)
   })
 })
+
+// -- #711: canonicalization-as-edit (focus+blur with zero edits) ---------------
+//
+// `mount` parses the stored markdown, `unmount` re-serializes it, and the
+// serializer canonicalizes (`3.` → `1.`, `_em_` → `*em*`, …). The old
+// `changed: newMarkdown !== originalMarkdown` therefore persisted a rewrite
+// on every focus+blur of a non-canonical block. `computeContentDelta` is the
+// single gate `unmount()` uses to decide persistence (changed → markdown,
+// unchanged → null), so these pin the no-persist contract at that gate.
+
+describe('computeContentDelta — canonicalization is not an edit (#711)', () => {
+  it('no-edit blur on `3. buy milk` does NOT persist (serializer renumbers to 1.)', () => {
+    const original = '3. buy milk'
+    // Focus+blur with zero edits: the doc is exactly parse(original).
+    const delta = computeContentDelta(original, parse(original) as DocNode)
+    // The serializer DOES canonicalize…
+    expect(delta.newMarkdown).toBe('1. buy milk')
+    // …but that is not an edit.
+    expect(delta.changed).toBe(false)
+  })
+
+  it('no-edit blur on underscore emphasis does NOT persist (`_em_` → `*em*`)', () => {
+    const original = 'some _emphasis_ here'
+    const delta = computeContentDelta(original, parse(original) as DocNode)
+    expect(delta.newMarkdown).toBe('some *emphasis* here')
+    expect(delta.changed).toBe(false)
+  })
+
+  it('no-edit blur through a REAL editor mount does NOT persist', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, Paragraph, Text, Bold],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    try {
+      const original = 'keep __calm__ and carry on'
+      // Same path as mount(): parse → replaceDocSilently.
+      replaceDocSilently(editor, parse(original) as unknown as Record<string, unknown>)
+      // Blur with zero edits: serialize what the editor holds.
+      const delta = computeContentDelta(original, editor.getJSON() as DocNode)
+      expect(delta.changed).toBe(false)
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('control: a real edit IS persisted even when the original canonicalizes', () => {
+    const original = '3. buy milk'
+    const delta = computeContentDelta(original, parse('3. buy oat milk') as DocNode)
+    expect(delta.changed).toBe(true)
+    expect(delta.newMarkdown).toBe('1. buy oat milk')
+  })
+
+  it('control: a real edit through a REAL editor is persisted', () => {
+    const editor = new Editor({
+      element: document.createElement('div'),
+      extensions: [Document, Paragraph, Text, Bold],
+      content: { type: 'doc', content: [{ type: 'paragraph' }] },
+    })
+    try {
+      const original = 'keep __calm__ and carry on'
+      replaceDocSilently(editor, parse(original) as unknown as Record<string, unknown>)
+      editor.commands.focus('end')
+      editor.commands.insertContent(' please')
+      const delta = computeContentDelta(original, editor.getJSON() as DocNode)
+      expect(delta.changed).toBe(true)
+      expect(delta.newMarkdown).toBe('keep **calm** and carry on please')
+    } finally {
+      editor.destroy()
+    }
+  })
+
+  it('identical round-trip stays unchanged without invoking the canonical compare', () => {
+    const original = 'plain text'
+    const delta = computeContentDelta(original, parse(original) as DocNode)
+    expect(delta.changed).toBe(false)
+    expect(delta.newMarkdown).toBe('plain text')
+  })
+})
+
+// -- #710-5 follow-through: hard breaks don't split the block on blur ----------
+
+describe('shouldSplitOnBlur — hard breaks (#710-5)', () => {
+  it('returns false for a Shift+Enter hard break (one paragraph, not two blocks)', () => {
+    // Serialized form of text+hardBreak+text — contains a newline but parses
+    // back to a SINGLE paragraph block.
+    expect(shouldSplitOnBlur('first\\\nsecond')).toBe(false)
+  })
+
+  it('still returns true for a genuine two-paragraph separator', () => {
+    expect(shouldSplitOnBlur('first\nsecond')).toBe(true)
+  })
+})

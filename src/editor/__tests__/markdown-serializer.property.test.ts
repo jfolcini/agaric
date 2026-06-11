@@ -22,8 +22,10 @@ const NUM_RUNS = 500
 /**
  * Characters that are meaningful to the serializer. We deliberately include
  * all delimiter characters so fast-check explores edge cases with them.
+ * `_ | ~ =` were added with #710 — the round-trip corruption family showed
+ * the old alphabet couldn't catch underscore/pipe/strike/highlight bugs.
  */
-const INTERESTING_CHARS = 'abcXY 012*`#[\\]()'
+const INTERESTING_CHARS = 'abcXY 012*`#[\\]()_|~='
 
 /** A non-empty string from the interesting character alphabet. */
 const arbText: fc.Arbitrary<string> = fc
@@ -179,6 +181,17 @@ const arbMarkdownString: fc.Arbitrary<string> = fc
         ']',
         '(',
         ')',
+        // #710 alphabet extension: emphasis underscores, strike, highlight,
+        // table pipes, ordered-list prefixes, and their escapes.
+        '_',
+        '__',
+        '~~',
+        '==',
+        '|',
+        '\\_',
+        '\\|',
+        '1. ',
+        '2. ',
       ),
       fc
         .array(fc.constantFrom(...'abcXY 012'.split('')), { minLength: 1, maxLength: 6 })
@@ -223,34 +236,73 @@ function marksEqual(a: readonly PMMark[] | undefined, b: readonly PMMark[] | und
   return sortedA.every((t, i) => t === sortedB[i])
 }
 
+/** Merge adjacent text nodes with identical marks (parser-canonical form). */
+function mergeAdjacentTextNodes(content: readonly InlineNode[]): InlineNode[] {
+  const merged: InlineNode[] = []
+  for (const node of content) {
+    const last = merged.length > 0 ? merged[merged.length - 1] : null
+    if (node.type === 'text' && last?.type === 'text' && marksEqual(last.marks, node.marks)) {
+      // Merge into previous text node
+      const combined: TextNode = { type: 'text', text: last.text + node.text }
+      if (last.marks && last.marks.length > 0) {
+        merged[merged.length - 1] = { ...combined, marks: [...last.marks] }
+      } else {
+        merged[merged.length - 1] = combined
+      }
+    } else {
+      merged.push(node)
+    }
+  }
+  return merged
+}
+
+function normalizeParagraphNode(p: ParagraphNode): ParagraphNode {
+  if (!p.content || p.content.length === 0) return p
+  const merged = mergeAdjacentTextNodes(p.content)
+  if (merged.length === 0) return { type: 'paragraph' }
+  return { type: 'paragraph', content: merged }
+}
+
 /**
  * Normalize a DocNode by merging adjacent text nodes with the same marks.
  * This is what the parser naturally does — it never produces split text nodes
- * with identical marks. We need this to compare generated docs with parsed docs.
+ * with identical marks. We need this to compare generated docs with parsed
+ * docs. Recurses into ordered-list items and table cells (reachable since
+ * the #710 alphabet extension added `1. ` / `|` tokens) — e.g. two adjacent
+ * same-href link nodes in a list item serialize as ONE `[text](url)` and
+ * reparse as a single merged node.
  */
 function normalizeDoc(doc: DocNode): DocNode {
   if (!doc.content) return doc
   const paragraphs = doc.content
     .map((p) => {
-      if (p.type !== 'paragraph' || !('content' in p) || !p.content || p.content.length === 0)
-        return p
-      const merged: InlineNode[] = []
-      for (const node of p.content) {
-        const last = merged.length > 0 ? merged[merged.length - 1] : null
-        if (node.type === 'text' && last?.type === 'text' && marksEqual(last.marks, node.marks)) {
-          // Merge into previous text node
-          const combined: TextNode = { type: 'text', text: last.text + node.text }
-          if (last.marks && last.marks.length > 0) {
-            merged[merged.length - 1] = { ...combined, marks: [...last.marks] }
-          } else {
-            merged[merged.length - 1] = combined
-          }
-        } else {
-          merged.push(node)
+      if (p.type === 'paragraph') return normalizeParagraphNode(p)
+      if (p.type === 'orderedList' && p.content) {
+        return {
+          ...p,
+          content: p.content.map((item) =>
+            item.content ? { ...item, content: item.content.map(normalizeParagraphNode) } : item,
+          ),
         }
       }
-      if (merged.length === 0) return { type: 'paragraph' as const }
-      return { type: 'paragraph' as const, content: merged }
+      if (p.type === 'table' && p.content) {
+        return {
+          ...p,
+          content: p.content.map((row) =>
+            row.content
+              ? {
+                  ...row,
+                  content: row.content.map((cell) =>
+                    cell.content
+                      ? { ...cell, content: cell.content.map(normalizeParagraphNode) }
+                      : cell,
+                  ),
+                }
+              : row,
+          ),
+        }
+      }
+      return p
     })
     // Strip empty paragraphs — these serialize to "" which parses back as
     // no content at all, so they must be removed for structural equality.
@@ -458,7 +510,11 @@ describe('property: structural invariants', () => {
         const result = parse(s)
         if (result.content) {
           for (const child of result.content) {
-            expect(['paragraph', 'heading', 'codeBlock']).toContain(child.type)
+            // `table` / `orderedList` joined with the #710 alphabet
+            // extension (`|`, `1. ` tokens now appear in inputs).
+            expect(['paragraph', 'heading', 'codeBlock', 'table', 'orderedList']).toContain(
+              child.type,
+            )
           }
         }
       }),

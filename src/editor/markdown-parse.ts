@@ -11,6 +11,7 @@
  */
 
 import { logger } from '../lib/logger'
+import { underscoreRunFlank } from './markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -166,10 +167,26 @@ function probeExternalLink(s: Scanner): LinkMatch | null {
 }
 
 /**
- * Unescape a URL: decode %29 → ) for unbalanced parens that were escaped during serialization.
+ * Unescape a URL: decode the backslash escapes (`\\`, `\(`, `\)`) that
+ * `escapeUrl` emits for literal backslashes and unbalanced parens.
+ *
+ * #710-6: the previous implementation decoded EVERY `%29` → `)`, corrupting
+ * URLs in which the user literally typed `%29`. Percent sequences are now
+ * left untouched; only the serializer's own backslash escapes are decoded.
  */
 function unescapeUrl(url: string): string {
-  return url.replace(/%29/g, ')')
+  let out = ''
+  for (let i = 0; i < url.length; i++) {
+    const ch = url[i]
+    const next = url[i + 1]
+    if (ch === '\\' && (next === '\\' || next === '(' || next === ')')) {
+      out += next
+      i++
+      continue
+    }
+    out += ch
+  }
+  return out
 }
 
 /**
@@ -362,16 +379,51 @@ export function parseTable(
   return { blocks: [block], consumed }
 }
 
+/**
+ * Split a table row on UNESCAPED `|` separators only (#710-3). The previous
+ * `.split('|')` ran before the `\|` unescape, so an escaped pipe inside a
+ * cell (`a\|b`) was treated as a column boundary. Backslash pairs (`\x`) are
+ * copied verbatim so `\\` (escaped backslash) never shields a real separator.
+ */
+function splitRowOnUnescapedPipes(line: string): string[] {
+  const cells: string[] = []
+  let current = ''
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (ch === '\\' && i + 1 < line.length) {
+      current += ch + line[i + 1]
+      i++
+      continue
+    }
+    if (ch === '|') {
+      cells.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  cells.push(current)
+  return cells
+}
+
 function buildTableRows(tableLines: readonly string[], depth: number): TableRowNode[] {
   const rows: TableRowNode[] = []
   for (let r = 0; r < tableLines.length; r++) {
     const tableLine = tableLines[r] as string
-    if (/^\|[\s\-:|]+\|$/.test(tableLine)) continue
-    const cellTexts = tableLine
-      .replace(/^\|/, '')
-      .replace(/\|$/, '')
-      .split('|')
-      .map((c) => c.trim().replace(/\\\|/g, '|'))
+    // Separator rows must contain at least one `-`/`:` — a row of empty
+    // cells (`|  |`, serialized from an empty-cell table row) is data, not
+    // a separator, and used to be silently dropped here.
+    if (/^\|[\s|]*[-:][\s\-:|]*\|$/.test(tableLine)) continue
+    // Drop the leading/trailing empty segments produced by the row's outer
+    // `| … |` delimiters, then trim and unescape each cell. The `\|` → `|`
+    // unescape runs BEFORE parseLine so pipes inside inline code spans and
+    // link URLs (which bypass scanEscape) are restored too.
+    const segments = splitRowOnUnescapedPipes(tableLine)
+    if (segments.length > 0 && segments[0]?.trim() === '') segments.shift()
+    // Keep at least one cell so a degenerate `|` line still yields an empty
+    // cell (matching the previous `.replace(...).split('|')` behaviour).
+    if (segments.length > 1 && segments[segments.length - 1]?.trim() === '') segments.pop()
+    const cellTexts = segments.map((c) => c.trim().replace(/\\\|/g, '|'))
     const isHeader = r === 0
     const cells = cellTexts.map((cellText) => buildTableCell(cellText, isHeader, depth))
     rows.push({ type: 'tableRow', content: cells })
@@ -430,17 +482,48 @@ function buildListItem(itemText: string, depth: number): ListItemNode {
   return { type: 'listItem', content: [paragraph] }
 }
 
-/** Fallback production: single-line paragraph. Always matches. */
+/**
+ * Length of the trailing backslash run of a line. An ODD run means the last
+ * backslash is a hard-break marker (#710-5): `escapeText` doubles every
+ * literal backslash, so serializer output only ends a line with an odd run
+ * when `serializeInlineChild` emitted the `\` + newline hardBreak token.
+ */
+function trailingBackslashRun(line: string): number {
+  let n = 0
+  while (n < line.length && line[line.length - 1 - n] === '\\') n++
+  return n
+}
+
+/**
+ * Fallback production: paragraph. Always matches.
+ *
+ * A line whose trailing backslash run is odd ends with a hard-break marker
+ * (#710-5) — the following line is part of the SAME paragraph, joined by a
+ * `hardBreak` node, so Shift+Enter line breaks no longer split the block on
+ * blur. A trailing backslash on the LAST line stays literal (CommonMark:
+ * a backslash at end of input is not a hard break) — the serializer always
+ * emits a newline after the marker, so this case never comes from our own
+ * output.
+ */
 export function parseParagraph(
   lines: readonly string[],
   i: number,
   depth: number,
 ): BlockParseResult {
-  const line = lines[i] as string
-  const inlineNodes = parseLine(line, depth)
+  const inlineNodes: InlineNode[] = []
+  let j = i
+  for (;;) {
+    const line = lines[j] as string
+    if (j + 1 >= lines.length || trailingBackslashRun(line) % 2 === 0) {
+      inlineNodes.push(...parseLine(line, depth))
+      break
+    }
+    inlineNodes.push(...parseLine(line.slice(0, -1), depth), { type: 'hardBreak' })
+    j++
+  }
   const block: ParagraphNode =
     inlineNodes.length === 0 ? { type: 'paragraph' } : { type: 'paragraph', content: inlineNodes }
-  return { blocks: [block], consumed: 1 }
+  return { blocks: [block], consumed: j - i + 1 }
 }
 
 /**
@@ -508,7 +591,6 @@ export interface InlineState {
   readonly nodes: InlineNode[]
   inBold: boolean
   inItalic: boolean
-  inCode: boolean
   inStrike: boolean
   inHighlight: boolean
   inUnderline: boolean
@@ -526,7 +608,6 @@ export interface InlineState {
   /** Snapshots of `nodes.length` at the moment a mark opened (for revert). */
   boldOpenNodeLen: number
   italicOpenNodeLen: number
-  codeOpenNodeLen: number
   strikeOpenNodeLen: number
   highlightOpenNodeLen: number
   underlineOpenNodeLen: number
@@ -540,7 +621,6 @@ export function createInlineState(line: string, depth: number): InlineState {
     nodes: [],
     inBold: false,
     inItalic: false,
-    inCode: false,
     inStrike: false,
     inHighlight: false,
     inUnderline: false,
@@ -550,7 +630,6 @@ export function createInlineState(line: string, depth: number): InlineState {
     italicDelim: null,
     boldOpenNodeLen: 0,
     italicOpenNodeLen: 0,
-    codeOpenNodeLen: 0,
     strikeOpenNodeLen: 0,
     highlightOpenNodeLen: 0,
     underlineOpenNodeLen: 0,
@@ -574,31 +653,51 @@ function flushBuf(st: InlineState, marks: readonly PMMark[]): void {
 }
 
 /**
- * Code span: a backtick toggles code mode. Returns `true` if consumed.
- * This helper handles both the opening/closing delimiter AND literal content
- * while inside a code span — the return value signals whether to `continue`
- * the outer loop.
+ * Code span (CommonMark §6.1, single-line subset): a run of N backticks opens
+ * a span that is closed by the next run of EXACTLY N backticks. Content is
+ * taken raw (no escapes, no nested marks). When the content begins AND ends
+ * with a space and is not all spaces, one space is stripped from each side —
+ * the serializer pads with those spaces when the content starts/ends with a
+ * backtick or space (#710-2: `` `a`b` `` used to reparse corrupted; it now
+ * serializes as ``` ``a`b`` ``` and round-trips).
+ *
+ * A run with no matching closer makes the rest of the line literal text
+ * (preserving the old unclosed-backtick revert semantics).
  */
 export function scanCodeSpan(st: InlineState): boolean {
-  const ch = peek(st.scanner)
-  if (ch === '`') {
-    if (st.inCode) {
-      flushBuf(st, [{ type: 'code' }])
-      st.inCode = false
-    } else {
-      flushBuf(st, currentMarks(st))
-      st.codeOpenNodeLen = st.nodes.length
-      st.inCode = true
+  const s = st.scanner
+  if (peek(s) !== '`') return false
+  let runLen = 1
+  while (peek(s, runLen) === '`') runLen++
+  // Find the next backtick run of exactly `runLen` (longer/shorter runs are
+  // content, per CommonMark).
+  const src = s.src
+  let i = s.pos + runLen
+  while (i < src.length) {
+    if (src[i] !== '`') {
+      i++
+      continue
     }
-    st.scanner.pos++
-    return true
+    let closeLen = 1
+    while (src[i + closeLen] === '`') closeLen++
+    if (closeLen === runLen) {
+      let content = src.slice(s.pos + runLen, i)
+      if (content.startsWith(' ') && content.endsWith(' ') && content.trim() !== '') {
+        content = content.slice(1, -1)
+      }
+      flushBuf(st, currentMarks(st))
+      if (content.length > 0) {
+        st.nodes.push({ type: 'text', text: content, marks: [{ type: 'code' }] })
+      }
+      s.pos = i + closeLen
+      return true
+    }
+    i += closeLen
   }
-  if (st.inCode) {
-    st.buf += ch
-    st.scanner.pos++
-    return true
-  }
-  return false
+  // No closer: the rest of the line is literal text (delimiter included).
+  st.buf += src.slice(s.pos)
+  s.pos = src.length
+  return true
 }
 
 /** Backslash escape for any parser-significant char. */
@@ -621,6 +720,13 @@ function isEscapableChar(ch: string): boolean {
     ch === ']' ||
     ch === '~' ||
     ch === '=' ||
+    // `_`/`|` are escapable so literal underscores and pipes round-trip
+    // (#710-1, #710-4) — escapeText emits `\_` / `\|` and this accepts them.
+    ch === '_' ||
+    ch === '|' ||
+    // `.` is escapable so a paragraph beginning with `N. ` round-trips as
+    // text (serialized `N\. `) instead of re-parsing as an ordered list.
+    ch === '.' ||
     // `<` is escapable so a literal `<u>`/`</u>` in text (serialized as `\<u>`)
     // round-trips as text instead of opening an underline mark (#211 P2-5).
     ch === '<'
@@ -647,39 +753,16 @@ export function scanExternalLinkToken(st: InlineState): boolean {
   return true
 }
 
-/** Word char per CommonMark flanking (Unicode letters + numbers). */
-const WORD_CHAR_RE = /[\p{L}\p{N}]/u
-
 /**
  * CommonMark-aligned flanking test for an underscore delimiter run at the
- * scanner cursor. The flanking chars are taken from the FULL contiguous `_`
- * run in both directions — the cursor may sit mid-run if an earlier `_` was
- * already emitted as literal (e.g. the 2nd `_` of `a__b__c`), and the rule
- * must always see the whole run's outer edges, never an inner `_`.
- *
- * The run can OPEN only when the char immediately before it is absent (line
- * start) or NOT a word char, AND the char immediately after the run is
- * present and NOT whitespace. It can CLOSE only when the char before is
- * present and NOT whitespace, AND the char after is absent (line end) or NOT
- * a word char. A run that is neither a valid open nor close — e.g. a `_`/`__`
- * flanked by word chars on both sides (`snake_case`, `a_b_c`, `a__b__c`) — is
- * literal text. (`*` runs use the naive asterisk toggle and have no such
- * guard, so the asterisk path stays byte-identical to before.)
+ * scanner cursor (the cursor may sit mid-run if an earlier `_` was already
+ * emitted as literal — e.g. the 2nd `_` of `a__b__c`). Thin wrapper over the
+ * shared `underscoreRunFlank` (also used by the serializer's escape decision,
+ * #710-1, so the two halves cannot drift). `*` runs use the naive asterisk
+ * toggle and have no such guard.
  */
 function underscoreFlank(s: Scanner): { canOpen: boolean; canClose: boolean } {
-  let start = 0
-  while (peek(s, start - 1) === '_') start -= 1
-  let end = 0
-  while (peek(s, end) === '_') end += 1
-  const before = peek(s, start - 1) // '' at line start
-  const after = peek(s, end) // '' at line end
-  const beforeWord = before !== '' && WORD_CHAR_RE.test(before)
-  const afterWord = after !== '' && WORD_CHAR_RE.test(after)
-  const beforeWs = before === '' || /\s/.test(before)
-  const afterWs = after === '' || /\s/.test(after)
-  const canOpen = !beforeWord && after !== '' && !afterWs
-  const canClose = before !== '' && !beforeWs && !afterWord
-  return { canOpen, canClose }
+  return underscoreRunFlank(s.src, s.pos)
 }
 
 /** Bold toggle: `**` (asterisk, naive) or `__` (underscore, CommonMark flanking). */
@@ -814,10 +897,8 @@ function scanPlain(st: InlineState): void {
  * nested unclosed marks are handled correctly.
  */
 function revertUnclosedMarks(st: InlineState): void {
-  if (st.inCode) {
-    const reverted = st.nodes.splice(st.codeOpenNodeLen)
-    st.buf = `\`${reverted.map(nodeToPlainText).join('')}${st.buf}`
-  }
+  // (Code spans need no revert: scanCodeSpan resolves open/close eagerly and
+  // emits unmatched delimiter runs as literal text on the spot.)
   if (st.inHighlight) {
     const reverted = st.nodes.splice(st.highlightOpenNodeLen)
     st.buf = `==${reverted.map(nodeToPlainText).join('')}${st.buf}`

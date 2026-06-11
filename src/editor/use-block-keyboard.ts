@@ -86,6 +86,12 @@ export interface EditorState {
 export interface EditorLike {
   state: EditorState
   isEmpty: boolean
+  /**
+   * Node-type probe (TipTap's `Editor.isActive(name)`). Optional so plain
+   * test doubles keep working — when absent, the selection is assumed to be
+   * in a plain text block (#725 guards disabled).
+   */
+  isActive?: (name: string) => boolean
 }
 
 /**
@@ -106,6 +112,13 @@ export function handleBlockKeyDown(
     atStart: from <= 1 && selectionEmpty,
     atEnd: to >= docSize - 1 && selectionEmpty,
     isEmpty: editor.isEmpty,
+    // #725 — node-type guards: inside a code block or table, Enter must
+    // insert a newline/paragraph (ProseMirror's newlineInCode / splitBlock)
+    // instead of flushing the block, and Backspace must defer to the node's
+    // own handling (e.g. CodeBlock's clear-on-empty) instead of deleting or
+    // merging the whole block.
+    inCodeBlock: editor.isActive?.('codeBlock') ?? false,
+    inTable: editor.isActive?.('table') ?? false,
   }
   for (const rule of KEY_RULES) {
     if (rule.match(event, ctx)) {
@@ -128,6 +141,10 @@ interface KeyContext {
   atStart: boolean
   atEnd: boolean
   isEmpty: boolean
+  /** Selection is inside a code block (#725 — Enter/Backspace guards). */
+  inCodeBlock: boolean
+  /** Selection is inside a table (#725 — Enter/Backspace guards). */
+  inTable: boolean
 }
 
 interface KeyRule {
@@ -207,9 +224,13 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onShowProperties?.()
     },
   },
-  // Enter (without Shift): save + create new sibling
+  // Enter (without Shift): save + create new sibling. Suppressed inside
+  // code blocks and tables (#725) so ProseMirror's own Enter handling runs
+  // instead (newlineInCode inserts a newline in the fence; splitBlock adds a
+  // paragraph in the table cell). Exiting those nodes still works via
+  // Escape / ArrowDown-at-end.
   {
-    match: (e) => e.key === 'Enter' && !e.shiftKey,
+    match: (e, ctx) => e.key === 'Enter' && !e.shiftKey && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onEnterSave()
@@ -243,18 +264,24 @@ const KEY_RULES: ReadonlyArray<KeyRule> = [
       cb.onFocusNext()
     },
   },
-  // Backspace on empty block → delete block (unless sole remaining block)
+  // Backspace on empty block → delete block (unless sole remaining block).
+  // Suppressed inside code blocks/tables (#725): an "empty" code block or
+  // table should be unwrapped/edited by ProseMirror's Backspace handling
+  // (e.g. CodeBlock clears itself back to a paragraph), not deleted whole.
   {
-    match: (e, ctx) => e.key === 'Backspace' && ctx.isEmpty,
+    match: (e, ctx) => e.key === 'Backspace' && ctx.isEmpty && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       if (cb.isLastBlock?.()) return
       cb.onDeleteBlock({ cursorPlacement: 'end' })
     },
   },
-  // Backspace at start of non-empty block → merge with previous (p2-t11)
+  // Backspace at start of non-empty block → merge with previous (p2-t11).
+  // Suppressed inside code blocks/tables (#725): merging a fence/table into
+  // the previous block as raw text mangles its markdown.
   {
-    match: (e, ctx) => e.key === 'Backspace' && ctx.atStart && !ctx.isEmpty,
+    match: (e, ctx) =>
+      e.key === 'Backspace' && ctx.atStart && !ctx.isEmpty && !ctx.inCodeBlock && !ctx.inTable,
     handle: (e, cb) => {
       e.preventDefault()
       cb.onMergeWithPrev()

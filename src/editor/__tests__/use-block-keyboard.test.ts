@@ -1,8 +1,14 @@
 import { renderHook } from '@testing-library/react'
 import { Editor } from '@tiptap/core'
+import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import Paragraph from '@tiptap/extension-paragraph'
+import { Table } from '@tiptap/extension-table'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
+import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -834,5 +840,242 @@ describe('useBlockKeyboard — IME / composition guard', () => {
     expect(callbacks._calls['onEnterSave']).toBe(1)
 
     cleanup()
+  })
+})
+
+// -- #725: Enter/Backspace inside code blocks and tables ------------------------
+//
+// The Enter rule used to fire unconditionally on the capture-phase listener,
+// so ProseMirror's `newlineInCode` (code blocks) and `splitBlock` (table
+// cells) never ran — pressing Enter inside a fence flushed the whole block.
+// These tests drive BOTH halves of the pipeline with a REAL editor:
+//   1. `handleBlockKeyDown` (the capture-phase wrapper) must NOT intercept,
+//   2. the key dispatched through the editor's real ProseMirror keymap
+//      (`view.someProp('handleKeyDown', …)` — the #752 pattern) must insert
+//      a newline / paragraph inside the node.
+
+describe('#725 — node-type guards (code block / table)', () => {
+  const lowlight = createLowlight(common)
+
+  /** Run a keydown through the editor's ProseMirror keymap plugins. */
+  function dispatchKeydown(ed: Editor, key: string): boolean {
+    return (
+      ed.view.someProp('handleKeyDown', (handler) =>
+        handler(ed.view, new KeyboardEvent('keydown', { key })),
+      ) ?? false
+    )
+  }
+
+  function makeCodeBlockEditor(codeText: string): { editor: Editor; cleanup: () => void } {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text, CodeBlockLowlight.configure({ lowlight })],
+      content: {
+        type: 'doc',
+        content: [
+          codeText.length > 0
+            ? { type: 'codeBlock', content: [{ type: 'text', text: codeText }] }
+            : { type: 'codeBlock' },
+        ],
+      },
+    })
+    return {
+      editor,
+      cleanup: () => {
+        editor.destroy()
+        element.remove()
+      },
+    }
+  }
+
+  function makeTableEditor(): { editor: Editor; cleanup: () => void } {
+    const element = document.createElement('div')
+    document.body.appendChild(element)
+    const editor = new Editor({
+      element,
+      extensions: [Document, Paragraph, Text, Table, TableRow, TableHeader, TableCell],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'table',
+            content: [
+              {
+                type: 'tableRow',
+                content: [
+                  {
+                    type: 'tableCell',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: 'cell one' }] }],
+                  },
+                  {
+                    type: 'tableCell',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: 'cell two' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+    return {
+      editor,
+      cleanup: () => {
+        editor.destroy()
+        element.remove()
+      },
+    }
+  }
+
+  describe('Enter inside a code block', () => {
+    it('is NOT intercepted by the block rule and inserts a newline via the real keymap', () => {
+      const { editor, cleanup } = makeCodeBlockEditor('const x = 1')
+      try {
+        // Caret at the end of the code text (inside the fence).
+        editor.commands.setTextSelection(1 + 'const x = 1'.length)
+        expect(editor.isActive('codeBlock')).toBe(true)
+
+        // 1. Capture-phase wrapper: must yield (no flush, no preventDefault).
+        const cbs = makeCallbacks()
+        const event = makeEvent('Enter')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onEnterSave']).toBeUndefined()
+
+        // 2. Real ProseMirror keymap: newlineInCode handles Enter.
+        expect(dispatchKeydown(editor, 'Enter')).toBe(true)
+        expect(editor.state.doc.firstChild?.type.name).toBe('codeBlock')
+        expect(editor.state.doc.firstChild?.textContent).toBe('const x = 1\n')
+        // Still a single block — nothing was split or flushed.
+        expect(editor.state.doc.childCount).toBe(1)
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('mid-text Enter inserts the newline at the caret', () => {
+      const { editor, cleanup } = makeCodeBlockEditor('ab')
+      try {
+        editor.commands.setTextSelection(2) // between a and b
+        const cbs = makeCallbacks()
+        handleBlockKeyDown(makeEvent('Enter'), editor, cbs)
+        expect(cbs._calls['onEnterSave']).toBeUndefined()
+        expect(dispatchKeydown(editor, 'Enter')).toBe(true)
+        expect(editor.state.doc.firstChild?.textContent).toBe('a\nb')
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('Backspace at the start of a code block does NOT merge with the previous block', () => {
+      const { editor, cleanup } = makeCodeBlockEditor('const x = 1')
+      try {
+        editor.commands.setTextSelection(1) // start of the code text → ctx.atStart
+        const cbs = makeCallbacks()
+        const event = makeEvent('Backspace')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
+        expect(cbs._calls['onDeleteBlock']).toBeUndefined()
+      } finally {
+        cleanup()
+      }
+    })
+
+    it('Backspace in an EMPTY code block defers to ProseMirror (clears the fence, not the block)', () => {
+      const { editor, cleanup } = makeCodeBlockEditor('')
+      try {
+        editor.commands.setTextSelection(1)
+        expect(editor.isEmpty).toBe(true) // would have matched the delete-block rule
+        const cbs = makeCallbacks()
+        const event = makeEvent('Backspace')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onDeleteBlock']).toBeUndefined()
+        // The real keymap converts the empty fence back to a paragraph.
+        expect(dispatchKeydown(editor, 'Backspace')).toBe(true)
+        expect(editor.state.doc.firstChild?.type.name).toBe('paragraph')
+      } finally {
+        cleanup()
+      }
+    })
+  })
+
+  describe('Enter inside a table', () => {
+    it('is NOT intercepted by the block rule and adds a paragraph in the cell via the real keymap', () => {
+      const { editor, cleanup } = makeTableEditor()
+      try {
+        // Place the caret inside the first cell's text.
+        const cellOnePos = 5 // doc(0) table(1) row(2) cell(3) para(4) text(5…)
+        editor.commands.setTextSelection(cellOnePos + 'cell one'.length)
+        expect(editor.isActive('table')).toBe(true)
+
+        // 1. Capture-phase wrapper must yield.
+        const cbs = makeCallbacks()
+        const event = makeEvent('Enter')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).not.toHaveBeenCalled()
+        expect(cbs._calls['onEnterSave']).toBeUndefined()
+
+        // 2. Real keymap: splitBlock adds a second paragraph INSIDE the cell.
+        expect(dispatchKeydown(editor, 'Enter')).toBe(true)
+        const cell = editor.state.doc.firstChild?.firstChild?.firstChild
+        expect(cell?.type.name).toBe('tableCell')
+        expect(cell?.childCount).toBe(2)
+        // The table itself is intact (single top-level block).
+        expect(editor.state.doc.childCount).toBe(1)
+        expect(editor.state.doc.firstChild?.type.name).toBe('table')
+      } finally {
+        cleanup()
+      }
+    })
+  })
+
+  describe('plain paragraphs are unaffected (control)', () => {
+    it('Enter in a paragraph still flushes via onEnterSave (real editor)', () => {
+      const element = document.createElement('div')
+      document.body.appendChild(element)
+      const editor = new Editor({
+        element,
+        extensions: [Document, Paragraph, Text],
+        content: {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+        },
+      })
+      try {
+        editor.commands.setTextSelection(3)
+        const cbs = makeCallbacks()
+        const event = makeEvent('Enter')
+        handleBlockKeyDown(event, editor, cbs)
+        expect(event.preventDefault).toHaveBeenCalledOnce()
+        expect(cbs._calls['onEnterSave']).toBe(1)
+      } finally {
+        editor.destroy()
+        element.remove()
+      }
+    })
+
+    it('mock editors without isActive keep the legacy behaviour (guards default off)', () => {
+      const editor = makeEditor({})
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('Enter'), editor, cbs)
+      expect(cbs._calls['onEnterSave']).toBe(1)
+    })
+
+    it('mock editor reporting codeBlock suppresses Enter and Backspace rules', () => {
+      const editor: EditorLike = {
+        ...makeEditor({ from: 1, to: 1, isEmpty: true }),
+        isActive: (name: string) => name === 'codeBlock',
+      }
+      const cbs = makeCallbacks()
+      handleBlockKeyDown(makeEvent('Enter'), editor, cbs)
+      handleBlockKeyDown(makeEvent('Backspace'), editor, cbs)
+      expect(cbs._calls['onEnterSave']).toBeUndefined()
+      expect(cbs._calls['onDeleteBlock']).toBeUndefined()
+      expect(cbs._calls['onMergeWithPrev']).toBeUndefined()
+    })
   })
 })
