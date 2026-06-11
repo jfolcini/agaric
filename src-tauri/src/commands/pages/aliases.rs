@@ -43,18 +43,6 @@ pub async fn set_page_aliases_inner(
     // sync replay / scripted imports must be normalised here.
     let page_id = page_id.to_ascii_uppercase();
 
-    // Verify page exists and is a page type
-    let exists: bool = sqlx::query_scalar!(
-        r#"SELECT COUNT(*) > 0 AS "exists!: bool" FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL"#,
-        page_id,
-    )
-    .fetch_one(pool)
-    .await?;
-
-    if !exists {
-        return Err(AppError::NotFound("page not found".into()));
-    }
-
     // M-21: wrap the DELETE + per-alias INSERT loop in a single
     // `BEGIN IMMEDIATE` transaction so that a crash, pool-acquire
     // failure, or per-row INSERT error mid-loop rolls the page back to
@@ -63,6 +51,25 @@ pub async fn set_page_aliases_inner(
     // immediate write lock instead of interleaving their phases.
     // allow-raw-tx: page_aliases is its own table, emits no op_log entries (#110)
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+    // #661 — verify the page exists and is a live page block INSIDE the
+    // IMMEDIATE tx (the F01/F02/F03 sibling-command pattern). Pre-fix the
+    // probe ran on the pool BEFORE `BEGIN IMMEDIATE`; a concurrent
+    // `delete_block` landing in the gap between the probe and the write
+    // lock would leave the freshly-inserted aliases attached to a
+    // tombstoned page (TOCTOU). Running it under the writer lock makes
+    // the existence check and the alias writes atomic against any
+    // concurrent delete.
+    let exists: bool = sqlx::query_scalar!(
+        r#"SELECT COUNT(*) > 0 AS "exists!: bool" FROM blocks WHERE id = ?1 AND block_type = 'page' AND deleted_at IS NULL"#,
+        page_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    if !exists {
+        return Err(AppError::NotFound("page not found".into()));
+    }
 
     // Delete existing aliases
     sqlx::query!("DELETE FROM page_aliases WHERE page_id = ?1", page_id)

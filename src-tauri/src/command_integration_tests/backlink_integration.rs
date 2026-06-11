@@ -1854,7 +1854,7 @@ async fn get_block_history_returns_ops_for_block() {
         .await
         .unwrap();
 
-    let resp = get_block_history_inner(&pool, block.id.clone().into_string(), None, None, None)
+    let resp = get_block_history_inner(&pool, block.id.clone(), None, None, None)
         .await
         .unwrap();
 

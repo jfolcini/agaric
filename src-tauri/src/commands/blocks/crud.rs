@@ -312,10 +312,14 @@ pub async fn edit_block_inner(
         parent_id,
         position,
         deleted_at: None,
-        todo_state: None,
-        priority: None,
-        due_date: None,
-        scheduled_date: None,
+        // #656: an edit only changes `content`; the task metadata is
+        // untouched, so thread the existing values through rather than
+        // hardcoding `None` (which would wipe task state for any consumer
+        // that applies this row optimistically).
+        todo_state: existing.todo_state,
+        priority: existing.priority,
+        due_date: existing.due_date,
+        scheduled_date: existing.scheduled_date,
         page_id: existing.page_id,
     })
 }

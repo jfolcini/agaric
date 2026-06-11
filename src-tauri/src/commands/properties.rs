@@ -710,6 +710,10 @@ pub async fn set_scheduled_date_inner(
 ///
 /// # Errors
 ///
+/// - [`AppError::Validation`] — `key` is a system-managed lifecycle property
+///   (`created_at` / `completed_at` / `repeat-*`); these are written only by
+///   internal state-transition helpers and must not be deleted by FE/MCP
+///   callers, or recurrence bookkeeping breaks (#658).
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_property_inner(
@@ -719,6 +723,23 @@ pub async fn delete_property_inner(
     block_id: ActiveBlockId,
     key: String,
 ) -> Result<(), AppError> {
+    // #658: `delete_property_core` is the unguarded path used internally by
+    // state-transition helpers (e.g. clearing `created_at` / `completed_at`
+    // / `repeat-*` during a recurrence transition). The public command must
+    // NOT let callers remove those system-managed *lifecycle* keys, or
+    // recurrence bookkeeping silently breaks.
+    //
+    // The reserved *column* keys (`todo_state` / `priority` / `due_date` /
+    // `scheduled_date`) are intentionally NOT blocked: clearing them is a
+    // legitimate user action (e.g. removing a block's due date), and core
+    // routes them to the matching `blocks` column. So the guard is the
+    // built-in set MINUS the reserved column keys — i.e. exactly the
+    // lifecycle keys.
+    if crate::op::is_builtin_property_key(&key) && !crate::op::is_reserved_property_key(&key) {
+        return Err(AppError::Validation(format!(
+            "cannot delete system-managed property '{key}'"
+        )));
+    }
     delete_property_core(pool, device_id, materializer, block_id.into_string(), key).await
 }
 
