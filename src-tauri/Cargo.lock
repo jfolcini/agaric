@@ -99,6 +99,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "agaric-diagnostics"
+version = "0.5.0"
+dependencies = [
+ "agaric",
+ "regex",
+ "rustc-hash",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

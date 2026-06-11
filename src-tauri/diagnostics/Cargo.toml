@@ -1,0 +1,74 @@
+# #645 — diagnostics carve-out crate.
+#
+# Holds the two read-only DB inspection binaries (`op_log_histogram` and
+# `audit_cross_space_refs`) that previously lived as `[[bin]]` targets in
+# the `agaric` app crate. Moving them into their own workspace member
+# (a) keeps `tauri-bundler` from scanning them as app `[[bin]]` entries it
+# must copy into the .deb/.rpm/AppImage (see the deleted note in
+# `../Cargo.toml`), and (b) proves the multi-crate workspace wiring ahead
+# of a future core carve.
+#
+# The bins call only the app lib's PUBLIC API
+# (`agaric_lib::{db::init_pool, error::AppError}` and the
+# `spaces::cross_space_validation` doc reference), so the crate depends on
+# `agaric` via a path dep. That pulls the whole app lib (heavy but correct
+# — the same lib the bins linked against before the move).
+[package]
+name = "agaric-diagnostics"
+version = "0.5.0"
+edition = "2024"
+rust-version = "1.95.0"
+license = "GPL-3.0-or-later"
+publish = false
+
+# Mirror the app crate's lint posture so clippy/rustc behave identically
+# under CI (the app crate declares these as package-level tables, not
+# `[workspace.lints]`, so we replicate them here rather than inherit).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+fallible_impl_from = "deny"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+large_futures = "warn"
+default_trait_access = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+
+[dependencies]
+# Path dep on the app crate — the lib target is named `agaric_lib`, so the
+# bins keep their `agaric_lib::…` paths verbatim. No default features are
+# enabled on `agaric` beyond its (empty) default set; the heavy Tauri lib
+# is linked because the diagnostics tools share the app's DB layer.
+agaric = { path = ".." }
+
+# Versions copied verbatim from `../Cargo.toml`'s [dependencies] so the
+# diagnostics bins resolve to the exact same crate versions they linked
+# against in the app crate.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+regex = "1"
+rustc-hash = "2.1.2"
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[[bin]]
+name = "op_log_histogram"
+path = "src/bin/op_log_histogram.rs"
+
+[[bin]]
+name = "audit_cross_space_refs"
+path = "src/bin/audit_cross_space_refs.rs"
+
+# cargo-machete name-matches `use agaric::…`, but the bins reference the lib
+# TARGET name `agaric_lib::…` (the `agaric` package renames its lib), so the
+# static check can't see the usage and false-flags `agaric` as unused. It IS
+# used (every DB call goes through `agaric_lib::…`) — ignore it here.
+[package.metadata.cargo-machete]
+ignored = ["agaric"]
