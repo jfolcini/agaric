@@ -186,8 +186,8 @@ describe('serialize', () => {
   })
 
   describe('special nodes', () => {
-    it('hardBreak emits newline', () => {
-      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\nb')
+    it('hardBreak emits backslash hard break (#710-5)', () => {
+      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\\\nb')
     })
 
     it('multiple paragraphs joined with newline', () => {
@@ -1138,9 +1138,9 @@ describe('external links', () => {
       ).toBe('[wiki](https://en.wikipedia.org/wiki/Link_(disambiguation))')
     })
 
-    it('link with unbalanced ) in URL escapes it', () => {
+    it('link with unbalanced ) in URL escapes it (#710-6: backslash, not %29)', () => {
       expect(serialize(doc(paragraph(linked('broken', 'https://x.com/foo)bar'))))).toBe(
-        '[broken](https://x.com/foo%29bar)',
+        '[broken](https://x.com/foo\\)bar)',
       )
     })
 
@@ -2037,12 +2037,12 @@ describe('inline variant dispatch', () => {
   })
 
   describe('hardBreak variant', () => {
-    it('emits a newline (happy path)', () => {
-      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\nb')
+    it('emits a backslash hard break (#710-5, happy path)', () => {
+      expect(serialize(doc(paragraph(text('a'), hardBreak(), text('b'))))).toBe('a\\\nb')
     })
 
     it('closes active bold before emitting hardBreak (edge: atom amid marks)', () => {
-      expect(serialize(doc(paragraph(bold('a'), hardBreak(), text('b'))))).toBe('**a**\nb')
+      expect(serialize(doc(paragraph(bold('a'), hardBreak(), text('b'))))).toBe('**a**\\\nb')
     })
   })
 
@@ -2076,7 +2076,7 @@ describe('inline variant dispatch', () => {
           ),
         ),
       )
-      expect(out).toBe(`a #[${ULID}] b [[${ULID}]] c ((${REF_ULID})) d\ne`)
+      expect(out).toBe(`a #[${ULID}] b [[${ULID}]] c ((${REF_ULID})) d\\\ne`)
     })
   })
 })
@@ -2118,9 +2118,10 @@ describe('external link scan edge cases', () => {
     const para = result.content?.[0] as ParagraphNode | undefined
     const first = para?.content?.[0] as TextNode | undefined
     expect(first?.marks?.some((m) => m.type === 'link')).toBe(true)
-    // The href is the raw url slice (with the backslash preserved).
+    // `\)` is the serializer's escape for an unbalanced `)` (#710-6), so
+    // unescapeUrl decodes it back to the literal paren in the href.
     const linkMark = first?.marks?.find((m) => m.type === 'link')
-    expect(linkMark).toEqual({ type: 'link', attrs: { href: 'a\\)b' } })
+    expect(linkMark).toEqual({ type: 'link', attrs: { href: 'a)b' } })
   })
 
   it('rejects [[ULID]] as an external link (double-bracket prefix is block_link)', () => {
@@ -2292,5 +2293,195 @@ describe('FEAT-3p7: foreign-space block_link round-trip is stable', () => {
     expect(md2).toBe(md1)
     // Also structurally equivalent
     expect(parsed1).toEqual(original)
+  })
+})
+
+// -- #710: markdown round-trip corruption family -------------------------------
+//
+// Six empirically-verified corruption bugs, each pinned by BOTH directions:
+//   doc → md → doc   (structural: what blur+refocus does to editor content)
+//   md  → doc → md   (byte-stable: stored markdown must not drift)
+
+describe('#710 round-trip corruption family', () => {
+  /** md → doc → md must be byte-identical. */
+  function expectByteStable(md: string): void {
+    expect(serialize(parse(md))).toBe(md)
+  }
+
+  describe('1. literal underscores are escaped (were unescapable)', () => {
+    it('doc→md: text with snake-style underscores serializes escaped', () => {
+      expect(serialize(doc(paragraph(text('snake _foo_ case'))))).toBe('snake \\_foo\\_ case')
+    })
+
+    it('doc→md→doc: literal `_foo_` stays plain text (was re-parsed as italic)', () => {
+      const original = doc(paragraph(text('snake _foo_ case')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('doc→md→doc: intraword snake_case round-trips', () => {
+      const original = doc(paragraph(text('snake_case_name')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('md→doc→md: escaped underscores are byte-stable', () => {
+      expectByteStable('snake \\_foo\\_ case')
+      expectByteStable('a \\_\\_init\\_\\_ b')
+    })
+
+    it('user-typed `_em_` still parses as italic (parser unchanged)', () => {
+      expect(parse('_em_')).toEqual(doc(paragraph(italic('em'))))
+    })
+  })
+
+  describe('2. inline code containing backticks (delimiter-run fences)', () => {
+    it('doc→md: backtick in code content grows the delimiter run', () => {
+      expect(serialize(doc(paragraph(code('a`b'))))).toBe('``a`b``')
+    })
+
+    it('doc→md: leading/trailing backtick content gets space padding', () => {
+      expect(serialize(doc(paragraph(code('`lead'))))).toBe('`` `lead ``')
+      expect(serialize(doc(paragraph(code('trail`'))))).toBe('`` trail` ``')
+    })
+
+    it('doc→md→doc: code with embedded backticks survives (was corrupted)', () => {
+      for (const content of ['a`b', '`lead', 'trail`', 'a``b`c', '```']) {
+        const original = doc(paragraph(text('x '), code(content), text(' y')))
+        expect(parse(serialize(original))).toEqual(original)
+      }
+    })
+
+    it('md→doc→md: multi-backtick code spans are byte-stable', () => {
+      expectByteStable('``a`b``')
+      expectByteStable('x ``a`b`` y')
+      expectByteStable('`` `lead ``')
+    })
+  })
+
+  describe('3. escaped pipes inside table cells (split was escape-unaware)', () => {
+    it('doc→md→doc: a cell containing a literal | keeps one cell (was split in two)', () => {
+      const original = doc(
+        table(
+          tableRow(tableHeader(paragraph(text('a|b'))), tableHeader(paragraph(text('c')))),
+          tableRow(tableCell(paragraph(text('1|2'))), tableCell(paragraph(text('3')))),
+        ),
+      )
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('doc→md→doc: backslash + pipe cell text survives', () => {
+      const original = doc(
+        table(
+          tableRow(tableHeader(paragraph(text('A\\B')))),
+          tableRow(tableCell(paragraph(text('C\\|D')))),
+        ),
+      )
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('md→doc→md: escaped cell pipes are byte-stable', () => {
+      expectByteStable('| a\\|b | c |\n| --- | --- |')
+      expectByteStable('| a\\|b | c |\n| --- | --- |\n| 1\\|2 | 3 |')
+    })
+
+    it('parse: `a\\|b` is ONE cell with a literal pipe, not two cells', () => {
+      const result = parse('| a\\|b |\n| --- |')
+      const tbl = result.content?.[0] as TableNode
+      const headerRow = tbl.content?.[0]
+      expect(headerRow?.content).toHaveLength(1)
+      expect(headerRow?.content?.[0]?.content?.[0]?.content).toEqual([
+        { type: 'text', text: 'a|b' },
+      ])
+    })
+  })
+
+  describe('4. paragraphs with a leading | (were re-parsed as tables)', () => {
+    it('doc→md: leading pipe is escaped', () => {
+      expect(serialize(doc(paragraph(text('|not a table'))))).toBe('\\|not a table')
+    })
+
+    it('doc→md→doc: a paragraph starting with | stays a paragraph', () => {
+      const original = doc(paragraph(text('|foo | bar |')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('md→doc→md: escaped leading pipe is byte-stable', () => {
+      expectByteStable('\\|not a table')
+    })
+  })
+
+  describe('5. hard breaks (were serialized as bare \\n = block separator)', () => {
+    it('doc→md→doc: text + hardBreak + text stays ONE paragraph (was split into 2 blocks)', () => {
+      const original = doc(paragraph(text('first'), hardBreak(), text('second')))
+      const md = serialize(original)
+      expect(md).toBe('first\\\nsecond')
+      expect(parse(md)).toEqual(original)
+      // The parsed doc has exactly one block — shouldSplitOnBlur-style checks
+      // (parse().content.length > 1) no longer split it.
+      expect(parse(md).content).toHaveLength(1)
+    })
+
+    it('doc→md→doc: trailing hardBreak round-trips', () => {
+      const original = doc(paragraph(text('a'), hardBreak()))
+      const md = serialize(original)
+      expect(md).toBe('a\\\n')
+      expect(parse(md)).toEqual(original)
+    })
+
+    it('doc→md→doc: hardBreak before a literal trailing backslash (even/odd run disambiguation)', () => {
+      // text 'a\' escapes to `a\\` (even run); the hardBreak marker adds one
+      // more `\` making the run odd — parser must strip exactly the marker.
+      const original = doc(paragraph(text('a\\'), hardBreak(), text('b')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('md→doc→md: backslash hard break is byte-stable', () => {
+      expectByteStable('first\\\nsecond')
+      expectByteStable('a\\\nb\\\nc')
+    })
+
+    it('paragraph blocks separated by a bare newline still split (escaped backslash at EOL is literal)', () => {
+      expect(parse('a\\\\\nb')).toEqual(doc(paragraph(text('a\\')), paragraph(text('b'))))
+    })
+
+    it('backslash at end of input stays literal (CommonMark)', () => {
+      expect(parse('end\\')).toEqual(doc(paragraph(text('end\\'))))
+    })
+  })
+
+  describe('6. user-typed %29 in URLs (was decoded to `)` on every parse)', () => {
+    it('md→doc: literal %29 in a URL is preserved in the href', () => {
+      const result = parse('[x](https://e.com/a%29b)')
+      const para = result.content?.[0] as ParagraphNode
+      const first = para.content?.[0] as TextNode
+      const linkMark = first.marks?.find((m) => m.type === 'link')
+      expect(linkMark).toEqual({ type: 'link', attrs: { href: 'https://e.com/a%29b' } })
+    })
+
+    it('md→doc→md: user-typed %29 is byte-stable', () => {
+      expectByteStable('[x](https://e.com/a%29b)')
+    })
+
+    it('doc→md→doc: unbalanced ) in href round-trips via backslash escape', () => {
+      const original = doc(paragraph(linked('x', 'https://x.com/foo)bar')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('doc→md→doc: unbalanced ( in href round-trips (previously broke the link)', () => {
+      const original = doc(paragraph(linked('x', 'https://x.com/a(b')))
+      expect(serialize(original)).toBe('[x](https://x.com/a\\(b)')
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('doc→md→doc: literal backslash in href round-trips', () => {
+      const original = doc(paragraph(linked('x', 'https://x.com/a\\b')))
+      expect(parse(serialize(original))).toEqual(original)
+    })
+
+    it('legacy stored %29 escapes degrade gracefully (percent form kept, URL still valid)', () => {
+      // Old serializer output for an unbalanced `)`. The new parser no longer
+      // decodes it — the href keeps the (equivalent) percent-encoded form.
+      const md = '[broken](https://x.com/foo%29bar)'
+      expect(serialize(parse(md))).toBe(md)
+    })
   })
 })

@@ -73,10 +73,23 @@ export interface ContentDelta {
 /**
  * Serialize a ProseMirror JSON doc and compare against the original markdown.
  * Pure function — no editor instance required.
+ *
+ * #711 — canonicalization is not an edit. `mount` parses the stored markdown
+ * and `unmount` re-serializes it, and the serializer canonicalizes
+ * (`3. item` → `1. item`, `_em_` → `*em*`, `snake_case` → `snake\_case`, …).
+ * Comparing the new markdown against the RAW original therefore flagged
+ * `changed: true` on a plain focus+blur with zero edits, silently rewriting
+ * stored content and polluting the op log / undo history. When the raw
+ * strings differ, compare against the canonicalized original
+ * (`serialize(parse(original))`) instead: only real document changes count.
  */
 export function computeContentDelta(originalMarkdown: string, currentJson: DocNode): ContentDelta {
   const newMarkdown = serialize(currentJson, notifyUnknownNodeTypeToast)
-  return { newMarkdown, changed: newMarkdown !== originalMarkdown, originalMarkdown }
+  if (newMarkdown === originalMarkdown) {
+    return { newMarkdown, changed: false, originalMarkdown }
+  }
+  const canonicalOriginal = serialize(parse(originalMarkdown))
+  return { newMarkdown, changed: newMarkdown !== canonicalOriginal, originalMarkdown }
 }
 
 /**

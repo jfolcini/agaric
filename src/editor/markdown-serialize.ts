@@ -17,6 +17,7 @@
  * this file.
  */
 
+import { underscoreRunFlank } from './markdown-common'
 import type {
   BlockquoteNode,
   CodeBlockNode,
@@ -42,8 +43,24 @@ function escapeText(s: string): string {
       out += '\\\\'
       continue
     }
-    if (ch === '*' || ch === '`' || ch === '~' || ch === '=') {
+    // `|` is the table-cell separator AND the table block gate
+    // (`startsWith('|')`) — unescaped it can turn a paragraph into a table
+    // on reparse (#710-4).
+    if (ch === '*' || ch === '`' || ch === '~' || ch === '=' || ch === '|') {
       out += `\\${ch}`
+      continue
+    }
+    // `_` is an emphasis delimiter (GFM) — escape exactly the runs the
+    // parser's flanking rule could treat as delimiters (#710-1), so a
+    // literal `_foo_` survives the round-trip while intraword underscores
+    // (`snake_case`) stay readable and unescaped. `'unknown'` edges: this
+    // node may be concatenated with neighboring marked nodes, so a run at a
+    // node edge is escaped pessimistically. Inserted backslash escapes never
+    // flip a flank verdict: every escapable char is punctuation (non-word,
+    // non-whitespace), exactly like the backslash replacing it.
+    if (ch === '_') {
+      const { canOpen, canClose } = underscoreRunFlank(s, i, 'unknown')
+      out += canOpen || canClose ? `\\${ch}` : ch
       continue
     }
     // `<u>` / `</u>` are the underline storage tokens (#211 P2-5) — escape the
@@ -154,26 +171,39 @@ function groupByLink(content: readonly InlineNode[]): NodeGroup[] {
 }
 
 /** Escape parentheses in URLs to prevent breaking `[text](url)` syntax.
- * Balanced parens are handled by the parser's depth tracking. Only
- * unbalanced `)` needs encoding.
+ *
+ * Balanced parens are handled by the parser's depth tracking
+ * (`scanBalancedClose`), so they stay raw. Unbalanced parens are
+ * backslash-escaped — `scanBalancedClose` honours `\x` pairs, so an escaped
+ * paren neither opens nor closes the link URL. Literal backslashes are
+ * doubled so `unescapeUrl` can decode unambiguously.
+ *
+ * #710-6: the previous implementation percent-encoded an unbalanced `)` as
+ * `%29`, and `unescapeUrl` decoded EVERY `%29` — corrupting URLs in which the
+ * user literally typed `%29`. Backslash escaping is invertible without
+ * touching user-typed percent sequences.
  */
 function escapeUrl(url: string): string {
-  let depth = 0
-  let result = ''
-  for (const ch of url) {
+  // Pass 1: find the unbalanced parens (unmatched `)` and unclosed `(`).
+  const unbalanced = new Set<number>()
+  const openStack: number[] = []
+  for (let i = 0; i < url.length; i++) {
+    const ch = url[i]
     if (ch === '(') {
-      depth++
-      result += ch
+      openStack.push(i)
     } else if (ch === ')') {
-      if (depth > 0) {
-        depth--
-        result += ch
-      } else {
-        result += '%29'
-      }
-    } else {
-      result += ch
+      if (openStack.length > 0) openStack.pop()
+      else unbalanced.add(i)
     }
+  }
+  for (const i of openStack) unbalanced.add(i)
+  // Pass 2: emit, escaping backslashes and the unbalanced parens.
+  let result = ''
+  for (let i = 0; i < url.length; i++) {
+    const ch = url[i]
+    if (ch === '\\') result += '\\\\'
+    else if (unbalanced.has(i)) result += `\\${ch}`
+    else result += ch
   }
   return result
 }
@@ -194,6 +224,28 @@ function serializeInlineAtom(token: string, activeMarks: Set<string>): string {
 }
 
 /**
+ * Wrap inline-code content in a backtick run that cannot collide with
+ * backticks inside the content (#710-2). CommonMark: pick a delimiter run
+ * one longer than the longest backtick run in the content, and pad with a
+ * single space when the content starts/ends with a backtick (or with a
+ * space, which the parser would otherwise strip).
+ */
+function serializeInlineCode(text: string): string {
+  const runs = text.match(/`+/g)
+  const longest = runs ? Math.max(...runs.map((r) => r.length)) : 0
+  const fence = '`'.repeat(longest + 1)
+  // Pad when the content could be confused with the delimiter (leading or
+  // trailing backtick) or when a boundary space would be stripped by the
+  // parser's CommonMark space-trimming rule. All-space content is NOT
+  // padded — the parser only strips when the trimmed content is non-empty.
+  const needsPad =
+    text.startsWith('`') ||
+    text.endsWith('`') ||
+    ((text.startsWith(' ') || text.endsWith(' ')) && text.trim() !== '')
+  return needsPad ? `${fence} ${text} ${fence}` : `${fence}${text}${fence}`
+}
+
+/**
  * Serialize a single TextNode, coalescing its marks with the currently
  * active mark set. Mutates `activeMarks` to reflect the new active set
  * after this node is emitted.
@@ -204,7 +256,7 @@ function serializeInlineText(child: TextNode, activeMarks: Set<string>): string 
 
   if (hasCode) {
     // Code is exclusive — close all active marks, emit backtick-wrapped content
-    return serializeInlineAtom(`\`${child.text}\``, activeMarks)
+    return serializeInlineAtom(serializeInlineCode(child.text), activeMarks)
   }
 
   // Compute desired bold/italic/strike/highlight mark set for this node
@@ -255,7 +307,13 @@ function serializeInlineChild(
   if (child.type === 'block_ref') {
     return serializeInlineAtom(`((${child.attrs.id}))`, activeMarks)
   }
-  if (child.type === 'hardBreak') return serializeInlineAtom('\n', activeMarks)
+  // #710-5: a CommonMark backslash hard break (`\` + newline) — distinct from
+  // the bare `\n` block separator, so a Shift+Enter line break round-trips as
+  // ONE paragraph instead of being split into two blocks on blur. The parser
+  // recognises an odd trailing-backslash run (escapeText doubles literal
+  // backslashes, so serializer output can only end a line with an odd run via
+  // this token).
+  if (child.type === 'hardBreak') return serializeInlineAtom('\\\n', activeMarks)
   const unknown = child as { type: string }
   onUnknownNode?.(unknown.type)
   return serializeInlineAtom('', activeMarks)
@@ -311,7 +369,12 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
     }
   }
 
-  return result
+  // A paragraph whose text begins with an ordered-list marker (`N. `) would
+  // re-parse as an orderedList — escape the dot (the parser accepts `\.`)
+  // so the text stays a paragraph. Only the start of the paragraph can
+  // trigger the list production (hard-break continuation lines are consumed
+  // by the paragraph parser before the list production ever sees them).
+  return result.replace(/^(\d+)\. /, '$1\\. ')
 }
 
 function serializeHeading(node: HeadingNode, onUnknownNode?: (type: string) => void): string {
@@ -362,6 +425,26 @@ function serializeBlockquote(node: BlockquoteNode, onUnknownNode?: (type: string
   return lines.map((line) => `> ${line}`).join('\n')
 }
 
+/**
+ * Escape any `|` in a serialized cell that is not already escaped, scanning
+ * escape-aware (`\x` pairs are copied verbatim). `escapeText` already emits
+ * `\|` for plain text (#710-4), so this pass only catches pipes from paths
+ * that bypass `escapeText` — inline-code content and link URLs.
+ */
+function escapeCellPipes(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '\\' && i + 1 < text.length) {
+      out += ch + text[i + 1]
+      i++
+      continue
+    }
+    out += ch === '|' ? '\\|' : ch
+  }
+  return out
+}
+
 function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void): string {
   if (!node.content || node.content.length === 0) return ''
   const rows = node.content
@@ -371,18 +454,16 @@ function serializeTable(node: TableNode, onUnknownNode?: (type: string) => void)
     const cells: string[] = []
     if (row.content) {
       for (const cell of row.content) {
-        // `serializeParagraph` already routes text through `escapeText`,
-        // which converts every literal `\` into `\\` before we see it
-        // here. The only table-specific work left is escaping `|`, the
-        // column separator. CodeQL's `js/incomplete-sanitization` flags
-        // the bare `replace(/\|/g, '\\|')` because it cannot see across
-        // the function boundary into `escapeText`; the alert is a known
-        // false positive and is dismissed in the code-scanning UI.
+        // A markdown table cell is single-line, but Enter inside a table
+        // (#725) can leave multiple paragraphs in a PM cell — serialize all
+        // of them (joined with a space) instead of silently dropping
+        // everything after the first.
         const text =
           cell.content && cell.content.length > 0
-            ? serializeParagraph(cell.content[0] as ParagraphNode, onUnknownNode).replace(
-                /\|/g,
-                '\\|',
+            ? escapeCellPipes(
+                cell.content
+                  .map((p) => serializeParagraph(p as ParagraphNode, onUnknownNode))
+                  .join(' '),
               )
             : ''
         cells.push(text)

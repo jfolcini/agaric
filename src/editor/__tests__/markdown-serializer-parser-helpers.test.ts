@@ -237,21 +237,35 @@ describe('parseParagraph', () => {
 // -- Inline scanner helpers --------------------------------------------------
 
 describe('scanCodeSpan', () => {
-  it('opens and closes a code span on backtick, emitting code-marked text', () => {
+  it('consumes a whole `x` span in one call, emitting code-marked text', () => {
     const st = createInlineState('`x`', 0)
-    // Open
     expect(scanCodeSpan(st)).toBe(true)
-    expect(st.inCode).toBe(true)
-    // Literal content
-    expect(scanCodeSpan(st)).toBe(true)
-    expect(st.buf).toBe('x')
-    // Close
-    expect(scanCodeSpan(st)).toBe(true)
-    expect(st.inCode).toBe(false)
+    expect(st.scanner.pos).toBe(3)
     expect(st.nodes).toEqual([{ type: 'text', text: 'x', marks: [{ type: 'code' }] }])
   })
 
-  it('returns false for non-backtick outside of code mode', () => {
+  it('matches a multi-backtick delimiter run, keeping inner backticks literal (#710-2)', () => {
+    const st = createInlineState('``a`b``', 0)
+    expect(scanCodeSpan(st)).toBe(true)
+    expect(st.scanner.pos).toBe(7)
+    expect(st.nodes).toEqual([{ type: 'text', text: 'a`b', marks: [{ type: 'code' }] }])
+  })
+
+  it('strips one boundary space from padded content (CommonMark, #710-2)', () => {
+    const st = createInlineState('`` `tick ``', 0)
+    expect(scanCodeSpan(st)).toBe(true)
+    expect(st.nodes).toEqual([{ type: 'text', text: '`tick', marks: [{ type: 'code' }] }])
+  })
+
+  it('emits an unmatched delimiter run + remainder as literal text', () => {
+    const st = createInlineState('``a`', 0)
+    expect(scanCodeSpan(st)).toBe(true)
+    expect(st.scanner.pos).toBe(4)
+    expect(st.buf).toBe('``a`')
+    expect(st.nodes).toEqual([])
+  })
+
+  it('returns false for non-backtick input', () => {
     const st = createInlineState('abc', 0)
     expect(scanCodeSpan(st)).toBe(false)
     expect(st.scanner.pos).toBe(0)
