@@ -113,8 +113,9 @@ pub async fn journal_for_date_inner(
 ///
 /// # FEAT-3p5 — per-space lookup
 ///
-/// The lookup query joins `blocks` against `block_properties` filtering
-/// `key = 'space' AND value_ref = <space_id>`. The same date can therefore
+/// The lookup query filters `blocks` on `b.space_id = <space_id>` (#533,
+/// migration 0086 — `space_id` is a first-class column). The same date can
+/// therefore
 /// have a distinct journal page in every space — switching space takes
 /// the user to that space's daily note, not a shared global note.
 ///

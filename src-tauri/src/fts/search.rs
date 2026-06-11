@@ -909,14 +909,17 @@ async fn fts_fetch_rows(
     };
     fb.add_tags_all(PREFIX, &active_tag_ids);
 
-    // FEAT-3 Phase 2 — optional space-id filter. Resolves content blocks
-    // to their owning page via `b.page_id` and intersects
-    // against `block_properties(key = 'space').value_ref`. Mirrors the
-    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` shape used
-    // by the pagination helpers — kept inline (via the builder) here
-    // because the dynamic-SQL shape of this query (varying param indices
-    // for parent / tag / space filters) prevents the compile-time sqlx
-    // macro from being applied.
+    // FEAT-3 Phase 2 — optional space-id filter. Filters on the
+    // first-class `b.space_id` column directly (#533, migration 0086 — the
+    // former `b.page_id IN (SELECT … block_properties WHERE key = 'space')`
+    // sub-select is gone). Appends the bare `b.space_id = ?N` form (no
+    // `?N IS NULL OR` guard — this fragment is only appended when a space
+    // is active, so the NULL short-circuit of the pagination helpers'
+    // `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` is
+    // unnecessary here). Kept inline (via the builder) because the
+    // dynamic-SQL shape of this query (varying param indices for parent /
+    // tag / space filters) prevents the compile-time sqlx macro from being
+    // applied.
     fb.add_space(PREFIX, space_id);
 
     // PEND-54 — page-name glob include / exclude filters. Each entry

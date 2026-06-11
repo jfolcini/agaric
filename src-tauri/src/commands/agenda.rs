@@ -50,9 +50,8 @@ pub async fn count_agenda_batch_inner(
     // The literal mirrors
     // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
     // inline here because `sqlx::query!` requires a string literal and does
-    // not accept `concat!()`. Resolves the agenda-cached block to its
-    // owning page via `b.page_id` and intersects
-    // against `block_properties(key = 'space').value_ref`.
+    // not accept `concat!()`. Filters on the first-class `b.space_id`
+    // column (#533, migration 0086).
     let dates_json = serde_json::to_string(&dates)?;
     let space_filter = scope.as_filter_param();
     let rows = sqlx::query!(
@@ -110,10 +109,9 @@ pub async fn count_agenda_batch_by_source_inner(
     let scope_param = scope.as_filter_param();
     // FEAT-3p4 — ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
-    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`]. Resolves the
-    // agenda-cached block to its owning page via `b.page_id` and intersects
-    // against `block_properties(key = 'space').value_ref`. Uses the
-    // compile-time-checked `query!` macro — the only difference from
+    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] and filters
+    // on the first-class `b.space_id` column (#533, migration 0086). Uses
+    // the compile-time-checked `query!` macro — the only difference from
     // `count_agenda_batch_inner` is the extra `ac.source` output column.
     let rows = sqlx::query!(
         "SELECT ac.date, ac.source, COUNT(*) AS \"cnt!: i64\" \
@@ -250,9 +248,8 @@ pub async fn list_projected_agenda_inner(
     )> = sqlx::query_as(
         // FEAT-3p4 — ?7 (space_id) drives the shared space-filter clause.
         // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
-        // query uses dynamic-typed `query_as`. Resolves the cached block
-        // to its owning page via `b.page_id` and
-        // intersects against `block_properties(key = 'space').value_ref`.
+        // query uses dynamic-typed `query_as`. Filters on the first-class
+        // `b.space_id` column (#533, migration 0086).
         "SELECT pac.block_id, pac.projected_date, pac.source,
                 b.id, b.block_type, b.content, b.parent_id, b.position,
                 b.deleted_at,
@@ -400,10 +397,8 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // is the denormalised root-page column (migration 0027).
     // FEAT-3p4 — ?1 (space_id) drives the shared space-filter clause.
     // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
-    // `sqlx::query_as!` requires a string literal directly. Resolves
-    // the repeating block to its owning page via
-    // `b.page_id` and intersects against
-    // `block_properties(key = 'space').value_ref`.
+    // `sqlx::query_as!` requires a string literal directly. Filters on the
+    // first-class `b.space_id` column (#533, migration 0086).
     let rows = sqlx::query_as!(
         RepeatingBlockRow,
         r#"SELECT b.id, b.block_type, b.content, b.parent_id, b.position,

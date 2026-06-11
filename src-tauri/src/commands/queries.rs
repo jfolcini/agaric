@@ -514,9 +514,8 @@ pub async fn count_backlinks_batch_inner(
     // PEND-35 Tier 1.6 — `?2` carries the active space id (or NULL for
     // [`SpaceScope::Global`]). The shape mirrors
     // `crate::backlink::query::eval_backlink_query`:
-    //   `(?N IS NULL OR b.page_id IN (
-    //        SELECT bp.block_id FROM block_properties bp
-    //        WHERE bp.key = 'space' AND bp.value_ref = ?N))`
+    //   `(?N IS NULL OR b.space_id = ?N)`
+    // (#533, migration 0086 — `space_id` is a first-class column)
     // — applied to the SOURCE block (`b`) so a backlink whose source
     // page lives outside the active space is excluded from the count.
     let sql = "SELECT bl.target_id, COUNT(*) as cnt \

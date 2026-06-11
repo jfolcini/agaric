@@ -48,15 +48,15 @@
 //!
 //! | File | Why structurally different |
 //! |---|---|
-//! | `commands/pages.rs` (alias-prefix lookup) | `b.id IN (...)` instead of `b.page_id IN (...)` — page rows match by their own id, not their owning page. |
-//! | `pagination/history.rs` (op-log filter) | `json_extract(ol.payload, '$.block_id') IN (...)` — operates on the op-log payload, not a `blocks` row. |
-//! | `fts/search.rs` / `fts/toggle_filter.rs` (dynamic SQL) | No `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
+//! | `pagination/history.rs` (op-log filter) | `ol.block_id IN (SELECT id FROM blocks WHERE space_id = ?N)` — operates on op-log rows, resolving each to its `blocks` row via a sub-select; the bare `space_id` (no `b.` alias) is structurally distinct from the canonical `b.space_id`. |
+//! | `fts/search.rs` / `fts/toggle_filter.rs` (dynamic SQL) | Bare `b.space_id = ?N` with no `?N IS NULL OR` guard — the filter is conditionally appended only when `space_id.is_some()`, so the inline shape is fundamentally different. |
 //!
-//! These files use the same *block_properties(key='space')*
-//! sub-select but with a different surrounding bracket structure,
-//! so the canonical-shape regex below does not (and should not)
-//! match them. If the canonical fragment ever changes shape, those
-//! sites will need separate review.
+//! All production space filters read the first-class `blocks.space_id`
+//! column (#533, migration 0086); the structurally-different sites above
+//! differ only in their surrounding clause (sub-select vs. guard-less
+//! append), not in the underlying column. The canonical-shape regex below
+//! does not (and should not) match them. If the canonical fragment ever
+//! changes shape, those sites will need separate review.
 
 /// Canonical inline form of the space-filter SQL fragment with `?N`
 /// standing in for the bind index (which varies from `?2` to `?8`

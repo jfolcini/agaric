@@ -278,9 +278,9 @@ pub async fn batch_resolve_inner(
     let space_filter = scope.as_filter_param();
 
     // FEAT-3 Phase 7: scope to the current space using the canonical
-    // `b.page_id IN (SELECT bp.block_id FROM block_properties bp
-    // WHERE bp.key = 'space' AND bp.value_ref = ?)` filter (matches the pattern
-    // shipped in `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
+    // `b.space_id = ?` filter (#533, migration 0086 — `space_id` is now a
+    // first-class column; matches the pattern shipped in
+    // `pagination/{hierarchy,trash}.rs` and `fts/search.rs`).
     // The `?2 IS NULL OR …` shape lets cross-space callers
     // ([`SpaceScope::Global`]) bypass the filter entirely while
     // space-scoped callers ([`SpaceScope::Active`]) get the
@@ -659,10 +659,10 @@ pub async fn get_blocks(
 /// The space-filter shape mirrors `pagination::list_trash` (and the
 /// canonical [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`]
 /// fragment inlined across `pagination/{hierarchy,trash}.rs`):
-/// `b.page_id IN (SELECT bp.block_id FROM
-/// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?1)`.
-/// A soft-deleted block retains its `page_id` column value so the
-/// filter applies identically to live and deleted blocks.
+/// `b.space_id = ?1` (#533, migration 0086 — `space_id` is now a
+/// first-class column). A soft-deleted block retains its `space_id`
+/// column value so the filter applies identically to live and deleted
+/// blocks.
 ///
 /// Returns the raw row count — descendants of a deleted root are
 /// counted individually. The badge only needs a non-zero / count

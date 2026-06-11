@@ -417,8 +417,8 @@ pub async fn list_tags_by_prefix_inner(
 /// (`TagList.tsx`), which used to call
 /// `list_tags_by_prefix({ prefix: "", limit: 500 })` and silently get
 /// only 200 rows because `list_tags_by_prefix_inner` clamps at
-/// `MAX_TAGS_PREFIX = 200`.  Tags are space-scoped via
-/// `block_properties(key = 'space')` on the tag block (see
+/// `MAX_TAGS_PREFIX = 200`.  Tags are space-scoped via the tag block's
+/// own `blocks.space_id` column (#533, migration 0086 — see
 /// `add_tag_inner`'s cross-space guard), so this command takes a
 /// `space_id` and applies the same filter shape as
 /// `list_all_pages_in_space_inner`.

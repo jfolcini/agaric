@@ -112,9 +112,10 @@ pub async fn get_page_aliases_inner(
 /// Look up a page by one of its aliases. Returns `(page_id, title)` if found.
 ///
 /// `scope` (PEND-35 Tier 1.2) — [`SpaceScope::Active`] restricts the
-/// match to aliases pointing at pages whose `space` property equals the
-/// wrapped [`SpaceId`]. Mirrors the
-/// `(?N IS NULL OR pa.page_id IN (SELECT bp.block_id ...))` short-circuit
+/// match to aliases pointing at pages whose `b.space_id` equals the
+/// wrapped [`SpaceId`] (#533, migration 0086 — `space_id` is a first-class
+/// column). Mirrors the
+/// `(?N IS NULL OR b.space_id = ?N)` short-circuit
 /// already used by [`list_page_aliases_by_prefix_inner`] so the alias
 /// resolver and the prefix picker apply the same scoping rule.
 /// [`SpaceScope::Global`] keeps the cross-space behaviour for callers
