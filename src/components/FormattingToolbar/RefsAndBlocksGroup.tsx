@@ -10,12 +10,13 @@
  */
 
 import type { Editor } from '@tiptap/react'
-import { FileCode2, Heading, Info, Table2 } from 'lucide-react'
+import { FileCode2, Heading, Info, Table, Table2 } from 'lucide-react'
 import type React from 'react'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
 import { CodeLanguageSelector } from '@/components/editor-toolbar/CodeLanguageSelector'
 import { HeadingLevelSelector } from '@/components/editor-toolbar/HeadingLevelSelector'
+import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { LANG_SHORT, toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
 
@@ -402,6 +403,89 @@ export function renderTableOpsButton({
         data-editor-portal
       >
         <TableOpsSelector
+          editor={editor}
+          onClose={() => {
+            setOpen(false)
+            if (mode === 'overflow') onOverflowClose()
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+interface TablePickerButtonProps {
+  editor: Editor
+  mode: RenderMode
+  t: (key: string) => string
+  open: boolean
+  setOpen: (next: boolean | ((prev: boolean) => boolean)) => void
+  onOverflowClose: () => void
+}
+
+/**
+ * Render the table-insert grid-picker trigger (#215b). Mirrors the callout /
+ * table-ops popover triggers; opens a `TablePicker` grid whose selection
+ * inserts an N×M table via the same `insertTable` path as the `/table` slash
+ * command. Unlike the table-ops trigger this is always present (it inserts a
+ * new table) — it does not depend on the selection being inside a table.
+ */
+export function renderTablePickerButton({
+  editor,
+  mode,
+  t,
+  open,
+  setOpen,
+  onOverflowClose,
+}: TablePickerButtonProps): React.ReactElement {
+  if (mode === 'sentinel') {
+    return (
+      <Button variant="ghost" size="icon-xs" aria-hidden tabIndex={-1}>
+        <Table className="h-3.5 w-3.5" />
+      </Button>
+    )
+  }
+
+  const trigger =
+    mode === 'overflow' ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        aria-label={t('toolbar.insertTable')}
+        className="justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11"
+        onPointerDown={(e) => {
+          e.preventDefault()
+          setOpen((prev) => !prev)
+        }}
+      >
+        <Table className="h-3.5 w-3.5 mr-2" />
+        <span>{t('toolbar.insertTable')}</span>
+      </Button>
+    ) : (
+      <Tip label={t('toolbar.insertTableTip')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={t('toolbar.insertTable')}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            setOpen((prev) => !prev)
+          }}
+        >
+          <Table className="h-3.5 w-3.5" />
+        </Button>
+      </Tip>
+    )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>{trigger}</PopoverAnchor>
+      <PopoverContent
+        align="start"
+        className="w-auto max-w-[calc(100vw-2rem)] p-1"
+        data-editor-portal
+      >
+        <TablePicker
           editor={editor}
           onClose={() => {
             setOpen(false)

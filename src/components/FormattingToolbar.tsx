@@ -45,6 +45,7 @@ import {
   renderCodeBlockButton,
   renderHeadingButton,
   renderTableOpsButton,
+  renderTablePickerButton,
 } from './FormattingToolbar/RefsAndBlocksGroup'
 import { type RenderMode, renderConfigButton, Tip } from './FormattingToolbar/shared'
 import { Button } from './ui/button'
@@ -78,6 +79,7 @@ export function FormattingToolbar({
   const [codeBlockPopoverOpen, setCodeBlockPopoverOpen] = useState(false)
   const [calloutPopoverOpen, setCalloutPopoverOpen] = useState(false)
   const [tableOpsPopoverOpen, setTableOpsPopoverOpen] = useState(false)
+  const [tablePickerPopoverOpen, setTablePickerPopoverOpen] = useState(false)
   const [overflowPopoverOpen, setOverflowPopoverOpen] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -169,6 +171,15 @@ export function FormattingToolbar({
           t,
           open: tableOpsPopoverOpen,
           setOpen: setTableOpsPopoverOpen,
+          onOverflowClose: closeOverflow,
+        })
+      case 'toolbar.insertTable':
+        return renderTablePickerButton({
+          editor,
+          mode,
+          t,
+          open: tablePickerPopoverOpen,
+          setOpen: setTablePickerPopoverOpen,
           onOverflowClose: closeOverflow,
         })
       case 'toolbar.cyclePriority':

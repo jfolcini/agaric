@@ -54,6 +54,10 @@ export function buildToolbarItems(
 
   // Group 1 — structure
   for (const c of structureButtons) pushButton(c.label, 1, c.priority ?? 0)
+  // #215b — table-insert grid picker. Always present (structural insert with a
+  // `/table` slash twin); demoted toward overflow like the other long-tail
+  // structure inserts (divider 35 / callout 30) so it drops in first.
+  pushButton('toolbar.insertTable', 1, 45, true)
   // Table ops ride here too (structural), but only while in a table. High
   // priority so it survives overflow collapse — it's contextual and the
   // user is actively working in the table they'd want to edit.
