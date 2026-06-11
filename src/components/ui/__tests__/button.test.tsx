@@ -4,7 +4,8 @@
  * Validates:
  *  - Each size variant renders correctly
  *  - Coarse pointer media query classes are present for touch-target sizing
- *  - lg and icon-lg variants do NOT add coarse overrides (already ≥48px)
+ *    on EVERY size variant — lg/icon-lg are h-10/size-10 (40px), below the
+ *    44px AGENTS.md touch-target mandate, so they bump to 44px too (#759)
  *  - a11y compliance via axe audit
  */
 
@@ -92,9 +93,11 @@ describe('Button', () => {
     expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
-  it('lg size does NOT include coarse pointer override (already >=48px)', () => {
+  // #759: lg is h-10 (40px) — below the 44px touch-target mandate, so it
+  // gets the same coarse-pointer bump as every other sub-44px size.
+  it('lg size includes coarse pointer height override (h-10 is only 40px)', () => {
     const btn = renderButton('lg')
-    expect(btn.className).not.toContain('[@media(pointer:coarse)]')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:h-11')
   })
 
   it('icon size includes coarse pointer size override', () => {
@@ -112,9 +115,10 @@ describe('Button', () => {
     expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
-  it('icon-lg size does NOT include coarse pointer override (already >=48px)', () => {
+  // #759: icon-lg is size-10 (40px) — below the 44px touch-target mandate.
+  it('icon-lg size includes coarse pointer size override (size-10 is only 40px)', () => {
     const btn = renderButton('icon-lg')
-    expect(btn.className).not.toContain('[@media(pointer:coarse)]')
+    expect(btn.className).toContain('[@media(pointer:coarse)]:size-11')
   })
 
   // -- a11y -------------------------------------------------------------------

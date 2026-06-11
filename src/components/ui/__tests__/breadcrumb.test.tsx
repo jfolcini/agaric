@@ -18,10 +18,12 @@
  *  - axe(container) audit passes (incl. after the FEAT-13 focus-style change)
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+import { t } from '@/lib/i18n'
 
 import {
   Breadcrumb,
@@ -341,6 +343,141 @@ describe('Breadcrumb', () => {
       const hiddenC = await screen.findByText('C')
       await user.click(hiddenC)
       expect(middleSelect).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // #759 — the overflow popover claims role="menu" / role="menuitem", so it
+  // must actually implement the APG menu pattern: focus moves into the menu
+  // on open and ArrowDown / ArrowUp / Home / End rove focus across the
+  // menuitems (the toolbar's ArrowLeft/ArrowRight handler only queries
+  // `data-breadcrumb-crumb`, which the portaled menuitems don't carry).
+  describe('#759 overflow popover menu semantics (APG menu pattern)', () => {
+    /** 6-crumb trail → middle crumbs B, C, D collapse into the popover. */
+    function makeOverflowItems(onMiddleSelect?: () => void): BreadcrumbCrumb[] {
+      return [
+        { id: 'A', label: 'A', onSelect: vi.fn() },
+        { id: 'B', label: 'B', onSelect: vi.fn() },
+        { id: 'C', label: 'C', onSelect: onMiddleSelect ?? vi.fn() },
+        { id: 'D', label: 'D', onSelect: vi.fn() },
+        { id: 'E', label: 'E', onSelect: vi.fn() },
+        { id: 'F', label: 'F' },
+      ]
+    }
+
+    async function openMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole('button', { name: t('breadcrumb.showHidden') }))
+      await screen.findByRole('menu')
+      return screen.getAllByRole('menuitem')
+    }
+
+    it('routes the default trigger label through the i18n catalog', () => {
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      expect(screen.getByRole('button', { name: t('breadcrumb.showHidden') })).toBeInTheDocument()
+    })
+
+    it('trigger advertises the popup with aria-haspopup="menu"', () => {
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const trigger = screen.getByRole('button', { name: t('breadcrumb.showHidden') })
+      expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    })
+
+    it('exposes the collapsed crumbs as menuitems inside a labelled menu', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      expect(screen.getByRole('menu', { name: t('breadcrumb.showHidden') })).toBeInTheDocument()
+      expect(menuitems).toHaveLength(3)
+      expect(menuitems.map((el) => el.textContent)).toEqual(['B', 'C', 'D'])
+    })
+
+    it('moves focus to the first menuitem when the menu opens', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+    })
+
+    it('removes menuitems from the Tab order (roving focus, tabindex="-1")', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      for (const item of menuitems) {
+        expect(item).toHaveAttribute('tabindex', '-1')
+      }
+    })
+
+    it('ArrowDown roves focus forward and wraps at the end', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+      await user.keyboard('{ArrowDown}')
+      expect(menuitems[1]).toHaveFocus()
+      await user.keyboard('{ArrowDown}')
+      expect(menuitems[2]).toHaveFocus()
+      await user.keyboard('{ArrowDown}')
+      expect(menuitems[0]).toHaveFocus()
+    })
+
+    it('ArrowUp roves focus backward and wraps at the start', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+      await user.keyboard('{ArrowUp}')
+      expect(menuitems[2]).toHaveFocus()
+      await user.keyboard('{ArrowUp}')
+      expect(menuitems[1]).toHaveFocus()
+    })
+
+    it('Home / End jump to the first / last menuitem', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+      await user.keyboard('{End}')
+      expect(menuitems[2]).toHaveFocus()
+      await user.keyboard('{Home}')
+      expect(menuitems[0]).toHaveFocus()
+    })
+
+    it('ArrowLeft / ArrowRight inside the menu do not yank focus to the toolbar', async () => {
+      // React portals bubble through the REACT tree: keydowns on the portaled
+      // menuitems reach the toolbar's roving-focus handler, which (without
+      // its containment guard) would focus a toolbar crumb and dismiss the
+      // menu on any key it handles that the menu's own handler doesn't stop.
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+      await user.keyboard('{ArrowRight}')
+      expect(menuitems[0]).toHaveFocus()
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+      await user.keyboard('{ArrowLeft}')
+      expect(menuitems[0]).toHaveFocus()
+      expect(screen.getByRole('menu')).toBeInTheDocument()
+    })
+
+    it('Enter on an arrow-focused menuitem selects the crumb and closes the menu', async () => {
+      const user = userEvent.setup()
+      const onMiddleSelect = vi.fn()
+      render(<Breadcrumb items={makeOverflowItems(onMiddleSelect)} ariaLabel="Trail" />)
+      const menuitems = await openMenu(user)
+      await waitFor(() => expect(menuitems[0]).toHaveFocus())
+      await user.keyboard('{ArrowDown}') // B → C
+      await user.keyboard('{Enter}')
+      expect(onMiddleSelect).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
+    })
+
+    it('passes axe with the menu open', async () => {
+      const user = userEvent.setup()
+      render(<Breadcrumb items={makeOverflowItems()} ariaLabel="Trail" />)
+      await openMenu(user)
+      // The popover content is portaled to document.body, so audit the body.
+      const results = await axe(document.body)
+      expect(results).toHaveNoViolations()
     })
   })
 

@@ -41,6 +41,8 @@ save-if: ${{ github.ref == 'refs/heads/main' }}
 
 Every remote `uses:` is SHA-pinned to a commit, not a tag — verified across the workflow set. Dependabot runs weekly for the GitHub Actions ecosystem; npm and cargo are deferred pending grouping rules (see §14, R2). Rust-based developer tools (cargo-deny, cargo-machete, cargo-audit, sqruff, typos, zizmor, taplo) install via `taiki-e/install-action` against upstream prebuilt binaries, side-stepping the cold-cache compile that previously dominated lint runs. Workflow-level permissions default to `contents: read`, with per-job write overrides only where genuinely required (`id-token: write` and `attestations: write` appear only on the attestation jobs). `zizmor` lints the workflow files themselves on a baseline-then-tighten posture; `actionlint` via prek closes the local-side gap so workflow regressions surface before the push.
 
+**npm `overrides`.** `package.json` pins `uuid` to `^14.0.0` — its sole consumer is `mermaid` (which accepts `^11.1.0 || ^12 || ^13 || ^14.0.0`); the override holds the resolution at the newest major instead of letting the lockfile drift across mermaid's wide range (#759). `smol-toml >=1.6.1` is an advisory floor.
+
 **License headers.** The repo-level `LICENSE` (GPL-3.0-or-later) is canonical; no per-file SPDX headers are enforced for new files. The non-policy is documented here so future contributors don't re-litigate it. Revisit trigger: a downstream packager — Flathub, Homebrew tap, Nix — requires per-file SPDX for ingestion.
 
 ## SLSA provenance, Sigstore, and the unsigned-binary tradeoff

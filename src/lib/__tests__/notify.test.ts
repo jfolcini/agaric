@@ -1,6 +1,7 @@
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 
 // `notify.retry` is the standardised "error + Retry action" helper
@@ -30,7 +31,9 @@ describe('notify.retry', () => {
     expect(msg).toBe('Sync failed')
     expect(opts?.['id']).toBe('retry')
     const action = opts?.['action'] as { label?: string; onClick?: () => void } | undefined
-    expect(action?.label).toBe('Retry')
+    // #759: the fallback label routes through the i18n catalog, not a
+    // hardcoded English literal.
+    expect(action?.label).toBe(t('action.retry'))
 
     // The forwarded onClick wraps the supplied callback.
     expect(typeof action?.onClick).toBe('function')

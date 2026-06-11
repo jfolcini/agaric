@@ -4,12 +4,15 @@
  * Validates:
  *  - displayName is set on all exported components
  *  - ref forwarding for simple HTML sub-components
+ *  - mobile Sheet's sr-only title/description come from the i18n catalog (#759)
  */
 
-import { fireEvent, render } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import * as React from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
+
+import { t } from '@/lib/i18n'
 
 import {
   Sidebar,
@@ -351,5 +354,60 @@ describe('Sidebar a11y', () => {
       rules: { region: { enabled: false } },
     })
     expect(results).toHaveNoViolations()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #759 — mobile Sheet sr-only header strings route through t()
+// ---------------------------------------------------------------------------
+
+describe('#759 mobile Sheet a11y description', () => {
+  beforeEach(() => {
+    // Below the 768px breakpoint `useIsMobile()` reports true on first render
+    // (it reads window.innerWidth in its useState initialiser).
+    Object.defineProperty(window, 'innerWidth', {
+      value: 375,
+      configurable: true,
+      writable: true,
+    })
+  })
+
+  function renderMobileSidebar() {
+    return render(
+      <SidebarProvider>
+        <Sidebar>
+          <SidebarContent>Content</SidebarContent>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    )
+  }
+
+  it('describes the opened Sheet with the i18n title + description (sr-only)', async () => {
+    renderMobileSidebar()
+
+    fireEvent.click(screen.getByRole('button', { name: t('sidebar.toggleSidebar') }))
+
+    const dialog = await screen.findByRole('dialog')
+    // Radix wires aria-labelledby / aria-describedby to SheetTitle /
+    // SheetDescription — both must resolve to catalog strings, not
+    // hardcoded English literals.
+    expect(dialog).toHaveAccessibleName(t('sidebar.label'))
+    expect(dialog).toHaveAccessibleDescription(t('sidebar.mobileDescription'))
+  })
+
+  it('opened mobile Sheet passes axe', async () => {
+    renderMobileSidebar()
+
+    fireEvent.click(screen.getByRole('button', { name: t('sidebar.toggleSidebar') }))
+    // Scope the audit to the Sheet itself — Radix's focus-guard spans on
+    // document.body (tabindex="0" + aria-hidden) trip axe's
+    // aria-hidden-focus rule and are framework-owned, not ours.
+    const dialog = await screen.findByRole('dialog')
+
+    await waitFor(async () => {
+      const results = await axe(dialog)
+      expect(results).toHaveNoViolations()
+    })
   })
 })
