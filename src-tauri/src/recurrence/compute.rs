@@ -4,7 +4,14 @@
 use sqlx::SqlitePool;
 
 use super::parser::shift_date;
-use crate::commands::{create_block_in_tx, is_valid_iso_date, set_property_in_tx};
+// #642: `is_valid_iso_date` moved to the neutral `crate::domain::block_ops`
+// layer so recurrence depends *down* on it. `create_block_in_tx` /
+// `set_property_in_tx` are the create-block / set-property command cores
+// (op_log + payload entangled) and stay in `crate::commands` —
+// TODO(#642 follow-up): extract their tx-scoped bodies into `domain` once
+// the op_log/payload plumbing can be threaded through the neutral layer.
+use crate::commands::{create_block_in_tx, set_property_in_tx};
+use crate::domain::block_ops::is_valid_iso_date;
 use crate::materializer::Materializer;
 use crate::op_log;
 use crate::pagination::BlockRow;
@@ -164,7 +171,7 @@ pub(crate) async fn handle_recurrence_in_tx(
         // above reads `value_date`, but `set_property` allows type-loose
         // writes — a `repeat-until` planted as `"2025-12-31T23:59:59Z"`
         // would compare wrong (`T` > `-`) and the recurrence would
-        // never stop. We re-use `crate::commands::is_valid_iso_date`
+        // never stop. We re-use `crate::domain::block_ops::is_valid_iso_date`
         // (already imported) which enforces the same strict shape used
         // when the value was originally written via `set_property_in_tx`.
         // On malformed input we warn loudly and stop the recurrence
@@ -377,7 +384,7 @@ pub(crate) async fn handle_recurrence_in_tx(
     //     and `repeat-origin` is `migrations/0016_seed_repeat_properties.sql`.
     //   - ISO-date validation for the *value* written to
     //     `repeat-until` (and other date columns) is enforced by
-    //     `crate::commands::is_valid_iso_date` inside
+    //     `crate::domain::block_ops::is_valid_iso_date` inside
     //     `set_property_in_tx`. The L-100 fix above this block
     //     re-uses the same validator to gate the `repeat-until`
     //     end-condition compare so a malformed value cannot slip

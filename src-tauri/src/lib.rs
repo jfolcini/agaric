@@ -6,9 +6,14 @@ pub mod cache;
 pub mod cancellation;
 pub mod commands;
 pub mod dag;
+// #642: neutral domain layer — declared right after `commands` for
+// alphabetical proximity but is a strictly *lower* layer (depends on
+// neither `commands` nor `fts`). Both depend down on it; this breaks the
+// former `commands ⇄ fts` module cycle.
 pub mod db;
 pub mod deeplink;
 pub mod device;
+pub mod domain;
 pub mod draft;
 pub mod error;
 pub mod filters;

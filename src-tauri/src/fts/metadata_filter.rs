@@ -35,7 +35,7 @@
 //! ensures at most one branch fires per row. `value_bool` is internal
 //! (not user-typed) and remains out of scope.
 
-use crate::commands::queries::{
+use crate::domain::search_types::{
     DateFilter, DateOp, NamedDateRange, SearchFilter, SearchPropertyFilter,
 };
 use crate::error::AppError;
@@ -719,7 +719,7 @@ fn monday_of(d: NaiveDate) -> NaiveDate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::queries::{NamedDateRange, SearchFilter, SearchPropertyFilter};
+    use crate::domain::search_types::{NamedDateRange, SearchFilter, SearchPropertyFilter};
 
     fn fixed_today() -> NaiveDate {
         // 2026-05-18 is a Monday — pinned so `this-week` math is stable.

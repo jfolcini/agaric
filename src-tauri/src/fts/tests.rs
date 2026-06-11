@@ -4559,7 +4559,7 @@ async fn partitioned_happy_path_pages_and_blocks_within_caps() {
         "partitioned".to_string(),
         2,
         3,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4600,7 +4600,7 @@ async fn partitioned_pages_partition_is_page_typed_only_with_mixed_types() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4630,7 +4630,7 @@ async fn partitioned_blocks_partition_is_unrestricted() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4671,7 +4671,7 @@ async fn partitioned_caps_honour_each_partition_limit() {
         "partitioned".to_string(),
         1,
         1,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4694,7 +4694,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         "partitioned".to_string(),
         2,
         3,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4715,7 +4715,7 @@ async fn partitioned_has_more_flags_reflect_partition_overflow() {
         "partitioned".to_string(),
         20,
         20,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4741,7 +4741,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
             q.to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await
@@ -4771,7 +4771,7 @@ async fn partitioned_empty_query_returns_empty_partitions() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             space_id: Some(FTS_SPACE_A_ID.to_string()),
             ..Default::default()
         },
@@ -4807,7 +4807,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -4818,7 +4818,7 @@ async fn partitioned_ignores_block_type_filter_in_filter_struct() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             // PEND-61 Phase 1: this field MUST be ignored — partitioning
             // by block_type is what the IPC does.
             block_type_filter: Some("page".to_string()),
@@ -4893,7 +4893,7 @@ async fn partitioned_space_filter_excludes_other_spaces_from_both_partitions() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             space_id: Some(FTS_SPACE_A_ID.to_string()),
             ..Default::default()
         },
@@ -4936,7 +4936,7 @@ async fn partitioned_regex_mode_routes_through_partitioned_dispatch() {
         "partition".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -4978,7 +4978,7 @@ async fn partitioned_zero_limits_yield_empty_partitions_and_no_has_more() {
         "partitioned".to_string(),
         0,
         0,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5043,7 +5043,7 @@ async fn partitioned_max_search_results_ceiling_propagates_to_has_more() {
         "partitioned".to_string(),
         50,
         50,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5148,7 +5148,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     );
     let fut1 = crate::commands::queries::search_blocks_partitioned_inner(
@@ -5156,7 +5156,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     );
     let fut2 = crate::commands::queries::search_blocks_partitioned_inner(
@@ -5164,7 +5164,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     );
     let fut3 = crate::commands::queries::search_blocks_partitioned_inner(
@@ -5172,7 +5172,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     );
     let fut4 = crate::commands::queries::search_blocks_partitioned_inner(
@@ -5180,7 +5180,7 @@ async fn concurrent_partitioned_searches_do_not_deadlock_or_starve() {
         "partitioned".to_string(),
         8,
         40,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     );
 
@@ -5263,7 +5263,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await;
@@ -5276,7 +5276,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await;
@@ -5289,7 +5289,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await;
@@ -5302,7 +5302,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await;
@@ -5315,7 +5315,7 @@ async fn concurrent_pool_starvation_bound_500ms() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await;
@@ -5361,7 +5361,7 @@ async fn partitioned_over_long_query_is_rejected() {
         huge,
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5395,7 +5395,7 @@ async fn partitioned_sub_trigram_only_under_cap_short_circuits() {
         short,
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5438,7 +5438,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
     assign_to_space_for_fts(&pool, PT_PAGE_IDS[0], FTS_SPACE_A_ID).await;
     rebuild_fts_index(&pool).await.unwrap();
 
-    let filter = crate::commands::queries::SearchFilter {
+    let filter = crate::domain::search_types::SearchFilter {
         parent_id: Some(PT_PAGE_IDS[0].to_string()),
         tag_ids: vec!["01HQTAG000000000000000TAG1".to_string()],
         space_id: Some(FTS_SPACE_A_ID.to_string()),
@@ -5455,18 +5455,18 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         block_type_filter: Some("page".to_string()),
         state_filter: vec!["TODO".to_string()],
         priority_filter: vec!["A".to_string()],
-        due_filter: Some(crate::commands::queries::DateFilter::Named(
-            crate::commands::queries::NamedDateRange::Today,
+        due_filter: Some(crate::domain::search_types::DateFilter::Named(
+            crate::domain::search_types::NamedDateRange::Today,
         )),
-        scheduled_filter: Some(crate::commands::queries::DateFilter::Op {
-            op: crate::commands::queries::DateOp::Gte,
+        scheduled_filter: Some(crate::domain::search_types::DateFilter::Op {
+            op: crate::domain::search_types::DateOp::Gte,
             date: "2026-01-01".to_string(),
         }),
-        property_filters: vec![crate::commands::queries::SearchPropertyFilter {
+        property_filters: vec![crate::domain::search_types::SearchPropertyFilter {
             key: "owner".to_string(),
             value: "alice".to_string(),
         }],
-        excluded_property_filters: vec![crate::commands::queries::SearchPropertyFilter {
+        excluded_property_filters: vec![crate::domain::search_types::SearchPropertyFilter {
             key: "archived".to_string(),
             value: "true".to_string(),
         }],
@@ -5513,7 +5513,7 @@ async fn partitioned_empty_space_returns_empty_partitions() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5578,7 +5578,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await;
@@ -5589,7 +5589,7 @@ async fn partitioned_giant_space_completes_within_1s() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5681,7 +5681,7 @@ async fn partitioned_case_sensitive_with_or_preserves_case() {
         "Foo OR Bar".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             case_sensitive: true,
             ..Default::default()
         },
@@ -5771,7 +5771,7 @@ async fn partitioned_whole_word_with_and_combines_terms() {
         "foo AND bar".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             whole_word: true,
             ..Default::default()
         },
@@ -5849,7 +5849,7 @@ async fn partitioned_regex_alternation_matches_both() {
         "(foo|bar).*baz".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -5917,7 +5917,7 @@ async fn partitioned_nfc_query_matches_nfd_content() {
         nfc_query.to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -5969,7 +5969,7 @@ async fn partitioned_regex_bare_alternation_matches_both_arms_under_case_flag() 
         "foo|bar".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             case_sensitive: false,
             ..Default::default()
@@ -6005,7 +6005,7 @@ async fn partitioned_regex_invalid_pattern_returns_validation_error() {
         "*".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -6072,7 +6072,7 @@ async fn partitioned_scan_returns_pages_when_blocks_outrank_them() {
         "partitioned".to_string(),
         5,  // page_limit
         20, // block_limit
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -6144,7 +6144,7 @@ async fn partitioned_regex_page_filter_returns_pages_when_content_dominates() {
         "regex_page_target_".to_string(),
         20,
         20,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -6290,7 +6290,7 @@ async fn cancellation_drops_in_flight_query() {
         "partitioned".to_string(),
         50,
         50,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         Some(token),
     )
     .await;
@@ -6319,7 +6319,7 @@ async fn cancellation_drops_in_flight_query() {
             "partitioned".to_string(),
             50,
             50,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             Some(token2),
         )
         .await;
@@ -6427,7 +6427,7 @@ async fn slow_acquire_logs_warning() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             None,
         )
         .await
@@ -6470,7 +6470,7 @@ async fn cancellation_does_not_lose_in_flight_results() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             Some(token_a),
         )
         .await
@@ -6485,7 +6485,7 @@ async fn cancellation_does_not_lose_in_flight_results() {
             "partitioned".to_string(),
             10,
             10,
-            crate::commands::queries::SearchFilter::default(),
+            crate::domain::search_types::SearchFilter::default(),
             Some(token_b),
         )
         .await
@@ -6564,7 +6564,7 @@ async fn rapid_fire_burst_pattern_does_not_starve_pool() {
                 "partitioned".to_string(),
                 10,
                 10,
-                crate::commands::queries::SearchFilter::default(),
+                crate::domain::search_types::SearchFilter::default(),
                 Some(token),
             )
             .await
@@ -6989,7 +6989,7 @@ async fn partitioned_regex_pre_cancelled_token_returns_cancelled() {
         "partition".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -7234,7 +7234,7 @@ async fn partitioned_has_more_is_true_at_exactly_the_cap() {
         "capboundary".to_string(),
         100,
         100,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -7265,7 +7265,7 @@ async fn partitioned_over_limit_is_rejected() {
         "partitioned".to_string(),
         101,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -7281,7 +7281,7 @@ async fn partitioned_over_limit_is_rejected() {
         "partitioned".to_string(),
         10,
         101,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -7303,7 +7303,7 @@ async fn partitioned_limits_at_exactly_the_cap_are_accepted() {
         "partitioned".to_string(),
         100,
         100,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await;
@@ -7326,7 +7326,7 @@ async fn partitioned_invalid_regex_fails_fast_with_validation() {
         "(unclosed".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -7358,7 +7358,7 @@ async fn partitioned_pre_cancelled_token_returns_cancelled() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         Some(token),
     )
     .await;
@@ -7381,8 +7381,8 @@ async fn search_empty_property_key_is_rejected() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
-            property_filters: vec![crate::commands::queries::SearchPropertyFilter {
+        crate::domain::search_types::SearchFilter {
+            property_filters: vec![crate::domain::search_types::SearchPropertyFilter {
                 key: "   ".to_string(),
                 value: "x".to_string(),
             }],
@@ -7416,7 +7416,7 @@ async fn search_empty_space_id_matches_nothing() {
         "partitioned".to_string(),
         10,
         10,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             space_id: Some(String::new()),
             ..Default::default()
         },
@@ -7825,7 +7825,7 @@ async fn be_a10_sqla2_partitioned_regex_has_more_at_cap() {
         "regexcap".to_string(),
         cap,
         cap,
-        crate::commands::queries::SearchFilter {
+        crate::domain::search_types::SearchFilter {
             is_regex: true,
             ..Default::default()
         },
@@ -7862,7 +7862,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         Some(over),
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await
@@ -7878,7 +7878,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         Some(MAX_SEARCH_RESULTS),
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await;
@@ -7900,7 +7900,7 @@ async fn be_a10_sqla1_cursor_rejects_over_cap_limit() {
         "sqla1".to_string(),
         None,
         None,
-        crate::commands::queries::SearchFilter::default(),
+        crate::domain::search_types::SearchFilter::default(),
         None,
     )
     .await;

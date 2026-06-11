@@ -2155,9 +2155,9 @@ export type RestoreToOpResult = {
 };
 
 /**
- *  Response row for [`search_blocks_inner`].
+ *  Response row for `search_blocks_inner`.
  *
- *  Mirrors [`ActiveBlockRow`] column-for-column so the wire format is a
+ *  Mirrors `ActiveBlockRow` column-for-column so the wire format is a
  *  strict superset (every field in `ActiveBlockRow` is reproduced
  *  verbatim) and adds `snippet` — the FTS5 [`snippet`] window with
  *  literal `<mark>...</mark>` boundaries on every match span. The
@@ -2213,7 +2213,7 @@ export type SearchBlockRow = {
 };
 
 /**
- *  Optional filter bundle for [`search_blocks_inner`].
+ *  Optional filter bundle for `search_blocks_inner`.
  *
  *  PEND-50 Phase 0 collapses the previous positional `parent_id` /
  *  `tag_ids` / `space_id` args into a single struct so the `tauri-specta`
@@ -2359,7 +2359,7 @@ export type SearchFilter = {
  *  PEND-53 — Property predicate for [`SearchFilter::property_filters`] /
  *  [`SearchFilter::excluded_property_filters`].
  *
- *  Named separately from the (existing) [`PropertyFilter`] struct used by
+ *  Named separately from the (existing) `PropertyFilter` struct used by
  *  `filtered_blocks_query` — that one carries five typed value fields and
  *  a comparison operator; this one is the simpler `(key, value_text)`
  *  shape the inline `prop:key=value` token produces.
