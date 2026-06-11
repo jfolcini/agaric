@@ -1241,14 +1241,28 @@ async fn refresh_inbound_counts_after_reindex(
     }
 
     // (3) Resolve the source page (the page this block rolls up to in
-    // `page_link_cache` — `COALESCE(parent_id, block_id)` to mirror
-    // `cache::reindex_page_link_cache_for_block`).
-    let parent_row = sqlx::query!("SELECT parent_id FROM blocks WHERE id = ?", block_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let source_page: String = match parent_row.map(|r| r.parent_id) {
-        Some(Some(parent)) => parent,
-        _ => block_id.to_owned(),
+    // `page_link_cache`). #677 — this MUST mirror
+    // `cache::reindex_page_link_cache_for_block`'s `COALESCE(page_id,
+    // parent_id, id)` chain (page_links.rs, "MUST stay identical" since #345),
+    // NOT the older `COALESCE(parent_id, block_id)`. For a content block nested
+    // several levels under a page, `parent_id` is the intermediate block — not
+    // the page — so keying off it resolves a different `source_page` than the
+    // roll-up groups under, and the page_link_cache lookup below would miss the
+    // block's cached outbound edges. `page_id` is the nearest page ancestor
+    // (and == id for page blocks); `parent_id` then `id` are the same fallbacks
+    // the roll-up uses for un-stamped fixtures / top-level / purged blocks.
+    let src_row = sqlx::query!(
+        "SELECT page_id, parent_id FROM blocks WHERE id = ?",
+        block_id
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let source_page: String = match src_row {
+        Some(r) => r
+            .page_id
+            .or(r.parent_id)
+            .unwrap_or_else(|| block_id.to_owned()),
+        None => block_id.to_owned(),
     };
 
     // Add every target_page_id currently in page_link_cache from this

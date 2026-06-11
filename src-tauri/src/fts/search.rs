@@ -144,7 +144,7 @@ fn tokenize_query(input: &str) -> Vec<QueryToken> {
 /// Sanitize a raw user query for safe use in an FTS5 MATCH expression.
 ///
 /// Supports a subset of FTS5 search operators so that users can write
-/// queries like `"exact phrase"`, `NOT spam`, or `cats OR dogs`.
+/// queries like `"exact phrase"`, `cats NOT dogs`, or `cats OR dogs`.
 ///
 /// ## Rules
 ///
@@ -153,7 +153,10 @@ fn tokenize_query(input: &str) -> Vec<QueryToken> {
 ///    are *not* subject to the trigram length filter — the user explicitly
 ///    asked for them.
 /// 2. **`NOT` operator** — preserved as the bare keyword when followed by at
-///    least one more token.
+///    least one more token. FTS5 `NOT` is a *binary* operator (`A NOT B`):
+///    a standalone leading `NOT term` (no left operand) is an FTS5 syntax
+///    error, surfaced as `AppError::Validation` by [`search_fts`]. We do not
+///    rewrite it — `NOT` is meaningful only between two operands.
 /// 3. **`OR` / `AND` operators** — preserved as bare keywords when they appear
 ///    between two other tokens.
 /// 4. **Trigram length filter (I-Search-2)** — non-operator word tokens
@@ -204,7 +207,25 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
                 // Skip empty or whitespace-only phrases: `""` would pass
                 // the post-loop `sanitized.is_empty()` guard unchanged but
                 // is a syntax error in FTS5 MATCH.
-                if phrase.trim().is_empty() {
+                let trimmed = phrase.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // #673 — a quoted phrase shorter than a trigram ("ab") emits
+                // ZERO trigram tokens, so its `MATCH` clause returns no rows
+                // and AND-collapses the whole query to nothing — the exact
+                // silent failure the bare-word length filter exists to
+                // prevent. The explicit-quoting "intent" bypass does not
+                // rescue a phrase the index physically cannot represent, so
+                // we drop it (with a warning) rather than letting it zero out
+                // the query. `chars().count()` counts unicode scalars so a
+                // 2-char CJK phrase is measured as 2.
+                if trimmed.chars().count() < TRIGRAM_MIN_LEN {
+                    tracing::warn!(
+                        phrase = %trimmed,
+                        "fts: dropping sub-trigram quoted phrase (< {TRIGRAM_MIN_LEN} chars); \
+                         the trigram index cannot match it"
+                    );
                     continue;
                 }
                 let escaped = phrase.replace('"', "\"\"");
@@ -258,9 +279,15 @@ pub(crate) fn sanitize_fts_query(query: &str) -> String {
     //     dropped, leaving the trailing operator's operand intact.
     // We do NOT drop a *leading* bare operator: the first pass only ever
     // emits a leading bare `NOT` (OR/AND require a preceding emitted
-    // operand to be promoted), and `NOT term` is the intended,
-    // FTS5-valid form preserved by the existing contract. Iterate to a
-    // fixpoint so a run collapses fully.
+    // operand to be promoted). #669 — this leading `NOT term` is NOT a
+    // valid form: FTS5 `NOT` is binary (`A NOT B`), so a leading bare
+    // `NOT` produces an FTS5 syntax error that `search_fts` maps to
+    // `AppError::Validation` (pinned by `fts/tests.rs`). We deliberately
+    // preserve it rather than silently dropping the `NOT` (which would
+    // invert the user's intent — searching FOR `term` they asked to
+    // exclude) or quoting it (which would search for the literal word
+    // "not"). Surfacing a clear validation error is the contract.
+    // Iterate to a fixpoint so a run collapses fully.
     let is_bare_op = |s: &str| matches!(s, "OR" | "AND" | "NOT");
     loop {
         let before = output_parts.len();
@@ -806,6 +833,15 @@ async fn fts_fetch_rows(
     // meaningful resolution is finer than 1e-9, this epsilon would merge
     // distinct ranks and skip/duplicate rows at the page boundary; revisit
     // it together with the cursor `rank` field then.
+    //
+    // #671 — the strict-greater arm must clear the epsilon band, i.e.
+    // `fts.rank > ?3 + 1e-9`, NOT `fts.rank > ?3`. The boundary row's
+    // recomputed rank can drift UPWARD into `(?3, ?3 + 1e-9)`; with a bare
+    // `> ?3` that row satisfies the first disjunct and is re-emitted on the
+    // next page (the `ABS(...) < 1e-9 AND id > ?4` tiebreak never gets to
+    // exclude it). Adding `+ 1e-9` makes the predicate symmetric: anything
+    // inside the epsilon band falls through to the id tiebreak, only a
+    // genuinely-greater rank advances past it.
     // P4 (#346) — when the caller (the MCP `search` tool) supplies a
     // `snippet_len`, truncate `content` at the DB with `substr(b.content,
     // 1, N)` instead of shipping the full column up to Rust to be
@@ -826,7 +862,7 @@ async fn fts_fetch_rows(
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR fts.rank > ?3
+           AND (?2 IS NULL OR fts.rank > ?3 + 1e-9
                 OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
     );
 
@@ -1289,7 +1325,7 @@ pub(crate) fn fts_select_prefix_for_test(with_snippet: bool) -> String {
          JOIN blocks b ON b.id = fts.block_id
          WHERE fts_blocks MATCH ?1
            AND b.deleted_at IS NULL
-           AND (?2 IS NULL OR fts.rank > ?3
+           AND (?2 IS NULL OR fts.rank > ?3 + 1e-9
                 OR (ABS(fts.rank - ?3) < 1e-9 AND b.id > ?4))"#,
     )
 }

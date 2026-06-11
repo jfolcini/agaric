@@ -174,10 +174,14 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
     }
     let mut segments: Vec<Segment> = Vec::new();
     let mut buf = String::new();
-    let bytes = input.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let ch = bytes[i] as char;
+    // #624: drive the cursor with `char_indices` so non-ASCII literals stay
+    // intact. The old `bytes[i] as char` reinterpreted each UTF-8 byte as a
+    // Latin-1 code point, so a brace pattern with non-ASCII text (`Café{1,2}`)
+    // mojibake'd (`é` → `Ã©`) and the expanded GLOBs silently never matched a
+    // title. `{`/`}` are ASCII (1 byte each), so the slice arithmetic below
+    // stays byte-correct on absolute byte offsets `i`/`end`.
+    let mut chars = input.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
         if ch == '{' {
             if !buf.is_empty() {
                 segments.push(Segment::Literal(std::mem::take(&mut buf)));
@@ -201,10 +205,17 @@ fn expand_braces(input: &str) -> Result<Vec<String>, AppError> {
             } else {
                 alts
             }));
-            i = end + 1;
+            // Skip the cursor past the consumed `{...}` group, i.e. every char
+            // whose byte offset is `<= end` (the closing `}` at byte `end`).
+            while let Some(&(j, _)) = chars.peek() {
+                if j <= end {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
         } else {
             buf.push(ch);
-            i += 1;
         }
     }
     if !buf.is_empty() {
@@ -359,6 +370,27 @@ mod tests {
         // brace expansion → ['a/c','a/d','b/c','b/d']; substring wrap
         // for items without metas; lowercased.
         assert_eq!(out, vec!["*a/c*", "*a/d*", "*b/c*", "*b/d*"]);
+    }
+
+    #[test]
+    fn brace_expansion_preserves_non_ascii_literals_624() {
+        // #624: the old `bytes[i] as char` cursor reinterpreted each UTF-8
+        // byte of `é` as Latin-1, mojibake-ing the literal (`Café` → `CafÃ©`).
+        // The expanded GLOBs then re-encoded as 4 garbage bytes and silently
+        // never matched a title. char_indices keeps the literal intact: ASCII
+        // folds (C→c), the non-ASCII `é` is preserved verbatim (matches #381).
+        let out = prepare_globs(&["Café{1,2}".to_string()]).unwrap();
+        assert_eq!(
+            out,
+            vec!["*café1*", "*café2*"],
+            "non-ASCII brace literal must round-trip, not mojibake"
+        );
+        // Each expanded pattern must remain valid UTF-8 containing the intact
+        // `é` (0xC3 0xA9), never the mojibake `Ã©` (0xC3 0x83 0xC2 0xA9).
+        for pat in &out {
+            assert!(pat.contains('é'), "expected intact 'é' in {pat:?}");
+            assert!(!pat.contains('Ã'), "mojibake leaked into {pat:?}");
+        }
     }
 
     #[test]

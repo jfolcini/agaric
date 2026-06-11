@@ -301,7 +301,7 @@ pub async fn list_tags_by_prefix(
         }
         None => MAX_TAGS_PREFIX,
     };
-    let rows = sqlx::query_as!(
+    let mut rows = sqlx::query_as!(
         TagCacheRow,
         r#"SELECT tag_id, name, usage_count, updated_at
          FROM tags_cache WHERE name LIKE ?1 ESCAPE '\' ORDER BY name LIMIT ?2"#,
@@ -310,6 +310,36 @@ pub async fn list_tags_by_prefix(
     )
     .fetch_all(pool)
     .await?;
+
+    // #768 — guarantee the exact (case-insensitive) match is present even when
+    // it would otherwise fall off the `LIMIT` page. `tags_cache.name` is
+    // BINARY-collated (migration 0001), so `ORDER BY name` sorts uppercase
+    // case-variants ahead of a lowercase exact match: with 20+ siblings like
+    // `WIP-1`…`WIP-25` an exact `wip` sorts past the page and the frontend
+    // resolver settles the name as unresolved (false-empty after #717). Fetch
+    // the exact NOCASE match separately and splice it to the front (deduped) so
+    // a valid tag always resolves. The bounded LIKE scan above is unchanged, so
+    // the NOCASE prefix-index plan (migration 0050) still applies.
+    if !prefix.is_empty() {
+        let exact = sqlx::query_as!(
+            TagCacheRow,
+            r#"SELECT tag_id, name, usage_count, updated_at
+             FROM tags_cache WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1"#,
+            prefix,
+        )
+        .fetch_optional(pool)
+        .await?;
+        if let Some(exact) = exact
+            && !rows.iter().any(|r| r.tag_id == exact.tag_id)
+        {
+            // Drop the page's last row if inserting the exact match would push
+            // the result over the caller's requested limit, keeping the cap.
+            if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= effective_limit {
+                rows.pop();
+            }
+            rows.insert(0, exact);
+        }
+    }
     Ok(rows)
 }
 
@@ -645,6 +675,59 @@ mod tests {
             plan.contains("idx_tags_cache_name_nocase"),
             "expected query plan to use the NOCASE index added by \
              migration 0050, got plan:\n{plan}"
+        );
+    }
+
+    /// #768 — an exact (case-insensitive) match must resolve even when 20+
+    /// BINARY-collated case-variant siblings sort ahead of it and would push
+    /// it off the `LIMIT` page. Reproduction: seed `WIP-1`…`WIP-25` (uppercase,
+    /// which BINARY-sorts before lowercase) plus a lowercase exact `wip`; with
+    /// `limit = 20` the bare prefix page never includes `wip`. Fix proof: the
+    /// exact-match splice puts `wip` in the returned set.
+    #[tokio::test]
+    async fn list_tags_by_prefix_exact_match_survives_full_page_768() {
+        let (pool, _dir) = test_pool().await;
+
+        // 25 uppercase case-variant siblings (`WIP-1`…`WIP-25`). Uppercase
+        // ASCII (0x57 'W') sorts before lowercase (0x77 'w') under BINARY, so
+        // these all precede the lowercase exact in `ORDER BY name`.
+        for i in 1..=25 {
+            let id = format!("TAGWIP{i:020}");
+            let name = format!("WIP-{i}");
+            insert_block(&pool, &id, "tag", &name).await;
+            insert_tag_cache(&pool, &id, &name, 1).await;
+        }
+        // The lowercase exact match the user is resolving.
+        insert_block(&pool, "TAGWIPEXACT00000000000001A", "tag", "wip").await;
+        insert_tag_cache(&pool, "TAGWIPEXACT00000000000001A", "wip", 1).await;
+
+        // Sanity: the bare prefix page (limit 20) does NOT contain the exact
+        // match — it is pushed off by the 25 uppercase siblings. This is the
+        // pre-fix failure mode the splice repairs.
+        let bare = sqlx::query_scalar::<_, String>(
+            r#"SELECT name FROM tags_cache WHERE name LIKE 'wip%' ESCAPE '\' ORDER BY name LIMIT 20"#,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !bare.iter().any(|n| n == "wip"),
+            "fixture invariant: exact 'wip' must fall off the bare 20-row prefix page"
+        );
+
+        // With the fix, resolving `wip` at limit 20 returns the exact match.
+        let result = list_tags_by_prefix(&pool, "wip", Some(20)).await.unwrap();
+        assert!(
+            result
+                .iter()
+                .any(|r| r.name == "wip" && r.tag_id == "TAGWIPEXACT00000000000001A"),
+            "#768: exact lowercase 'wip' must resolve despite 25 uppercase siblings"
+        );
+        // The cap is still honoured.
+        assert!(
+            result.len() <= 20,
+            "result must not exceed the requested limit; got {}",
+            result.len()
         );
     }
 

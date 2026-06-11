@@ -1032,13 +1032,20 @@ async fn filter_only_scan(
     snippet_len: Option<usize>,
 ) -> Result<Vec<SearchBlockRow>, AppError> {
     let content_select = super::search::content_select_expr(snippet_len);
+    // #674 — this blank-query path does NO content matching (no free-text
+    // pattern); it only applies structural filters (parent / tag / space /
+    // glob / metadata / block-type). The `AND b.content IS NOT NULL` clause
+    // was inherited from `regex_mode_query`, where it is required because the
+    // regex runs against `content`. Here it merely hides NULL-content blocks
+    // that satisfy the structural filters — diverging from `eval_tag_query`,
+    // which has no such clause. Drop it so tag/prop filters see every matching
+    // block regardless of whether it carries text content.
     let mut sql = format!(
         r#"SELECT b.id, b.block_type, {content_select}, b.parent_id, b.position,
                   b.deleted_at, b.todo_state, b.priority, b.due_date,
                   b.scheduled_date, b.page_id
            FROM blocks b
-           WHERE b.deleted_at IS NULL
-             AND b.content IS NOT NULL"#,
+           WHERE b.deleted_at IS NULL"#,
     );
 
     // M2 (#348) — same `StructuralFilterBuilder` as `regex_mode_query`,

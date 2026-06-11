@@ -26,6 +26,17 @@ pub use types::*;
 /// one place. (L-82/L-83/L-84)
 pub(crate) const SMALL_IN_LIMIT: usize = 500;
 
+/// Vault-wide ceiling on the number of FTS-matched block ids a single
+/// backlink/unlinked-references query materialises into memory.
+///
+/// `eval_unlinked_references` (`grouped.rs`) has always capped its trigram
+/// scan at this many rows (querying `LIMIT FTS_ROW_CAP + 1` to detect
+/// truncation). #672 — the `Contains` filter resolver (`filters.rs`) ran the
+/// same kind of trigram `MATCH` with NO limit, so a short common token could
+/// materialise every matching id into a `FxHashSet` (and, downstream, a JSON
+/// bind). Both sites now share this constant so the cap can never drift.
+pub(crate) const FTS_ROW_CAP: usize = 10_000;
+
 /// Per-group ceiling on the number of backlink blocks materialised and
 /// fetched for a single source page in the grouped/unlinked responses.
 ///

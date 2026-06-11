@@ -12,6 +12,58 @@ use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
 use crate::pagination::{BlockRow, Cursor, PageRequest};
 
+/// Total order on grouped-backlink groups: by `page_title` (ascending, with
+/// `None` sorting LAST), then by `page_id`. This is the single source of truth
+/// for both the `group_list.sort_by` calls below AND the #625 cursor resume,
+/// so the cursor comparison can never diverge from the on-page ordering.
+fn cmp_group(
+    a_title: Option<&str>,
+    a_pid: &str,
+    b_title: Option<&str>,
+    b_pid: &str,
+) -> std::cmp::Ordering {
+    match (a_title, b_title) {
+        (Some(at), Some(bt)) => at.cmp(bt).then_with(|| a_pid.cmp(b_pid)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a_pid.cmp(b_pid),
+    }
+}
+
+/// Resume grouped pagination after `cursor` over the already-sorted
+/// `group_list`, returning the groups STRICTLY GREATER than the cursor in
+/// [`cmp_group`] order.
+///
+/// #625 — the old `skip_while(|g| g.page_id != cursor_id).skip(1)` resumed by
+/// *equality*: if the cursor's source page no longer appeared in the freshly
+/// rebuilt `group_list` (its last backlink was deleted/unlinked between page
+/// requests, or a different FTS truncation window dropped it), `skip_while`
+/// consumed the ENTIRE list → an empty page with `has_more = false`, silently
+/// terminating pagination and dropping every remaining group. `partition_point`
+/// over the sort order resumes at the next-greater group whether or not the
+/// cursor's own group survived.
+fn groups_after_cursor<'a>(
+    group_list: &'a [(String, Option<String>, Vec<String>)],
+    cursor: Option<&Cursor>,
+) -> Vec<&'a (String, Option<String>, Vec<String>)> {
+    match cursor {
+        None => group_list.iter().collect(),
+        Some(c) => {
+            // The cursor stashes `page_id` in `id` and `page_title` in the
+            // `deleted_at` slot (see `Cursor::for_group`). `group_list` is
+            // sorted by `cmp_group`, so `partition_point` finds the first
+            // element strictly greater than the cursor in O(log n).
+            let cursor_title = c.deleted_at.as_deref();
+            let cursor_pid = c.id.as_str();
+            let start = group_list.partition_point(|(pid, title, _)| {
+                cmp_group(title.as_deref(), pid, cursor_title, cursor_pid)
+                    != std::cmp::Ordering::Greater
+            });
+            group_list[start..].iter().collect()
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public: eval_backlink_query_grouped
 // ---------------------------------------------------------------------------
@@ -183,29 +235,12 @@ pub async fn eval_backlink_query_grouped(
         .into_iter()
         .map(|(pid, (title, blocks))| (pid, title, blocks))
         .collect();
-    group_list.sort_by(|a, b| {
-        let ta = a.1.as_deref();
-        let tb = b.1.as_deref();
-        match (ta, tb) {
-            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.0.cmp(&b.0),
-        }
-    });
+    group_list.sort_by(|a, b| cmp_group(a.1.as_deref(), &a.0, b.1.as_deref(), &b.0));
 
-    // 6. Apply cursor pagination on groups
-    let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
-        if let Some(after_id) = start_after {
-            group_list
-                .iter()
-                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
-                .skip(1)
-                .collect()
-        } else {
-            group_list.iter().collect()
-        };
+    // 6. Apply cursor pagination on groups. #625 — resume by sort-order
+    //    comparison (next-greater group), NOT by equality on the cursor's
+    //    page_id, so a vanished cursor group does not terminate pagination.
+    let groups_after_cursor = groups_after_cursor(&group_list, page.after.as_ref());
 
     // page.limit is a validated positive pagination bound; safe to convert
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
@@ -306,10 +341,12 @@ pub async fn eval_backlink_query_grouped(
         });
     }
 
-    // 11. Build cursor from last group's page_id if has_more
+    // 11. Build cursor from last group's (page_title, page_id) if has_more.
+    //     #625 — the cursor now carries the sort key (title + id) so the next
+    //     page resumes via `cmp_group` comparison, surviving a vanished group.
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.0.clone()).encode()?)
+        Some(Cursor::for_group(last.0.clone(), last.1.clone()).encode()?)
     } else {
         None
     };
@@ -429,11 +466,14 @@ pub async fn eval_unlinked_references(
     //    `format!` so the SQL stays in sync if the constant changes (I-Search-3).
     //    `ORDER BY fb.block_id` makes the truncation boundary deterministic
     //    across calls (M-62) — without it SQLite is free to return a different
-    //    10 001 rows on the next request, which breaks cursor pagination
-    //    (the cursor encodes a page_id from the truncated set; if the next
-    //    truncation drops it, `skip_while` consumes everything and pagination
-    //    terminates early or loops). See I-Search-13 for the cursor-side
-    //    cross-reference.
+    //    10 001 rows on the next request, perturbing which groups appear.
+    //    #625 — the grouped cursor now resumes via `cmp_group` comparison
+    //    (`groups_after_cursor`), so even if a different truncation window
+    //    drops the cursor's group entirely, pagination resumes at the
+    //    next-greater group instead of consuming the whole list. The stable
+    //    ORDER BY still minimises group churn between pages (a nicer UX), but
+    //    pagination correctness no longer DEPENDS on the cursor group
+    //    surviving. See I-Search-13 for the cursor-side cross-reference.
     //
     //    FEAT-3p4 — the `(?3 IS NULL OR COALESCE(...))` clause mirrors
     //    `crate::space_filter_clause!`. Resolves the FTS-matched block
@@ -456,7 +496,7 @@ pub async fn eval_unlinked_references(
     //    than scoping to descendants of the current page. Applied at
     //    the base-set step so pagination + `total_count` /
     //    `filtered_count` all see the post-filter universe.
-    const FTS_ROW_CAP: usize = 10_000;
+    use super::FTS_ROW_CAP;
     let fts_sql = format!(
         "SELECT fb.block_id \
          FROM fts_blocks fb \
@@ -588,29 +628,12 @@ pub async fn eval_unlinked_references(
         .into_iter()
         .map(|(pid, (title, blocks))| (pid, title, blocks))
         .collect();
-    group_list.sort_by(|a, b| {
-        let ta = a.1.as_deref();
-        let tb = b.1.as_deref();
-        match (ta, tb) {
-            (Some(a_title), Some(b_title)) => a_title.cmp(b_title).then_with(|| a.0.cmp(&b.0)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.0.cmp(&b.0),
-        }
-    });
+    group_list.sort_by(|a, b| cmp_group(a.1.as_deref(), &a.0, b.1.as_deref(), &b.0));
 
-    // 8. Apply cursor pagination on groups
-    let start_after = page.after.as_ref().map(|c| c.id.as_str());
-    let groups_after_cursor: Vec<&(String, Option<String>, Vec<String>)> =
-        if let Some(after_id) = start_after {
-            group_list
-                .iter()
-                .skip_while(|(pid, _, _)| pid.as_str() != after_id)
-                .skip(1)
-                .collect()
-        } else {
-            group_list.iter().collect()
-        };
+    // 8. Apply cursor pagination on groups. #625 — resume by sort-order
+    //    comparison (next-greater group), NOT by equality on the cursor's
+    //    page_id, so a vanished cursor group does not terminate pagination.
+    let groups_after_cursor = groups_after_cursor(&group_list, page.after.as_ref());
 
     // page.limit is a validated positive pagination bound; safe to convert
     let limit_usize = usize::try_from(page.limit).unwrap_or(usize::MAX);
@@ -708,10 +731,12 @@ pub async fn eval_unlinked_references(
         });
     }
 
-    // 13. Build cursor from last group's page_id if has_more
+    // 13. Build cursor from last group's (page_title, page_id) if has_more.
+    //     #625 — carry the sort key so the next page resumes via `cmp_group`
+    //     comparison, surviving a vanished group.
     let next_cursor = if has_more {
         let last = actual_groups.last().expect("has_more implies non-empty");
-        Some(Cursor::for_id(last.0.clone()).encode()?)
+        Some(Cursor::for_group(last.0.clone(), last.1.clone()).encode()?)
     } else {
         None
     };
