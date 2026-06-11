@@ -611,6 +611,11 @@ export const commands = {
 	 *  Tauri command: gather bug-report metadata (app version, OS, arch,
 	 *  device id, recent ERROR/WARN log lines). Delegates to
 	 *  [`collect_bug_report_metadata_inner`].
+	 *
+	 *  #609: redaction inputs (home dir, GCal email, peer device ids) are
+	 *  resolved here — same sources as [`read_logs_for_report`] — so the
+	 *  recent-error tail embedded in the prefilled public GitHub issue body
+	 *  goes through the same redaction pipeline as the ZIP export.
 	 */
 	collectBugReportMetadata: () => typedError<BugReport, AppError>(__TAURI_INVOKE("collect_bug_report_metadata")),
 	/**
@@ -1032,6 +1037,12 @@ export type BugReport = {
 	/**
 	 *  Last [`RECENT_ERRORS_CAP`] error/warn lines from today's
 	 *  `agaric.log`, newest last.
+	 *
+	 *  #609: ALWAYS redacted through the same pipeline as the ZIP export
+	 *  ([`redact_line_with_redactor`]) — the frontend embeds these lines
+	 *  verbatim into the prefilled PUBLIC GitHub issue body
+	 *  (`src/lib/bug-report.ts::formatReportBody`), and unlike the ZIP
+	 *  path there is no user-facing redact toggle on the issue-body path.
 	 */
 	recent_errors: string[],
 };

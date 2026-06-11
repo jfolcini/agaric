@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 
-import { _internals, buildGitHubIssueUrl, formatReportBody } from '../bug-report'
+import { _internals, buildGitHubIssueUrl, formatReportBody, truncateDeviceId } from '../bug-report'
 import type { BugReport } from '../tauri'
+
+// #609: UUID-shaped, like the real per-device identifier — the issue body
+// must never embed it in full (the same value is scrubbed to
+// [REDACTED_DEVICE_ID] in the ZIP export; cleartext in a public issue
+// would be inconsistent).
+const FULL_DEVICE_ID = '12345678-9abc-4def-8123-456789abcdef'
 
 const SAMPLE_METADATA: BugReport = {
   app_version: '0.1.0',
   os: 'linux',
   arch: 'x86_64',
-  device_id: 'DEV-123',
+  device_id: FULL_DEVICE_ID,
   recent_errors: ['2025-01-01 ERROR [agaric] kaboom', '2025-01-01 WARN [agaric] slowpoke'],
 }
 
@@ -112,7 +118,7 @@ describe('formatReportBody', () => {
       - **App version:** \`0.1.0\`
       - **OS:** \`linux\`
       - **Arch:** \`x86_64\`
-      - **Device ID:** \`DEV-123\`
+      - **Device ID:** \`12345678…\` _(truncated)_
 
       ## Recent errors
 
@@ -167,5 +173,36 @@ describe('formatReportBody', () => {
     })
     expect(body).toContain('_(no recent errors)_')
     expect(body).not.toContain('```')
+  })
+
+  // #609: the full device ID is a stable identifier the redaction pipeline
+  // scrubs from the ZIP export — it must never appear in cleartext in the
+  // prefilled public GitHub issue body.
+  it('never embeds the full device ID in the body (#609)', () => {
+    const body = formatReportBody({
+      metadata: SAMPLE_METADATA,
+      description: 'hi',
+    })
+    expect(body).not.toContain(FULL_DEVICE_ID)
+    expect(body).toContain('`12345678…` _(truncated)_')
+  })
+})
+
+// --------------------------------------------------------------------------
+// truncateDeviceId (#609)
+// --------------------------------------------------------------------------
+
+describe('truncateDeviceId', () => {
+  it('keeps only the first 8 characters of a UUID-shaped ID', () => {
+    expect(truncateDeviceId(FULL_DEVICE_ID)).toBe('12345678…')
+  })
+
+  it('passes short IDs through unchanged', () => {
+    expect(truncateDeviceId('DEV-123')).toBe('DEV-123')
+    expect(truncateDeviceId('12345678')).toBe('12345678')
+  })
+
+  it('handles the empty string', () => {
+    expect(truncateDeviceId('')).toBe('')
   })
 })
