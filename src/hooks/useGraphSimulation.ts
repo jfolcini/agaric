@@ -39,7 +39,6 @@ import { select } from 'd3-selection'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import type { GraphEdge, GraphNode } from '@/components/GraphView.helpers'
 import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
 import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
@@ -54,6 +53,7 @@ import {
   type SimulationCtx,
   type SimulationHandle,
 } from '@/lib/graph-sim-helpers'
+import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 
 export interface UseGraphSimulationArgs {
   svgRef: React.RefObject<SVGSVGElement | null>

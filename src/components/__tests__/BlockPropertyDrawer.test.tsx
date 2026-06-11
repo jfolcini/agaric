@@ -46,7 +46,8 @@ const mockedReportIpcError = vi.mocked(reportIpcError)
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-import { BlockPropertyDrawer, PropertyRow } from '../BlockPropertyDrawer'
+import { BlockPropertyDrawer } from '../BlockPropertyDrawer'
+import { PropertyRow } from '../PropertyRow'
 
 let pageStore: StoreApi<PageBlockState>
 

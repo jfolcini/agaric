@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { GraphEdge, GraphNode } from '@/components/GraphView.helpers'
+import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 
 import { renderGraphElements } from '../graph-sim-helpers'
 
