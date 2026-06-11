@@ -88,4 +88,9 @@ export const toolbar: Record<string, string> = {
   'toolbar.tableDeleteRow': 'Delete row',
   'toolbar.tableDeleteColumn': 'Delete column',
   'toolbar.tableDeleteTable': 'Delete table',
+  // #215b — the toolbar table insert grid-picker.
+  'toolbar.insertTable': 'Insert table',
+  'toolbar.insertTableTip': 'Insert table (/table)',
+  'toolbar.tableInsertHint': 'Drag to size',
+  'toolbar.tableDimensionsCell': '{{rows}} by {{cols}} table',
 }
