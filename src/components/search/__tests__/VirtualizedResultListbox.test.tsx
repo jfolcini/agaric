@@ -121,6 +121,44 @@ describe('VirtualizedResultListbox', () => {
     expect(listbox.className).toContain('overflow-y-auto')
   })
 
+  // #737 — the `<ul>` is the SCROLL CONTAINER; an element cannot overflow
+  // itself with its own height declaration, so totalSize must be reserved
+  // by an IN-FLOW box. It rides a `::before` pseudo-element (height fed by
+  // the `--vrl-total-size` custom property) so the listbox's only DOM
+  // children stay `<li role="option">` rows (axe `aria-required-children`).
+  describe('in-flow size spacer (#737)', () => {
+    it('reserves the virtualizer total size via the ::before spacer, not its own height', () => {
+      setup() // 3 rows × 36px estimate → totalSize 108px (mock).
+      const listbox = screen.getByTestId('group-listbox')
+      // Custom property feeds the pseudo-element spacer…
+      expect(listbox.style.getPropertyValue('--vrl-total-size')).toBe('108px')
+      expect(listbox.className).toContain("before:content-['']")
+      expect(listbox.className).toContain('before:block')
+      expect(listbox.className).toContain('before:h-[var(--vrl-total-size)]')
+      // …and the scroll container must NOT declare its own height: that
+      // was the broken pattern (scrollHeight collapsed to the mounted
+      // window once totalSize exceeded the max-h cap, breaking scrollbar
+      // geometry and far scrollToIndex jumps).
+      expect(listbox.style.height).toBe('')
+    })
+
+    it('scales the spacer with tall groups so every virtual offset is reachable', () => {
+      const blocks = Array.from({ length: 50 }, (_, i) => makeRow(`b${i}`))
+      setup({ blocks })
+      const listbox = screen.getByTestId('group-listbox')
+      expect(listbox.style.getPropertyValue('--vrl-total-size')).toBe(`${50 * 36}px`)
+    })
+
+    it('keeps options as the only DOM children (no element spacer to trip axe)', () => {
+      setup()
+      const listbox = screen.getByTestId('group-listbox')
+      expect(listbox.children).toHaveLength(3)
+      for (const child of Array.from(listbox.children)) {
+        expect(child.getAttribute('role')).toBe('option')
+      }
+    })
+  })
+
   it('carries aria-activedescendant only when given an active row', () => {
     const { rerender } = setup()
     expect(screen.getByTestId('group-listbox')).not.toHaveAttribute('aria-activedescendant')

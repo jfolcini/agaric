@@ -521,6 +521,109 @@ describe('CommandPalette — partitioned query', () => {
     })
     expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
   })
+
+  it('does not repopulate stale results after the input is cleared mid-flight (#736)', async () => {
+    // The empty-query early-return must bump the generation guard and
+    // drop `loading`: clearing the input does NOT fire a new IPC, so
+    // without the bump the previous keystroke's in-flight response still
+    // passes `isCurrent` and repopulates results UNDER the recents /
+    // welcome empty state.
+    vi.useFakeTimers()
+
+    let firstResolve: (v: PartitionedResp) => void = () => {}
+    const firstPromise = new Promise<PartitionedResp>((resolve) => {
+      firstResolve = resolve
+    })
+    mockedSearchBlocksPartitioned.mockImplementationOnce(() => firstPromise)
+
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input')
+
+    // Keystroke — flush the 80 ms debounce so the IPC fires (hanging).
+    fireEvent.change(input, { target: { value: 'stale' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(mockedSearchBlocksPartitioned).toHaveBeenCalledTimes(1)
+    // The hung IPC keeps the loading shimmer up…
+    expect(screen.getByTestId('palette-loading-shimmer')).toBeInTheDocument()
+
+    // …until the user clears the input mid-flight: the empty-query path
+    // is synchronous (no debounce), clears results, and must drop the
+    // shimmer immediately.
+    fireEvent.change(input, { target: { value: '' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    vi.useRealTimers()
+    expect(screen.queryByTestId('palette-loading-shimmer')).toBeNull()
+
+    // The cleared keystroke fired no new IPC.
+    expect(mockedSearchBlocksPartitioned).toHaveBeenCalledTimes(1)
+
+    // Release the in-flight response late — its generation was
+    // invalidated by the clear, so it must NOT repopulate the list.
+    await act(async () => {
+      firstResolve(partitionedResp([makePageRow('PAGE_STALE', 'Stale')], []))
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
+    expect(screen.queryByTestId('palette-loading-shimmer')).toBeNull()
+  })
+
+  it('does not repopulate stale results after a mid-flight mode switch (#736)', async () => {
+    // Same race, different exit: leaving search mode (mode chip / `>`
+    // prefix) fires no new IPC either, so the `mode !== 'search'`
+    // early-return must also bump the generation guard. Without it the
+    // in-flight response lands silently while the commands body is
+    // shown, then flashes as stale groups when the user toggles back
+    // to search.
+    vi.useFakeTimers()
+
+    let firstResolve: (v: PartitionedResp) => void = () => {}
+    const firstPromise = new Promise<PartitionedResp>((resolve) => {
+      firstResolve = resolve
+    })
+    mockedSearchBlocksPartitioned.mockImplementationOnce(() => firstPromise)
+
+    render(<CommandPalette />)
+    openPalette()
+    const input = screen.getByTestId('command-palette-input')
+
+    // Keystroke — flush the 80 ms debounce so the IPC fires (hanging).
+    fireEvent.change(input, { target: { value: 'stale' } })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(mockedSearchBlocksPartitioned).toHaveBeenCalledTimes(1)
+
+    // Toggle to commands mode mid-flight (no new search IPC fires)…
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+
+    // …and let the in-flight response land while the commands body is
+    // shown. Its generation was invalidated by the mode switch, so it
+    // must NOT update pages/blocks behind the commands view.
+    await act(async () => {
+      firstResolve(partitionedResp([makePageRow('PAGE_STALE', 'Stale')], []))
+      await vi.advanceTimersByTimeAsync(10)
+    })
+
+    // Toggling back to search must not flash the stale group — assert
+    // BEFORE flushing the debounce, i.e. before any new fetch could
+    // overwrite a (buggy) stale repopulation.
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    vi.useRealTimers()
+    expect(screen.queryByTestId('palette-page-header-PAGE_STALE')).toBeNull()
+  })
 })
 
 describe('CommandPalette — caps and surplus pill', () => {

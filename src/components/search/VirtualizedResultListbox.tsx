@@ -143,7 +143,23 @@ export function VirtualizedResultListbox({
       // collapses the listbox to a sliver (or 0). The floor keeps ~5 rows
       // visible; small groups are unaffected (their intrinsic height is
       // below the cap either way).
-      className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto"
+      //
+      // #737 — in-flow `::before` spacer instead of `height: totalSize` on
+      // the `<ul>` itself. The `<ul>` is the SCROLL CONTAINER (max-h cap +
+      // overflow-y-auto): an element cannot overflow itself with its own
+      // height declaration, so once totalSize exceeded the cap, scrollHeight
+      // was determined solely by the mounted window+overscan rows — the
+      // scrollbar thumb misrepresented the list and a far `scrollToIndex`
+      // (End/PageDown) clamped to the current scrollHeight, leaving the
+      // active row unmounted and `aria-activedescendant` dangling. The
+      // pseudo-element reserves the full `totalSize` IN FLOW (the
+      // absolutely-positioned rows are out of flow), so
+      // `scrollHeight == totalSize` while only the window mounts. A pseudo-
+      // element is used (not an inner spacer `<div>`) so the listbox's only
+      // DOM children remain `<li role="option">` rows — an element spacer
+      // trips axe's `aria-required-children` rule (the reason the previous
+      // inner spacer was removed).
+      className="search-result-listbox ml-4 mt-1 list-none p-0 relative max-h-[max(calc(100dvh-320px),12rem)] overflow-y-auto before:content-[''] before:block before:w-px before:h-[var(--vrl-total-size)]"
       aria-label={ariaLabel}
       // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-to-interactive-role, jsx-a11y/prefer-tag-over-role -- `<ul role="listbox">` is the canonical WAI-ARIA listbox container; the search a11y model (PEND-50) requires per-group listboxes. Keyboard activation flows through `aria-activedescendant`, so the `<ul>` itself is the right host. A virtualized custom listbox can't be a <datalist>/<select> (those can't host the absolutely-positioned virtual rows).
       role="listbox"
@@ -151,12 +167,11 @@ export function VirtualizedResultListbox({
       tabIndex={tabIndex}
       data-testid={dataTestId}
       onKeyDown={onKeyDown}
-      // Total-size height on the `<ul>` itself (it is `position: relative`)
-      // so the scrollbar reflects every row while only the window mounts.
-      // The `<li role="option">` rows are absolutely positioned inside, so
-      // the only direct children of the listbox are options — no spacer
-      // element that would trip axe's `aria-required-children` rule.
-      style={{ height: `${totalSize}px` }}
+      // Custom property feeds the `before:` spacer height above; custom
+      // properties inherit into pseudo-elements, and this is the only way
+      // to give a pseudo-element a per-render dynamic height without
+      // injecting a stylesheet.
+      style={{ '--vrl-total-size': `${totalSize}px` } as React.CSSProperties}
     >
       {virtualItems.map((vi) => {
         const block = blocks[vi.index]
