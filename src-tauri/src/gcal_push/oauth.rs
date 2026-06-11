@@ -8,9 +8,11 @@
 //!   (`exchange_code`), persisting the account email to `gcal_settings`.
 //! * Refresh an access token via the refresh-grant (`refresh_token`).
 //! * Wrap a caller-supplied operation with auto-refresh-on-401
-//!   semantics (`fetch_with_auto_refresh`), including a single bounded
-//!   retry and a `gcal:reauth_required` event on a second 401 /
-//!   `invalid_grant` / `unauthorized_client`.
+//!   semantics (`fetch_with_auto_refresh`): a single bounded refresh +
+//!   retry, surfacing `AppError::Gcal(Unauthorized)` on a second 401 /
+//!   `invalid_grant` / `unauthorized_client` so the caller (the
+//!   connector's `run_cycle_with_auto_refresh`, #683) can run its
+//!   terminal-reauth side effects.
 //!
 //! # Token redaction (critical)
 //!
@@ -64,7 +66,7 @@ use sqlx::SqlitePool;
 
 use crate::error::{AppError, GcalErrorKind};
 
-use super::keyring_store::{GcalEvent, GcalEventEmitter, TokenStore};
+use super::keyring_store::TokenStore;
 use super::models::{self, GcalSettingKey};
 
 // ---------------------------------------------------------------------------
@@ -570,22 +572,30 @@ impl OAuthClient {
 /// 3. Re-run `op` once with the refreshed token.
 ///
 /// If the second attempt is ALSO unauthorized, or if the refresh
-/// itself fails with a revocation error, emit
-/// [`GcalEvent::ReauthRequired`] via the supplied emitter, clear the
-/// keystore, and return
+/// itself fails with a revocation error, return
 /// `Err(AppError::Gcal(GcalErrorKind::Unauthorized))` (FEAT-5c — the
-/// HTTP-layer taxonomy).
+/// HTTP-layer taxonomy).  Terminal **side effects** belong to the
+/// caller (#683): the connector's
+/// `run_cycle_with_auto_refresh` maps that error to PEND-24 H3's
+/// `handle_terminal_unauthorized` (persist the `reauth_required`
+/// pause flag + emit the email-bearing `GcalEvent::ReauthRequired`).
+/// The wrapper deliberately does NOT clear the token store — the
+/// Settings tab keeps showing "connected as …" while the reauth
+/// banner is up, and a successful re-auth overwrites the stale token
+/// anyway.
 ///
 /// # Errors
 /// * `AppError::Validation("oauth.not_connected")` — no token stored
 ///   (pre-HTTP config-layer error, stays on Validation).
 /// * `AppError::Gcal(GcalErrorKind::Unauthorized)` — second 401 after
 ///   refresh, OR refresh itself failed with revocation semantics.
+/// * `AppError::Validation("oauth.refresh_failed: …")` — the refresh
+///   failed transiently (network / 5xx); callers treat this as
+///   retry-later, NOT as a reauth trigger.
 /// * Any `AppError` propagated via [`FetchError::Other`] from `op`.
 pub async fn fetch_with_auto_refresh<F, Fut, T>(
     oauth_client: &OAuthClient,
     token_store: &Arc<dyn TokenStore>,
-    emitter: &Arc<dyn GcalEventEmitter>,
     mut op: F,
 ) -> Result<T, AppError>
 where
@@ -608,48 +618,12 @@ where
         }
     }
 
-    // Bounded refresh: one attempt.
-    let refreshed = match oauth_client.refresh_token(&initial).await {
-        Ok(t) => t,
-        Err(e) => {
-            // Revoked / invalid refresh token — give up, prompt for
-            // reauth.  `classify_refresh_error` collapses
-            // `invalid_grant` / `unauthorized_client` to
-            // `AppError::Gcal(Unauthorized)`; matching on that here
-            // (rather than calling a one-line helper) keeps the
-            // recovery branch readable in-place.  MAINT-151(f).
-            if matches!(&e, AppError::Gcal(GcalErrorKind::Unauthorized)) {
-                tracing::warn!(
-                    target: "gcal",
-                    error = %e,
-                    "refresh token revoked — emitting reauth_required",
-                );
-                // PEND-24 H3: this is the OAuth-layer recovery path
-                // and has no `&SqlitePool` access, so the email
-                // payload is left blank. The connector-layer emit
-                // site (run_cycle's DateFailure::Unauthorized arm)
-                // does have pool access and supplies the email when
-                // the same revocation surfaces through the per-date
-                // push pipeline.
-                emitter.emit(GcalEvent::ReauthRequired {
-                    account_email: None,
-                });
-                // Clear-errors are logged but swallowed: the reauth
-                // flow will overwrite on reconnect anyway, and we do
-                // not want to mask the more important Validation error.
-                if let Err(clear_err) = token_store.clear().await {
-                    tracing::warn!(
-                        target: "gcal",
-                        error = %clear_err,
-                        "failed to clear token store after revocation",
-                    );
-                }
-                return Err(AppError::Gcal(GcalErrorKind::Unauthorized));
-            }
-            // Transient / non-revocation refresh failure — surface verbatim.
-            return Err(e);
-        }
-    };
+    // Bounded refresh: one attempt.  `classify_refresh_error`
+    // collapses `invalid_grant` / `unauthorized_client` to
+    // `AppError::Gcal(Unauthorized)` (terminal — propagated to the
+    // caller's reauth path); every other failure mode is transient
+    // and also propagates verbatim (callers retry later).
+    let refreshed = oauth_client.refresh_token(&initial).await?;
 
     token_store.store(&refreshed).await?;
 
@@ -659,22 +633,8 @@ where
         Err(FetchError::Unauthorized) => {
             tracing::warn!(
                 target: "gcal",
-                "second 401 after refresh — emitting reauth_required",
+                "second 401 after refresh — unauthorized is terminal",
             );
-            // PEND-24 H3: same caveat as the revoked-refresh branch
-            // above — no pool access at this layer; the connector
-            // supplies the email when the same condition reappears
-            // on the next cycle.
-            emitter.emit(GcalEvent::ReauthRequired {
-                account_email: None,
-            });
-            if let Err(clear_err) = token_store.clear().await {
-                tracing::warn!(
-                    target: "gcal",
-                    error = %clear_err,
-                    "failed to clear token store after second 401",
-                );
-            }
             Err(AppError::Gcal(GcalErrorKind::Unauthorized))
         }
     }
@@ -909,9 +869,7 @@ fn classify_refresh_error(
 mod tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::gcal_push::keyring_store::{
-        GcalEvent, MockTokenStore, NoopEventEmitter, RecordingEventEmitter, TokenStore,
-    };
+    use crate::gcal_push::keyring_store::{MockTokenStore, TokenStore};
 
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use std::path::PathBuf;
@@ -1587,11 +1545,11 @@ mod tests {
         // as `refresh_token=` and Google responds with `invalid_grant`,
         // which `classify_refresh_error` maps to
         // `AppError::Gcal(GcalErrorKind::Unauthorized)`.  The
-        // `fetch_with_auto_refresh` wrapper recognises that variant
-        // inline (MAINT-151(f) inlined the former `is_revocation_error`
-        // predicate) and emits `gcal:reauth_required` — exactly the
-        // right user-facing outcome (the user has to redo the OAuth
-        // flow because there is no usable refresh token).
+        // `fetch_with_auto_refresh` wrapper propagates that variant
+        // verbatim and the connector's terminal-reauth path (#683)
+        // emits `gcal:reauth_required` — exactly the right
+        // user-facing outcome (the user has to redo the OAuth flow
+        // because there is no usable refresh token).
         //
         // This test pins that error variant so a future change (e.g. a
         // synchronous local validation that returns a different error
@@ -1635,14 +1593,11 @@ mod tests {
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
         store.store(&dummy_token("A1", "R1")).await.unwrap();
 
-        let emitter: Arc<dyn GcalEventEmitter> = Arc::new(RecordingEventEmitter::new());
-        let emitter_for_assert = Arc::clone(&emitter);
-
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_inner = Arc::clone(&calls);
 
         let result: Result<&'static str, AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, move |token| {
+            fetch_with_auto_refresh(&client, &store, move |token| {
                 let calls_inner = Arc::clone(&calls_inner);
                 async move {
                     calls_inner.fetch_add(1, Ordering::SeqCst);
@@ -1658,14 +1613,10 @@ mod tests {
             1,
             "op must be invoked exactly once on happy path"
         );
-        // Can't downcast dyn back to RecordingEventEmitter; assert via
-        // the fact that token is still present (no revocation path fired).
         assert!(
             store.load().await.unwrap().is_some(),
             "token must remain in keystore after happy-path op"
         );
-        // Emitter must be untouched.
-        let _ = emitter_for_assert; // silence unused warning
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1689,14 +1640,11 @@ mod tests {
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
         store.store(&dummy_token("A1", "R1")).await.unwrap();
 
-        let recorder = Arc::new(RecordingEventEmitter::new());
-        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
-
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_inner = Arc::clone(&calls);
 
         let result: Result<&'static str, AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, move |token| {
+            fetch_with_auto_refresh(&client, &store, move |token| {
                 let calls_inner = Arc::clone(&calls_inner);
                 async move {
                     let n = calls_inner.fetch_add(1, Ordering::SeqCst);
@@ -1733,15 +1681,10 @@ mod tests {
             "R1",
             "refresh token must carry forward when the refresh response omits it"
         );
-        assert_eq!(
-            recorder.events().len(),
-            0,
-            "happy refresh path must NOT emit reauth_required"
-        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn fetch_with_auto_refresh_emits_reauth_required_on_second_401_and_clears_store() {
+    async fn fetch_with_auto_refresh_second_401_is_terminal_and_keeps_store() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
 
@@ -1761,11 +1704,8 @@ mod tests {
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
         store.store(&dummy_token("A1", "R1")).await.unwrap();
 
-        let recorder = Arc::new(RecordingEventEmitter::new());
-        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
-
         let result: Result<(), AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, |_token| async {
+            fetch_with_auto_refresh(&client, &store, |_token| async {
                 Err::<(), _>(FetchError::Unauthorized)
             })
             .await;
@@ -1774,21 +1714,24 @@ mod tests {
             matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "second 401 must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
+        // #683: terminal side effects (reauth event, pause flag) belong
+        // to the caller; the wrapper must NOT clear the keystore — the
+        // Settings tab keeps its "connected as …" state while the
+        // reauth banner is up.
+        let stored = store
+            .load()
+            .await
+            .unwrap()
+            .expect("keystore must NOT be cleared by the wrapper on second 401");
         assert_eq!(
-            recorder.events(),
-            vec![GcalEvent::ReauthRequired {
-                account_email: None
-            }],
-            "GcalEvent::ReauthRequired must be emitted exactly once on second 401"
-        );
-        assert!(
-            store.load().await.unwrap().is_none(),
-            "keystore must be cleared after second 401 so the next reconnect starts fresh"
+            stored.access.expose_secret(),
+            "A2-refreshed",
+            "the refreshed token persisted before the second attempt stays stored"
         );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn fetch_with_auto_refresh_emits_reauth_required_on_revoked_refresh_token() {
+    async fn fetch_with_auto_refresh_revoked_refresh_token_is_terminal_and_keeps_store() {
         let mock = MockServer::start().await;
         let client = build_client(&mock).await;
 
@@ -1805,11 +1748,8 @@ mod tests {
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
         store.store(&dummy_token("A1", "R1")).await.unwrap();
 
-        let recorder = Arc::new(RecordingEventEmitter::new());
-        let emitter: Arc<dyn GcalEventEmitter> = recorder.clone();
-
         let result: Result<(), AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, |_token| async {
+            fetch_with_auto_refresh(&client, &store, |_token| async {
                 Err::<(), _>(FetchError::Unauthorized)
             })
             .await;
@@ -1818,16 +1758,46 @@ mod tests {
             matches!(result, Err(AppError::Gcal(GcalErrorKind::Unauthorized))),
             "revoked refresh token must surface AppError::Gcal(Unauthorized), got {result:?}"
         );
-        assert_eq!(
-            recorder.events(),
-            vec![GcalEvent::ReauthRequired {
-                account_email: None
-            }],
-            "revoked refresh must emit ReauthRequired exactly once"
+        assert!(
+            store.load().await.unwrap().is_some(),
+            "wrapper must NOT clear the keystore on revocation (#683 — caller owns side effects)"
+        );
+    }
+
+    /// #683 — a TRANSIENT refresh failure (5xx from the token
+    /// endpoint) must propagate as the flow-layer
+    /// `oauth.refresh_failed` Validation error, NOT as terminal
+    /// `Unauthorized` — callers keep their dirty state and retry
+    /// later instead of demanding a manual re-auth.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fetch_with_auto_refresh_transient_refresh_failure_is_not_terminal() {
+        let mock = MockServer::start().await;
+        let client = build_client(&mock).await;
+
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .and(body_string_contains("grant_type=refresh_token"))
+            .respond_with(ResponseTemplate::new(503).set_body_string("upstream sad"))
+            .expect(1)
+            .mount(&mock)
+            .await;
+
+        let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
+        store.store(&dummy_token("A1", "R1")).await.unwrap();
+
+        let result: Result<(), AppError> =
+            fetch_with_auto_refresh(&client, &store, |_token| async {
+                Err::<(), _>(FetchError::Unauthorized)
+            })
+            .await;
+
+        assert!(
+            matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.refresh_failed")),
+            "transient refresh failure must surface oauth.refresh_failed, got {result:?}"
         );
         assert!(
-            store.load().await.unwrap().is_none(),
-            "revoked refresh must clear the keystore"
+            store.load().await.unwrap().is_some(),
+            "token must survive a transient refresh failure"
         );
     }
 
@@ -1837,13 +1807,10 @@ mod tests {
         let client = build_client(&mock).await;
 
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
-        let emitter: Arc<dyn GcalEventEmitter> = Arc::new(NoopEventEmitter);
 
         let result: Result<(), AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, |_token| async {
-                Ok::<_, FetchError>(())
-            })
-            .await;
+            fetch_with_auto_refresh(&client, &store, |_token| async { Ok::<_, FetchError>(()) })
+                .await;
 
         assert!(
             matches!(result, Err(AppError::Validation(ref m)) if m.contains("oauth.not_connected")),
@@ -1858,10 +1825,9 @@ mod tests {
 
         let store: Arc<dyn TokenStore> = Arc::new(MockTokenStore::new());
         store.store(&dummy_token("A1", "R1")).await.unwrap();
-        let emitter: Arc<dyn GcalEventEmitter> = Arc::new(RecordingEventEmitter::new());
 
         let result: Result<(), AppError> =
-            fetch_with_auto_refresh(&client, &store, &emitter, |_token| async {
+            fetch_with_auto_refresh(&client, &store, |_token| async {
                 Err::<(), _>(FetchError::Other(AppError::Validation(
                     "upstream_500".to_owned(),
                 )))
