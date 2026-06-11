@@ -5,6 +5,7 @@ import { FeatureErrorBoundary } from '@/components/common/FeatureErrorBoundary'
 import { GcalReauthBanner } from '@/components/gcal/GcalReauthBanner'
 import { AppSidebar } from '@/components/layout/AppSidebar'
 import { QuickAccessBar } from '@/components/layout/QuickAccessBar'
+import { QuickCaptureFab } from '@/components/layout/QuickCaptureFab'
 import { SpaceTopStripe } from '@/components/layout/SpaceTopStripe'
 import { TabBar } from '@/components/layout/TabBar'
 import {
@@ -584,6 +585,14 @@ function App() {
           </Suspense>
         </FeatureErrorBoundary>
       )}
+      {/* #920: mobile/touch entry point for quick-capture. The OS chord
+          (`useQuickCaptureShortcut`) is a no-op on phones, so this FAB is
+          the only reachable way to open the dialog there. Reuses the same
+          `setQuickCaptureOpen` setter; self-gates on
+          `useShouldShowMobileChrome()` and renders nothing on desktop. */}
+      <FeatureErrorBoundary name="Quick capture button">
+        <QuickCaptureFab setQuickCaptureOpen={setQuickCaptureOpen} />
+      </FeatureErrorBoundary>
       {/* FEAT-12: Quick-capture dialog — driven by the global hotkey
           registered in App's startup effect. Gated on `quickCaptureOpen`
           + lazy-loaded so the editor surface stays off the critical path
