@@ -35,6 +35,7 @@ import {
   setSettingsTabInUrl,
 } from '@/lib/url-state'
 import { cn } from '@/lib/utils'
+import { useNavigationStore } from '@/stores/navigation'
 
 import { AgentAccessSettingsTab } from './AgentAccessSettingsTab'
 import { DeviceManagement } from './DeviceManagement'
@@ -127,6 +128,29 @@ const TAB_LABEL_KEYS: Record<SettingsTab, string> = {
 export function SettingsView(): React.ReactElement {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<SettingsTab>(readActiveTab)
+
+  // #734 — consume the pending-tab handoff slot. The deep-link router and
+  // the NoPeersDialog CTA write it before flipping the view to
+  // `'settings'`; subscribing (rather than reading once in the useState
+  // initializer like localStorage / the URL param) means an
+  // `agaric://settings/<tab>` link still lands while Settings is ALREADY
+  // the current view. Unknown tab names are dropped; the slot is cleared
+  // either way so a stale request can't re-fire on the next mount.
+  const pendingSettingsTab = useNavigationStore((s) => s.pendingSettingsTab)
+  useEffect(() => {
+    if (pendingSettingsTab === null) return
+    if ((TAB_IDS as readonly string[]).includes(pendingSettingsTab)) {
+      setActiveTab(pendingSettingsTab as SettingsTab)
+    }
+    // Clear only if the slot still holds the value this effect consumed —
+    // passive effects flush asynchronously after commit, so a SECOND deep
+    // link can write the slot in between; an unconditional null here would
+    // swallow it before its own effect run ever sees it.
+    const store = useNavigationStore.getState()
+    if (store.pendingSettingsTab === pendingSettingsTab) {
+      store.setPendingSettingsTab(null)
+    }
+  }, [pendingSettingsTab])
 
   // Persist active tab so navigating away and back restores the user's place
   // (UX-276). Validation happens on read in `readActiveTab` — stored values

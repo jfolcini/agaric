@@ -32,7 +32,7 @@
 import { useEffect } from 'react'
 
 import { logger } from '@/lib/logger'
-import { getCurrentDeepLink } from '@/lib/tauri'
+import { getBlock, getCurrentDeepLink } from '@/lib/tauri'
 import { SETTINGS_ACTIVE_TAB_KEY } from '@/lib/url-state'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
@@ -82,26 +82,110 @@ function isOpenSettingsPayload(p: unknown): p is OpenSettingsPayload {
   )
 }
 
-/** Apply a `deeplink:navigate-to-block` / `deeplink:navigate-to-page` event. */
-export function handleNavigatePayload(payload: unknown, eventName: string): void {
+/** Distinguishes the two navigate events — a BLOCK id needs containing-
+ *  page resolution before it can be fed to `navigateToPage`. */
+export type NavigateTargetKind = 'block' | 'page'
+
+/**
+ * #734 — upper bound on the parent-chain walk when resolving a block's
+ * containing page. Real trees are a handful of levels deep; the cap only
+ * exists so a corrupt / cyclic `parent_id` chain can't loop the router
+ * forever.
+ */
+const MAX_ANCESTOR_HOPS = 100
+
+/** Forward to the tabs store, logging (never throwing) on failure. */
+function safeNavigateToPage(
+  eventName: string,
+  pageId: string,
+  title: string,
+  blockId?: string,
+): void {
+  try {
+    if (blockId === undefined) {
+      useTabsStore.getState().navigateToPage(pageId, title)
+    } else {
+      useTabsStore.getState().navigateToPage(pageId, title, blockId)
+    }
+  } catch (err) {
+    logger.warn('deeplink', `${eventName} navigateToPage threw`, undefined, err)
+  }
+}
+
+/**
+ * Apply a `deeplink:navigate-to-block` / `deeplink:navigate-to-page` event.
+ *
+ * #734 — both events used to share a blind `navigateToPage(id, '')`:
+ * a BLOCK link opened the block's own ULID as if it were a page (no
+ * containing-page resolution, no scroll-and-highlight), and a DATE-titled
+ * page bypassed the journal redirect because `tabs.ts` keys it on the
+ * TITLE — which was always `''` here. The handler now resolves the
+ * target through `getBlock`:
+ *
+ *   - `kind === 'page'` → fetch the page's title so the journal redirect
+ *     (UX-242) and the tab label work like every in-app navigation.
+ *   - `kind === 'block'` → resolve the containing page via the
+ *     denormalized `blocks.page_id` column (maintained by the
+ *     materializer: `page_id_self_for_pages` CHECK for pages, cross-page
+ *     moves reparent it — the same column AlertSection / AgendaResults
+ *     already navigate through) and navigate THERE, passing the original
+ *     block id as the third arg so the editor scrolls to and highlights
+ *     it (same contract as in-app `[[ULID]]` links). Rows without a
+ *     `page_id` (orphaned subtrees / legacy data) fall back to walking
+ *     `parent_id` to the nearest `page`-typed ancestor.
+ *
+ * IPC failures degrade to the legacy `navigateToPage(id, '')` so a
+ * deep link is never silently dropped. Never rejects.
+ */
+export async function handleNavigatePayload(
+  payload: unknown,
+  eventName: string,
+  kind: NavigateTargetKind,
+): Promise<void> {
   if (!isBlockNavigatePayload(payload)) {
     logger.warn('deeplink', `${eventName} payload missing valid id`, {
       payload: JSON.stringify(payload),
     })
     return
   }
-  // The backend already validates the ULID via `BlockId::from_string`;
-  // the navigation store uses ULIDs for both block and page IDs (every
-  // page IS a block in the op log).  The router passes through to
-  // `navigateToPage(pageId, title, blockId?)` — we don't have a title
-  // at the URL-routing layer, so we pass an empty string and rely on
-  // the resolve cache to populate the breadcrumb label after the
-  // navigation lands.  The page-editor view re-resolves the title on
-  // mount.
   try {
-    useTabsStore.getState().navigateToPage(payload.id, '')
+    let block = await getBlock(payload.id)
+    if (kind === 'page' || block.block_type === 'page') {
+      safeNavigateToPage(eventName, payload.id, block.content ?? '')
+      return
+    }
+    // BLOCK target — prefer the denormalized `page_id` column: ONE extra
+    // IPC fetch (for the page title) instead of an O(depth) sequential
+    // parent walk, and immune to a soft-deleted intermediate ancestor
+    // killing the chain mid-walk.
+    if (block.page_id !== null && block.page_id !== payload.id) {
+      const page = await getBlock(block.page_id)
+      safeNavigateToPage(eventName, page.id, page.content ?? '', payload.id)
+      return
+    }
+    // No usable `page_id` (orphaned subtree / legacy rows) — walk the
+    // parent chain. Stop at the first `page`-typed ancestor; if the chain
+    // ends without one, fall back to the topmost ancestor reached so the
+    // user still lands as close to the block as possible.
+    for (let hop = 0; block.parent_id !== null && hop < MAX_ANCESTOR_HOPS; hop++) {
+      block = await getBlock(block.parent_id)
+      if (block.block_type === 'page') {
+        safeNavigateToPage(eventName, block.id, block.content ?? '', payload.id)
+        return
+      }
+    }
+    safeNavigateToPage(
+      eventName,
+      block.id,
+      block.content ?? '',
+      block.id === payload.id ? undefined : payload.id,
+    )
   } catch (err) {
-    logger.warn('deeplink', `${eventName} navigateToPage threw`, undefined, err)
+    // Target fetch failed (unknown id, IPC down, …) — preserve the
+    // pre-#734 behaviour so the link still opens SOMETHING the views
+    // can re-resolve on mount.
+    logger.warn('deeplink', `${eventName} target resolution failed`, { id: payload.id }, err)
+    safeNavigateToPage(eventName, payload.id, '')
   }
 }
 
@@ -124,6 +208,14 @@ export function handleOpenSettingsPayload(payload: unknown): void {
     // Not fatal — the view still mounts on `'general'`.
   }
   try {
+    // #734 — ALSO write the store handoff slot SettingsView subscribes to
+    // while mounted. The localStorage write above only matters on a fresh
+    // mount; when Settings is already the current view (or the panel
+    // mounts with a stale `?settings=` URL param that outranks
+    // localStorage in `readActiveTab`), the slot is what actually flips
+    // the tab. Validation lives in SettingsView — unknown names are
+    // dropped there.
+    useNavigationStore.getState().setPendingSettingsTab(payload.tab)
     useNavigationStore.getState().setView('settings')
   } catch (err) {
     logger.warn('deeplink', 'setView("settings") threw', undefined, err)
@@ -147,7 +239,8 @@ export function useDeepLinkRouter(): void {
     DEEPLINK_EVENT_NAVIGATE_TO_BLOCK,
     (event) => {
       try {
-        handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
+        // Async (block→page resolution) but never rejects — see handler.
+        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, 'block')
       } catch (err) {
         logger.error(
           'deeplink',
@@ -174,7 +267,7 @@ export function useDeepLinkRouter(): void {
     DEEPLINK_EVENT_NAVIGATE_TO_PAGE,
     (event) => {
       try {
-        handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
+        void handleNavigatePayload(event.payload, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
       } catch (err) {
         logger.error('deeplink', `${DEEPLINK_EVENT_NAVIGATE_TO_PAGE} handler threw`, undefined, err)
       }
@@ -280,10 +373,10 @@ export function dispatchLaunchUrl(raw: string): void {
   const normalisedId = identifier.toUpperCase()
   switch (host) {
     case 'block':
-      handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK)
+      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_BLOCK, 'block')
       return
     case 'page':
-      handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE)
+      void handleNavigatePayload({ id: normalisedId }, DEEPLINK_EVENT_NAVIGATE_TO_PAGE, 'page')
       return
     case 'settings':
       // Settings tab names are not ULIDs — pass through as-is.
