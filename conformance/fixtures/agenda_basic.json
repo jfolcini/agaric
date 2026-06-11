@@ -1,0 +1,104 @@
+{
+  "description": "Set the agenda-relevant column-backed fields on a content block: todo_state, priority, due_date, scheduled_date. Checks the reserved fixed-field columns project identically. Auto-derived created_at/completed_at timestamp properties are intentionally excluded from the normalized snapshot (nondeterministic = today's date; mock does not model them).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "ship the slice",
+        "deleted_at": null,
+        "due_date": "2026-07-01",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": "2",
+        "scheduled_date": "2026-06-30",
+        "todo_state": "TODO"
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_scheduled_date"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "agenda_basic",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "2"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-07-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-06-30"
+      },
+      "command": "set_scheduled_date"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "ship the slice",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

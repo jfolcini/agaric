@@ -1,0 +1,165 @@
+{
+  "description": "Set typed user properties (Num/Text/Date/Ref/Bool) on a content block via set_property. Checks property value typing in the block_properties projection. Uses freeform (undefined) keys to avoid property_definitions select validation; value_ref points at seed page S1 (same space).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "key": "estimate",
+          "op_type": "set_property"
+        },
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "key": "deadline",
+          "op_type": "set_property"
+        },
+        {
+          "key": "linked",
+          "op_type": "set_property"
+        },
+        {
+          "key": "starred",
+          "op_type": "set_property"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "deadline",
+        "value": "2026-07-01",
+        "value_type": "Date"
+      },
+      {
+        "block_id": "B2",
+        "key": "estimate",
+        "value": 3.0,
+        "value_type": "Num"
+      },
+      {
+        "block_id": "B2",
+        "key": "linked",
+        "value": "B1",
+        "value_type": "Ref"
+      },
+      {
+        "block_id": "B2",
+        "key": "note",
+        "value": "draft",
+        "value_type": "Text"
+      },
+      {
+        "block_id": "B2",
+        "key": "starred",
+        "value": true,
+        "value_type": "Bool"
+      }
+    ]
+  },
+  "name": "properties_typed",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "estimate",
+        "value": {
+          "value_num": 3
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "note",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "deadline",
+        "value": {
+          "value_date": "2026-07-01"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "linked",
+        "value": {
+          "value_ref": "000000000000000000000000S1"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "starred",
+        "value": {
+          "value_bool": true
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

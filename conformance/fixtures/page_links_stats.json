@@ -1,0 +1,170 @@
+{
+  "description": "Blocks containing [[id]]-style links across and within pages. Checks the derived page_links projection (source_id/target_id/source_page_id) — the migration-0070 same-page/self exclusion surface the mock reimplements in handlers.ts. Links are written via edit_block (not create) because the backend only indexes block_links on edit_block, not create_block; the mock derives links live from content. Link tokens embed the 26-char expansion of seed label S1 (rjust 26 with '0').",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target page body self-link [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "Source page body now links to [[000000000000000000000000S1]]",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B2",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B2",
+        "parent_id": "B2",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "same-page anchor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "placeholder",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "edit_block"
+        }
+      ]
+    },
+    "page_links": [
+      {
+        "source_id": "B1",
+        "source_page_id": "B1",
+        "target_id": "B1"
+      },
+      {
+        "source_id": "B2",
+        "source_page_id": "B2",
+        "target_id": "B1"
+      }
+    ],
+    "properties": []
+  },
+  "name": "page_links_stats",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "placeholder",
+        "index": 0,
+        "parentId": "S2"
+      },
+      "command": "create_block"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "same-page anchor",
+        "index": 0,
+        "parentId": "S1"
+      },
+      "command": "create_block"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "placeholder",
+        "index": 1,
+        "parentId": "S1"
+      },
+      "command": "create_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "Source page body now links to [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S1",
+        "toText": "Target page body self-link [[000000000000000000000000S1]]"
+      },
+      "command": "edit_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Target",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "page",
+        "content": "Source",
+        "id": "S2",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}

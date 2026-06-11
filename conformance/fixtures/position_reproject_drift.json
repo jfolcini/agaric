@@ -1,0 +1,134 @@
+{
+  "description": "Move a block within its sibling group, then delete it. Exercises the production engine path (#891): the materializer applies each op through the per-space Loro engine and reprojects DENSE 1-based sibling positions from the engine's fractional order. After the move+delete the surviving siblings collapse to 1,2 (the tombstoned block keeps its last projected rank, 3). The tauri-mock densely renumbers surviving siblings to 1..N (insertAtSlotAndRenumber + renumberSiblings in handlers.ts), so it now MATCHES this engine-authored snapshot — the spurious 'position drift' under #763 was an artifact of the old runner exercising the SQL-only fallback (gapped provisional positions) instead of the engine path. Re-authored via CONFORMANCE_UPDATE=1 from the engine runner.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "deleted_at": "DELETED",
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 3,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "second",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "third",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "create_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "delete_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "position_reproject_drift",
+  "ops": [
+    {
+      "args": {
+        "blockType": "content",
+        "content": "second",
+        "index": 1,
+        "parentId": "S1"
+      },
+      "command": "create_block"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "third",
+        "index": 2,
+        "parentId": "S1"
+      },
+      "command": "create_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "newIndex": 2,
+        "newParentId": "S1"
+      },
+      "command": "move_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "first",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
