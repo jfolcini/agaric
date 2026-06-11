@@ -173,31 +173,63 @@ fn default_socket_path() -> PathBuf {
     base.join(APP_IDENTIFIER).join(MCP_RO_SOCKET_FILENAME)
 }
 
+/// #696 — message for a CONNECT-phase failure: the socket could not be
+/// reached at all, so "the server is not running" is the right
+/// diagnosis and "enable it in Settings" the right remedy.
+fn connect_failure_message(socket_path: &std::path::Path, err: &std::io::Error) -> String {
+    format!(
+        "Agaric MCP not running (socket path: {}). Enable it in Settings → Agent access.\n\
+         (underlying error: {err})",
+        socket_path.display(),
+    )
+}
+
+/// #696 — message for a BRIDGE-phase failure: the session connected and
+/// then broke mid-flight (broken pipe, app quit, disconnect-all). The
+/// old code funnelled this through the connect-phase wording, telling
+/// the user a running-then-killed server was "not running — enable it
+/// in Settings", which sends them to a toggle that is already on.
+fn bridge_failure_message(socket_path: &std::path::Path, err: &std::io::Error) -> String {
+    format!(
+        "Agaric MCP connection lost after the session started (socket path: {}). \
+         The app may have quit, restarted, or disconnected agents.\n\
+         (underlying error: {err})",
+        socket_path.display(),
+    )
+}
+
 async fn run(socket_override: Option<PathBuf>) -> ExitCode {
     let socket_path = resolve_socket_path(socket_override);
 
-    match connect(&socket_path).await {
+    // #696 — connect and bridge are distinct phases with distinct
+    // failure stories; do not collapse them into one error message.
+    let stream = match connect(&socket_path).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            eprintln!("{}", connect_failure_message(&socket_path, &e));
+            return ExitCode::from(1);
+        }
+    };
+
+    match bridge(stream).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!(
-                "Agaric MCP not running (socket path: {}). Enable it in Settings → Agent access.\n\
-                 (underlying error: {e})",
-                socket_path.display(),
-            );
+            eprintln!("{}", bridge_failure_message(&socket_path, &e));
             ExitCode::from(1)
         }
     }
 }
 
 #[cfg(unix)]
-async fn connect(socket_path: &std::path::Path) -> std::io::Result<()> {
+async fn connect(socket_path: &std::path::Path) -> std::io::Result<tokio::net::UnixStream> {
     use tokio::net::UnixStream;
-    let stream = UnixStream::connect(socket_path).await?;
-    bridge(stream).await
+    UnixStream::connect(socket_path).await
 }
 
 #[cfg(windows)]
-async fn connect(pipe_path: &std::path::Path) -> std::io::Result<()> {
+async fn connect(
+    pipe_path: &std::path::Path,
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
     use tokio::net::windows::named_pipe::ClientOptions;
     let pipe_str = pipe_path.to_str().ok_or_else(|| {
         std::io::Error::new(
@@ -205,8 +237,7 @@ async fn connect(pipe_path: &std::path::Path) -> std::io::Result<()> {
             format!("pipe path is not valid UTF-8: {}", pipe_path.display()),
         )
     })?;
-    let client = ClientOptions::new().open(pipe_str)?;
-    bridge(client).await
+    ClientOptions::new().open(pipe_str)
 }
 
 /// Shuttle bytes between stdin/stdout and the connected socket. When stdin
@@ -351,5 +382,76 @@ mod tests {
     fn resolve_socket_path_from_falls_back_to_default_when_env_missing() {
         let resolved = resolve_socket_path_from(None, None, PathBuf::from("/tmp/default.sock"));
         assert_eq!(resolved, PathBuf::from("/tmp/default.sock"));
+    }
+
+    // ── #696 — connect-phase vs bridge-phase failure messages ──────────
+
+    #[test]
+    fn connect_failure_message_advises_enabling_in_settings() {
+        let err = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+        let msg = connect_failure_message(std::path::Path::new("/tmp/x.sock"), &err);
+        assert!(
+            msg.contains("Agaric MCP not running"),
+            "connect-phase failure means the server is unreachable: {msg}"
+        );
+        assert!(
+            msg.contains("Settings"),
+            "connect-phase remedy is the Settings toggle: {msg}"
+        );
+        assert!(msg.contains("/tmp/x.sock"), "names the socket path: {msg}");
+        assert!(msg.contains("refused"), "carries the io detail: {msg}");
+    }
+
+    #[test]
+    fn bridge_failure_message_does_not_claim_server_not_running() {
+        let err = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe");
+        let msg = bridge_failure_message(std::path::Path::new("/tmp/x.sock"), &err);
+        assert!(
+            !msg.contains("not running"),
+            "#696: a mid-session failure must NOT claim the server is not running: {msg}"
+        );
+        assert!(
+            !msg.contains("Enable it in Settings"),
+            "#696: the enable-toggle advice is wrong for a session that already started: {msg}"
+        );
+        assert!(
+            msg.contains("after the session started"),
+            "bridge-phase wording identifies the mid-session phase: {msg}"
+        );
+        assert!(msg.contains("broken pipe"), "carries the io detail: {msg}");
+    }
+
+    /// #696 happy + error path through the real `connect` + `bridge`
+    /// machinery on unix: a server that accepts and immediately closes
+    /// lets `connect` succeed (so a subsequent failure would be
+    /// bridge-phase, not connect-phase), while a missing socket file
+    /// fails in the connect phase.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connect_phase_distinguishes_missing_socket_from_live_server() {
+        use tokio::net::UnixListener;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let live_path = dir.path().join("live.sock");
+        let listener = UnixListener::bind(&live_path).expect("bind");
+        let accept_task = tokio::spawn(async move {
+            let _ = listener.accept().await;
+        });
+
+        // Live socket: connect-phase succeeds.
+        let stream = connect(&live_path).await;
+        assert!(
+            stream.is_ok(),
+            "connect must succeed against a live socket: {stream:?}"
+        );
+        drop(stream);
+        let _ = accept_task.await;
+
+        // Missing socket: connect-phase fails (this is the only case
+        // that should produce the "not running" guidance).
+        let missing = dir.path().join("missing.sock");
+        let err = connect(&missing).await.expect_err("no socket bound");
+        let msg = connect_failure_message(&missing, &err);
+        assert!(msg.contains("Agaric MCP not running"));
     }
 }

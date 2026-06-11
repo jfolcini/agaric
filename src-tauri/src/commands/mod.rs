@@ -153,8 +153,8 @@ pub use queries::{
     query_by_property, query_by_property_inner, search_blocks, search_blocks_inner,
 };
 pub use spaces::{
-    SpaceRow, create_page_in_space, create_page_in_space_inner, create_space, create_space_inner,
-    list_spaces, list_spaces_inner,
+    McpSpaceRow, SpaceRow, create_page_in_space, create_page_in_space_inner, create_space,
+    create_space_inner, list_spaces, list_spaces_inner, list_spaces_registry_inner,
 };
 pub use sync_cmds::{
     cancel_pairing, cancel_pairing_inner, cancel_sync, cancel_sync_inner, confirm_pairing,
@@ -371,7 +371,11 @@ pub use tags::{
 pub(crate) use blocks::{create_block_in_tx, delete_property_in_tx, set_property_in_tx};
 pub(crate) use properties::is_valid_iso_date;
 
-const MAX_CONTENT_LENGTH: usize = 256 * 1024;
+/// Maximum block-content size (bytes) enforced at the IPC layer
+/// (`create_block_in_tx`, `edit_block_inner`, drafts). `pub(crate)` so
+/// the MCP boundary (#699) reuses the same cap for `set_property`'s
+/// `value_text` instead of inventing a second number.
+pub(crate) const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 
 /// Maximum allowed nesting depth for the block tree.
 /// Prevents pathological recursion and keeps recursive CTEs bounded.

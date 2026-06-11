@@ -246,6 +246,8 @@ macro_rules! agaric_commands {
             $crate::commands::mcp::get_mcp_socket_path,
             $crate::commands::mcp::mcp_set_enabled,
             $crate::commands::mcp::mcp_disconnect_all,
+            // MCP activity ring read surface (#695)
+            $crate::commands::mcp::get_mcp_recent_activity,
             // MCP RW (FEAT-4h slice 2)
             $crate::commands::mcp::get_mcp_rw_status,
             $crate::commands::mcp::get_mcp_rw_socket_path,
@@ -1436,6 +1438,13 @@ pub fn run() {
             // L-46: gate that serialises rapid `mcp_set_enabled` toggles
             // so the marker write + spawn cannot interleave.
             app.manage(commands::McpToggleGate::new());
+            // #695 — ONE shared activity ring, managed so the
+            // `get_mcp_recent_activity` command reads what the RO and
+            // RW serve tasks write. Allocated here (not inside
+            // `ActivityContext::from_app_handle`) so the history
+            // survives enable/disable cycles.
+            let mcp_activity_ring = mcp::activity::McpActivityRing::new();
+            app.manage(mcp_activity_ring.clone());
             let mcp_pool = pools_read_for_mcp;
             let mcp_write_pool = pools_write_for_mcp_ro;
             let mcp_materializer = materializer_for_mcp;
@@ -1447,6 +1456,7 @@ pub fn run() {
                 mcp_write_pool,
                 mcp_materializer,
                 mcp_device_id,
+                mcp_activity_ring.0.clone(),
                 Some((*mcp_lifecycle).clone()),
             );
 
@@ -1468,6 +1478,9 @@ pub fn run() {
                 pools_write_for_mcp_rw,
                 materializer_for_mcp_rw,
                 device_id_for_mcp_rw,
+                // #695 — same shared ring as the RO surface so the
+                // command surfaces one merged feed.
+                mcp_activity_ring.0.clone(),
                 Some((*mcp_rw_lifecycle_inner).clone()),
             );
 

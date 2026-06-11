@@ -5,7 +5,7 @@
 //! return `result` and produces a short string that the activity-feed
 //! ring buffer / `mcp:activity` event surface render in the
 //! Settings → Agent Access activity list. The dispatcher in
-//! [`super::rmcp_adapter::RmcpReadOnlyAdapter::call_tool`] selects the
+//! [`super::rmcp_adapter::RmcpAdapter::call_tool`] selects the
 //! right summariser by tool name on success; tools without a registered
 //! summariser fall through to the bare tool name (defensive default for
 //! any tool added later without a summariser).
@@ -37,7 +37,7 @@ use serde_json::Value;
 use super::registry::{
     TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_GET_AGENDA,
     TOOL_GET_BLOCK, TOOL_GET_PAGE, TOOL_JOURNAL_FOR_DATE, TOOL_LIST_BACKLINKS, TOOL_LIST_PAGES,
-    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY,
+    TOOL_LIST_PROPERTY_DEFS, TOOL_LIST_SPACES, TOOL_LIST_TAGS, TOOL_SEARCH, TOOL_SET_PROPERTY,
     TOOL_UPDATE_BLOCK_CONTENT,
 };
 
@@ -76,7 +76,7 @@ fn has_more(v: &Value) -> bool {
 /// Top-level dispatch: select the right per-tool summariser for `name`.
 /// Falls back to the bare tool name when no summariser is registered.
 ///
-/// Always called from [`super::rmcp_adapter::RmcpReadOnlyAdapter::call_tool`]
+/// Always called from [`super::rmcp_adapter::RmcpAdapter::call_tool`]
 /// on the **Ok** branch; the Err branch keeps using the clipped error message and
 /// does not invoke this module.
 pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
@@ -91,6 +91,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_LIST_PROPERTY_DEFS => summarise_list_property_defs(args, result),
         TOOL_GET_AGENDA => summarise_get_agenda(args, result),
         TOOL_JOURNAL_FOR_DATE => summarise_journal_for_date(args, result),
+        TOOL_LIST_SPACES => summarise_list_spaces(args, result),
         // ---- read-write (tools_rw) ----
         TOOL_APPEND_BLOCK => summarise_append_block(args, result),
         TOOL_UPDATE_BLOCK_CONTENT => summarise_update_block_content(args, result),
@@ -260,6 +261,17 @@ pub fn summarise_journal_for_date(args: &Value, result: &Value) -> String {
     }
 }
 
+/// `list_spaces — N space(s)` (#633). Space names are user-authored
+/// content (like tag names) and never appear in the summary; the
+/// response is a top-level JSON array, so count via [`root_array_len`].
+pub fn summarise_list_spaces(_args: &Value, result: &Value) -> String {
+    let n = root_array_len(result);
+    format!(
+        "list_spaces — {n} {}",
+        if n == 1 { "space" } else { "spaces" }
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Read-write summarisers
 // ---------------------------------------------------------------------------
@@ -310,6 +322,9 @@ pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
         Some(format!("={n}"))
     } else if let Some(date) = args.get("value_date").and_then(Value::as_str) {
         Some(format!("={date}"))
+    } else if let Some(b) = args.get("value_bool").and_then(Value::as_bool) {
+        // #697 — booleans are structural metadata, safe to embed.
+        Some(format!("={b}"))
     } else {
         // `value_text` is content (never embedded); `value_ref` (when
         // present) is a ULID we surface as an 8-char prefix.
@@ -650,6 +665,25 @@ mod tests {
     }
 
     #[test]
+    fn list_spaces_counts_spaces_and_omits_names() {
+        let result = json!([
+            { "id": ULID_A, "name": "SECRET_TITLE", "is_default": true },
+            { "id": ULID_B, "name": "SECRET_TAG_NAME", "is_default": false },
+        ]);
+        let s = summarise_list_spaces(&json!({}), &result);
+        assert_eq!(s, "list_spaces — 2 spaces");
+        assert_no_secrets(&s);
+        assert_no_full_ulid(&s, ULID_A);
+    }
+
+    #[test]
+    fn list_spaces_singular_form_for_one_space() {
+        let result = json!([{ "id": ULID_A, "name": "SECRET_TITLE", "is_default": true }]);
+        let s = summarise_list_spaces(&json!({}), &result);
+        assert_eq!(s, "list_spaces — 1 space");
+    }
+
+    #[test]
     fn journal_for_date_combines_date_and_prefix() {
         let args = json!({ "date": "2025-01-15" });
         let result = json!({ "id": ULID_A, "content": "SECRET_TITLE" });
@@ -910,12 +944,16 @@ mod tests {
         let result_agenda = json!([
             { "block": { "id": ULID_A, "content": "SECRET_BLOCK_CONTENT" }, "projected_date": "2025-01-05", "source": "due_date" }
         ]);
+        let result_spaces = json!([
+            { "id": ULID_A, "name": "SECRET_TITLE", "is_default": true }
+        ]);
 
         let result_for = |name: &str| -> &Value {
             match name {
                 TOOL_LIST_TAGS => &result_tags,
                 TOOL_LIST_PROPERTY_DEFS => &result_defs,
                 TOOL_GET_AGENDA => &result_agenda,
+                TOOL_LIST_SPACES => &result_spaces,
                 _ => &kitchen,
             }
         };

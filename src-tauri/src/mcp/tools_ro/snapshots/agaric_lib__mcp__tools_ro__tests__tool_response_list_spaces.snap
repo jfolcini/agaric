@@ -1,0 +1,10 @@
+---
+source: src/mcp/tools_ro/tests.rs
+expression: result
+---
+- id: 00000000000000000AGAR1CPER
+  is_default: true
+  name: Personal
+- id: 00000000000000000AGAR1CWRK
+  is_default: false
+  name: Work

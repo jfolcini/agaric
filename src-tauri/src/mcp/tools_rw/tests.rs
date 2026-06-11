@@ -333,6 +333,188 @@ async fn set_property_rejects_multiple_value_fields() {
     );
 }
 
+/// #697 happy path: `value_bool` is accepted at the MCP boundary and
+/// threads through to a `value_type = 'boolean'` definition. Before
+/// the fix, `deny_unknown_fields` rejected the very slot the L-122
+/// error message told the agent to use.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_accepts_value_bool_697() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    // PEND-14 boolean-typed definition so the value lands in value_bool.
+    crate::commands::create_property_def_inner(&pool, "archived".into(), "boolean".into(), None)
+        .await
+        .expect("boolean property def");
+    settle(&mat).await;
+
+    let result = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block.id.clone(),
+                "key": "archived",
+                "value_bool": true,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("#697: value_bool must be accepted at the MCP boundary");
+    assert_eq!(result["id"], block.id.as_str());
+    settle(&mat).await;
+
+    let stored: Option<bool> = sqlx::query_scalar(
+        "SELECT value_bool FROM block_properties WHERE block_id = ? AND key = 'archived'",
+    )
+    .bind(block.id.as_str())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, Some(true), "value_bool must land in the bool slot");
+}
+
+/// #697 schema/message coherence: the L-122 error for a zero-value call
+/// advertises value_bool — assert the advertised slot now parses (i.e.
+/// the schema lists it and serde accepts it alongside the other four).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_error_message_slots_match_schema_697() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "set_property",
+            json!({"block_id": block.id.clone(), "key": "assignee", "space_id": &space}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("zero values must error");
+    let AppError::Validation(msg) = err else {
+        panic!("expected Validation");
+    };
+    assert!(
+        msg.contains("value_bool"),
+        "L-122 message advertises value_bool: {msg}"
+    );
+
+    // Every slot named in the message must be a schema property —
+    // an agent that follows the error must not hit a parse failure.
+    let desc = tool_desc_set_property();
+    let props = desc.input_schema["properties"]
+        .as_object()
+        .expect("schema properties");
+    for slot in [
+        "value_text",
+        "value_num",
+        "value_date",
+        "value_ref",
+        "value_bool",
+    ] {
+        assert!(
+            msg.contains(slot),
+            "L-122 message must advertise `{slot}`: {msg}"
+        );
+        assert!(
+            props.contains_key(slot),
+            "schema must accept advertised slot `{slot}` (#697)"
+        );
+    }
+}
+
+/// #697: providing value_bool alongside another slot still trips the
+/// exactly-one invariant (value_bool participates in the count).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_value_bool_counts_toward_exactly_one_697() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    settle(&mat).await;
+
+    let err = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block.id,
+                "key": "assignee",
+                "value_text": "alice",
+                "value_bool": true,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("two slots must error");
+    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+}
+
+// -------------------------------------------------------------------
+// #699 — value_text size cap at the MCP boundary
+// -------------------------------------------------------------------
+
+/// #699: value_text larger than MAX_CONTENT_LENGTH (the cap the IPC
+/// layer enforces on block content) is rejected with a Validation
+/// error naming the cap, BEFORE any DB work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_rejects_oversized_value_text_699() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    settle(&mat).await;
+
+    let oversized = "x".repeat(crate::commands::MAX_CONTENT_LENGTH + 1);
+    let err = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block.id,
+                "key": "assignee",
+                "value_text": oversized,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect_err("oversized value_text must be rejected (#699)");
+    match err {
+        AppError::Validation(msg) => {
+            assert!(
+                msg.contains("value_text length"),
+                "message names the field: {msg}"
+            );
+            assert!(
+                msg.contains(&crate::commands::MAX_CONTENT_LENGTH.to_string()),
+                "message names the cap: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+/// #699 boundary: a value_text of exactly MAX_CONTENT_LENGTH bytes
+/// passes the boundary check (parity with the block-content cap, which
+/// is exclusive at `> MAX_CONTENT_LENGTH`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn set_property_accepts_value_text_at_cap_699() {
+    let (tools, mat, pool, space, _dir) = mk_tools().await;
+    let block = mk_in_space_content_block(&pool, &mat, &space, "task").await;
+    settle(&mat).await;
+
+    let at_cap = "x".repeat(crate::commands::MAX_CONTENT_LENGTH);
+    let result = tools
+        .call_tool(
+            "set_property",
+            json!({
+                "block_id": block.id.clone(),
+                "key": "assignee",
+                "value_text": at_cap,
+                "space_id": space,
+            }),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("value_text at exactly the cap must pass the boundary check");
+    assert_eq!(result["id"], block.id.as_str());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn set_property_rejects_zero_value_fields() {
     let (tools, mat, pool, space, _dir) = mk_tools().await;

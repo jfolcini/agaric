@@ -4,7 +4,7 @@
 
 ## Production framing = `rmcp` adapter
 
-The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpReadOnlyAdapter`** in `rmcp_adapter.rs`. The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in MAINT-111. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
+The production path for MCP `tools/list` and `tools/call` dispatch is **`RmcpAdapter`** in `rmcp_adapter.rs` (renamed from `RmcpReadOnlyAdapter` in #693 — it serves BOTH surfaces, parameterised on `McpSurface` so `get_info` advertises the surface it actually fronts). The historical hand-rolled JSON-RPC framing in `server.rs` (`make_success`, `parse_request`, `dispatch`, `handle_*`) was deleted in MAINT-111. **Do not reintroduce hand-rolled framing**; if you need a new MCP method, add it via `rmcp`'s `ServerHandler` trait impl.
 
 `run_connection` in `server.rs` is the per-connection lifecycle wrapper: it owns the FEAT-4e disconnect grace period + `McpLifecycle::active_connections` counter, then delegates the wire loop to `adapter.serve(stream)`. **Touch the lifecycle wrapper for connection-level concerns (grace, listener teardown); touch the adapter for tool dispatch.**
 
@@ -48,7 +48,7 @@ After every `tools/call` completion, the adapter calls `emit_tool_completion(ctx
 - `session_id` — the connection's session ULID (stable across the connection's lifetime).
 - `op_ref` + `additional_op_refs` — drained from the `LAST_APPEND` task-local; the first op is the primary `OpRef`, the rest are `additionalOpRefs`. **One activity-feed entry per tool call, regardless of how many ops the tool wrote.**
 
-This is automatic; tool handlers don't call it directly. The plumbing is in `RmcpReadOnlyAdapter::call_tool`.
+This is automatic; tool handlers don't call it directly. The plumbing is in `RmcpAdapter::call_tool`.
 
 ## JSON-RPC error codes
 

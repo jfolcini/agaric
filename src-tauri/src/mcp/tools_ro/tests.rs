@@ -54,18 +54,18 @@ async fn settle(mat: &Materializer) {
 }
 
 // -------------------------------------------------------------------
-// list_tools — snapshot of the 9-tool wire contract
+// list_tools — snapshot of the 10-tool wire contract
 // -------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn list_tools_advertises_nine_tools() {
+async fn list_tools_advertises_ten_tools() {
     let (tools, _mat, _dir) = mk_tools().await;
     let descs = tools.list_tools();
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(
         names.len(),
-        9,
-        "ReadOnlyTools exposes exactly nine v1 tools"
+        10,
+        "ReadOnlyTools exposes exactly ten tools (v1 nine + #633 list_spaces)"
     );
     assert_eq!(
         names,
@@ -79,8 +79,9 @@ async fn list_tools_advertises_nine_tools() {
             "list_property_defs",
             "get_agenda",
             "journal_for_date",
+            "list_spaces",
         ],
-        "tool order is part of the wire contract — do not re-order",
+        "tool order is part of the wire contract — do not re-order (new tools append)",
     );
 }
 
@@ -1395,6 +1396,269 @@ async fn journal_for_date_invalid_date_validation() {
         .await
         .expect_err("invalid date");
     assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+}
+
+// -------------------------------------------------------------------
+// #633 — list_spaces
+// -------------------------------------------------------------------
+
+/// #633 happy path: the seeded Personal + Work spaces surface as
+/// `{ id, name, is_default }` rows, alphabetical by name, with
+/// `is_default` marking exactly the Personal space.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    // Seed the two canonical spaces (Personal carries the reserved
+    // SPACE_PERSONAL_ULID, which is what `is_default` keys on).
+    crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
+        .await
+        .unwrap();
+
+    let result = tools
+        .call_tool("list_spaces", json!({}), &test_ctx())
+        .await
+        .expect("happy path");
+    let rows = result.as_array().expect("list_spaces returns a JSON array");
+    assert_eq!(rows.len(), 2, "bootstrap seeds exactly two spaces");
+
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|r| r["name"].as_str().expect("name string"))
+        .collect();
+    assert_eq!(names, vec!["Personal", "Work"], "alphabetical by name");
+
+    let personal = &rows[0];
+    assert_eq!(
+        personal["id"].as_str(),
+        Some(crate::spaces::SPACE_PERSONAL_ULID),
+        "Personal carries the reserved seeded ULID",
+    );
+    assert_eq!(
+        personal["is_default"],
+        json!(true),
+        "Personal is the default space",
+    );
+    assert_eq!(
+        rows[1]["is_default"],
+        json!(false),
+        "non-Personal spaces are not default",
+    );
+
+    // The discovery loop the issue describes: a space id returned by
+    // list_spaces must be directly usable as the `space_id` argument
+    // of a space-requiring tool.
+    let space_id = personal["id"].as_str().unwrap().to_string();
+    let journal = tools
+        .call_tool(
+            "journal_for_date",
+            json!({"date": "2025-03-03", "space_id": space_id}),
+            &test_ctx(),
+        )
+        .await
+        .expect("a list_spaces id must satisfy a space_id-requiring tool");
+    assert_eq!(journal["block_type"], "page");
+}
+
+/// #633 error path: strict boundary — unknown fields are rejected with
+/// a Validation error (→ -32602), same as every other tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_rejects_unknown_field() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool("list_spaces", json!({"bogus": 1}), &test_ctx())
+        .await
+        .expect_err("must reject unknown field");
+    assert!(matches!(err, AppError::Validation(_)), "got {err:?}");
+}
+
+/// #633: a soft-deleted space block keeps its registry row (0089
+/// semantics) but must NOT surface from list_spaces — liveness is the
+/// standard `blocks.deleted_at IS NULL` predicate.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_excludes_soft_deleted_space() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let keep = mk_space(&tools.pool, "Keep").await;
+    let doomed = mk_space(&tools.pool, "Doomed").await;
+    settle(&mat).await;
+    // Soft-delete the space's block row directly (the user-facing
+    // delete flow soft-deletes the empty space block the same way).
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind(&doomed)
+        .execute(&tools.pool)
+        .await
+        .unwrap();
+
+    let result = tools
+        .call_tool("list_spaces", json!({}), &test_ctx())
+        .await
+        .expect("happy path");
+    let rows = result.as_array().expect("array");
+    let ids: Vec<&str> = rows.iter().map(|r| r["id"].as_str().expect("id")).collect();
+    assert!(ids.contains(&keep.as_str()), "live space surfaces");
+    assert!(
+        !ids.contains(&doomed.as_str()),
+        "soft-deleted space must not surface from list_spaces",
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn snapshot_list_spaces_response_shape() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    crate::spaces::bootstrap_spaces_for_test(&tools.pool, DEV)
+        .await
+        .unwrap();
+    let result = tools
+        .call_tool("list_spaces", json!({}), &test_ctx())
+        .await
+        .unwrap();
+    // The seeded ULIDs are reserved constants (stable across runs), so
+    // no redaction is needed — the snapshot pins the full wire shape.
+    insta::assert_yaml_snapshot!("tool_response_list_spaces", result);
+}
+
+// -------------------------------------------------------------------
+// #694 — journal_for_date normalises space_id at the boundary
+// -------------------------------------------------------------------
+
+/// #694 / L-121 sibling of `get_block_accepts_lowercase_ulid_l121`:
+/// `journal_for_date` was the only handler that skipped
+/// `normalize_ulid_arg` on `space_id`, so a lowercase space ULID
+/// surfaced as a spurious "space not found".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn journal_for_date_accepts_lowercase_space_id_694() {
+    let (tools, mat, _dir) = mk_tools().await;
+    let space = mk_space(&tools.pool, "Personal").await;
+    settle(&mat).await;
+
+    let lower = space.to_lowercase();
+    assert_ne!(lower, space, "fixture space ULID must not be all-lowercase");
+
+    let result = tools
+        .call_tool(
+            "journal_for_date",
+            json!({"date": "2025-06-15", "space_id": lower}),
+            &test_ctx(),
+        )
+        .await
+        .expect("lowercase space ULID must be accepted at the MCP boundary (#694)");
+    assert_eq!(result["block_type"], "page");
+    assert_eq!(result["content"], "2025-06-15");
+
+    // Idempotency must hold across casings: the canonical-case call
+    // resolves to the same page the lowercase call created.
+    settle(&mat).await;
+    let again = tools
+        .call_tool(
+            "journal_for_date",
+            json!({"date": "2025-06-15", "space_id": space}),
+            &test_ctx(),
+        )
+        .await
+        .expect("canonical-case call succeeds");
+    assert_eq!(
+        again["id"], result["id"],
+        "lowercase and canonical space ids must resolve to the same journal page",
+    );
+}
+
+// -------------------------------------------------------------------
+// #699 — search filter-term budget
+// -------------------------------------------------------------------
+
+/// #699: a `tag_ids` list larger than the SQLite bind-parameter limit
+/// (`MAX_SQL_PARAMS` = SEARCH_FILTER_TERMS_CAP) is rejected at the
+/// boundary with an actionable Validation error instead of surfacing
+/// as an opaque internal error from the doomed SQL statement.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_tag_ids_vector_699() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let tag_ids: Vec<String> = (0..SEARCH_FILTER_TERMS_CAP + 1)
+        .map(|i| format!("TAG{i}"))
+        .collect();
+    let err = tools
+        .call_tool(
+            "search",
+            json!({"query": "x", "space_id": TEST_SPACE_ID, "tag_ids": tag_ids}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("oversized tag_ids must be rejected");
+    match err {
+        AppError::Validation(msg) => {
+            assert!(
+                msg.contains("too many filter terms"),
+                "message names the violation: {msg}"
+            );
+            assert!(
+                msg.contains(&SEARCH_FILTER_TERMS_CAP.to_string()),
+                "message names the cap: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+/// #699: PEND-65 filter vectors count against the same combined
+/// budget — two half-budget vectors together overflow it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_rejects_oversized_combined_filter_vectors_699() {
+    let (tools, _mat, _dir) = mk_tools().await;
+    let half: Vec<String> = (0..(SEARCH_FILTER_TERMS_CAP / 2 + 1))
+        .map(|i| format!("S{i}"))
+        .collect();
+    let err = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "x",
+                "space_id": TEST_SPACE_ID,
+                "filter": {
+                    "state_filter": half,
+                    "excluded_state_filter": half,
+                },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("combined filter vectors over the budget must be rejected");
+    assert!(
+        matches!(err, AppError::Validation(ref msg) if msg.contains("too many filter terms")),
+        "got {err:?}",
+    );
+}
+
+/// #699 boundary sanity: a modest in-budget filter set still runs (the
+/// cap must not reject legitimate calls).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_accepts_in_budget_filter_vectors_699() {
+    let (tools, mat, _dir) = mk_tools().await;
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle row".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    let result = tools
+        .call_tool(
+            "search",
+            json!({
+                "query": "needle",
+                "space_id": TEST_SPACE_ID,
+                "filter": { "excluded_state_filter": ["DONE", "CANCELLED"] },
+            }),
+            &test_ctx(),
+        )
+        .await
+        .expect("in-budget filters must not trip the #699 cap");
+    assert_eq!(result["items"].as_array().unwrap().len(), 1);
 }
 
 // -------------------------------------------------------------------

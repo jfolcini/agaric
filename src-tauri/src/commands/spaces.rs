@@ -96,6 +96,53 @@ pub async fn list_spaces(pool: State<'_, ReadPool>) -> Result<Vec<SpaceRow>, App
         .map_err(sanitize_internal_error)
 }
 
+/// A space row returned by [`list_spaces_registry_inner`] — the MCP
+/// `list_spaces` tool's wire shape (#633). `is_default` marks the
+/// seeded "Personal" space ([`crate::spaces::SPACE_PERSONAL_ULID`]),
+/// which is the space the boot backfill assigns orphaned pages to —
+/// the natural pick for an agent that has no out-of-band space
+/// configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct McpSpaceRow {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+/// Return every live space as `{ id, name, is_default }`, ordered
+/// alphabetically by name (id as tiebreak).
+///
+/// #633 / #804 — reads the first-class `spaces` registry table (the
+/// canonical "is a space" definition since migration 0089) joined
+/// against `blocks` for liveness (`deleted_at IS NULL`, the standard
+/// live-space predicate per the 0089 migration notes) and the
+/// user-facing name (`content`). Registry rows for soft-deleted space
+/// blocks are retained by design; the JOIN filters them out here the
+/// same way every other live-space query does.
+#[instrument(skip(pool), err)]
+pub async fn list_spaces_registry_inner(pool: &SqlitePool) -> Result<Vec<McpSpaceRow>, AppError> {
+    let rows = sqlx::query!(
+        r#"SELECT
+               s.id as "id!: String",
+               COALESCE(b.content, '') as "name!: String"
+           FROM spaces s
+           JOIN blocks b
+             ON b.id = s.id
+            AND b.deleted_at IS NULL
+           ORDER BY COALESCE(b.content, '') ASC, s.id ASC"#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| McpSpaceRow {
+            is_default: r.id == crate::spaces::SPACE_PERSONAL_ULID,
+            id: r.id,
+            name: r.name,
+        })
+        .collect())
+}
+
 // ---------------------------------------------------------------------------
 // FEAT-3 Phase 2: `create_page_in_space`
 // ---------------------------------------------------------------------------
@@ -512,6 +559,81 @@ mod tests {
         // No bootstrap — no spaces.
         let spaces = list_spaces_inner(&pool).await.unwrap();
         assert_eq!(spaces.len(), 0, "empty DB yields no spaces");
+    }
+
+    // ── #633: list_spaces_registry_inner (MCP discovery surface) ─────
+
+    /// #633 happy path: the registry-backed inner returns the seeded
+    /// spaces with `is_default` marking exactly the Personal space.
+    #[tokio::test]
+    async fn list_spaces_registry_returns_seeded_with_default_flag() {
+        let (pool, _dir) = test_pool().await;
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let rows = list_spaces_registry_inner(&pool).await.unwrap();
+        assert_eq!(rows.len(), 2, "bootstrap seeds exactly two spaces");
+        assert_eq!(rows[0].name, "Personal", "alphabetical by name");
+        assert_eq!(rows[0].id, SPACE_PERSONAL_ULID);
+        assert!(rows[0].is_default, "Personal is the default space");
+        assert_eq!(rows[1].name, "Work");
+        assert_eq!(rows[1].id, SPACE_WORK_ULID);
+        assert!(!rows[1].is_default, "Work is not the default space");
+    }
+
+    /// #633: the registry inner agrees with the property-backed
+    /// `list_spaces_inner` on the live-space id set (the registry rows
+    /// are trigger-derived from the same `is_space` property writes).
+    #[tokio::test]
+    async fn list_spaces_registry_agrees_with_property_backed_inner() {
+        let (pool, _dir) = test_pool().await;
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+
+        let via_registry: Vec<String> = list_spaces_registry_inner(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        let via_property: Vec<String> = list_spaces_inner(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(
+            via_registry, via_property,
+            "registry-backed and property-backed live-space sets must agree",
+        );
+    }
+
+    /// #633 error/edge path: a soft-deleted space keeps its registry
+    /// row (0089 semantics) but is excluded by the liveness JOIN; an
+    /// empty DB yields an empty list rather than an error.
+    #[tokio::test]
+    async fn list_spaces_registry_excludes_soft_deleted_and_handles_empty() {
+        let (pool, _dir) = test_pool().await;
+        let empty = list_spaces_registry_inner(&pool).await.unwrap();
+        assert!(empty.is_empty(), "empty DB yields no spaces");
+
+        bootstrap_spaces(&pool, DEV).await.unwrap();
+        sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+            .bind(SPACE_WORK_ULID)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The registry row survives the soft delete by design…
+        let registry_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM spaces")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            registry_rows, 2,
+            "registry rows mirror the flag, not liveness"
+        );
+        // …but the live-space query must filter it out.
+        let rows = list_spaces_registry_inner(&pool).await.unwrap();
+        assert_eq!(rows.len(), 1, "soft-deleted space excluded");
+        assert_eq!(rows[0].id, SPACE_PERSONAL_ULID);
     }
 
     #[tokio::test]

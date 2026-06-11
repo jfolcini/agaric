@@ -3231,6 +3231,10 @@ export const HANDLERS: Record<string, Handler> = {
 
   mcp_disconnect_all: returnNull,
 
+  // #695 — activity-ring read surface. The mock server has no agent
+  // traffic, so the recent-activity feed is always empty.
+  get_mcp_recent_activity: () => [],
+
   get_mcp_rw_status: () => ({
     enabled: false,
     socket_path: '/mock/agaric-mcp-rw.sock',
