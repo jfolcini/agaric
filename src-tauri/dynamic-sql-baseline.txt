@@ -35,7 +35,9 @@
 4 src-tauri/src/loro/projection.rs
 4 src-tauri/src/loro/snapshot.rs
 1 src-tauri/src/maintenance.rs
-22 src-tauri/src/materializer/handlers.rs
+18 src-tauri/src/materializer/handlers/loro_apply.rs
+1 src-tauri/src/materializer/handlers/pages_cache.rs
+3 src-tauri/src/materializer/handlers/sql_only.rs
 1 src-tauri/src/materializer/retry_queue.rs
 1 src-tauri/src/mcp/handler_utils.rs
 2 src-tauri/src/op_log.rs
