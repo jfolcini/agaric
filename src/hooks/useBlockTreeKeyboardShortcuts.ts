@@ -17,6 +17,11 @@ import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
 import { matchesShortcutBinding } from '../lib/keyboard-config'
+import {
+  clearTreeInteractionIfHolder,
+  isLastInteractedTree,
+  markTreeInteracted,
+} from '../lib/last-interacted-tree'
 import { useBlockStore } from '../stores/blocks'
 import type { PageBlockState } from '../stores/page-blocks'
 import { storeOwnsBlock } from '../stores/page-blocks'
@@ -78,6 +83,20 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     zoomToRoot,
     zoomIn,
   } = options
+
+  // ── #774 — track this tree as "last interacted" for the shared
+  // zoom-out Escape tie-break ──────────────────────────────────────────
+  // The interaction signal is focus ownership: when this tree's store owns
+  // the focused block, the user is acting in THIS tree. Recording it here
+  // means a later Escape (fired with no block focused) zooms out the tree
+  // the user last edited, rather than the earliest-mounted one. Cleared on
+  // unmount so a stale token can't keep claiming Escape.
+  useEffect(() => {
+    if (storeOwnsBlock(pageStore, focusedBlockId)) markTreeInteracted(pageStore)
+  }, [pageStore, focusedBlockId])
+  useEffect(() => {
+    return () => clearTreeInteractionIfHolder(pageStore)
+  }, [pageStore])
 
   // ── Keyboard shortcut for collapse toggle (`collapseExpand`, default
   // Mod+. — routed through matchesShortcutBinding so rebinds work, #724) ──
@@ -164,6 +183,10 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
       if (e.defaultPrevented) return
       if (!matchesShortcutBinding(e, 'zoomOut')) return
       if (zoomedBlockId === null) return
+      // #774 — break the mount-order tie: with several zoomed trees, only the
+      // most-recently-interacted one claims Escape (others fall through). The
+      // old `defaultPrevented` race let the earliest-MOUNTED zoomed tree win.
+      if (!isLastInteractedTree(pageStore)) return
       const { focusedBlockId: fid, selectedBlockIds: sel } = useBlockStore.getState()
       if (fid) return
       if (sel.length > 0) return
@@ -177,7 +200,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handleZoomOutEscape)
     return () => document.removeEventListener('keydown', handleZoomOutEscape)
-  }, [zoomedBlockId, zoomToRoot])
+  }, [zoomedBlockId, zoomToRoot, pageStore])
 
   // ── Keyboard shortcut: zoom IN to the focused block (D1, #217) ──
   // Mirrors the context-menu "Zoom in" action, which is gated on

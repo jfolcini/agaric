@@ -94,6 +94,24 @@ interface UndoStore {
 
   /** Clear undo state for a page (called on navigation away). */
   clearPage: (pageId: string) => void
+
+  /**
+   * #731 — re-anchor undo state after a sync applied remote ops to a page.
+   *
+   * `performSingleUndo` addresses the backend op-log POSITIONALLY
+   * (`undoPageOp({ pageId, undoDepth })`), and the backend selects the
+   * Nth-most-recent op across ALL devices with no device filter. Only a
+   * LOCAL `onNewAction` resets `undoDepth`; remote ops landing between two
+   * Ctrl+Z presses shift that indexing, so the next undo would reverse a
+   * DIFFERENT op than the user intends (and stale `redoStack` OpRefs may
+   * target ops the remote write superseded). When `useSyncEvents` reloads a
+   * page's blocks after `sync:complete` (ops_received > 0), it must also drop
+   * that page's positional undo anchor here. Reset to the pristine baseline
+   * (depth 0, empty redo stack + group sizes) — identical to `onNewAction`,
+   * but only for pages whose op-log actually changed. No-op for pages with no
+   * recorded undo state.
+   */
+  reanchorAfterRemoteOps: (pageId: string) => void
 }
 
 /**
@@ -374,6 +392,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     clearPage: (pageId: string) => {
       set((state) => ({
         pages: setPageState(state.pages, pageId, () => undefined),
+      }))
+    },
+
+    reanchorAfterRemoteOps: (pageId: string) => {
+      set((state) => ({
+        // Only re-anchor pages that already carry undo state — a page the
+        // user never touched has no stale positional anchor to fix, and
+        // creating a pristine entry for it would needlessly grow the Map.
+        pages: setPageState(state.pages, pageId, (current) =>
+          current ? { redoStack: [], undoDepth: 0, redoGroupSizes: [] } : current,
+        ),
       }))
     },
   }

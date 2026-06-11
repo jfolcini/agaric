@@ -19,6 +19,7 @@ const {
   mockLoad,
   mockPageBlockRegistry,
   mockPreload,
+  mockReanchorUndo,
 } = vi.hoisted(() => {
   const mockUnlisten = vi.fn()
   const mockListen = vi.fn().mockResolvedValue(mockUnlisten)
@@ -44,6 +45,7 @@ const {
   })
 
   const mockPreload = vi.fn().mockResolvedValue(undefined)
+  const mockReanchorUndo = vi.fn()
 
   return {
     mockUnlisten,
@@ -56,6 +58,7 @@ const {
     mockLoad,
     mockPageBlockRegistry,
     mockPreload,
+    mockReanchorUndo,
   }
 })
 
@@ -80,6 +83,15 @@ vi.mock('@/stores/sync', () => ({
 
 vi.mock('@/stores/page-blocks', () => ({
   pageBlockRegistry: mockPageBlockRegistry,
+}))
+
+// #731 — useSyncEvents re-anchors each reloaded page's undo state.
+vi.mock('@/stores/undo', () => ({
+  useUndoStore: {
+    getState: vi.fn(() => ({
+      reanchorAfterRemoteOps: mockReanchorUndo,
+    })),
+  },
 }))
 
 vi.mock('@/stores/resolve', () => ({
@@ -402,6 +414,53 @@ describe('useSyncEvents', () => {
       })
 
       expect(mockLoad).toHaveBeenCalled()
+
+      unmount()
+    })
+
+    it('re-anchors undo state for each reloaded page when ops_received > 0 (#731)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 5,
+          ops_sent: 0,
+        },
+      })
+
+      // Remote ops shifted the backend op-log indexing that undoDepth
+      // addresses; the page's positional undo anchor must be reset, keyed by
+      // the same pageId the block reload uses (#731).
+      expect(mockReanchorUndo).toHaveBeenCalledWith('PAGE_1')
+
+      unmount()
+    })
+
+    it('does NOT re-anchor undo state when ops_received === 0 (#731)', async () => {
+      const { unmount } = renderHook(() => useSyncEvents())
+
+      await vi.waitFor(() => {
+        expect(mockListen).toHaveBeenCalledTimes(2)
+      })
+
+      const callback = getListenerCallback('sync:complete')
+      callback({
+        payload: {
+          type: 'complete',
+          remote_device_id: 'device-42',
+          ops_received: 0,
+          ops_sent: 3,
+        },
+      })
+
+      expect(mockReanchorUndo).not.toHaveBeenCalled()
 
       unmount()
     })

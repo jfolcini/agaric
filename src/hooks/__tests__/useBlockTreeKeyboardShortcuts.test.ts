@@ -8,6 +8,7 @@
 import { fireEvent, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { __resetLastInteractedTreeForTests } from '../../lib/last-interacted-tree'
 import { useBlockStore } from '../../stores/blocks'
 import type { UseBlockTreeKeyboardShortcutsOptions } from '../useBlockTreeKeyboardShortcuts'
 import { useBlockTreeKeyboardShortcuts } from '../useBlockTreeKeyboardShortcuts'
@@ -56,6 +57,9 @@ function makeOptions(
 beforeEach(() => {
   vi.clearAllMocks()
   useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+  // #774 — clear the last-interacted-tree registry between tests so a
+  // marker from a prior test can't leak into the tie-break assertions.
+  __resetLastInteractedTreeForTests()
 })
 
 describe('useBlockTreeKeyboardShortcuts', () => {
@@ -304,6 +308,69 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
 
       expect(opts.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('#774 — only the last-interacted zoomed tree claims Escape (not mount-order-first)', () => {
+      // Two zoomed trees mounted; tree1 mounts FIRST (its keydown listener
+      // would win the old defaultPrevented race). The user last interacted
+      // with tree2 (focus was in tree2). Escape must zoom out tree2 only.
+      const tree1Store = makePageStore(['T1_BLOCK'])
+      const tree2Store = makePageStore(['T2_BLOCK'])
+
+      const tree1 = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'T1_BLOCK',
+        pageStore: tree1Store,
+        zoomToRoot: vi.fn(),
+      })
+      const tree2 = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'T2_BLOCK',
+        pageStore: tree2Store,
+        zoomToRoot: vi.fn(),
+      })
+
+      // Mount tree1 first (earliest mount → first keydown listener).
+      renderHook(() => useBlockTreeKeyboardShortcuts(tree1))
+      // Mount tree2, and simulate the user interacting with it: its store
+      // owns the focused block, which marks tree2 as last-interacted via the
+      // ownership effect. Then re-render with focus cleared (Escape requires
+      // no focus) — the last-interacted marker persists.
+      const tree2Focused: UseBlockTreeKeyboardShortcutsOptions = {
+        ...tree2,
+        focusedBlockId: 'T2_BLOCK',
+      }
+      const { rerender } = renderHook(
+        (props: UseBlockTreeKeyboardShortcutsOptions) => useBlockTreeKeyboardShortcuts(props),
+        { initialProps: tree2Focused },
+      )
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+      rerender({ ...tree2, focusedBlockId: null })
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      // Tie-break: tree2 (last-interacted) zooms out; tree1 (mounted first)
+      // does NOT — the old mount-order race is fixed.
+      expect(tree2.zoomToRoot).toHaveBeenCalledTimes(1)
+      expect(tree1.zoomToRoot).not.toHaveBeenCalled()
+    })
+
+    it('#774 — a lone zoomed tree handles Escape even with no prior interaction (fail-open)', () => {
+      // Single PageEditor, no interaction recorded yet → isLastInteractedTree
+      // returns true so the common case still works without a prior focus.
+      const opts = makeOptions({
+        focusedBlockId: null,
+        selectedBlockIds: [],
+        zoomedBlockId: 'BLOCK_1',
+      })
+      useBlockStore.setState({ focusedBlockId: null, selectedBlockIds: [] })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+
+      expect(opts.zoomToRoot).toHaveBeenCalledTimes(1)
     })
   })
 

@@ -412,6 +412,75 @@ describe('useUndoStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // #731 — reanchorAfterRemoteOps (undo × sync coherence)
+  // ---------------------------------------------------------------------------
+  describe('reanchorAfterRemoteOps (#731)', () => {
+    it('resets undoDepth and clears redoStack after remote ops land', async () => {
+      // User performs two undos: the backend op-log is now addressed at
+      // depth 2 and the redo stack holds two reversed-op refs.
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 4 }))
+      await useUndoStore.getState().undo('page1')
+
+      const before = useUndoStore.getState().pages.get('page1')
+      expect(before?.undoDepth).toBe(2)
+      expect(before?.redoStack).toHaveLength(2)
+
+      // A sync applies remote ops to this page → re-anchor the positional
+      // undo state so the next undo re-reads the newest op (depth 0) rather
+      // than reversing the wrong op at the now-shifted depth 2.
+      useUndoStore.getState().reanchorAfterRemoteOps('page1')
+
+      const after = useUndoStore.getState().pages.get('page1')
+      expect(after?.undoDepth).toBe(0)
+      expect(after?.redoStack).toEqual([])
+      expect(after?.redoGroupSizes).toEqual([])
+    })
+
+    it('the next undo after re-anchor addresses depth 0 (not the wrong op)', async () => {
+      // Reproduces the #731 wrong-op-reversed scenario at the store level:
+      // a remote op landing between two Ctrl+Z presses must not let the
+      // second undo address a shifted positional depth.
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1') // depth 0 → 1
+
+      // Sync applies a remote op + reloads the page → re-anchor.
+      useUndoStore.getState().reanchorAfterRemoteOps('page1')
+
+      // Next Ctrl+Z must hit depth 0 (the newest op, now the remote one's
+      // predecessor in the re-read log) — NOT depth 1, which would reverse
+      // a different op than the user intends.
+      mockedUndoPageOp.mockClear()
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 99 }))
+      await useUndoStore.getState().undo('page1')
+
+      expect(mockedUndoPageOp).toHaveBeenCalledWith({ pageId: 'page1', undoDepth: 0 })
+    })
+
+    it('is a no-op for a page with no prior undo state', () => {
+      useUndoStore.getState().reanchorAfterRemoteOps('untouched-page')
+      // No entry created — nothing to re-anchor, so the Map stays clean.
+      expect(useUndoStore.getState().pages.has('untouched-page')).toBe(false)
+    })
+
+    it('only re-anchors the named page, leaving others intact', async () => {
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev1', seq: 5 }))
+      await useUndoStore.getState().undo('page1')
+      mockedUndoPageOp.mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev2', seq: 8 }))
+      await useUndoStore.getState().undo('page2')
+
+      useUndoStore.getState().reanchorAfterRemoteOps('page1')
+
+      expect(useUndoStore.getState().pages.get('page1')?.undoDepth).toBe(0)
+      expect(useUndoStore.getState().pages.get('page1')?.redoStack).toEqual([])
+      // page2 had no remote ops — its undo anchor must survive.
+      expect(useUndoStore.getState().pages.get('page2')?.undoDepth).toBe(1)
+      expect(useUndoStore.getState().pages.get('page2')?.redoStack).toHaveLength(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // multiple pages tracked independently
   // ---------------------------------------------------------------------------
   describe('multiple pages', () => {

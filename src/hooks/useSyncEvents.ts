@@ -27,6 +27,7 @@ import { pageBlockRegistry } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
+import { useUndoStore } from '@/stores/undo'
 
 import { useTauriEventListener } from './useTauriEventListener'
 
@@ -100,7 +101,16 @@ export function useSyncEvents(): void {
         // Reload blocks if we received ops (data changed).
         // Reload ALL mounted page stores so every visible BlockTree updates.
         if (ops_received > 0) {
-          for (const store of pageBlockRegistry.values()) {
+          const reanchorUndo = useUndoStore.getState().reanchorAfterRemoteOps
+          for (const [pageId, store] of pageBlockRegistry.entries()) {
+            // #731 — re-anchor this page's positional undo state BEFORE the
+            // reload. The remote ops just applied shifted the backend op-log
+            // indexing that `undoDepth` addresses; without this reset the next
+            // Ctrl+Z would reverse the wrong op, and stale redoStack OpRefs
+            // could target ops the remote write superseded. Resetting to depth
+            // 0 / empty redo is the safe re-anchor (a fresh undo re-reads the
+            // newest op). Keyed by the same pageId the block reload uses.
+            reanchorUndo(pageId)
             store.getState().load()
           }
           // FEAT-3p7 — preload now takes the active space id so the
