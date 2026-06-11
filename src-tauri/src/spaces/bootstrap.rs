@@ -10,8 +10,11 @@ use std::collections::HashMap;
 
 use sqlx::SqlitePool;
 
-use crate::commands::set_property_in_tx;
+// #882: `set_property_in_tx` moved to the neutral `crate::domain::block_ops`
+// layer — bootstrap depends *down* on it, removing the `spaces → commands`
+// upward edge.
 use crate::db::{CommandTx, MAX_SQL_PARAMS};
+use crate::domain::block_ops::set_property_in_tx;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};

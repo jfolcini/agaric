@@ -369,7 +369,15 @@ pub use tags::{
 };
 
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
-pub(crate) use blocks::{create_block_in_tx, delete_property_in_tx, set_property_in_tx};
+// #882: `create_block_in_tx` / `set_property_in_tx` moved to the neutral
+// `crate::domain::block_ops` layer (removing the residual
+// `recurrence → commands` / `spaces → commands` upward edges). Re-export
+// keeps `crate::commands::{create_block_in_tx, set_property_in_tx}` and the
+// ~20 command-internal callers (journal/pages/spaces/properties, via the
+// `super::*` glob) churn-free. `delete_property_in_tx` still lives in
+// `commands::blocks`.
+pub(crate) use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
+pub(crate) use blocks::delete_property_in_tx;
 // #642: `is_valid_iso_date` (+ its delegate `validate_date_format`) moved to
 // the neutral `crate::domain::block_ops` layer. Re-export keeps the
 // `crate::commands::is_valid_iso_date` / `crate::commands::validate_date_format`
@@ -378,15 +386,11 @@ pub(crate) use blocks::{create_block_in_tx, delete_property_in_tx, set_property_
 // from `crate::domain::block_ops`.
 pub(crate) use crate::domain::block_ops::{is_valid_iso_date, validate_date_format};
 
-/// Maximum block-content size (bytes) enforced at the IPC layer
-/// (`create_block_in_tx`, `edit_block_inner`, drafts). `pub(crate)` so
-/// the MCP boundary (#699) reuses the same cap for `set_property`'s
-/// `value_text` instead of inventing a second number.
-pub(crate) const MAX_CONTENT_LENGTH: usize = 256 * 1024;
-
-/// Maximum allowed nesting depth for the block tree.
-/// Prevents pathological recursion and keeps recursive CTEs bounded.
-const MAX_BLOCK_DEPTH: i64 = 20;
+// #882: `MAX_CONTENT_LENGTH` / `MAX_BLOCK_DEPTH` moved alongside
+// `create_block_in_tx` into `crate::domain::block_ops`. Re-export keeps
+// `crate::commands::MAX_CONTENT_LENGTH` (MCP #699, tests) and every
+// glob-internal caller (`move_ops.rs`, `drafts.rs`) resolving unchanged.
+pub(crate) use crate::domain::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
 
 /// Maximum allowed attachment size (50 MB).
 const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
