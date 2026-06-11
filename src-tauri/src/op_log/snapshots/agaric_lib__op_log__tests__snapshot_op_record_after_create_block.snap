@@ -1,5 +1,6 @@
 ---
-source: src/op_log.rs
+source: src/op_log/mod.rs
+assertion_line: 908
 expression: record
 ---
 device_id: test-device
