@@ -7,7 +7,6 @@
 3 src-tauri/src/backlink/filters.rs
 2 src-tauri/src/backlink/grouped.rs
 1 src-tauri/src/backlink/sort.rs
-1 src-tauri/src/bin/audit_cross_space_refs.rs
 2 src-tauri/src/cache/agenda.rs
 4 src-tauri/src/cache/block_links.rs
 2 src-tauri/src/cache/block_tag_refs.rs

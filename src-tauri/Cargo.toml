@@ -6,7 +6,10 @@
 # gone, the spike's notes + final report + source are preserved at the
 # annotated git tag `pend-09/spike-archive` (commit `3e8a1267`).
 [workspace]
-members = ["."]
+# #645 — `diagnostics` holds the two read-only DB inspection bins
+# (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
+# crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
+members = [".", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -73,12 +76,11 @@ flat_map_option = "warn"
 # `cargo nextest run` does not. Local devs can still run the test
 # manually: `cargo build --bin agaric-mcp && cargo nextest run --features ci-smoke -E 'test(stub_binary)'`.
 ci-smoke = []
-# Opt-in feature that builds the `audit_cross_space_refs` and `op_log_histogram`
-# diagnostic bins. Off by default so `cargo tauri build` does not ship them in
-# the .deb/.rpm/AppImage — they are read-only DB inspection tools for
-# developers, not user-facing. Build locally with
-# `cargo build --release --features diagnostics --bin <name>` when needed.
-diagnostics = []
+# #645 — the `diagnostics` feature (formerly built the
+# `audit_cross_space_refs` / `op_log_histogram` bins) is retired: those
+# bins moved to the `agaric-diagnostics` workspace member, so the feature
+# gated nothing in this crate. Run the tools with
+# `cargo run -p agaric-diagnostics --bin <name>`.
 # MAINT-111: `rmcp` is a hard dep (was previously gated behind the
 # `mcp_rmcp_spike` feature during the M1/M2 spike). The adapter in
 # `mcp/rmcp_spike.rs` is the production tools/call dispatcher.
@@ -457,37 +459,14 @@ harness = false
 name = "agaric-mcp"
 path = "src/bin/agaric-mcp.rs"
 
-# PEND-15 Phase 0 — read-only audit binary that enumerates cross-space
-# references in a local notes.db. Informs the user's Path A vs Path B
-# gating decision before Phase 1 lands. Standalone (no Tauri app handle).
-#
-# NOTE (session 738): the `required-features = ["diagnostics"]` gate
-# previously here broke the release matrix — `tauri-bundler` scans every
-# `[[bin]]` entry and tries to copy each release binary into the
-# .deb/.rpm bundle regardless of `required-features`, so a feature-gated
-# bin that isn't built leaves a dangling `target/.../release/<name>`
-# path the bundler can't satisfy. Restoring the unconditional build is
-# the minimal fix. The original bundle-size concern (the bin adds
-# ~8 MB to the .deb / AppImage) is real but separate; the proper
-# resolution is to move the diagnostic bins into their own crate so
-# they sit outside the main `[[bin]]` scan entirely.
-[[bin]]
-name = "audit_cross_space_refs"
-path = "src/bin/audit_cross_space_refs.rs"
-
-# PEND-09 Phase 2 day-4 — read-only diagnostic that prints a histogram of
-# the user's `op_log` table (count + percentage per op_type) and compares
-# the result against the spike's synthetic 30/50/10/5/5 op-mix proxy.
-# Closes Phase-2 Gate 4 ("op-log volume sampling"); see `docs/session-log/2026-sessions-401-800.md`
-# Session 698 for the multi-day chain. The binary opens the DB with
-# `SqliteConnectOptions::read_only(true)` so it can never accidentally
-# write to the user's data — safe to run on a live DB.
-#
-# Bundle-size gating intentionally removed — see the note above on
-# `audit_cross_space_refs`.
-[[bin]]
-name = "op_log_histogram"
-path = "src/bin/op_log_histogram.rs"
+# #645 — the `audit_cross_space_refs` and `op_log_histogram` diagnostic
+# bins were carved out of this crate into the `agaric-diagnostics`
+# workspace member (`diagnostics/`). Moving them out of the app crate's
+# `[[bin]]` scan was the session-738 NOTE's "proper resolution": a
+# feature-gated bin can't be skipped because `tauri-bundler` scans every
+# `[[bin]]` entry regardless of `required-features`, so the bins now live
+# outside this manifest entirely. Run them with
+# `cargo run -p agaric-diagnostics --bin <name>`.
 
 # PEND-09 Phase 3 day-10 — `parity_report` bin deleted alongside the
 # `merge_parity_log` table (migration `0057`).  The bin's reason for
