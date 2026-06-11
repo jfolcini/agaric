@@ -7,7 +7,7 @@
 
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type * as React from 'react'
-import { DayPicker, type DayPickerProps } from 'react-day-picker'
+import { DayPicker, type DayPickerProps, useDayPicker } from 'react-day-picker'
 
 import { buttonVariants } from '@/components/ui/button'
 import { i18n } from '@/lib/i18n'
@@ -128,12 +128,22 @@ const Calendar = ({
             : {}),
           ...(onMonthClick
             ? {
+                // Read the CURRENTLY displayed month from the DayPicker context
+                // rather than `props.defaultMonth`. `defaultMonth` is only the
+                // month the picker OPENED on; once the user pages with the
+                // chevrons the displayed month diverges from it. The context's
+                // `months[0].date` is the first day of the active month, so the
+                // caption "go to monthly view" click targets what's on screen
+                // (#745). `useDayPicker()` is valid here because CaptionLabel
+                // renders inside the DayPicker provider.
                 CaptionLabel: ({ children }: React.HTMLAttributes<HTMLSpanElement>) => {
+                  const { months } = useDayPicker()
+                  const displayedMonth = months[0]?.date ?? new Date()
                   return (
                     <button
                       type="button"
                       className="text-sm font-medium cursor-pointer rounded-md px-2 py-1 hover:bg-accent hover:text-accent-foreground transition-colors focus-ring-visible"
-                      onClick={() => onMonthClick(props.defaultMonth ?? new Date())}
+                      onClick={() => onMonthClick(displayedMonth)}
                       aria-label={i18n.t('journal.monthlyViewButtonLabel')}
                     >
                       {children}

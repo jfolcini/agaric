@@ -476,7 +476,7 @@ describe('StatusPanel', () => {
 
       await screen.findByText('Foreground Queue')
 
-      // formatTimestamp with 'relative' style produces "5m ago"
+      // formatRelativeTime (i18n) resolves sidebar.minutesAgo -> "5m ago"
       const lastSyncedEl = document.querySelector('.sync-last-synced')
       expect(lastSyncedEl?.textContent).toBe('5m ago')
     })

@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { formatLastSynced } from '@/lib/format'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 
 import type { PeerRefRow } from '../lib/tauri'
 
@@ -46,7 +46,10 @@ export function PairingPeersList({ peers, onUnpair }: PairingPeersListProps): Re
                       <div className="min-w-0">
                         <p className="text-sm font-mono truncate">{peer.peer_id}</p>
                         <p className="text-xs text-muted-foreground">
-                          Last: {formatLastSynced(peer.synced_at)}
+                          Last:{' '}
+                          {peer.synced_at != null
+                            ? formatRelativeTime(peer.synced_at, t)
+                            : t('sidebar.lastSyncedNever')}
                         </p>
                         {peer.reset_count > 0 && (
                           <Badge tone="outline" className="mt-0.5 text-xs">

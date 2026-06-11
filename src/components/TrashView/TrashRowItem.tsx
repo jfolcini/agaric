@@ -18,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 
 import type { RichContentCallbacks } from '../../hooks/useRichContentCallbacks'
-import { formatTimestamp } from '../../lib/format'
+import { formatRelativeTime } from '../../lib/format-relative-time'
 import type { BlockRow } from '../../lib/tauri'
 import { renderRichContent } from '../RichContentRenderer'
 
@@ -112,7 +112,7 @@ export function TrashRowItem({
           </span>
           <span className="trash-item-date text-xs text-muted-foreground">
             {t('trash.deletedPrefix')}{' '}
-            {block.deleted_at ? formatTimestamp(block.deleted_at, 'relative') : ''}
+            {block.deleted_at ? formatRelativeTime(block.deleted_at, t) : ''}
           </span>
           {parentLabel && (
             <span

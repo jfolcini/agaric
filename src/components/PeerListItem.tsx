@@ -16,7 +16,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
-import { formatLastSynced, truncateId } from '@/lib/format'
+import { truncateId } from '@/lib/format'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -104,7 +105,12 @@ export function PeerListItem({
               {truncateId(peer.peer_id)}
             </p>
           )}
-          <p className="text-xs text-muted-foreground">Last: {formatLastSynced(peer.synced_at)}</p>
+          <p className="text-xs text-muted-foreground">
+            Last:{' '}
+            {peer.synced_at != null
+              ? formatRelativeTime(peer.synced_at, t)
+              : t('sidebar.lastSyncedNever')}
+          </p>
           {peer.reset_count > 0 && (
             <Badge tone="outline" className="mt-0.5 text-xs">
               {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}

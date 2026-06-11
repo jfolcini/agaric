@@ -262,6 +262,13 @@ test.describe('Link buttons', () => {
     await urlInput.fill('https://example.com')
     await urlInput.press('Enter')
 
+    // Wait for the link popover to fully close before doing anything else.
+    // Now that overlay close animates (tw-animate-css, #743) the popover
+    // lingers a frame, and while it is up focus can stay on the trigger/portal
+    // — so the blur-to-save click below races and the block never flushes to
+    // static. Waiting for the input to detach pins focus back to the editor.
+    await expect(urlInput).toBeHidden()
+
     // Verify link appears in editor. Both the TipTap ExternalLink extension
     // and the StaticBlock RichContentRenderer emit `data-testid="external-link"`.
     await expect(

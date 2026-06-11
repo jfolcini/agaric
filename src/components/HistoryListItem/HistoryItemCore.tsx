@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils'
 
 import { useRichContentCallbacks, useTagClickHandler } from '../../hooks/useRichContentCallbacks'
 import { formatTimestamp } from '../../lib/format'
+import { formatRelativeTime } from '../../lib/format-relative-time'
 import { getPayloadRawContent, getPropertyPayload } from '../../lib/history-utils'
 import { formatPropertyName } from '../../lib/property-utils'
 import type { HistoryEntry } from '../../lib/tauri'
@@ -136,7 +137,7 @@ export function HistoryItemCore({
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="history-item-time text-xs text-muted-foreground w-fit">
-                  {formatTimestamp(entry.created_at, 'relative')}
+                  {formatRelativeTime(entry.created_at, t)}
                 </span>
               </TooltipTrigger>
               <TooltipContent>

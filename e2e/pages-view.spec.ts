@@ -142,6 +142,12 @@ async function addPropertyFilter(
 async function selectSort(page: Page, optionName: string) {
   await page.getByRole('combobox', { name: 'Sort order' }).click()
   await page.getByRole('option', { name: optionName, exact: true }).click()
+  // Wait for the Select listbox to fully close before returning. While it is
+  // open Radix marks the rest of the app aria-hidden, so the role-based
+  // `grid()` read (visibleTitles) would resolve to nothing. Now that overlay
+  // close animates (tw-animate-css, #743) the listbox lingers a frame, so a
+  // bare option-click no longer guarantees a settled list.
+  await expect(page.getByRole('listbox')).toHaveCount(0)
 }
 
 async function selectDensity(page: Page, optionName: 'Compact' | 'Regular' | 'Expanded') {

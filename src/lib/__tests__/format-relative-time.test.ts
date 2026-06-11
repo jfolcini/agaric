@@ -95,4 +95,32 @@ describe('formatRelativeTime', () => {
     const future = new Date(now.getTime() + 60_000).toISOString()
     expect(formatRelativeTime(future, mockT as never)).toBe('sidebar.justNow')
   })
+
+  // #745: formatRelativeTime replaced the hardcoded-English formatTimestamp(_,
+  // 'relative') / formatLastSynced helpers. Those consumers pass epoch-ms
+  // numbers (synced_at / deleted_at are INTEGER columns, #109 Phase 2), so the
+  // formatter must accept a numeric timestamp identically to an ISO string.
+  it('accepts an epoch-milliseconds number identically to an ISO string', () => {
+    const fiveMinAgoMs = Date.now() - 5 * 60_000
+    expect(formatRelativeTime(fiveMinAgoMs, mockT as never)).toBe('sidebar.minutesAgo:5')
+  })
+
+  it('treats epoch 0 as a real (very old) timestamp, not a "never" sentinel', () => {
+    // 0 is a valid past timestamp; consumers gate the null "never synced"
+    // case themselves via t('sidebar.lastSyncedNever'), so the formatter must
+    // still produce a relative string for 0 rather than anything special.
+    const result = formatRelativeTime(0, mockT as never)
+    expect(result).toBe('sidebar.daysAgo:' + Math.floor((Date.now() - 0) / 86_400_000))
+  })
+})
+
+// #745: the "Never synced" / null case is no longer baked into a formatter.
+// Consumers (PeerListItem, PairingPeersList, AppSidebar) render the i18n key
+// `sidebar.lastSyncedNever` when the timestamp is null. This guards that the
+// key exists and resolves to a non-empty English string.
+describe('lastSyncedNever i18n key (replaces hardcoded "Never synced")', () => {
+  it('is defined in the English common namespace', async () => {
+    const { common } = await import('../i18n/common')
+    expect(common['sidebar.lastSyncedNever']).toBe('Never synced')
+  })
 })

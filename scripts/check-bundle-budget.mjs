@@ -45,11 +45,13 @@ const GROWTH_TOLERANCE = 0.1
  * Returns null for files we can't confidently de-hash.
  */
 function logicalName(file) {
-  // Vite/Rolldown hashes are a fixed run of [A-Za-z0-9_] (NO hyphen) as the
-  // final `-`-delimited segment before `.js`. Make the logical-name part
-  // GREEDY so hyphenated group names (`react-vendor`, `ui-radix`) keep their
-  // hyphen, and pin the hash to the trailing alnum/underscore run.
-  const m = file.match(/^(.+)-[A-Za-z0-9_]{8}\.js$/)
+  // Vite/Rolldown content hashes are 8 base64url chars — [A-Za-z0-9_-], which
+  // DOES include `-` (e.g. `index-DdAc-Z5m.js`, `react-vendor-oz-_EXyL.js`).
+  // Pin the hash to exactly the 8 chars before `.js` and keep the logical-name
+  // part GREEDY so hyphenated group names (`react-vendor`, `ui-radix`) and
+  // hyphenated hashes both parse. The split is unambiguous because the hash is
+  // always the 8 chars immediately before `.js`, preceded by a `-`.
+  const m = file.match(/^(.+)-[A-Za-z0-9_-]{8}\.js$/)
   return m ? m[1] : null
 }
 

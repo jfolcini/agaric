@@ -1,29 +1,19 @@
 /**
- * Format a timestamp for display.
+ * Format a timestamp for display as an absolute date/time.
+ *
+ * For relative ("2 hours ago") strings use `formatRelativeTime` from
+ * `format-relative-time.ts` — it is i18n-aware (#745). This function only
+ * produces absolute, locale-formatted output; the app is pinned to English,
+ * so `toLocaleDateString(undefined, …)` resolves consistently.
+ *
  * @param value - either an ISO 8601 string or epoch-milliseconds number
  *   (#109 Phase 2 migrates several columns from ISO TEXT to INTEGER ms;
  *   `new Date(value)` accepts both forms)
- * @param style - 'full' (date + time), 'date' (date only), 'relative' (e.g. "2 hours ago")
+ * @param style - 'full' (date + time) or 'date' (date only)
  */
-export function formatTimestamp(
-  value: string | number,
-  style: 'full' | 'date' | 'relative' = 'full',
-): string {
+export function formatTimestamp(value: string | number, style: 'full' | 'date' = 'full'): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value)
-
-  if (style === 'relative') {
-    const now = Date.now()
-    const diffMs = now - date.getTime()
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return 'Just now'
-    if (diffMin < 60) return `${diffMin}m ago`
-    const diffHr = Math.floor(diffMin / 60)
-    if (diffHr < 24) return `${diffHr}h ago`
-    const diffDay = Math.floor(diffHr / 24)
-    if (diffDay < 30) return `${diffDay}d ago`
-    return date.toLocaleDateString()
-  }
 
   if (style === 'date') {
     return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -36,15 +26,6 @@ export function formatTimestamp(
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-/**
- * Format a last-synced timestamp for display. Returns 'Never synced' for null.
- * Delegates to formatTimestamp with 'relative' style for non-null values.
- */
-export function formatLastSynced(syncedAt: number | null): string {
-  if (syncedAt == null) return 'Never synced'
-  return formatTimestamp(syncedAt, 'relative')
 }
 
 /** Truncate a string (typically a block/device ID) for display. */

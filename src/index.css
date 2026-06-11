@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 @import "highlight.js/styles/github.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -127,7 +128,10 @@
   --card-foreground: oklch(0.129 0.042 264.695);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.55 0.188 28.71);
+  /* WCAG AA (#744): --primary-foreground on --primary was 4.09:1, below the
+   * 4.5:1 minimum for the text-sm font-medium Button label. Darkening --primary
+   * L 0.55 → 0.50 raises it to ≈5.07:1 while preserving the brand hue/chroma. */
+  --primary: oklch(0.5 0.188 28.71);
   --primary-foreground: oklch(0.911 0.04 84.583);
   --secondary: oklch(0.968 0.007 264.542);
   --secondary-foreground: oklch(0.208 0.042 265.755);
@@ -274,7 +278,9 @@
   --card-foreground: oklch(0.984 0.003 247.858);
   --popover: oklch(0.129 0.042 264.695);
   --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.55 0.188 28.71);
+  /* WCAG AA (#744): same --primary-foreground/--primary pair as light mode was
+   * 4.09:1; L 0.55 → 0.50 lifts it to ≈5.07:1. */
+  --primary: oklch(0.5 0.188 28.71);
   --primary-foreground: oklch(0.911 0.04 84.583);
   --secondary: oklch(0.279 0.041 260.031);
   --secondary-foreground: oklch(0.984 0.003 247.858);
@@ -404,7 +410,9 @@
   --secondary: oklch(0.93 0.03 85); /* base2 */
   --secondary-foreground: oklch(0.51 0.02 210); /* base00 */
   --muted: oklch(0.93 0.03 85);
-  --muted-foreground: oklch(0.58 0.02 210);
+  /* WCAG AA (#744): muted-foreground on this theme's --background was 3.89:1.
+   * L 0.58 → 0.50 raises it to ≈5.45:1 (≥4.5:1 for normal body text). */
+  --muted-foreground: oklch(0.5 0.02 210);
   --accent: oklch(0.93 0.04 235); /* base2 tinted blue */
   --accent-foreground: oklch(0.45 0.13 235);
   --destructive: oklch(0.59 0.22 30); /* red */
