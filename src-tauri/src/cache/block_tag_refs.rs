@@ -299,16 +299,28 @@ async fn compute_desired_pairs(
     .into_iter()
     .collect();
 
-    // #375: resolve every live block's space once so the full rebuild applies
-    // the SAME cross-space exclusion the incremental `reindex_block_tag_refs`
-    // pushes into its INSERT. Without this, a full rebuild (snapshot restore,
-    // boot empty-table fallback, explicit "rebuild caches") re-admits exactly
-    // the cross-space tag-refs the incremental path is careful to exclude. The
-    // per-block subquery is `space::resolve_block_space`'s SQL (page_id-aware,
-    // both soft-delete guards). A NULL space means "unscoped".
+    // #375 / #678: resolve every live block's space once so the full rebuild
+    // applies the SAME cross-space exclusion the incremental
+    // `reindex_block_tag_refs` pushes into its INSERT. Without this, a full
+    // rebuild (snapshot restore, boot empty-table fallback, explicit "rebuild
+    // caches") re-admits exactly the cross-space tag-refs the incremental path
+    // is careful to exclude.
+    //
+    // #678 — this query MUST mirror `space::resolve_block_space`'s SQL, which
+    // is `COALESCE(b.space_id, p.space_id)` via a LEFT JOIN to the owning page
+    // (`blocks.page_id`). The previous bare `b.space_id` lacked that page
+    // fallback its own comment claimed, so a block whose own `space_id` is not
+    // yet materialised — e.g. inside the brief space-propagation gap post-#533,
+    // where `page_id` is stamped but `space_id` is set by a later task —
+    // resolved NULL ("unscoped") in the rebuild while the incremental path
+    // resolved the page's space. That is precisely the rebuild-vs-incremental
+    // divergence the #375 comment says this code exists to prevent. The page
+    // join carries the same `deleted_at IS NULL` guard as `resolve_block_space`.
+    // A NULL space means "unscoped".
     let space_of: std::collections::HashMap<String, Option<String>> = sqlx::query!(
-        r#"SELECT b.id AS "id!", b.space_id AS "space?"
+        r#"SELECT b.id AS "id!", COALESCE(b.space_id, p.space_id) AS "space?"
            FROM blocks b
+           LEFT JOIN blocks p ON p.id = b.page_id AND p.deleted_at IS NULL
            WHERE b.deleted_at IS NULL"#
     )
     .fetch_all(&mut *conn)

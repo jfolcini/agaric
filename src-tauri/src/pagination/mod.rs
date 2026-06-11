@@ -524,6 +524,25 @@ impl Cursor {
         }
     }
 
+    /// Cursor keyed on `(group_title, page_id)` — used by the grouped
+    /// backlink / unlinked-references queries, whose group keyset sorts by
+    /// `page_title` (NULL last) then `page_id`. `id` carries the source
+    /// `page_id`; the `deleted_at` slot reuses its String carrier to stash
+    /// the group's `page_title` (`None` ⇒ a title-less group, which sorts
+    /// last). #625 — resuming on `(title, page_id) > cursor` rather than an
+    /// equality `skip_while` lets pagination continue from the next-greater
+    /// group when the cursor's own group has vanished between page requests.
+    #[must_use]
+    pub(super) fn for_group(page_id: String, page_title: Option<String>) -> Self {
+        Self {
+            id: page_id,
+            position: None,
+            deleted_at: page_title,
+            seq: None,
+            rank: None,
+        }
+    }
+
     /// Cursor keyed on `(rank, id)` — used by `fts::search`, whose
     /// keyset is `(rank ASC, id ASC)` with epsilon comparison
     /// `ABS(rank - cursor_rank) < 1e-9` to avoid exact float equality.

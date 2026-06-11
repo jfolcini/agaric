@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT tag_id, name, usage_count, updated_at\n             FROM tags_cache WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "tag_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags_cache",
+            "name": "tag_id"
+          }
+        }
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags_cache",
+            "name": "name"
+          }
+        }
+      },
+      {
+        "name": "usage_count",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "tags_cache",
+            "name": "usage_count"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tags_cache",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "fff8cc41196bea85d19d4fcc4ef95ad4b06eb72b9eec0fb9b6cd51d13322fdf9"
+}

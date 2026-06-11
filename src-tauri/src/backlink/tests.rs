@@ -1,6 +1,6 @@
 use super::filters::{
-    crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms, resolve_filter,
-    resolve_filter_with_candidates, ulid_to_ms,
+    compile_backlink_filter, crockford_decode_char, ms_to_ulid_prefix, parse_iso_to_ms,
+    resolve_filter, resolve_filter_with_candidates, ulid_to_ms,
 };
 use super::grouped::{eval_backlink_query_grouped, eval_unlinked_references};
 use super::query::{
@@ -895,6 +895,58 @@ async fn filter_created_in_range_both() {
     assert!(
         set.contains(&recent_ulid),
         "recent block should be within 2020-2099 range"
+    );
+}
+
+/// #670 — an unparseable `after`/`before` bound must be rejected loudly
+/// (Validation), NOT silently dropped (which widens the filter to all blocks).
+/// Reproduction: a malformed bound used to resolve to `None` and return the
+/// whole non-deleted set. Fix proof: it now errors, in BOTH the resolver and
+/// the compiled twin.
+#[tokio::test]
+async fn filter_created_in_range_rejects_unparseable_bound_670() {
+    let (pool, _dir) = test_pool().await;
+    insert_block(&pool, "TARGET", "page", "target").await;
+    let recent_ulid = ulid::Ulid::new().to_string();
+    insert_block(&pool, &recent_ulid, "content", "recent").await;
+    insert_block_link(&pool, &recent_ulid, "TARGET").await;
+
+    // Resolver path — malformed `after`.
+    let bad_after = BacklinkFilter::CreatedInRange {
+        after: Some("not-a-date".into()),
+        before: None,
+    };
+    let err = resolve_filter(&pool, &bad_after, 0)
+        .await
+        .expect_err("unparseable `after` must error, not silently widen to all blocks");
+    match &err {
+        AppError::Validation(msg) => assert!(
+            msg.starts_with("InvalidDateFilter:"),
+            "expected InvalidDateFilter prefix, got: {msg}"
+        ),
+        other => panic!("expected Validation error, got {other:?}"),
+    }
+
+    // Resolver path — malformed `before`.
+    let bad_before = BacklinkFilter::CreatedInRange {
+        after: None,
+        before: Some("2025-13-99".into()), // syntactically ISO-ish but invalid date
+    };
+    assert!(
+        matches!(
+            resolve_filter(&pool, &bad_before, 0).await,
+            Err(AppError::Validation(_))
+        ),
+        "unparseable `before` must error in the resolver path"
+    );
+
+    // Compiled twin — same contract so resolver and compiled paths agree.
+    assert!(
+        matches!(
+            compile_backlink_filter(&pool, &bad_after, 0).await,
+            Err(AppError::Validation(_))
+        ),
+        "unparseable bound must error in the compiled path too"
     );
 }
 
@@ -3515,6 +3567,79 @@ async fn eval_grouped_pagination() {
     assert_eq!(resp2.groups.len(), 1, "second page has 1 remaining group");
     assert!(!resp2.has_more, "no more groups after second page");
     assert!(resp2.next_cursor.is_none(), "no cursor on last page");
+}
+
+/// #625 — grouped pagination must NOT silently terminate when the cursor's
+/// own group vanishes between page requests. Reproduction: page through with
+/// limit=1, delete the cursor group's only backlink (so it disappears from the
+/// freshly rebuilt group_list), then the tail must still paginate. The old
+/// `skip_while(pid != cursor).skip(1)` consumed the whole list → empty page,
+/// `has_more=false`, dropping groups B and C.
+#[tokio::test]
+async fn eval_grouped_pagination_survives_vanished_cursor_group_625() {
+    let (pool, _dir) = test_pool().await;
+    insert_block_with_parent(&pool, "TARGET", "page", "Target", None, None).await;
+    // Three groups sorted by title: "Page A" < "Page B" < "Page C".
+    for ch in ['A', 'B', 'C'] {
+        let page_id = format!("PAGE_{ch}");
+        let blk_id = format!("BLK_{ch}1");
+        insert_block_with_parent(&pool, &page_id, "page", &format!("Page {ch}"), None, None).await;
+        insert_block_with_parent(
+            &pool,
+            &blk_id,
+            "content",
+            &format!("block {ch}1"),
+            Some(&page_id),
+            Some(1),
+        )
+        .await;
+        insert_block_link(&pool, &blk_id, "TARGET").await;
+    }
+
+    // Page 1, limit=1 → first group is PAGE_A; cursor points at it.
+    let page1 = PageRequest::new(None, Some(1)).unwrap();
+    let resp1 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page1, None)
+        .await
+        .unwrap();
+    assert_eq!(resp1.groups.len(), 1, "page 1 has one group");
+    assert_eq!(resp1.groups[0].page_id, "PAGE_A", "first group is PAGE_A");
+    assert!(resp1.has_more, "more groups remain (B, C)");
+    let cursor = resp1.next_cursor.expect("has_more implies a cursor");
+
+    // Between pages, the cursor group's sole backlink is unlinked — PAGE_A
+    // disappears from the rebuilt group_list entirely.
+    sqlx::query("DELETE FROM block_links WHERE source_id = 'BLK_A1' AND target_id = 'TARGET'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Page 2 via the now-orphaned cursor: must resume at PAGE_B (the
+    // next-greater group), NOT terminate empty.
+    let page2 = PageRequest::new(Some(cursor), Some(1)).unwrap();
+    let resp2 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page2, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.groups.len(),
+        1,
+        "page 2 must still return a group (PAGE_B), not silently terminate"
+    );
+    assert_eq!(
+        resp2.groups[0].page_id, "PAGE_B",
+        "resume at the next-greater group after the vanished cursor group"
+    );
+    assert!(resp2.has_more, "PAGE_C still remains after PAGE_B");
+    let cursor2 = resp2.next_cursor.expect("has_more implies a cursor");
+
+    // Page 3 → PAGE_C, then exhausted.
+    let page3 = PageRequest::new(Some(cursor2), Some(1)).unwrap();
+    let resp3 = eval_backlink_query_grouped(&pool, "TARGET", None, None, &page3, None)
+        .await
+        .unwrap();
+    assert_eq!(resp3.groups.len(), 1, "page 3 returns the last group");
+    assert_eq!(resp3.groups[0].page_id, "PAGE_C", "last group is PAGE_C");
+    assert!(!resp3.has_more, "no more groups after PAGE_C");
+    assert!(resp3.next_cursor.is_none(), "final page emits no cursor");
 }
 
 #[tokio::test]

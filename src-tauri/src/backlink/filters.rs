@@ -5,8 +5,8 @@ use futures_util::future::try_join_all;
 use rustc_hash::FxHashSet;
 use sqlx::SqlitePool;
 
-use super::SMALL_IN_LIMIT;
 use super::types::{BacklinkFilter, CompareOp};
+use super::{FTS_ROW_CAP, SMALL_IN_LIMIT};
 use crate::error::AppError;
 use crate::fts::sanitize_fts_query;
 use crate::sql_utils::escape_like;
@@ -383,28 +383,43 @@ pub(crate) fn resolve_filter_with_candidates<'a>(
                 }
                 // Query FTS5 index, join back to blocks to get block id and
                 // exclude deleted blocks.
-                let rows = sqlx::query_scalar::<_, String>(
+                //
+                // #672 — cap the scan at `FTS_ROW_CAP` rows, matching
+                // `eval_unlinked_references`. A short common token (e.g. "the")
+                // matches a large fraction of the vault; without a cap every
+                // matching id is materialised into the `FxHashSet` here and
+                // then into a JSON bind downstream. We fetch `FTS_ROW_CAP + 1`
+                // to detect truncation, then trim to `FTS_ROW_CAP` and warn.
+                let fts_sql = format!(
                     "SELECT fb.block_id \
                      FROM fts_blocks fb \
                      JOIN blocks b ON b.id = fb.block_id \
                      WHERE fts_blocks MATCH ?1 \
-                       AND b.deleted_at IS NULL",
-                )
-                .bind(&sanitized)
-                .fetch_all(pool)
-                .await?;
+                       AND b.deleted_at IS NULL \
+                     ORDER BY fb.block_id \
+                     LIMIT {}",
+                    FTS_ROW_CAP + 1
+                );
+                let rows = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(fts_sql.as_str()))
+                    .bind(&sanitized)
+                    .fetch_all(pool)
+                    .await?;
+                if rows.len() > FTS_ROW_CAP {
+                    tracing::warn!(
+                        cap = FTS_ROW_CAP,
+                        "backlink Contains filter truncated: the query matched more than \
+                         the FTS row cap; results limited to the first {FTS_ROW_CAP} blocks"
+                    );
+                    return Ok(rows.into_iter().take(FTS_ROW_CAP).collect());
+                }
                 Ok(rows.into_iter().collect())
             }
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                let after_prefix = after
-                    .as_ref()
-                    .and_then(|d| parse_iso_to_ms(d))
-                    .map(ms_to_ulid_prefix);
-                let before_prefix = before
-                    .as_ref()
-                    .and_then(|d| parse_iso_to_ms(d))
-                    .map(ms_to_ulid_prefix);
+                // #670 — reject an unparseable bound loudly instead of silently
+                // widening the filter to "all blocks".
+                let after_prefix = resolve_range_bound(after.as_ref())?;
+                let before_prefix = resolve_range_bound(before.as_ref())?;
 
                 // Build SQL with optional ULID range bounds.  ULID prefix comparison
                 // works because Crockford base32 preserves sort order and SQLite
@@ -885,14 +900,10 @@ pub(crate) fn compile_backlink_filter<'a>(
             }
 
             BacklinkFilter::CreatedInRange { after, before } => {
-                let after_prefix = after
-                    .as_ref()
-                    .and_then(|d| parse_iso_to_ms(d))
-                    .map(ms_to_ulid_prefix);
-                let before_prefix = before
-                    .as_ref()
-                    .and_then(|d| parse_iso_to_ms(d))
-                    .map(ms_to_ulid_prefix);
+                // #670 — same loud rejection in the compiled twin, so the
+                // resolver path and the compiled path agree on validity.
+                let after_prefix = resolve_range_bound(after.as_ref())?;
+                let before_prefix = resolve_range_bound(before.as_ref())?;
 
                 let mut clauses: Vec<&str> = Vec::new();
                 let mut binds: Vec<FilterBind> = Vec::new();
@@ -1066,6 +1077,28 @@ async fn fetch_descendants_of(
         .fetch_all(pool)
         .await?;
         Ok(rows.into_iter().collect())
+    }
+}
+
+/// Resolve an optional `CreatedInRange` bound into an optional ULID prefix,
+/// rejecting a present-but-unparseable bound loudly.
+///
+/// #670 — the old `bound.as_ref().and_then(parse_iso_to_ms).map(...)` chain
+/// silently swallowed a malformed bound (`and_then` → `None`), degrading the
+/// range filter to "all blocks" — the opposite of the user's intent. The
+/// metadata date filter (`fts/metadata_filter.rs`) already rejects the same
+/// input loudly with an `InvalidDateFilter:` validation error; this mirrors
+/// that contract. `None` (bound absent) stays `Ok(None)`; only a present,
+/// non-parseable string is an error.
+fn resolve_range_bound(bound: Option<&String>) -> Result<Option<String>, AppError> {
+    match bound {
+        None => Ok(None),
+        Some(raw) => match parse_iso_to_ms(raw) {
+            Some(ms) => Ok(Some(ms_to_ulid_prefix(ms))),
+            None => Err(AppError::Validation(format!(
+                "InvalidDateFilter: expected ISO 8601 date (YYYY-MM-DD or RFC 3339), got '{raw}'"
+            ))),
+        },
     }
 }
 

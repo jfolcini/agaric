@@ -1752,10 +1752,27 @@ fn sanitize_preserves_quoted_phrases() {
 
 #[test]
 fn sanitize_preserves_not_operator() {
+    // #669 — the sanitiser emits the bare leading `NOT` unchanged. This is a
+    // *binary*-operator keyword in FTS5: a leading `NOT term` has no left
+    // operand and is an FTS5 syntax error at MATCH time (see the `search_fts`
+    // "standalone NOT should produce a validation error" test). The sanitiser
+    // does NOT silently drop it (that would invert intent) — it preserves it
+    // so the error surfaces as `AppError::Validation`.
     assert_eq!(
         sanitize_fts_query("NOT spam"),
         "NOT \"spam\"",
-        "NOT followed by a term should be preserved as operator"
+        "leading bare NOT preserved verbatim; FTS5 rejects it at MATCH time (#669)"
+    );
+}
+
+#[test]
+fn sanitize_preserves_binary_not_operator_669() {
+    // #669 — the *valid* form is the binary `A NOT B`, which FTS5 accepts.
+    // This is the form the rustdoc now advertises (not the leading `NOT B`).
+    assert_eq!(
+        sanitize_fts_query("cats NOT dogs"),
+        "\"cats\" NOT \"dogs\"",
+        "binary NOT between two terms is the FTS5-valid form"
     );
 }
 
@@ -2003,6 +2020,33 @@ fn sanitize_whitespace_only_quoted_phrase_yields_empty() {
         sanitize_fts_query("\"  \""),
         "",
         "whitespace-only quoted phrase is a FTS5 syntax error and must be dropped"
+    );
+}
+
+#[test]
+fn sanitize_sub_trigram_quoted_phrase_dropped_673() {
+    // #673 — a quoted phrase shorter than a trigram emits zero trigram
+    // tokens, so on its own it AND-collapses the query to no rows. Dropping
+    // it (rather than honouring the quote-intent bypass) prevents the silent
+    // empty result the bare-word length filter already guards against.
+    assert_eq!(
+        sanitize_fts_query("\"ab\""),
+        "",
+        "a sub-trigram quoted phrase cannot match the trigram index; drop it"
+    );
+    // Mixed with a real term: the short phrase is dropped, the term survives —
+    // the query no longer collapses to nothing.
+    assert_eq!(
+        sanitize_fts_query("\"ab\" hello"),
+        "\"hello\"",
+        "sub-trigram phrase dropped; the matchable term must survive"
+    );
+    // A phrase whose words are each sub-trigram but which spans >=3 chars
+    // (the trigram tokenizer indexes across the space) is KEPT.
+    assert_eq!(
+        sanitize_fts_query("\"ab cd\""),
+        "\"ab cd\"",
+        "phrase spanning >= 3 chars has trigrams across the space; keep it"
     );
 }
 
@@ -8051,6 +8095,56 @@ async fn new3_filter_only_by_tag_returns_tagged_excludes_untagged() {
         );
         assert!(item.snippet.is_none(), "filter-only row carries no snippet");
     }
+}
+
+/// #674 — the filter-only scan must NOT inherit `content IS NOT NULL` from
+/// the regex path: a NULL-content block carrying the filter's tag is a valid
+/// structural match and was silently invisible. This is the reproduction
+/// (pre-fix the block is dropped) AND the fix proof (post-fix it is returned).
+#[tokio::test]
+async fn new3_filter_only_includes_null_content_block_674() {
+    let (pool, _dir) = test_pool().await;
+
+    new3_seed_tag(&pool).await;
+    let tagged_text = pt_block_id(0);
+    let tagged_null = pt_block_id(1);
+    insert_block(&pool, &tagged_text, "content", "has text", None, Some(0)).await;
+    // A tagged block whose `content` is NULL (e.g. an empty/structural block
+    // that nonetheless carries a tag). It satisfies the tag filter but the
+    // inherited `content IS NOT NULL` clause used to hide it.
+    insert_block_with_null_content(&pool, &tagged_null, "content").await;
+    new3_tag_block(&pool, &tagged_text, TAG_ULID).await;
+    new3_tag_block(&pool, &tagged_null, TAG_ULID).await;
+
+    let page = PageRequest::new(None, Some(50)).unwrap();
+    let tags = vec![TAG_ULID.to_string()];
+    let result = search_with_toggles(
+        &pool,
+        "", // blank free-text → filter-only scan
+        &page,
+        None,
+        Some(&tags),
+        None,
+        &[],
+        &[],
+        new3_toggles_off(),
+        None,
+        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|r| r.id.as_str()).collect();
+    assert!(
+        ids.contains(tagged_null.as_str()),
+        "#674: NULL-content block matching the tag filter must be returned, not hidden"
+    );
+    assert!(
+        ids.contains(tagged_text.as_str()),
+        "the text-bearing tagged block is returned too"
+    );
+    assert_eq!(ids.len(), 2, "exactly the two tagged blocks (got {ids:?})");
 }
 
 /// NEW-3 (2) — blank query + NO filter → empty (preserved), cursor path.
