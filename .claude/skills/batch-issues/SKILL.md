@@ -105,9 +105,15 @@ oversight; don't exceed 5.
   (see pitfalls):** `ln -sfn <main>/node_modules node_modules` (Phase A `prek --all-files`
   lints JS regardless of your diff; without it oxfmt's native binding is "not found") and
   `cp src-tauri/.env src-tauri/dev.db <wt>/src-tauri/` (Phase E `sqlx prepare --check`
-  connects to `DATABASE_URL=sqlite:dev.db`). For frontend, the `node_modules` symlink must
-  exist BEFORE `tsc -b` or it creates a real dir and nesting breaks (TS2688). Simpler for a
-  one-off: push the branch from the MAIN checkout instead of the worktree.
+  connects to `DATABASE_URL=sqlite:dev.db`) **followed immediately by
+  `(cd <wt>/src-tauri && sqlx migrate run)`**. The copied `dev.db` is a snapshot as of
+  worktree creation; in a long parallel run a later migration merges to `main` while your
+  worktree builds, so its `dev.db` goes stale and the pre-commit clippy (online sqlx) fails
+  with `no such column: …` even though `.sqlx` offline and nextest are green. Migrating at
+  seed time prevents the abort (cost the run ~3 retries 2026-06-11). For frontend, the
+  `node_modules` symlink must exist BEFORE `tsc -b` or it creates a real dir and nesting
+  breaks (TS2688). Simpler for a one-off: push the branch from the MAIN checkout instead of
+  the worktree.
 - Ship each issue as its own PR; reconcile both against CI per §8.
 - Don't force a bad second issue: if everything else is blocked on a maintainer decision,
   run just one — but pick a short wakeup, not a 20-minute idle.
@@ -216,13 +222,24 @@ Use the template and plan-issue bookkeeping in **`references/session-log.md`**. 
 
 ## 7. COMMIT AND PUSH
 
-Stage and commit normally — the **pre-commit hook** runs prek's commit-staged checks
-(format, lint, biome, fast clippy, conventional message). If a hook modifies files
-(biome auto-fix), re-stage and retry.
+**Pre-format BEFORE committing to land the first commit.** The pre-commit hook auto-fixes
+formatting (`cargo fmt`, `oxfmt`, trim-trailing-whitespace, fix-end-of-files) and then
+*aborts the commit* so you re-stage — HEAD doesn't move. In a long run this abort→re-stage
+→retry cycle (sometimes twice: fmt, then end-of-files) cost ~10 wasted hook re-runs
+(2026-06-11). Avoid it: before the first `git commit`, run the fixers yourself on the
+changed files — Rust `cargo fmt`; frontend `npx oxfmt --write <changed files>` (NEVER
+`oxfmt --write .` — it reformats all TOML and aborts, see pitfalls). Then commit once.
+
+If a hook still modifies files (e.g. biome auto-fix you didn't anticipate), re-stage and
+retry.
 
 **Verify the commit actually landed:** under rtk, "ok N files changed" can mask a
 pre-commit abort. Confirm `git log --oneline -1` shows your commit (HEAD advanced) before
-pushing.
+pushing. When a commit aborts, read the hook output for the **named failing hook** —
+`cargo fmt`/`fix end of files` (auto-fix → re-stage), `cargo clippy … no such column`
+(stale worktree dev.db → `sqlx migrate run`, see §2), `clippy too many arguments` (a param
+push crossed 7 → `#[allow(clippy::too_many_arguments)]` per the file's own convention) —
+each has a distinct fix; don't blind-retry.
 
 Push when ready — the **pre-push hook** runs prek's heavier checks (full clippy,
 `no-commit-to-branch=main` guard, `pre-push` stages). Do NOT run `prek run --all-files`
@@ -237,21 +254,6 @@ specta bindings) and verify with `cargo check --all-targets` (benches aren't cov
 
 After pushing, open a PR against `main` (`gh pr create --base main --head <branch>`) with
 `Closes #NN` in the body so the merge auto-closes the issue.
-
-**Issue-closing hygiene (maintainer instruction, 2026-06-11 — #804 left #783/#612/#681
-dangling):**
-
-- One explicit `Closes #NNN` per issue the PR FULLY fixes. Verify GitHub parsed them
-  before relying on auto-close:
-  `gh api graphql -f query='{repository(owner:"jfolcini",name:"agaric"){pullRequest(number:<PR>){closingIssuesReferences(first:10){nodes{number state}}}}'`
-- **Partial fix → never `Closes`.** Instead post a re-scope comment on the issue
-  ("#PR fixed X; this issue is now only Y") so the remainder stays accurately scoped.
-- At the batch-boundary sweep, after merging: confirm the linked issues actually flipped
-  to CLOSED (auto-close fires only on merge to the default branch).
-- If you discover a merged PR fixed an issue without linking it: verify the fix in
-  current `main` (file:line), then `gh issue close NNN --comment` citing the PR and the
-  evidence. Audit query — recent merged PRs with still-OPEN linked issues should return
-  empty.
 
 **Do NOT wait for CI on this PR.** The pre-push hook is your local gate; remote CI runs
 async over many minutes. Instead:
