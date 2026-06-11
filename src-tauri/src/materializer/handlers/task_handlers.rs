@@ -12,11 +12,11 @@ use super::*;
 pub(crate) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
-    gcal_handle: &OnceLock<GcalConnectorHandle>,
+    dirty_sink: &OnceLock<Arc<dyn DirtySink + Send + Sync>>,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {
-            if let Err(e) = apply_op(pool, record, gcal_handle).await {
+            if let Err(e) = apply_op(pool, record, dirty_sink).await {
                 tracing::warn!(
                     op_type = %record.op_type,
                     device_id = %record.device_id,
@@ -85,7 +85,7 @@ pub(crate) async fn handle_foreground_task(
             // isolation.
             let mut tx =
                 crate::db::begin_immediate_logged(pool, "materializer_apply_batch").await?;
-            let mut pending_events: Vec<DeferredNotification> = Vec::new();
+            let mut pending_events: Vec<DirtyNotification> = Vec::new();
             // C-2b: track the highest seq across the batch so we can
             // advance the apply cursor exactly once before commit. An
             // empty batch leaves `max_seq` at None so the cursor is not
@@ -98,21 +98,21 @@ pub(crate) async fn handle_foreground_task(
             // default for non-RestoreBlock ops so the post-commit walk
             // just no-ops on those slots.
             let mut per_record_effects: Vec<ApplyEffects> = Vec::with_capacity(records.len());
-            // #482: hoist the gcal-active check once before the loop so
-            // `snapshot_for_op` (a SELECT inside the writer lock) is
-            // skipped entirely when Google Calendar is not connected —
-            // the snapshot result is only consumed when `gcal_on` is true.
-            // The snapshot MUST be taken BEFORE `apply_op_tx` to capture
-            // the pre-mutation state (old dates), which is why the
-            // conditional read stays at the top of the per-record body.
-            let gcal_on = gcal_handle.get().is_some();
+            // #482 / #643: hoist the active-sink check once before the
+            // loop so the sink's `snapshot_for_op` (a SELECT inside the
+            // writer lock) is skipped entirely when no integration is
+            // wired — the snapshot is only captured when a `DirtySink` is
+            // active. The snapshot MUST be taken BEFORE `apply_op_tx` to
+            // capture the pre-mutation state (old dates), which is why
+            // the conditional read stays at the top of the per-record
+            // body.
+            let active_sink = dirty_sink.get().filter(|s| s.is_active());
             // M-10: `records` is `&Arc<Vec<OpRecord>>`; `.iter()` derefs
             // through `Arc -> Vec` to yield `&OpRecord` without copying.
             for record in records.iter() {
-                let snapshot = if gcal_on {
-                    snapshot_for_op(&mut tx, record).await?
-                } else {
-                    BlockDateSnapshot::default()
+                let snapshot = match active_sink {
+                    Some(sink) => Some(sink.snapshot_for_op(&mut tx, record).await?),
+                    None => None,
                 };
                 let effects = match apply_op_tx(&mut tx, record).await {
                     Ok(eff) => eff,
@@ -130,8 +130,8 @@ pub(crate) async fn handle_foreground_task(
                 };
                 per_record_effects.push(effects);
                 max_seq = Some(max_seq.map_or(record.seq, |prev| prev.max(record.seq)));
-                if gcal_on {
-                    // PEND-25 L2: wrap in `Arc` so `DeferredNotification`
+                if let Some(snapshot) = snapshot {
+                    // PEND-25 L2: wrap in `Arc` so `DirtyNotification`
                     // holds the record by refcount. Batch input is
                     // `Arc<Vec<OpRecord>>` (shared) and individual records
                     // do not have their own `Arc` upstream, so one
@@ -139,7 +139,7 @@ pub(crate) async fn handle_foreground_task(
                     // that the field type is consistent with the single-op
                     // `apply_op` path, which `Arc::clone`s without a deep
                     // clone.
-                    pending_events.push(DeferredNotification {
+                    pending_events.push(DirtyNotification {
                         record: Arc::new((*record).clone()),
                         snapshot,
                     });
@@ -180,7 +180,12 @@ pub(crate) async fn handle_foreground_task(
                 .await;
             }
 
-            notify_gcal_for_events(gcal_handle, pending_events);
+            // #643: hand the buffered `(record, snapshot)` pairs to the
+            // sink post-commit; it computes its own dirty events. No-op
+            // when no sink is active (the vec is empty in that case).
+            if let Some(sink) = active_sink {
+                sink.notify(pending_events);
+            }
             Ok(())
         }
         MaterializeTask::Barrier(notify) => {

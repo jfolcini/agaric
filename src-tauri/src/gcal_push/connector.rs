@@ -321,6 +321,61 @@ impl GcalConnectorHandle {
     }
 }
 
+/// #643 — the [`GcalConnectorHandle`] is the materializer's
+/// [`DirtySink`](crate::materializer::DirtySink) implementation.
+///
+/// This is the layer that owns the GCal-specific dirty-date mapping:
+/// the materializer hands us the raw op record plus a pre-mutation
+/// [`BlockDateSnapshot`](super::dirty_producer::BlockDateSnapshot) it
+/// captured inside the apply transaction, and *we* run
+/// [`compute_dirty_event`](super::dirty_producer::compute_dirty_event)
+/// to turn that into the date-set [`DirtyEvent`] the connector consumes.
+/// Before #643 that computation lived in the materializer's core apply
+/// pipeline; inverting it behind `DirtySink` keeps the materializer
+/// integration-agnostic.
+///
+/// The opaque [`DirtySnapshot`](crate::materializer::DirtySnapshot) we
+/// produce in [`snapshot_for_op`](crate::materializer::DirtySink::snapshot_for_op)
+/// is a boxed `BlockDateSnapshot`;
+/// [`notify`](crate::materializer::DirtySink::notify) downcasts it back.
+/// A failed downcast means a different sink's snapshot reached this impl
+/// — a wiring bug — so we warn and skip rather than panic on the apply
+/// hot path.
+#[async_trait::async_trait]
+impl crate::materializer::DirtySink for GcalConnectorHandle {
+    async fn snapshot_for_op(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        record: &crate::op_log::OpRecord,
+    ) -> Result<crate::materializer::DirtySnapshot, AppError> {
+        let snapshot = super::dirty_producer::snapshot_for_op(conn, record).await?;
+        Ok(Box::new(snapshot))
+    }
+
+    fn notify(&self, events: Vec<crate::materializer::DirtyNotification>) {
+        // Production callers pass `chrono::Local::now()` so the window
+        // clamp inside `compute_dirty_event` uses the user's local day —
+        // byte-identical to the pre-#643 materializer behaviour.
+        let today = chrono::Local::now().date_naive();
+        for crate::materializer::DirtyNotification { record, snapshot } in events {
+            let Ok(snapshot) = snapshot.downcast::<super::dirty_producer::BlockDateSnapshot>()
+            else {
+                tracing::warn!(
+                    target: "gcal",
+                    "DirtySink::notify received a snapshot that is not a BlockDateSnapshot — \
+                     wiring bug; skipping",
+                );
+                continue;
+            };
+            if let Some(event) =
+                super::dirty_producer::compute_dirty_event(&record, &snapshot, today)
+            {
+                self.notify_dirty(event);
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Settings snapshot — read once per cycle
 // ---------------------------------------------------------------------------

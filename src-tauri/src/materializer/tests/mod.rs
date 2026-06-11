@@ -1,8 +1,8 @@
 //! Tests for materializer queue coordination, dispatch routing, dedup logic, shutdown, flush barriers, and metrics.
+use super::DirtySink;
 use super::*;
 use crate::db::init_pool;
 use crate::error::AppError;
-use crate::gcal_push::connector::GcalConnectorHandle;
 use crate::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
@@ -21,16 +21,19 @@ const DEV: &str = "test-device-mat";
 const FIXED_TS: i64 = 1_735_689_600_000;
 const FAKE_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// Empty GCal handle cell used by every existing materializer test
-/// that predates FEAT-5h.  The cell is never populated, so
-/// [`crate::gcal_push::dirty_producer::compute_dirty_event`] is never
-/// invoked and the test behaves exactly as it did before the handle
-/// parameter was added.
-pub(super) fn empty_gcal_handle() -> OnceLock<GcalConnectorHandle> {
+/// Empty [`DirtySink`] cell used by every existing materializer test
+/// that predates FEAT-5h.  The cell is never populated, so no snapshot
+/// is captured and no dirty event is ever computed — the test behaves
+/// exactly as it did before the sink parameter was added.
+///
+/// #643: this used to be an `OnceLock<GcalConnectorHandle>`; the
+/// pipeline now takes an integration-agnostic
+/// `OnceLock<Arc<dyn DirtySink>>`.
+pub(super) fn empty_gcal_handle() -> OnceLock<StdArc<dyn DirtySink + Send + Sync>> {
     OnceLock::new()
 }
 
-pub(super) fn empty_gcal_handle_arc() -> StdArc<OnceLock<GcalConnectorHandle>> {
+pub(super) fn empty_gcal_handle_arc() -> StdArc<OnceLock<StdArc<dyn DirtySink + Send + Sync>>> {
     StdArc::new(OnceLock::new())
 }
 

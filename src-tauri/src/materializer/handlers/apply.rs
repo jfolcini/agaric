@@ -5,28 +5,28 @@
 use super::*;
 
 /// PEND-25 L2/L9: takes `&Arc<OpRecord>` so the post-commit
-/// `DeferredNotification` push is a cheap `Arc::clone` (atomic refcount
+/// [`DirtyNotification`] push is a cheap `Arc::clone` (atomic refcount
 /// bump) rather than a deep clone of the record's owned `String`
 /// payloads. Callers (the `MaterializeTask::ApplyOp` arm) already hold
 /// the record as `Arc<OpRecord>`, so the borrow threads through.
 pub(super) async fn apply_op(
     pool: &SqlitePool,
     record: &Arc<OpRecord>,
-    gcal_handle: &OnceLock<GcalConnectorHandle>,
+    dirty_sink: &OnceLock<Arc<dyn DirtySink + Send + Sync>>,
 ) -> Result<(), AppError> {
     // SQL-review M-1: route through `begin_immediate_logged` so
     // sync-burst contention surfaces as upfront serialised wait (with
     // a `warn!` if slow) instead of mid-tx `busy_timeout` stalls
     // under SQLite's default DEFERRED isolation.
     let mut tx = crate::db::begin_immediate_logged(pool, "materializer_apply_op").await?;
-    // #482: only pay for the snapshot SELECT when Google Calendar is
-    // active; the result is unused (and discarded) when gcal is off,
-    // which is the case for the vast majority of users.
-    let gcal_on = gcal_handle.get().is_some();
-    let snapshot = if gcal_on {
-        snapshot_for_op(&mut tx, record).await?
-    } else {
-        BlockDateSnapshot::default()
+    // #482 / #643: only pay for the pre-mutation snapshot SELECT when a
+    // DirtySink is wired and active (the GCal case); the snapshot is
+    // owned opaquely by the sink and skipped entirely for the vast
+    // majority of users who never enable an integration.
+    let active_sink = dirty_sink.get().filter(|s| s.is_active());
+    let snapshot = match active_sink {
+        Some(sink) => Some(sink.snapshot_for_op(&mut tx, record).await?),
+        None => None,
     };
     let effects = apply_op_tx(&mut tx, record).await?;
     // C-2b: advance the cursor in the same tx so `apply + cursor` are
@@ -63,14 +63,14 @@ pub(super) async fn apply_op(
     )
     .await;
 
-    if gcal_on {
-        notify_gcal_for_events(
-            gcal_handle,
-            vec![DeferredNotification {
-                record: Arc::clone(record),
-                snapshot,
-            }],
-        );
+    // #643: hand the sink the raw `(record, snapshot)` post-commit. The
+    // sink computes its own dirty events behind the trait — the
+    // materializer no longer maps ops to integration-specific events.
+    if let (Some(sink), Some(snapshot)) = (active_sink, snapshot) {
+        sink.notify(vec![DirtyNotification {
+            record: Arc::clone(record),
+            snapshot,
+        }]);
     }
     Ok(())
 }
@@ -292,36 +292,6 @@ pub(super) async fn advance_apply_cursor(
     .execute(&mut *conn)
     .await?;
     Ok(())
-}
-
-/// Pair of (op record, pre-mutation snapshot) buffered for emission
-/// after a successful commit.  See the `BatchApplyOps` arm.
-///
-/// PEND-25 L2: `record` is `Arc<OpRecord>` so the per-event push only
-/// performs an atomic refcount bump rather than deep-cloning the
-/// record's owned `String` payloads. Pairs with PEND-25 L9 (the
-/// `Arc<OpRecord>` shift in `enqueue_*_background`).
-pub(super) struct DeferredNotification {
-    pub(super) record: Arc<OpRecord>,
-    pub(super) snapshot: BlockDateSnapshot,
-}
-
-/// Fire [`GcalConnectorHandle::notify_dirty`] for every event in
-/// `events`.  No-op when the handle is unset (dev tests, headless
-/// environments) or when a record produces no dirty event.
-pub(super) fn notify_gcal_for_events(
-    gcal_handle: &OnceLock<GcalConnectorHandle>,
-    events: Vec<DeferredNotification>,
-) {
-    let Some(handle) = gcal_handle.get() else {
-        return;
-    };
-    let today = chrono::Local::now().date_naive();
-    for DeferredNotification { record, snapshot } in events {
-        if let Some(event) = compute_dirty_event(&record, &snapshot, today) {
-            handle.notify_dirty(event);
-        }
-    }
 }
 
 /// Side-effects an `apply_op_tx` call may produce that the caller needs
