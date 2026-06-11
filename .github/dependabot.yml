@@ -67,6 +67,13 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Cooldown (#816): hold every npm update for 7 days after publish
+    # before opening a PR. audit-signatures is warn-only and would not
+    # block a freshly-compromised release that lands in Monday's grouped
+    # batch; a one-week quarantine lets a malicious version be yanked /
+    # flagged upstream before it ever reaches a PR here.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 8
     commit-message:
       prefix: chore(npm)
@@ -151,6 +158,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Cooldown (#816): hold every cargo update for 7 days after publish
+    # before opening a PR (same supply-chain quarantine rationale as the
+    # npm ecosystem above — deny.toml locks sources to crates.io but does
+    # not gate on release age).
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 8
     commit-message:
       prefix: chore(cargo)
