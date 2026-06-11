@@ -2,6 +2,7 @@
 
 import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
+import { useEffect, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -58,17 +59,81 @@ const SheetOverlay = ({
 }
 SheetOverlay.displayName = 'SheetOverlay'
 
+/**
+ * Soft-keyboard inset for bottom sheets (#760).
+ *
+ * On Android (edge-to-edge / targetSdk 36) the theme-level `adjustResize`
+ * is largely neutered: the layout viewport does NOT shrink when the IME
+ * opens, so a `bottom-0`-anchored sheet — and any input focused inside it
+ * — sits underneath the keyboard. `window.visualViewport` is the only
+ * signal that survives edge-to-edge; this mirrors the tracking that
+ * `InPageFind` (overlay variant) and `JournalCalendarDropdown` already do.
+ *
+ * Returns the keyboard overlap in px (0 when the keyboard is hidden, the
+ * API is unavailable — jsdom, older WebViews — or `enabled` is false, so
+ * desktop and Playwright behavior is byte-identical to before). A
+ * pinch-zoomed viewport (`visualViewport.scale > 1`) also reports 0 —
+ * zoom shrinks `vv.height` exactly like the IME does, but lifting the
+ * sheet would be wrong there (desktop trackpad/touchscreen zoom).
+ */
+function useSoftKeyboardInset(enabled: boolean): number {
+  const [inset, setInset] = useState(0)
+  useEffect(() => {
+    if (!enabled) {
+      setInset(0)
+      return
+    }
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null
+    if (!vv) return
+    const update = () => {
+      // Pinch zoom ALSO shrinks visualViewport.height without any
+      // keyboard — on a desktop browser / touchscreen (trackpad pinch,
+      // WebView2 touch zoom) a zoomed viewport would otherwise float
+      // every bottom sheet up by a bogus "keyboard" inset. `scale > 1`
+      // is the discriminator: the IME never changes scale, pinch zoom
+      // always does. Treat a zoomed viewport as "no keyboard".
+      // (`undefined > 1` is false, so WebViews lacking `scale` keep the
+      // plain keyboard math.)
+      if (vv.scale > 1) {
+        setInset(0)
+        return
+      }
+      // Keyboard overlap = layout-viewport bottom minus visual-viewport
+      // bottom. Positive only while the IME (or another bottom inset)
+      // is up; clamp to 0 so transient negative readings during
+      // orientation changes never push the sheet below the viewport.
+      const overlap = window.innerHeight - (vv.height + vv.offsetTop)
+      setInset(overlap > 0 ? Math.round(overlap) : 0)
+    }
+    update()
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    return () => {
+      vv.removeEventListener('resize', update)
+      vv.removeEventListener('scroll', update)
+    }
+  }, [enabled])
+  return inset
+}
+
 const SheetContent = ({
   ref,
   className,
   children,
   side = 'right',
   showCloseButton = true,
+  style,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: 'top' | 'right' | 'bottom' | 'left'
   showCloseButton?: boolean
 }) => {
+  // Bottom sheets are the IME-covered case: they anchor at `bottom-0` and
+  // host focusable inputs (AddPropertyPopover, SearchSheet, ConfirmDialog
+  // mobile, …). Lift the sheet above the keyboard and cap its height at
+  // the remaining visual viewport so a tall sheet can't shove its header
+  // off the top of the screen. Other sides keep their static anchoring.
+  const keyboardInset = useSoftKeyboardInset(side === 'bottom')
   return (
     <SheetPortal>
       <SheetOverlay />
@@ -87,6 +152,20 @@ const SheetContent = ({
             'inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className,
         )}
+        // While the soft keyboard is up, lift the bottom anchor above it
+        // and cap the height at the remaining (visual) viewport. Inline
+        // styles override the `bottom-0` / `max-h-*` classes only for the
+        // keyboard's lifetime; when the inset returns to 0 the style prop
+        // reverts and the class anchoring is back in charge (#760).
+        style={
+          keyboardInset > 0
+            ? {
+                ...style,
+                bottom: keyboardInset,
+                maxHeight: `calc(100% - ${keyboardInset}px)`,
+              }
+            : style
+        }
         {...props}
       >
         {children}

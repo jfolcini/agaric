@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/capabilities.json",
+  "identifier": "desktop",
+  "description": "Desktop-only permissions for the main window (#760). The backing plugins (global-shortcut FEAT-12, autostart FEAT-13, updater) are registered behind #[cfg(desktop)] / #[cfg(not(mobile))] in lib.rs and their crates are desktop-target-scoped in Cargo.toml, so this capability is platform-scoped to match — an Android/iOS build skips it entirely instead of granting permissions for plugins that do not exist there.",
+  "windows": ["main"],
+  "platforms": ["linux", "macOS", "windows"],
+  "permissions": [
+    "global-shortcut:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "autostart:default",
+    "updater:default"
+  ]
+}
