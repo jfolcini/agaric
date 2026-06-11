@@ -313,3 +313,15 @@ the backlog, not to stop. Pending PRs get merged at the next batch-boundary swee
 - **Closing a plan issue from a partial fix** — only `Closes #NN` when the full plan ships.
 - **Kitchen-sink refactor to one subagent** — split by file boundary (≤6 files each).
 - **Dismissing a red check as "not my diff"** — inherited `main` failures are yours to fix.
+- **Concurrent full-suite commits/pushes get OOM-killed** — never background 2+ hook-heavy
+  git ops (each runs full clippy/nextest); earlyoom kills them silently (reports exit 0,
+  nothing lands). Serialize commit/push in the FOREGROUND; after each, verify HEAD moved
+  (`git log -1`) and the remote SHA changed (`git ls-remote`). Building in parallel
+  worktrees is fine — only the hook step must serialize.
+- **`cargo fmt` prek hook is `--check`, not auto-fix** — a long line a subagent/reviewer
+  left unformatted aborts the commit; run `cargo fmt` yourself in `<wt>/src-tauri`, re-stage.
+- **Splitting a god-file breaks path-keyed guards** — a verbatim MOVE still reds CI:
+  re-anchor `dynamic-sql-baseline.txt` (`--update-baseline`, verify count-preserving),
+  swap `check-raw-tx.py` allowlist globs to the new dir, repoint AGENTS.md +
+  `docs/architecture/*` citations. And **rebase onto origin/main first** — a branch forked
+  before a guard's commit landed won't even run that guard locally, so only CI catches it.
