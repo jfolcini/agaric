@@ -984,6 +984,74 @@ async fn mtls_server_extracts_peer_cert_cn() {
     server.shutdown().await;
 }
 
+/// #800 (security): a genuinely cert-less TLS client — one built with
+/// `with_no_client_auth()` instead of `with_client_auth_cert()` — is
+/// accepted by the `AllowAnyCert` acceptor (`client_auth_mandatory =
+/// false`), and the resulting server-side `SyncConnection` reports
+/// `peer_cert_cn() == None` and `peer_cert_hash() == None`.
+///
+/// This pins the *precondition* of the #800 attack: anonymous sockets
+/// can complete the handshake and reach `handle_incoming_sync` with no
+/// identity material. The responder-level rejection that closes the
+/// bypass is covered by
+/// `sync_daemon::tests::inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue800_certless_tls_connection_accepted_with_no_peer_identity() {
+    install_crypto_provider();
+    let server_cert = generate_self_signed_cert("server-device").unwrap();
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<(Option<String>, Option<String>)>();
+    let tx = std::sync::Mutex::new(Some(tx));
+    let (server, port) = SyncServer::start(&server_cert, move |conn| {
+        if let Some(tx) = tx.lock().unwrap().take() {
+            let _ = tx.send((conn.peer_cert_cn().map(String::from), conn.peer_cert_hash()));
+        }
+    })
+    .await
+    .unwrap();
+
+    // Cert-less client: accept the server cert (any agaric-* cert) but
+    // present NO client certificate of our own.
+    let observed: Arc<std::sync::OnceLock<String>> = Arc::new(std::sync::OnceLock::new());
+    let verifier = PinningCertVerifier {
+        expected_hash: None,
+        expected_remote_id: None,
+        observed_hash: observed,
+    };
+    let client_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth();
+    let connector = tokio_tungstenite::Connector::Rustls(Arc::new(client_config));
+    let url = format!("wss://127.0.0.1:{port}");
+    let (ws, _resp) = tokio_tungstenite::connect_async_tls_with_config(
+        &url,
+        Some(super::connection::ws_config()),
+        false,
+        Some(connector),
+    )
+    .await
+    .expect("#800 precondition: anonymous (cert-less) TLS connection must be accepted");
+
+    let (cn, hash) = tokio::time::timeout(Duration::from_secs(5), rx)
+        .await
+        .expect("timeout waiting for server connection")
+        .expect("server channel closed");
+    assert_eq!(
+        cn, None,
+        "#800: a cert-less connection must yield no peer cert CN on the server side"
+    );
+    assert_eq!(
+        hash, None,
+        "#800: a cert-less connection must yield no peer cert hash on the server side"
+    );
+
+    // Dropping `ws` tears down the cert-less connection; the assertions
+    // above already captured the server-side identity observation.
+    drop(ws);
+    server.shutdown().await;
+}
+
 // -- 10. AllowAnyCert verifier tests -----------------------------------
 
 #[test]
