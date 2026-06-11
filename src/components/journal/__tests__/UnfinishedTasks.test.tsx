@@ -13,7 +13,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
@@ -21,6 +21,7 @@ import { axe } from 'vitest-axe'
 import { makeBlock } from '../../../__tests__/fixtures'
 import { logger } from '../../../lib/logger'
 import type { BlockRow } from '../../../lib/tauri'
+import { useSpaceStore } from '../../../stores/space'
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -700,6 +701,78 @@ describe('UnfinishedTasks', () => {
         expect.any(Error),
       )
       warnSpy.mockRestore()
+    })
+
+    // #826 — the fetch `.catch` previously called setBlocks([]) unconditionally.
+    // A slow rejection from a superseded effect run must NOT clobber the newer
+    // run's successfully-loaded data (same stale-guard contract as #757). The
+    // effect re-runs when currentSpaceId changes, so we drive two runs: run #1
+    // rejects slowly, run #2 loads good data, then run #1's stale rejection
+    // arrives last and must be ignored.
+    it('#826 — a stale rejection does not clobber a newer run’s loaded data', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+      // Run #1 (space SPACE_A) hangs until we reject it after run #2 has loaded.
+      let rejectRun1: (err: Error) => void = () => {}
+      const run1 = new Promise<never>((_resolve, reject) => {
+        rejectRun1 = reject
+      })
+      let callIndex = 0
+      const goodBlocks = [makeYesterdayBlock('NEW', 'Fresh task from run 2')]
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_unfinished_tasks') {
+          callIndex += 1
+          // First effect run rejects (slowly); the second resolves with data.
+          if (callIndex === 1) return run1
+          return { items: goodBlocks, next_cursor: null, has_more: false }
+        }
+        if (cmd === 'batch_resolve') return []
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      })
+
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+      render(<UnfinishedTasks />)
+
+      // Run #1 is in flight → loading skeleton shows.
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks-loading')).toBeInTheDocument()
+      })
+
+      // Switch space → effect cleanup marks run #1 stale and run #2 starts.
+      await act(async () => {
+        useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      })
+
+      // Run #2's data is rendered.
+      await waitFor(() => {
+        expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      })
+      const user = userEvent.setup()
+      await user.click(screen.getByRole('button', { expanded: false }))
+      expect(screen.getByText('Fresh task from run 2')).toBeInTheDocument()
+
+      // NOW the stale run #1 rejects. Without the guard its catch would call
+      // setBlocks([]) and wipe run #2's data, hiding the whole section.
+      await act(async () => {
+        rejectRun1(new Error('stale rejection from superseded run'))
+        await run1.catch(() => {})
+      })
+
+      await waitFor(() => {
+        expect(warnSpy).toHaveBeenCalledWith(
+          'UnfinishedTasks',
+          'fetchUnfinished failed',
+          undefined,
+          expect.any(Error),
+        )
+      })
+
+      // The newer run's data survives — the stale rejection did not clobber it.
+      expect(screen.getByTestId('unfinished-tasks')).toBeInTheDocument()
+      expect(screen.getByText('Fresh task from run 2')).toBeInTheDocument()
+
+      warnSpy.mockRestore()
+      useSpaceStore.setState({ currentSpaceId: null })
     })
 
     it('batchResolve rejects — blocks render without page titles', async () => {

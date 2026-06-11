@@ -253,7 +253,11 @@ export function UnfinishedTasks({
         }
       } catch (err) {
         logger.warn('UnfinishedTasks', 'fetchUnfinished failed', undefined, err)
-        setBlocks([])
+        // #826 — mirror the #757 stale-guard contract: a slow/post-unmount
+        // rejection must not clobber newer successfully-loaded data (or call
+        // setState after unmount). Only reset blocks if this run still owns
+        // the effect.
+        if (!stale) setBlocks([])
       } finally {
         if (!stale) setLoading(false)
       }
