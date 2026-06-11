@@ -262,6 +262,7 @@ export const common: Record<string, string> = {
   'tabs.closeActiveTab': 'Close active tab',
   'tabs.nextTab': 'Next tab',
   'tabs.previousTab': 'Previous tab',
+  'quickCapture.fabLabel': 'Quick capture',
   'dialog.cancel': 'Cancel',
   'dialog.confirm': 'Confirm',
   'data.importTitle': 'Import',
