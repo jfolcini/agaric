@@ -9,7 +9,8 @@
 
 import type React from 'react'
 
-import { DeadlineWarningSection } from '../DeadlineWarningSection'
+import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
+
 import { AutostartRow } from './AutostartRow'
 import { QuickCaptureRow } from './QuickCaptureRow'
 import { ResetOnboardingRow } from './ResetOnboardingRow'

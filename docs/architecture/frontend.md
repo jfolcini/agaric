@@ -25,7 +25,7 @@ State lives in Zustand stores under `src/stores/`. One store per concern:
 
 ## ViewDispatcher (no router)
 
-`src/components/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | properties | trash | status | history | templates | settings | graph | page-editor`).
+`src/components/pages/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | properties | trash | status | history | templates | settings | graph | page-editor`).
 
 No router. Navigation is store-driven. `useTabsStore` owns the per-tab page stack; `useNavigationStore` owns the active view. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores by `useDeepLinkRouter`.
 

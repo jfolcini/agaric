@@ -13,7 +13,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { EmptyState } from '../components/EmptyState'
+import { EmptyState } from '@/components/common/EmptyState'
 
 function TestIcon({ className }: { className?: string }) {
   return <svg className={className} data-testid="test-icon" aria-hidden="true" />

@@ -22,12 +22,11 @@ import type React from 'react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-
-import { ConfirmDialog } from '../ConfirmDialog'
 
 /** Mirrors the Rust `McpStatus` struct exposed by `get_mcp_status`. */
 export interface McpStatus {

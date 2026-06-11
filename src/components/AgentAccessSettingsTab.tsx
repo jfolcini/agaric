@@ -36,6 +36,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -48,7 +49,6 @@ import { notify } from '@/lib/notify'
 import { ActivityFeed } from './agent-access/ActivityFeed'
 import type { McpRwStatus, McpStatus } from './agent-access/McpStatusSection'
 import { McpStatusSection } from './agent-access/McpStatusSection'
-import { LoadingSkeleton } from './LoadingSkeleton'
 
 export function AgentAccessSettingsTab(): React.ReactElement {
   const { t } = useTranslation()

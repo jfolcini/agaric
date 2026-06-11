@@ -1,0 +1,462 @@
+/**
+ * Tests for WelcomeModal component (F-31).
+ *
+ * Validates:
+ *  - Shows when localStorage has no onboarding flag
+ *  - Does NOT show when onboarding flag is set
+ *  - "Get Started" dismisses and sets localStorage
+ *  - "Create sample pages" routes through createPageInSpace + createBlock
+ *  - Does not show during boot loading state
+ *  - a11y compliance
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import i18n from 'i18next'
+import { toast } from 'sonner'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+// Mock lucide-react icons so we don't pull in the full icon library in tests.
+// #214 Phase 1B replaced the six abstract feature icons with three workflow
+// icons (SquareSlash, AtSign, Bold).
+vi.mock('lucide-react', () => ({
+  SquareSlash: (props: { className?: string }) => (
+    <svg data-testid="icon-square-slash" className={props.className} />
+  ),
+  AtSign: (props: { className?: string }) => (
+    <svg data-testid="icon-at-sign" className={props.className} />
+  ),
+  Bold: (props: { className?: string }) => (
+    <svg data-testid="icon-bold" className={props.className} />
+  ),
+  XIcon: (props: { className?: string }) => (
+    <svg data-testid="x-icon" className={props.className} />
+  ),
+}))
+
+import { WelcomeModal } from '@/components/pages/WelcomeModal'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { useBootStore } from '@/stores/boot'
+import { useSpaceStore } from '@/stores/space'
+
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
+const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
+
+/** No-op boot function to prevent side-effects. */
+const noopBoot = vi.fn(async () => {})
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  localStorage.clear()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
+  useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
+  // BUG-1 / H-3b — WelcomeModal routes onboarding sample-page creation
+  // through `createPageInSpace`, which reads
+  // `useSpaceStore.getState().currentSpaceId`. On a fresh first boot the
+  // SpaceStore has hydrated to whichever space sorts first
+  // alphabetically (Personal by default); seed the test store so the
+  // sample-pages flow doesn't bail.
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_TEST',
+    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
+    isReady: true,
+  })
+})
+
+describe('WelcomeModal', () => {
+  it('shows when localStorage has no onboarding flag', () => {
+    render(<WelcomeModal />)
+
+    expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+    expect(
+      screen.getByText('A local-first note-taking app for organizing your thoughts.'),
+    ).toBeInTheDocument()
+  })
+
+  it('does NOT show when onboarding flag is set', () => {
+    localStorage.setItem('agaric-onboarding-done', 'true')
+
+    render(<WelcomeModal />)
+
+    expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+  })
+
+  // #214 Phase 1B — the welcome modal now teaches three concrete
+  // workflows instead of six abstract feature blurbs.
+  it('displays the three workflow rows', () => {
+    render(<WelcomeModal />)
+
+    expect(screen.getByText('Press / for tasks & dates')).toBeInTheDocument()
+    expect(screen.getByText('Type [[ to link, @ to tag')).toBeInTheDocument()
+    expect(screen.getByText('Select text to format')).toBeInTheDocument()
+  })
+
+  // UX-278: feature list must use <ul role="list"> + <li> for proper SR
+  // semantics. #214 Phase 1B reduced six rows to three workflows.
+  it('renders the workflow list with semantic <ul>/<li> markup', () => {
+    render(<WelcomeModal />)
+
+    const list = screen.getByRole('list')
+    expect(list.tagName).toBe('UL')
+
+    const items = screen.getAllByRole('listitem')
+    expect(items).toHaveLength(3)
+    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[1]).toHaveTextContent('Type [[ to link, @ to tag')
+    expect(items[2]).toHaveTextContent('Select text to format')
+  })
+
+  // #214 Phase 1B — the slash workflow row teaches the command menu and
+  // uses the SquareSlash icon.
+  it('renders the slash workflow row first with its description and icon (#214)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[0]).toHaveTextContent('Press / for tasks & dates')
+    expect(items[0]).toHaveTextContent(
+      'Open the command menu to add tasks, dates, headings, and more.',
+    )
+    expect(items[0]?.querySelector('[data-testid="icon-square-slash"]')).not.toBeNull()
+  })
+
+  // #214 Phase 1B — the link/tag workflow row teaches the `[[` and `@`
+  // triggers and uses the AtSign icon.
+  it('renders the link/tag workflow row with both triggers and the AtSign icon (#214)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[1]).toHaveTextContent('[[')
+    expect(items[1]).toHaveTextContent('@')
+    expect(items[1]?.querySelector('[data-testid="icon-at-sign"]')).not.toBeNull()
+  })
+
+  // #214 Phase 1B — the formatting workflow row teaches the select-to-format
+  // gesture and uses the Bold icon.
+  it('renders the formatting workflow row last with the Bold icon (#214)', () => {
+    render(<WelcomeModal />)
+
+    const items = screen.getAllByRole('listitem')
+    expect(items[2]).toHaveTextContent('Select text to format')
+    expect(items[2]?.querySelector('[data-testid="icon-bold"]')).not.toBeNull()
+  })
+
+  // #214 Phase 1B — the old six abstract feature blurbs must be gone.
+  it('no longer renders the old abstract feature blurbs (#214)', () => {
+    render(<WelcomeModal />)
+
+    expect(screen.queryByText('Blocks + pages')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sync across devices')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reference syntax')).not.toBeInTheDocument()
+  })
+
+  it('"Get Started" dismisses and sets localStorage', async () => {
+    const user = userEvent.setup()
+    render(<WelcomeModal />)
+
+    const getStartedBtn = screen.getByRole('button', { name: 'Get Started' })
+    await user.click(getStartedBtn)
+
+    expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+    expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+  })
+
+  // BUG-1 / H-3b — page creation routes through `create_page_in_space`
+  // (returns the new ULID as a plain string). Content blocks still use
+  // `create_block`. So the sequence is:
+  //   2× `create_page_in_space` (Getting Started + Quick Tips)
+  // + 6× `create_block` (3 content children for each page)
+  // = 8 IPC invocations total.
+  it('"Create sample pages" calls create_page_in_space + create_block and dismisses', async () => {
+    const user = userEvent.setup()
+
+    let pageCount = 0
+    let blockCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        pageCount++
+        return `page-${pageCount}`
+      }
+      if (cmd === 'create_block') {
+        blockCount++
+        return {
+          id: `block-${blockCount}`,
+          block_type: 'content',
+          content: '',
+          parent_id: null,
+          position: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          deleted_at: null,
+        }
+      }
+      return {}
+    })
+
+    render(<WelcomeModal />)
+
+    const sampleBtn = screen.getByRole('button', { name: 'Create sample pages' })
+    await user.click(sampleBtn)
+
+    await waitFor(() => {
+      // 2 page creates + 6 child block creates = 8 total IPCs.
+      expect(mockedInvoke).toHaveBeenCalledTimes(8)
+    })
+
+    // Verify it created the two pages via the new IPC — assert via i18n
+    // keys (UX-278) so a locale change cannot silently break the test.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({
+        spaceId: 'SPACE_TEST',
+        content: i18n.t('welcome.sampleGettingStartedTitle'),
+      }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({
+        spaceId: 'SPACE_TEST',
+        content: i18n.t('welcome.sampleQuickTipsTitle'),
+      }),
+    )
+
+    // Negative assertion: NO `create_block` IPC fired with `blockType=page`
+    // (would mean the legacy bypass path crept back in).
+    const legacyCreatePageCalls = mockedInvoke.mock.calls.filter(
+      ([cmd, args]) =>
+        cmd === 'create_block' && (args as { blockType?: string }).blockType === 'page',
+    )
+    expect(legacyCreatePageCalls).toHaveLength(0)
+
+    // Dialog should be dismissed
+    await waitFor(() => {
+      expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+    })
+    expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+  })
+
+  // UX-278: sample-page bodies must come from i18n keys so non-English
+  // locales don't see English onboarding content.
+  it('"Create sample pages" uses i18n strings for every block content', async () => {
+    const user = userEvent.setup()
+
+    let pageCount = 0
+    let blockCount = 0
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'create_page_in_space') {
+        pageCount++
+        return `page-${pageCount}`
+      }
+      if (cmd === 'create_block') {
+        blockCount++
+        return {
+          id: `block-${blockCount}`,
+          block_type: 'content',
+          content: '',
+          parent_id: null,
+          position: 0,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          deleted_at: null,
+        }
+      }
+      return {}
+    })
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledTimes(8)
+    })
+
+    // Page titles ride on `create_page_in_space`.
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({ content: i18n.t('welcome.sampleGettingStartedTitle') }),
+    )
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'create_page_in_space',
+      expect.objectContaining({ content: i18n.t('welcome.sampleQuickTipsTitle') }),
+    )
+
+    // Body content blocks ride on `create_block`.
+    const bodyKeys = [
+      'welcome.sampleGettingStartedBody1',
+      'welcome.sampleGettingStartedBody2',
+      'welcome.sampleGettingStartedBody3',
+      'welcome.sampleQuickTipsBody1',
+      'welcome.sampleQuickTipsBody2',
+      'welcome.sampleQuickTipsBody3',
+    ] as const
+
+    for (const key of bodyKeys) {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({ content: i18n.t(key) }),
+      )
+    }
+  })
+
+  // MAINT-99: IPC error-path coverage. The "Create sample pages" flow
+  // wraps the create-page chain in try/catch and surfaces failures via
+  // toast.error. A regression where the catch block is dropped (or the
+  // toast call goes missing) would leave the user staring at a stuck
+  // dialog with no signal — this test pins the contract: rejection →
+  // error toast, modal stays open, onboarding flag is NOT persisted.
+  it('shows an error toast and keeps the modal open when create_page_in_space rejects', async () => {
+    const user = userEvent.setup()
+    const mockedToastError = vi.mocked(toast.error)
+
+    // First create_page_in_space call (Getting Started page) rejects —
+    // the remaining calls are short-circuited by the try/catch.
+    mockedInvoke.mockRejectedValueOnce(new Error('database is locked'))
+
+    render(<WelcomeModal />)
+    await user.click(screen.getByRole('button', { name: 'Create sample pages' }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(i18n.t('welcome.samplePagesFailed'))
+    })
+
+    // Modal stays open; onboarding flag NOT set so the user can retry
+    // (or pick a different action) on next launch.
+    expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+    expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+  })
+
+  it('does not show during boot loading state', () => {
+    useBootStore.setState({ state: 'booting', error: null, boot: noopBoot })
+
+    render(<WelcomeModal />)
+
+    expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+  })
+
+  it('does not show during boot error state', () => {
+    useBootStore.setState({ state: 'error', error: 'Something broke', boot: noopBoot })
+
+    render(<WelcomeModal />)
+
+    expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations when open', async () => {
+    const { container } = render(<WelcomeModal />)
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  it('has no a11y violations when dismissed', async () => {
+    localStorage.setItem('agaric-onboarding-done', 'true')
+
+    const { container } = render(<WelcomeModal />)
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
+  })
+
+  // UX-228: the closeOverlays shortcut (Escape by default) dispatches a
+  // window CustomEvent that WelcomeModal listens for. Verifies the modal
+  // dismisses, marks onboarding done, and stays dismissed on re-render.
+  describe('closeOverlays event (UX-228)', () => {
+    it('dispatching agaric:closeAllOverlays closes the modal', async () => {
+      render(<WelcomeModal />)
+
+      // Sanity: modal is open
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      await waitFor(() => {
+        expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+      })
+    })
+
+    it('dispatching agaric:closeAllOverlays marks onboarding done', async () => {
+      render(<WelcomeModal />)
+
+      expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+
+      await waitFor(() => {
+        expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
+      })
+    })
+
+    it('does not throw when event fires while modal is already closed', () => {
+      localStorage.setItem('agaric-onboarding-done', 'true')
+      render(<WelcomeModal />)
+
+      // Should be a no-op — no error, no extra writes
+      expect(() => {
+        window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      }).not.toThrow()
+    })
+
+    it('unsubscribes on unmount', async () => {
+      const { unmount } = render(<WelcomeModal />)
+
+      unmount()
+
+      // After unmount the handler should not run. We cannot assert the
+      // callback directly, but we can verify localStorage does not get
+      // written by the now-detached listener.
+      localStorage.removeItem('agaric-onboarding-done')
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      await Promise.resolve()
+      expect(localStorage.getItem('agaric-onboarding-done')).toBeNull()
+    })
+
+    it('has no a11y violations after dismissal via close-all-overlays', async () => {
+      const { container } = render(<WelcomeModal />)
+      window.dispatchEvent(new CustomEvent(CLOSE_ALL_OVERLAYS_EVENT))
+      await waitFor(() => {
+        expect(screen.queryByText('Welcome to Agaric')).not.toBeInTheDocument()
+      })
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  // ----------------------------------------------------------------------
+  // MAINT-215: modal mounts under both desktop (Dialog) and mobile (Sheet)
+  // paths via useDialogOrSheet('dialog'). We don't assert on Radix DOM
+  // specifics — just that the title / body content / buttons are
+  // accessible under both code paths.
+  // ----------------------------------------------------------------------
+
+  describe('responsive path (MAINT-215)', () => {
+    it('mounts on the mobile path (Sheet) with title, workflow list, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+
+      render(<WelcomeModal />)
+
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+      // Workflow list still renders inline on mobile (#214 Phase 1B: 3 rows).
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
+    })
+
+    it('mounts on the desktop path (Dialog) with title, workflow list, and buttons accessible', () => {
+      mockedUseIsMobile.mockReturnValue(false)
+
+      render(<WelcomeModal />)
+
+      expect(screen.getByText('Welcome to Agaric')).toBeInTheDocument()
+      expect(screen.getAllByRole('listitem')).toHaveLength(3)
+      expect(screen.getByRole('button', { name: 'Get Started' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Create sample pages' })).toBeInTheDocument()
+    })
+  })
+})

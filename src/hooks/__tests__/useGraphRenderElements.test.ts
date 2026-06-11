@@ -11,7 +11,8 @@ import { renderHook } from '@testing-library/react'
 import { select } from 'd3-selection'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
+import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
+
 import { useGraphRenderElements } from '../useGraphRenderElements'
 
 vi.mock('d3-selection', () => ({

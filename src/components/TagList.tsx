@@ -11,8 +11,11 @@ import type React from 'react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { RenameDialog } from '@/components/RenameDialog'
+import { EmptyState } from '@/components/common/EmptyState'
+import { ListViewState } from '@/components/common/ListViewState'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { RenameDialog } from '@/components/dialogs/RenameDialog'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,9 +45,6 @@ import {
 } from '../lib/tauri'
 import { useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
-import { EmptyState } from './EmptyState'
-import { ListViewState } from './ListViewState'
-import { LoadingSkeleton } from './LoadingSkeleton'
 
 interface TagListProps {
   /** Called when a tag name is clicked. */

@@ -1,0 +1,1731 @@
+/**
+ * Tests for HistoryView component.
+ *
+ * Validates:
+ *  - Renders empty state when no history entries
+ *  - Renders history entries with correct badges, timestamps, previews
+ *  - Checkbox toggles selection on click
+ *  - Shift+click selects range
+ *  - Arrow key navigation moves focus
+ *  - Space toggles checkbox on focused item
+ *  - Enter with selection shows confirmation dialog
+ *  - Confirmation dialog "Revert" calls revertOps with correct ops in reverse chronological order
+ *  - Non-reversible ops (purge_block) have disabled checkbox
+ *  - "Load more" button appears when hasMore=true
+ *  - Op type filter updates query
+ *  - a11y compliance
+ *  - Selection toolbar shows correct count
+ *  - "Clear selection" button clears all
+ *  - Escape key clears selection
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+import { makeHistoryEntry } from '@/__tests__/fixtures'
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { HistoryView } from '@/components/history/HistoryView'
+import { t } from '@/lib/i18n'
+import { useSpaceStore } from '@/stores/space'
+
+// Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
+vi.mock('@/components/templates/CompactionCard', () => ({
+  CompactionCard: () => null,
+}))
+
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
+// perf-review Tier 2 #6 (2026-05-14) — mirror the PageBrowser mock so
+// jsdom's zero-height scroll container doesn't collapse the virtual
+// list to zero rows. Returning every row keeps every existing
+// `getByTestId('history-item-N')` / `getAllByRole('row')` assertion
+// working without per-test changes.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
+// Radix Select is mocked globally via the shared mock in src/test-setup.ts
+// (see src/__tests__/mocks/ui-select.tsx).
+
+const mockedInvoke = vi.mocked(invoke)
+
+const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
+
+describe('HistoryView', () => {
+  it('renders empty state when no history entries', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<HistoryView />)
+
+    expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+  })
+
+  it('renders history entries with correct badges, timestamps, previews', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'Updated content' }, 1736942400000),
+        makeHistoryEntry(2, 'create_block', { content: 'New block' }, 1736848800000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    // Op type badges
+    expect(await screen.findByText('edit_block')).toBeInTheDocument()
+    expect(screen.getByText('create_block')).toBeInTheDocument()
+
+    // Payload previews
+    expect(screen.getByText('Updated content')).toBeInTheDocument()
+    expect(screen.getByText('New block')).toBeInTheDocument()
+  })
+
+  it('checkbox toggles selection on click', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: /Select operation edit_block #1/,
+    })
+    expect(checkbox).not.toBeChecked()
+
+    await user.click(checkbox)
+    expect(checkbox).toBeChecked()
+
+    // Selection toolbar should appear
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    await user.click(checkbox)
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('shift+click selects range', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    // Wait for items to render
+    await screen.findByText('item 1')
+
+    // Click the first item row
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+
+    // Shift+click the third item row
+    await user.keyboard('{Shift>}')
+    await user.click(items[2] as HTMLElement)
+    await user.keyboard('{/Shift}')
+
+    // All three should be selected
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes[0]).toBeChecked()
+    expect(checkboxes[1]).toBeChecked()
+    expect(checkboxes[2]).toBeChecked()
+
+    expect(screen.getByText(t('batch.selectedCount', { count: 3 }))).toBeInTheDocument()
+  })
+
+  it('arrow key navigation moves focus', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // First item should be auto-focused on load
+    const items = screen.getAllByTestId(/^history-item-/)
+    expect(items[0]).toHaveClass('ring-2')
+
+    // Press ArrowDown to move to second item
+    await user.keyboard('{ArrowDown}')
+    expect(items[0]).not.toHaveClass('ring-2')
+    expect(items[1]).toHaveClass('ring-2')
+
+    // Press ArrowUp to go back
+    await user.keyboard('{ArrowUp}')
+    expect(items[0]).toHaveClass('ring-2')
+    expect(items[1]).not.toHaveClass('ring-2')
+  })
+
+  it('space toggles checkbox on focused item', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Navigate to first item
+    await user.keyboard('{ArrowDown}')
+
+    // Press space to toggle
+    await user.keyboard(' ')
+
+    const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
+    expect(checkbox).toBeChecked()
+
+    // Press space again to untoggle
+    await user.keyboard(' ')
+    expect(checkbox).not.toBeChecked()
+  })
+
+  it('enter with selection shows confirmation dialog', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select via clicking the row
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+
+    // Press Enter
+    await user.keyboard('{Enter}')
+
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+    expect(screen.getByText(t('history.revertDescription', { count: 1 }))).toBeInTheDocument()
+  })
+
+  it('confirmation dialog "Revert" calls revertOps with correct ops in reverse chronological order', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'oldest' }, 1736762400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'middle' }, 1736848800000),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'newest' }, 1736935200000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockResolvedValueOnce([]) // revertOps
+      .mockResolvedValueOnce(emptyPage) // reload after revert
+
+    render(<HistoryView />)
+
+    await screen.findByText('oldest')
+
+    // Select all via Ctrl+A
+    await user.keyboard('{Control>}a{/Control}')
+
+    expect(screen.getByText(t('batch.selectedCount', { count: 3 }))).toBeInTheDocument()
+
+    // Click "Revert selected" button
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+
+    // Confirmation dialog appears
+    expect(screen.getByText(t('history.revertTitle', { count: 3 }))).toBeInTheDocument()
+
+    // Click Revert in dialog
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('revert_ops', {
+        ops: [
+          { device_id: 'DEVICE01', seq: 3 }, // newest first
+          { device_id: 'DEVICE01', seq: 2 },
+          { device_id: 'DEVICE01', seq: 1 }, // oldest last
+        ],
+      })
+    })
+  })
+
+  it('non-reversible ops (purge_block) have disabled checkbox', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'purge_block', { block_id: 'B1' }),
+        makeHistoryEntry(2, 'delete_attachment', { attachment_id: 'A1' }),
+        makeHistoryEntry(3, 'edit_block', { to_text: 'editable' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('purge_block')
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    // purge_block checkbox should be disabled
+    expect(checkboxes[0]).toBeDisabled()
+    // delete_attachment checkbox should be disabled
+    expect(checkboxes[1]).toBeDisabled()
+    // edit_block checkbox should be enabled
+    expect(checkboxes[2]).not.toBeDisabled()
+  })
+
+  it('"Load more" button appears when hasMore=true', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+    expect(loadMoreBtn).toBeInTheDocument()
+    // Verify shared LoadMoreButton is used (aria-busy attribute)
+    expect(loadMoreBtn).toHaveAttribute('aria-busy', 'false')
+  })
+
+  it('loads next page with cursor when Load More is clicked', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'entry 1' })],
+      next_cursor: 'cursor_page2',
+      has_more: true,
+      total_count: null,
+    }
+    const page2 = {
+      items: [makeHistoryEntry(2, 'edit_block', { to_text: 'entry 2' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page1).mockResolvedValueOnce(page2)
+
+    render(<HistoryView />)
+
+    const loadMoreBtn = await screen.findByRole('button', { name: /Load more/i })
+    await user.click(loadMoreBtn)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: null,
+        scope: { kind: 'global' },
+        cursor: 'cursor_page2',
+        limit: 50,
+      })
+    })
+
+    expect(await screen.findByText('entry 1')).toBeInTheDocument()
+    expect(screen.getByText('entry 2')).toBeInTheDocument()
+  })
+
+  it('op type filter updates query', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue(emptyPage)
+
+    render(<HistoryView />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: null,
+        scope: { kind: 'global' },
+        cursor: null,
+        limit: 50,
+      })
+    })
+
+    // Change filter to 'edit_block'
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit_block')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: 'edit_block',
+        scope: { kind: 'global' },
+        cursor: null,
+        limit: 50,
+      })
+    })
+  })
+
+  it('has no a11y violations with entries', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'accessible item' }),
+        makeHistoryEntry(2, 'purge_block', { block_id: 'B1' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    const { container } = render(<HistoryView />)
+
+    // axe's first call per worker loads rules and can exceed the default 1s
+    // waitFor timeout under full-suite worker contention. 5000ms matches the
+    // precedent in Sidebar.test.tsx / TemplatePicker.test.tsx (TEST-3 fix).
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  it('selection toolbar shows correct count', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select first item
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    // Select second item
+    await user.click(items[1] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+  })
+
+  it('"Clear selection" button clears all', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select item
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    // Click Clear selection
+    await user.click(screen.getByRole('button', { name: /Clear selection/ }))
+
+    // Toolbar is unmounted when selection becomes empty — matches
+    // ConflictList pattern so "N selected" text clears from the DOM.
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
+  })
+
+  it('escape key clears selection', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select item
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    // Press Escape
+    await user.keyboard('{Escape}')
+
+    // Selection cleared and toolbar unmounts with it.
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+  })
+
+  it('toolbar is hidden when nothing is selected', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // No selection → toolbar is not rendered; batch controls absent.
+    expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: /selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
+  })
+
+  it('calls list_page_history with correct params on mount', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    render(<HistoryView />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+        pageId: '__all__',
+        opTypeFilter: null,
+        scope: { kind: 'global' },
+        cursor: null,
+        limit: 50,
+      })
+    })
+  })
+
+  it('shows loading skeletons during initial load', () => {
+    mockedInvoke.mockReturnValueOnce(new Promise(() => {}))
+
+    const { container } = render(<HistoryView />)
+
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(3)
+  })
+
+  it('non-reversible ops have opacity-50 class', async () => {
+    const page = {
+      items: [makeHistoryEntry(1, 'purge_block', { block_id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('purge_block')
+
+    const item = screen.getByTestId('history-item-0')
+    expect(item).toHaveClass('opacity-50')
+  })
+
+  it('handles error from listPageHistory without crashing', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('network failure'))
+
+    render(<HistoryView />)
+
+    // Should render error banner and empty state, not crash
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(t('history.loadFailed'))
+      expect(screen.getByText(t('history.noEntriesFound'))).toBeInTheDocument()
+    })
+  })
+
+  it('Ctrl+A selects all reversible items but not non-reversible', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'purge_block', { block_id: 'B1' }),
+        makeHistoryEntry(3, 'create_block', { content: 'item 3' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Ctrl+A to select all
+    await user.keyboard('{Control>}a{/Control}')
+
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes[0]).toBeChecked() // edit_block
+    expect(checkboxes[1]).not.toBeChecked() // purge_block (disabled)
+    expect(checkboxes[2]).toBeChecked() // create_block
+  })
+
+  it('clicking a non-reversible row does not select it', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'purge_block', { block_id: 'B1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('purge_block')
+
+    const item = screen.getByTestId('history-item-0')
+    await user.click(item)
+
+    // Should not show selection toolbar
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations with empty state', async () => {
+    mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+    const { container } = render(<HistoryView />)
+
+    await waitFor(
+      async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      },
+      { timeout: 5000 },
+    )
+  })
+
+  it('confirmation dialog Cancel button closes dialog without calling revertOps', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select the entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    // Open confirmation dialog via Enter
+    await user.keyboard('{Enter}')
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+
+    // Click Cancel
+    await user.click(screen.getByRole('button', { name: /Cancel/ }))
+
+    // Dialog should be closed
+    await waitFor(() => {
+      expect(screen.queryByText(t('history.revertTitle', { count: 1 }))).not.toBeInTheDocument()
+    })
+
+    // revertOps should NOT have been called (only the initial list_page_history invoke)
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+    // Selection should be preserved
+    const checkbox = screen.getByRole('checkbox', { name: /Select operation edit_block #1/ })
+    expect(checkbox).toBeChecked()
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+  })
+
+  it('handles revert error gracefully', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, 1736848800000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select an entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+
+    // Open dialog and confirm revert
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // Dialog should close
+    await waitFor(() => {
+      expect(screen.queryByText(t('history.revertTitle', { count: 1 }))).not.toBeInTheDocument()
+    })
+
+    // Component should not crash — entries are still visible
+    expect(screen.getByText('item 1')).toBeInTheDocument()
+    expect(screen.getByText('item 2')).toBeInTheDocument()
+  })
+
+  it('reloads history after successful revert', async () => {
+    const user = userEvent.setup()
+    const page1 = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, 1736942400000)],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    const page2 = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'original' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'reverse op' }, 1736946000000, 'DEVICE01'),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page1) // initial load
+      .mockResolvedValueOnce([]) // revertOps succeeds
+      .mockResolvedValueOnce(page2) // reload after revert
+
+    render(<HistoryView />)
+
+    await screen.findByText('original')
+
+    // Select the entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 1 }))).toBeInTheDocument()
+
+    // Open dialog and confirm
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // listPageHistory should be called again (reload)
+    await waitFor(() => {
+      const listCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_page_history')
+      expect(listCalls).toHaveLength(2) // initial load + reload after revert
+    })
+
+    // Selection should be cleared
+    expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+
+    // New data should be visible
+    expect(await screen.findByText('reverse op')).toBeInTheDocument()
+  })
+
+  it('preserves selection when revert fails', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps fails
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select both entries
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(items[1] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+
+    // Open dialog and confirm
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // Wait for dialog to close
+    await waitFor(() => {
+      expect(screen.queryByText(t('history.revertTitle', { count: 2 }))).not.toBeInTheDocument()
+    })
+
+    // Selection should still be preserved
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+
+    const checkboxes = screen.getAllByRole('checkbox')
+    expect(checkboxes[0]).toBeChecked()
+    expect(checkboxes[1]).toBeChecked()
+  })
+
+  // TEST-1fg regression: after a successful batch revert, the selection
+  // toolbar (badge + Revert / Clear buttons) must unmount so that no
+  // "N selected" text remains in the DOM. Previously the toolbar was
+  // always rendered and still showed "0 selected" post-revert, which
+  // surfaced as Playwright strict-mode violations in e2e/history-revert.
+  it('unmounts selection toolbar after batch-revert resolves', async () => {
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+        makeHistoryEntry(2, 'create_block', { content: 'item 2' }, 1736848800000),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockResolvedValueOnce([]) // revert_ops resolves successfully
+      .mockResolvedValueOnce(emptyPage) // reload after revert
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select both entries so batch-revert is the path under test.
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+    await user.click(items[1] as HTMLElement)
+    expect(screen.getByText(t('batch.selectedCount', { count: 2 }))).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Revert selected/ })).toBeInTheDocument()
+
+    // Trigger confirmation dialog and confirm the revert.
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    // After resolve: selection set is empty AND the toolbar is unmounted.
+    // Both halves of the symptom (badge text + action button) must be gone.
+    await waitFor(() => {
+      expect(screen.queryByText(t('batch.selectedCount', { count: 2 }))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('batch.selectedCount', { count: 1 }))).not.toBeInTheDocument()
+      expect(screen.queryByText(t('batch.selectedCount', { count: 0 }))).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Revert selected/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Clear selection/ })).not.toBeInTheDocument()
+      expect(screen.queryByRole('toolbar', { name: /selected/ })).not.toBeInTheDocument()
+    })
+  })
+
+  // -- Focus management edge cases (#187) -------------------------------------
+
+  it('focus ring resets when op type filter changes', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Navigate to focus the second item
+    await user.keyboard('{ArrowDown}')
+    await user.keyboard('{ArrowDown}')
+    const items = screen.getAllByTestId(/^history-item-/)
+    expect(items[1]).toHaveClass('ring-2')
+
+    // Change op type filter — this triggers a reset
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit_block')
+
+    // After filter change, entries reload and focus resets to first item (auto-focus)
+    await waitFor(() => {
+      const newItems = screen.getAllByTestId(/^history-item-/)
+      expect(newItems[0]).toHaveClass('ring-2')
+      // Second item should no longer have focus ring
+      expect(newItems[1]).not.toHaveClass('ring-2')
+    })
+  })
+
+  it('arrow navigation works from reset position after filter change', async () => {
+    const user = userEvent.setup()
+    mockedInvoke.mockResolvedValue({
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'filtered item' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+
+    render(<HistoryView />)
+
+    await screen.findByText('filtered item')
+
+    // Navigate to focus the item
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+
+    // Change filter — resets focusedIndex to -1
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+    await user.selectOptions(select, 'edit_block')
+
+    // Wait for reload
+    await waitFor(() => {
+      expect(screen.getByText('filtered item')).toBeInTheDocument()
+    })
+
+    // Move focus away from the <select> — the keyboard handler ignores
+    // events when target is INPUT/SELECT/TEXTAREA.
+    await user.click(document.body)
+
+    // ArrowDown from -1 should focus first item (index 0)
+    await user.keyboard('{ArrowDown}')
+    await waitFor(() => {
+      expect(screen.getByTestId('history-item-0')).toHaveClass('ring-2')
+    })
+  })
+
+  it('shows error banner when loadHistory fails and clears on retry', async () => {
+    mockedInvoke
+      .mockRejectedValueOnce(new Error('network failure')) // initial load fails
+      .mockResolvedValueOnce(emptyPage) // retry succeeds
+
+    const user = userEvent.setup()
+
+    render(<HistoryView />)
+
+    // Error banner should appear
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(t('history.loadFailed'))
+
+    // Retry button should be visible
+    const retryBtn = screen.getByRole('button', { name: /Retry/ })
+    expect(retryBtn).toBeInTheDocument()
+
+    // Click retry — should clear error and reload
+    await user.click(retryBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows toast when revert fails', async () => {
+    const user = userEvent.setup()
+    const mockedToastError = vi.mocked(toast.error)
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // Select an entry
+    const items = screen.getAllByTestId(/^history-item-/)
+    await user.click(items[0] as HTMLElement)
+
+    // Open dialog and confirm revert
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith(t('history.revertFailed'))
+    })
+  })
+
+  // -- Device ID display --------------------------------------------------------
+
+  it('shows device_id for each entry', async () => {
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000, 'ABCDEF1234567890'),
+        makeHistoryEntry(
+          2,
+          'create_block',
+          { content: 'item 2' },
+          1736848800000,
+          'XY987654AABBCCDD',
+        ),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke.mockResolvedValueOnce(page)
+
+    render(<HistoryView />)
+
+    await screen.findByText('item 1')
+
+    // device_id truncated to first 8 chars
+    expect(screen.getByText('dev:ABCDEF12')).toBeInTheDocument()
+    expect(screen.getByText('dev:XY987654')).toBeInTheDocument()
+  })
+
+  describe('restore to here', () => {
+    it('shows confirmation dialog when restore button is clicked', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Click restore button
+      const restoreBtn = screen.getByRole('button', { name: /Reset to this point/i })
+      await user.click(restoreBtn)
+
+      // Confirmation dialog should appear
+      expect(screen.getByText(/Restore to/)).toBeInTheDocument()
+    })
+
+    it('calls restorePageToOp on confirm', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000, 'DEVICE01'),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 1, non_reversible_skipped: 0, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Click restore button
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+
+      // Click Restore in dialog
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('restore_page_to_op', {
+          pageId: '__all__',
+          targetDeviceId: 'DEVICE01',
+          targetSeq: 1,
+        })
+      })
+    })
+
+    it('shows success toast after restore', async () => {
+      const user = userEvent.setup()
+      const mockedToastSuccess = vi.mocked(toast.success)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 3, non_reversible_skipped: 0, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastSuccess).toHaveBeenCalledWith(t('history.restoreSuccess', { count: 3 }))
+      })
+    })
+
+    it('shows warning toast when non-reversible ops are skipped', async () => {
+      const user = userEvent.setup()
+      const mockedToastWarning = vi.mocked(toast.warning)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockResolvedValueOnce({ ops_reverted: 2, non_reversible_skipped: 1, results: [] }) // restorePageToOp
+        .mockResolvedValueOnce(emptyPage) // reload
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastWarning).toHaveBeenCalledWith(t('history.restoreSkipped', { count: 1 }))
+      })
+    })
+
+    it('shows error toast on failure', async () => {
+      const user = userEvent.setup()
+      const mockedToastError = vi.mocked(toast.error)
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000)],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke
+        .mockResolvedValueOnce(page) // initial load
+        .mockRejectedValueOnce(new Error('restore failed')) // restorePageToOp throws
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+      await user.click(screen.getByRole('button', { name: /^Restore$/ }))
+
+      await waitFor(() => {
+        expect(mockedToastError).toHaveBeenCalledWith(t('history.restoreFailed'))
+      })
+    })
+  })
+
+  // =========================================================================
+  // Home/End and PageUp/PageDown keyboard navigation (UX-138)
+  // =========================================================================
+
+  describe('Home/End and PageUp/PageDown navigation', () => {
+    it('Home key moves focus to first entry', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Navigate down to third item
+      await user.keyboard('{ArrowDown}')
+      await user.keyboard('{ArrowDown}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[2]).toHaveClass('ring-2')
+
+      // Home should go back to first item
+      await user.keyboard('{Home}')
+      expect(items[0]).toHaveClass('ring-2')
+    })
+
+    it('End key moves focus to last entry', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+          makeHistoryEntry(3, 'edit_block', { to_text: 'item 3' }, 1736935200000),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // End should go to last item
+      await user.keyboard('{End}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[2]).toHaveClass('ring-2')
+    })
+
+    it('PageDown jumps by 10 entries', async () => {
+      const user = userEvent.setup()
+      const entries = Array.from({ length: 15 }, (_, i) =>
+        makeHistoryEntry(
+          i + 1,
+          'edit_block',
+          { to_text: `item ${i + 1}` },
+          Date.parse(`2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`),
+        ),
+      )
+      const page = {
+        items: entries,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // PageDown should jump by 10
+      await user.keyboard('{PageDown}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[10]).toHaveClass('ring-2')
+    })
+
+    it('PageUp jumps back by 10 entries', async () => {
+      const user = userEvent.setup()
+      const entries = Array.from({ length: 15 }, (_, i) =>
+        makeHistoryEntry(
+          i + 1,
+          'edit_block',
+          { to_text: `item ${i + 1}` },
+          Date.parse(`2025-01-${String(15 - i).padStart(2, '0')}T12:00:00Z`),
+        ),
+      )
+      const page = {
+        items: entries,
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // Navigate to item 12 via End then ArrowUp a few times
+      await user.keyboard('{End}')
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[14]).toHaveClass('ring-2')
+
+      // PageUp should jump back by 10
+      await user.keyboard('{PageUp}')
+      expect(items[4]).toHaveClass('ring-2')
+    })
+  })
+
+  // UX-198: the filter-bar + selection-toolbar header used to render inside
+  // a `sticky top-0` wrapper. It's now hoisted to the App-level outlet via
+  // <ViewHeader>. The filter bar must still render (via ViewHeader's inline
+  // fallback) but the stale sticky classes must be gone from the subtree.
+  describe('UX-198 header outlet migration', () => {
+    it('has no sticky top-0 wrapper, but filter bar still renders', async () => {
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'ux198 regression' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      const { container } = render(<HistoryView />)
+      await screen.findByText(/ux198 regression/)
+
+      // Filter bar / selection toolbar content still renders inline.
+      expect(container.querySelector('.history-view-header')).toBeInTheDocument()
+      // Old sticky wrapper is gone.
+      const sticky = container.querySelector('.sticky.top-0')
+      expect(sticky).toBeNull()
+    })
+  })
+
+  // UX-259: destructive dialogs must not confirm on a reflex Enter.
+  // Note: HistoryView has a document-level Enter shortcut that opens the
+  // revert dialog when selection is non-empty. To avoid contaminating the
+  // assertion with that pre-existing handler, we verify focus state and
+  // confirm the destructive callback is NOT fired (the core UX-259 contract).
+  describe('UX-259: destructive dialog reflex-Enter safety', () => {
+    it('revert dialog auto-focuses Cancel and reflex Enter does not call revertOps', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+      await screen.findByText('item 1')
+
+      // Select first row.
+      const checkboxes = screen.getAllByRole('checkbox')
+      await user.click(checkboxes[0] as HTMLElement)
+
+      // Open the revert confirmation dialog.
+      await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+      expect(screen.getByText(t('history.revertTitle', { count: 1 }))).toBeInTheDocument()
+
+      // Cancel is auto-focused (UX-259), NOT the destructive Revert button.
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      const revertBtn = screen.getByRole('button', { name: /^Revert$/ })
+      expect(cancelBtn).toHaveFocus()
+      expect(revertBtn).not.toHaveFocus()
+
+      // Reflex Enter does NOT fire the destructive revertOps.
+      await user.keyboard('{Enter}')
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'revert_ops')).toHaveLength(0)
+    })
+
+    it('restore-to-here dialog auto-focuses Cancel; reflex Enter dismisses without calling restorePageToOp', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' })],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+      await screen.findByText('item 1')
+
+      // Open the restore confirmation dialog.
+      await user.click(screen.getByRole('button', { name: /Reset to this point/i }))
+      expect(screen.getByText(/Restore to/)).toBeInTheDocument()
+
+      // Cancel is auto-focused (UX-259), NOT the destructive Restore button.
+      const cancelBtn = screen.getByRole('button', { name: /Cancel/i })
+      const restoreBtn = screen.getByRole('button', { name: /^Restore$/ })
+      expect(cancelBtn).toHaveFocus()
+      expect(restoreBtn).not.toHaveFocus()
+
+      // Reflex Enter dismisses the dialog (Cancel is focused) — no document-level
+      // Enter handler interferes here because there is no selection.
+      await user.keyboard('{Enter}')
+
+      await waitFor(() => {
+        expect(screen.queryByText(/Restore to/)).not.toBeInTheDocument()
+      })
+
+      expect(mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'restore_page_to_op')).toHaveLength(
+        0,
+      )
+    })
+  })
+
+  // ===========================================================================
+  // UX-346 — touch-only ↑/↓ navigation toolbar.
+  //
+  // Vim/arrow keyboard nav has no equivalent on touch devices. The toolbar
+  // renders two buttons that drive the same `setFocusedIndex` updater the
+  // keyboard hook would. Visibility is gated by `[@media(pointer:coarse)]`
+  // — jsdom doesn't evaluate that media query so the element is in the
+  // DOM regardless; tests assert behaviour, not visual hiding.
+  // ===========================================================================
+  describe('UX-346 — touch navigation toolbar', () => {
+    it('renders the touch-nav toolbar when entries exist', async () => {
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      expect(screen.getByTestId('history-touch-nav')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('history.touchNavPrev') })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: t('history.touchNavNext') })).toBeInTheDocument()
+    })
+
+    it('clicking the ↓ button advances the focused index', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      // First item is auto-focused on load.
+      const items = screen.getAllByTestId(/^history-item-/)
+      expect(items[0]).toHaveClass('ring-2')
+
+      await user.click(screen.getByRole('button', { name: t('history.touchNavNext') }))
+
+      expect(items[0]).not.toHaveClass('ring-2')
+      expect(items[1]).toHaveClass('ring-2')
+    })
+
+    it('disables ↑ at the first row and ↓ at the last row', async () => {
+      const user = userEvent.setup()
+      const page = {
+        items: [
+          makeHistoryEntry(1, 'edit_block', { to_text: 'item 1' }, 1736942400000),
+          makeHistoryEntry(2, 'edit_block', { to_text: 'item 2' }, 1736938800000),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      }
+      mockedInvoke.mockResolvedValueOnce(page)
+
+      render(<HistoryView />)
+
+      await screen.findByText('item 1')
+
+      const prevBtn = screen.getByRole('button', { name: t('history.touchNavPrev') })
+      const nextBtn = screen.getByRole('button', { name: t('history.touchNavNext') })
+
+      // At index 0 — Prev disabled, Next enabled.
+      expect(prevBtn).toBeDisabled()
+      expect(nextBtn).not.toBeDisabled()
+
+      // Advance to the last row.
+      await user.click(nextBtn)
+
+      // At the last index — Prev enabled, Next disabled.
+      expect(prevBtn).not.toBeDisabled()
+      expect(nextBtn).toBeDisabled()
+    })
+  })
+})
+
+describe('HistoryView screen reader announcements (UX-282)', () => {
+  it('announces ops reverted count after batch revert', async () => {
+    const { announce } = await import('@/lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const page = {
+      items: [
+        makeHistoryEntry(1, 'edit_block', { to_text: 'a' }),
+        makeHistoryEntry(2, 'edit_block', { to_text: 'b' }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockResolvedValueOnce([]) // revertOps
+      .mockResolvedValueOnce(emptyPage) // reload after revert
+
+    render(<HistoryView />)
+    await screen.findByText('a')
+
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('2 operations reverted')
+    })
+  })
+
+  it('announces "Revert failed" when revert backend rejects', async () => {
+    const { announce } = await import('@/lib/announcer')
+    const mockedAnnounce = vi.mocked(announce)
+    const user = userEvent.setup()
+    const page = {
+      items: [makeHistoryEntry(1, 'edit_block', { to_text: 'a' })],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    }
+    mockedInvoke
+      .mockResolvedValueOnce(page) // initial load
+      .mockRejectedValueOnce(new Error('revert failed')) // revertOps throws
+
+    render(<HistoryView />)
+    await screen.findByText('a')
+
+    await user.keyboard('{Control>}a{/Control}')
+    await user.click(screen.getByRole('button', { name: /Revert selected/ }))
+    await user.click(screen.getByRole('button', { name: /^Revert$/ }))
+
+    await waitFor(() => {
+      expect(mockedAnnounce).toHaveBeenCalledWith('Revert failed')
+    })
+  })
+
+  // ===========================================================================
+  // UX-275 sub-fix 7: error-banner categorization (network / server / unknown).
+  // ===========================================================================
+  describe('UX-275 error categorization', () => {
+    it('classifies a network failure and shows network-specific copy', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('failed to fetch — network error'))
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'network')
+      // Heading remains the generic title; detail line is category-specific.
+      expect(alert).toHaveTextContent(t('history.loadFailed'))
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/connection problem/i)
+    })
+
+    it('classifies a server failure (5xx) and shows server-specific copy', async () => {
+      // Object-shaped error with HTTP status — exercises the obj.status path.
+      mockedInvoke.mockRejectedValueOnce({ status: 503, message: 'service unavailable' })
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'server')
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/local backend/i)
+    })
+
+    it('falls back to "unknown" when the error message is opaque', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('something weird happened'))
+
+      render(<HistoryView />)
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'unknown')
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/unexpected/i)
+    })
+
+    it('clears the categorised banner after a successful retry', async () => {
+      const user = userEvent.setup()
+      mockedInvoke
+        .mockRejectedValueOnce(new Error('network failure')) // initial load fails (network)
+        .mockResolvedValueOnce(emptyPage) // retry succeeds
+
+      render(<HistoryView />)
+
+      // Wait for the initial network-error banner.
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveAttribute('data-error-category', 'network')
+
+      await user.click(screen.getByRole('button', { name: /Retry/i }))
+
+      await waitFor(() => {
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // ===========================================================================
+  // FEAT-3 Phase 8 — current-space scoping with "All spaces" toggle.
+  //
+  // The default behaviour is current-space-only: HistoryView reads
+  // `currentSpaceId` from `useSpaceStore` and passes it through `scope`
+  // (PEND-18 Phase 3) on the IPC. Toggling "All spaces" drops the
+  // filter (passes `scope: { kind: 'global' }` so the backend returns
+  // ops from every space). UX-369 added localStorage persistence for
+  // the toggle — see the dedicated describe block below for that contract.
+  // ===========================================================================
+  describe('FEAT-3 Phase 8 — space scoping', () => {
+    afterEach(() => {
+      // Reset the space store after each test to avoid bleed across the
+      // rest of the suite (the store is shared module-level state).
+      useSpaceStore.setState({
+        currentSpaceId: null,
+        availableSpaces: [],
+        isReady: false,
+      })
+      // UX-369 — the "All spaces" toggle is now persisted to
+      // localStorage, so a flipped toggle in one test would otherwise
+      // leak `true` into the next test's initial render.
+      localStorage.removeItem('agaric:history:allSpacesToggle')
+    })
+
+    it('passes the current space id to the IPC by default', async () => {
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+        isReady: true,
+      })
+      mockedInvoke.mockResolvedValueOnce(emptyPage)
+
+      render(<HistoryView />)
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+
+    it('toggling "All spaces" drops the space filter (passes scope: global)', async () => {
+      const user = userEvent.setup()
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+        isReady: true,
+      })
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      render(<HistoryView />)
+
+      // First call uses the current space.
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
+          cursor: null,
+          limit: 50,
+        })
+      })
+
+      // Flip the "All spaces" Switch ON.
+      const toggle = screen.getByRole('switch', { name: /All spaces/i })
+      await user.click(toggle)
+
+      // After the toggle the IPC must be re-issued WITHOUT the space
+      // filter (scope: { kind: 'global' } in the wire payload).
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('list_page_history', {
+          pageId: '__all__',
+          opTypeFilter: null,
+          scope: { kind: 'global' },
+          cursor: null,
+          limit: 50,
+        })
+      })
+    })
+
+    it('shows the "current space" empty-state copy when scoped, and switches to the cross-space copy when toggled', async () => {
+      const user = userEvent.setup()
+      useSpaceStore.setState({
+        currentSpaceId: 'SPACE_PERSONAL',
+        availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: null }],
+        isReady: true,
+      })
+      // Both the initial scoped query AND the post-toggle "All spaces"
+      // query return empty pages so we can compare empty-state copy
+      // either side of the toggle.
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      render(<HistoryView />)
+
+      // Default scoped state ⇒ the FEAT-3 Phase 8 copy nudges the user
+      // toward the toggle.
+      expect(await screen.findByText(t('history.emptyCurrentSpace'))).toBeInTheDocument()
+      expect(screen.queryByText(t('history.noEntriesFound'))).not.toBeInTheDocument()
+
+      // Flip the toggle. The empty state must switch to the generic
+      // cross-space copy — there's no "toggle further" suggestion to
+      // make in the all-spaces view.
+      await user.click(screen.getByRole('switch', { name: /All spaces/i }))
+
+      expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+      expect(screen.queryByText(t('history.emptyCurrentSpace'))).not.toBeInTheDocument()
+    })
+  })
+
+  // ===========================================================================
+  // UX-369 — "All spaces" toggle persists across remounts via localStorage.
+  //
+  // Power users who routinely audit cross-space history previously had to
+  // re-flip the toggle every visit. The toggle now reads/writes
+  // `agaric:history:allSpacesToggle` so its state survives session restarts.
+  // ===========================================================================
+  describe('UX-369 — All spaces toggle persistence', () => {
+    afterEach(() => {
+      localStorage.removeItem('agaric:history:allSpacesToggle')
+    })
+
+    it('persists the "All spaces" toggle state across remounts', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(emptyPage)
+
+      const { unmount } = render(<HistoryView />)
+
+      // Initial render reflects the default (off).
+      const toggle = await screen.findByRole('switch', { name: /All spaces/i })
+      expect(toggle).not.toBeChecked()
+
+      // Flip the toggle ON; the hook writes `true` to localStorage.
+      await user.click(toggle)
+      expect(toggle).toBeChecked()
+
+      // Unmount and remount — a fresh HistoryView instance should read the
+      // persisted value back from localStorage.
+      unmount()
+      render(<HistoryView />)
+
+      const remountedToggle = await screen.findByRole('switch', { name: /All spaces/i })
+      expect(remountedToggle).toBeChecked()
+    })
+  })
+})

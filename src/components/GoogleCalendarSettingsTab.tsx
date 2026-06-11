@@ -18,6 +18,8 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,12 +29,10 @@ import type { GcalStatus } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
-import { ConfirmDialog } from './ConfirmDialog'
 import { connectErrorMessage } from './GoogleCalendarSettingsTab/connectErrorMessage'
 import { OAuthStatusSection } from './GoogleCalendarSettingsTab/OAuthStatusSection'
 import { SettingsForm } from './GoogleCalendarSettingsTab/SettingsForm'
 import { SyncStatusSection } from './GoogleCalendarSettingsTab/SyncStatusSection'
-import { LoadingSkeleton } from './LoadingSkeleton'
 
 const STATUS_POLL_INTERVAL_MS = 60_000
 const WINDOW_DEBOUNCE_MS = 500

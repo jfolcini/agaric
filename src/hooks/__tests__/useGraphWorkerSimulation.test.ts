@@ -15,7 +15,8 @@ import { act, renderHook } from '@testing-library/react'
 import { drag } from 'd3-drag'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
+import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
+
 import type { SimulationCtx } from '../../lib/graph-sim-helpers'
 import { logger } from '../../lib/logger'
 import { useGraphWorkerSimulation } from '../useGraphWorkerSimulation'

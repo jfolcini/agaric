@@ -32,7 +32,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
-vi.mock('../../BlockTree', () => ({
+vi.mock('@/components/editor/BlockTree', () => ({
   BlockTree: (props: {
     parentId?: string
     autoCreateFirstBlock?: boolean
@@ -50,7 +50,7 @@ vi.mock('../../BlockTree', () => ({
 }))
 
 // ── Mock DuePanel ───────────────────────────────────────────────────
-vi.mock('../../DuePanel', () => ({
+vi.mock('@/components/agenda/DuePanel', () => ({
   DuePanel: (props: { date: string }) => (
     <div data-testid="due-panel" data-date={props.date}>
       DuePanel
@@ -59,7 +59,7 @@ vi.mock('../../DuePanel', () => ({
 }))
 
 // ── Mock DonePanel ──────────────────────────────────────────────────
-vi.mock('../../DonePanel', () => ({
+vi.mock('@/components/agenda/DonePanel', () => ({
   DonePanel: (props: { date: string }) => (
     <div data-testid="done-panel" data-date={props.date}>
       DonePanel
@@ -68,7 +68,7 @@ vi.mock('../../DonePanel', () => ({
 }))
 
 // ── Mock LinkedReferences ───────────────────────────────────────────
-vi.mock('../../LinkedReferences', () => ({
+vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: (props: { pageId: string }) => (
     <div data-testid="linked-references" data-page-id={props.pageId}>
       LinkedReferences
@@ -77,7 +77,7 @@ vi.mock('../../LinkedReferences', () => ({
 }))
 
 // ── Mock EmptyState ─────────────────────────────────────────────────
-vi.mock('../../EmptyState', () => ({
+vi.mock('@/components/common/EmptyState', () => ({
   EmptyState: ({ message, action }: { message: string; action?: React.ReactNode }) => (
     <div data-testid="empty-state">
       <span>{message}</span>
@@ -87,7 +87,7 @@ vi.mock('../../EmptyState', () => ({
 }))
 
 // ── Mock AddBlockButton ─────────────────────────────────────────────
-vi.mock('../../AddBlockButton', () => ({
+vi.mock('@/components/editor/AddBlockButton', () => ({
   AddBlockButton: ({ onClick }: { onClick: () => void }) => (
     <button data-testid="add-block-button" onClick={onClick} type="button">
       Add block

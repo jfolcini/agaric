@@ -50,7 +50,7 @@ const { filterChangeRef } = vi.hoisted(() => ({
   filterChangeRef: { current: null as ((filters: unknown[]) => void) | null },
 }))
 
-vi.mock('../../AgendaFilterBuilder', () => ({
+vi.mock('@/components/agenda/AgendaFilterBuilder', () => ({
   AgendaFilterBuilder: (props: { filters: unknown[]; onFiltersChange: unknown }) => {
     filterChangeRef.current = props.onFiltersChange as (filters: unknown[]) => void
     return (
@@ -86,7 +86,7 @@ const { clearFiltersRef, loadMoreRef } = vi.hoisted(() => ({
   loadMoreRef: { current: null as (() => void) | null },
 }))
 
-vi.mock('../../AgendaResults', () => ({
+vi.mock('@/components/agenda/AgendaResults', () => ({
   AgendaResults: (props: {
     blocks: unknown[]
     loading: boolean

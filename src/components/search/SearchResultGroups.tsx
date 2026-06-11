@@ -33,9 +33,9 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
 import type { SearchBlockRow } from '@/lib/bindings'
 
-import { CollapsibleGroupList } from '../CollapsibleGroupList'
 import { ResultCountSummary } from './ResultCountSummary'
 import { SearchResultBlockRow } from './SearchResultBlockRow'
 import { VirtualizedResultListbox } from './VirtualizedResultListbox'

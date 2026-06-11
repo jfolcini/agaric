@@ -1,0 +1,633 @@
+/**
+ * Tests for StatusPanel component.
+ *
+ * Validates:
+ *  - Calls get_status on mount
+ *  - Renders all 4 metrics
+ *  - Polls every 5 seconds (uses fake timers)
+ *  - Cleans up interval on unmount
+ *  - a11y compliance
+ *  - Error/panic section renders when counts > 0 and hides when all zero
+ *  - High-water marks displayed under queue depth cards
+ *  - Health color classes applied based on queue depth (green/default/amber)
+ *  - Tooltip triggers present for all metric labels; content appears on hover
+ */
+
+import { invoke } from '@tauri-apps/api/core'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
+
+import { StatusPanel } from '@/components/agenda/StatusPanel'
+
+// Mock DeviceManagement to prevent its own IPC calls from interfering
+vi.mock('@/components/peers/DeviceManagement', () => ({
+  DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
+}))
+
+// Controllable sync store state for tests that need non-default values.
+const { mockSyncStoreState } = vi.hoisted(() => ({
+  mockSyncStoreState: {
+    state: 'idle' as string,
+    error: null as string | null,
+    peers: [] as Array<{ peer_id: string }>,
+    lastSyncedAt: null as string | null,
+    opsReceived: 0,
+    opsSent: 0,
+  },
+}))
+
+vi.mock('@/stores/sync', () => ({
+  useSyncStore: (selector: (s: typeof mockSyncStoreState) => unknown) =>
+    selector(mockSyncStoreState),
+}))
+
+const mockedInvoke = vi.mocked(invoke)
+
+const mockStatus = {
+  foreground_queue_depth: 3,
+  background_queue_depth: 7,
+  total_ops_dispatched: 42,
+  total_background_dispatched: 15,
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // Reset sync store to defaults
+  mockSyncStoreState.state = 'idle'
+  mockSyncStoreState.error = null
+  mockSyncStoreState.peers = []
+  mockSyncStoreState.lastSyncedAt = null
+  mockSyncStoreState.opsReceived = 0
+  mockSyncStoreState.opsSent = 0
+})
+
+describe('StatusPanel', () => {
+  it('calls get_status on mount', async () => {
+    mockedInvoke.mockResolvedValue(mockStatus)
+
+    render(<StatusPanel />)
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('get_status')
+    })
+  })
+
+  it('renders all 4 metrics', async () => {
+    mockedInvoke.mockResolvedValue(mockStatus)
+
+    render(<StatusPanel />)
+
+    expect(await screen.findByText('3')).toBeInTheDocument()
+    expect(screen.getByText('7')).toBeInTheDocument()
+    expect(screen.getByText('57')).toBeInTheDocument() // total_ops_dispatched (42) + total_background_dispatched (15)
+    expect(screen.getByText('15')).toBeInTheDocument()
+
+    // Labels
+    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+    expect(screen.getByText('Background Queue')).toBeInTheDocument()
+    expect(screen.getByText('Ops Processed')).toBeInTheDocument()
+    expect(screen.getByText('Background Dispatched')).toBeInTheDocument()
+  })
+
+  it('renders the panel title', async () => {
+    mockedInvoke.mockResolvedValue(mockStatus)
+
+    render(<StatusPanel />)
+
+    expect(await screen.findByText('Materializer Status')).toBeInTheDocument()
+  })
+
+  describe('polling with fake timers', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('polls every 5 seconds', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      await act(async () => {
+        render(<StatusPanel />)
+      })
+
+      // Initial call
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+      // Advance 5 seconds — should trigger second call
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+
+      // Advance another 5 seconds
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(3)
+    })
+
+    it('cleans up interval on unmount', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      let unmountFn: (() => void) | undefined
+      await act(async () => {
+        const { unmount } = render(<StatusPanel />)
+        unmountFn = unmount
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+      unmountFn?.()
+
+      // Advance time — should NOT trigger more calls
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10000)
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    })
+
+    it('updates metrics when polled data changes', async () => {
+      const updatedStatus = {
+        foreground_queue_depth: 10,
+        background_queue_depth: 20,
+        total_ops_dispatched: 100,
+        total_background_dispatched: 50,
+      }
+      mockedInvoke.mockResolvedValueOnce(mockStatus).mockResolvedValueOnce(updatedStatus)
+
+      await act(async () => {
+        render(<StatusPanel />)
+      })
+
+      // Initial values
+      expect(screen.getByText('3')).toBeInTheDocument()
+
+      // Advance timer to trigger poll
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+
+      // Updated values
+      expect(screen.getByText('10')).toBeInTheDocument()
+      expect(screen.getByText('20')).toBeInTheDocument()
+      expect(screen.getByText('150')).toBeInTheDocument() // 100 + 50
+      expect(screen.getByText('50')).toBeInTheDocument()
+    })
+  })
+
+  it('has no a11y violations', async () => {
+    mockedInvoke.mockResolvedValue(mockStatus)
+
+    const { container } = render(<StatusPanel />)
+
+    await waitFor(async () => {
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+  })
+
+  it('handles error from getStatus without crashing', async () => {
+    mockedInvoke.mockRejectedValue(new Error('network failure'))
+
+    render(<StatusPanel />)
+
+    // Should show error message
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load status')).toBeInTheDocument()
+    })
+    // Metrics should not render since status is still null
+    expect(screen.queryByText('Foreground Queue')).not.toBeInTheDocument()
+  })
+
+  it('shows error alongside status when poll fails after initial success', async () => {
+    vi.useFakeTimers()
+
+    mockedInvoke
+      .mockResolvedValueOnce(mockStatus) // initial load succeeds
+      .mockRejectedValueOnce(new Error('poll failed')) // second poll fails
+
+    await act(async () => {
+      render(<StatusPanel />)
+    })
+
+    // Status metrics should be visible
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+
+    // No error initially
+    expect(screen.queryByText('Failed to load status')).not.toBeInTheDocument()
+
+    // Advance to trigger poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    // Error should now be visible alongside the status metrics
+    expect(screen.getByText('Failed to load status')).toBeInTheDocument()
+    expect(screen.getByText('Foreground Queue')).toBeInTheDocument()
+
+    vi.useRealTimers()
+  })
+
+  describe('error/panic section', () => {
+    it('renders when error and panic counts are non-zero', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 2,
+        bg_errors: 0,
+        fg_panics: 1,
+        bg_panics: 3,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(
+        await screen.findByText('2 foreground errors, 1 foreground panic, 3 background panics'),
+      ).toBeInTheDocument()
+    })
+
+    it('renders singular form for count of 1', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 1,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 1,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText('1 foreground error, 1 background panic')).toBeInTheDocument()
+    })
+
+    it('is hidden when all error and panic counts are zero', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/background error/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/foreground panic/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/background panic/)).not.toBeInTheDocument()
+    })
+
+    it('is hidden when error fields are undefined (legacy mock)', async () => {
+      // mockStatus has no error/panic fields — component defaults to 0
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      expect(screen.queryByText(/foreground error/)).not.toBeInTheDocument()
+    })
+
+    it('shows cache staleness warning when bgErrors > 0', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_errors: 0,
+        bg_errors: 3,
+        fg_panics: 0,
+        bg_panics: 0,
+        fg_high_water: 0,
+        bg_high_water: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText('3 background errors')).toBeInTheDocument()
+      expect(
+        screen.getByText('Cache data may be stale. Restart the app to retry.'),
+      ).toBeInTheDocument()
+    })
+  })
+
+  describe('high-water marks', () => {
+    it('displays peak values under queue depth cards', async () => {
+      mockedInvoke.mockResolvedValue({
+        ...mockStatus,
+        fg_high_water: 15,
+        bg_high_water: 22,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      render(<StatusPanel />)
+
+      expect(await screen.findByText(/Peak: 15/)).toBeInTheDocument()
+      expect(screen.getByText(/Peak: 22/)).toBeInTheDocument()
+    })
+
+    it('shows Peak: 0 when high-water fields are undefined', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const peaks = screen.getAllByText(/Peak: 0/)
+      expect(peaks).toHaveLength(2)
+    })
+  })
+
+  describe('health color classes', () => {
+    it('applies green accent when queue depth is 0', async () => {
+      mockedInvoke.mockResolvedValue({
+        foreground_queue_depth: 0,
+        background_queue_depth: 0,
+        total_ops_dispatched: 5,
+        total_background_dispatched: 3,
+        fg_high_water: 0,
+        bg_high_water: 0,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0]?.className).toContain('border-status-done')
+      expect(metricCards[0]?.className).toContain('text-status-done-foreground')
+      expect(metricCards[1]?.className).toContain('border-status-done')
+      expect(metricCards[1]?.className).toContain('text-status-done-foreground')
+    })
+
+    it('applies no health accent for queue depth 1-10', async () => {
+      // mockStatus has fg=3, bg=7 — both in the 1-10 range
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0]?.className).not.toContain('border-status-done')
+      expect(metricCards[0]?.className).not.toContain('border-status-pending')
+      expect(metricCards[1]?.className).not.toContain('border-status-done')
+      expect(metricCards[1]?.className).not.toContain('border-status-pending')
+    })
+
+    it('applies amber accent when queue depth exceeds 10', async () => {
+      mockedInvoke.mockResolvedValue({
+        foreground_queue_depth: 15,
+        background_queue_depth: 25,
+        total_ops_dispatched: 5,
+        total_background_dispatched: 3,
+        fg_high_water: 15,
+        bg_high_water: 25,
+        fg_errors: 0,
+        bg_errors: 0,
+        fg_panics: 0,
+        bg_panics: 0,
+      })
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+      const metricCards = container.querySelectorAll('.status-metric')
+      expect(metricCards[0]?.className).toContain('border-status-pending')
+      expect(metricCards[0]?.className).toContain('text-status-pending-foreground')
+      expect(metricCards[1]?.className).toContain('border-status-pending')
+      expect(metricCards[1]?.className).toContain('text-status-pending-foreground')
+    })
+  })
+
+  describe('tooltips', () => {
+    it('shows tooltip content when hovering a metric label', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      render(<StatusPanel />)
+
+      const fgLabel = await screen.findByText('Foreground Queue')
+      await user.hover(fgLabel)
+
+      await waitFor(() => {
+        const matches = screen.getAllByText(
+          'Operations waiting to be applied to the database. Should stay near zero.',
+        )
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('has tooltip triggers for all four metric labels', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      // All 4 labels should be wrapped in tooltip trigger spans with cursor-help
+      const tooltipTriggers = container.querySelectorAll('.cursor-help')
+      expect(tooltipTriggers).toHaveLength(4)
+      expect(tooltipTriggers[0]?.textContent).toBe('Foreground Queue')
+      expect(tooltipTriggers[1]?.textContent).toBe('Background Queue')
+      expect(tooltipTriggers[2]?.textContent).toBe('Ops Processed')
+      expect(tooltipTriggers[3]?.textContent).toBe('Background Dispatched')
+    })
+  })
+
+  describe('tooltip keyboard accessibility', () => {
+    it('tooltip triggers have tabIndex={0} for keyboard access', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+
+      const { container } = render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      const tooltipTriggers = container.querySelectorAll('.cursor-help')
+      expect(tooltipTriggers).toHaveLength(4)
+      for (const trigger of tooltipTriggers) {
+        expect(trigger.getAttribute('tabindex')).toBe('0')
+      }
+    })
+  })
+
+  describe('Last Synced display', () => {
+    it('shows relative time when lastSyncedAt is set', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+      mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
+      mockSyncStoreState.lastSyncedAt = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      // formatRelativeTime (i18n) resolves sidebar.minutesAgo -> "5m ago"
+      const lastSyncedEl = document.querySelector('.sync-last-synced')
+      expect(lastSyncedEl?.textContent).toBe('5m ago')
+    })
+
+    it('shows "--" when lastSyncedAt is null', async () => {
+      mockedInvoke.mockResolvedValue(mockStatus)
+      mockSyncStoreState.peers = [{ peer_id: 'peer-1' }]
+      mockSyncStoreState.lastSyncedAt = null
+
+      render(<StatusPanel />)
+
+      await screen.findByText('Foreground Queue')
+
+      const lastSyncedEl = document.querySelector('.sync-last-synced')
+      expect(lastSyncedEl?.textContent).toBe('--')
+    })
+  })
+
+  describe('sync section', () => {
+    it('shows "Not configured" when sync has no peers', async () => {
+      // Default mock has peers: [] — should show "Not configured"
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Not configured')).toBeInTheDocument()
+    })
+
+    it('shows sync state indicator when peers exist', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'idle'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Idle')).toBeInTheDocument()
+    })
+
+    it('shows sync error message when error is set', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'error'
+      mockSyncStoreState.error = 'Connection lost'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Connection lost')).toBeInTheDocument()
+      // The sync error must be a live region so screen readers announce it.
+      const alert = screen.getByRole('alert')
+      expect(alert).toHaveTextContent('Connection lost')
+      expect(alert).toHaveClass('sync-panel-error')
+    })
+
+    it('shows sync metrics (peers count, ops received/sent)', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }, { peer_id: 'P2' }]
+      mockSyncStoreState.state = 'syncing'
+      mockSyncStoreState.opsReceived = 99
+      mockSyncStoreState.opsSent = 17
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Peers')).toBeInTheDocument()
+      const peerCount = document.querySelector('.sync-peer-count')
+      expect(peerCount?.textContent).toBe('2')
+      const opsReceived = document.querySelector('.sync-ops-received')
+      expect(opsReceived?.textContent).toBe('99')
+      const opsSent = document.querySelector('.sync-ops-sent')
+      expect(opsSent?.textContent).toBe('17')
+    })
+
+    it('shows "Syncing..." state label during active sync', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'syncing'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      expect(screen.getByText('Syncing...')).toBeInTheDocument()
+    })
+
+    // UX-266 — sub-fix 2: each sync state renders a distinct lucide
+    // icon next to the dot so colour-blind users (and anyone glancing
+    // at the panel) can tell `discovering` and `pairing` apart even
+    // though both still share the amber dot. The icon is decorative —
+    // the text label carries the canonical state.
+    describe('per-state icon (UX-266)', () => {
+      it('renders a Search-style icon for the discovering state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'discovering'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Discovering...')
+        const icon = screen.getByTestId('sync-state-icon-discovering')
+        expect(icon).toBeInTheDocument()
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+      })
+
+      it('renders a Link-style icon for the pairing state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'pairing'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Pairing...')
+        const icon = screen.getByTestId('sync-state-icon-pairing')
+        expect(icon).toBeInTheDocument()
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+        // Sanity: the discovering icon must not also be present.
+        expect(screen.queryByTestId('sync-state-icon-discovering')).not.toBeInTheDocument()
+      })
+
+      it('renders a CheckCircle-style icon for the idle state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'idle'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Idle')
+        expect(screen.getByTestId('sync-state-icon-idle')).toBeInTheDocument()
+      })
+
+      it('renders an AlertCircle-style icon for the error state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'error'
+        mockSyncStoreState.error = 'boom'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Error')
+        expect(screen.getByTestId('sync-state-icon-error')).toBeInTheDocument()
+      })
+
+      it('renders a spinning RefreshCw icon for the syncing state', async () => {
+        mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+        mockSyncStoreState.state = 'syncing'
+        mockedInvoke.mockResolvedValue(mockStatus)
+        render(<StatusPanel />)
+        await screen.findByText('Syncing...')
+        const icon = screen.getByTestId('sync-state-icon-syncing')
+        expect(icon).toBeInTheDocument()
+        expect(icon.getAttribute('class') ?? '').toContain('animate-spin')
+      })
+    })
+
+    it('shows tooltip on sync metric label hover', async () => {
+      mockSyncStoreState.peers = [{ peer_id: 'P1' }]
+      mockSyncStoreState.state = 'idle'
+      mockedInvoke.mockResolvedValue(mockStatus)
+      const user = userEvent.setup()
+      render(<StatusPanel />)
+      await screen.findByText('Materializer Status')
+      // Hover over "Ops Received" metric label
+      const label = screen.getByText('Ops Received')
+      await user.hover(label)
+      await waitFor(() => {
+        const matches = screen.getAllByText(/operations received from peers/i)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+  })
+})

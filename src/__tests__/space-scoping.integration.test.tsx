@@ -21,10 +21,10 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { fetchGraphData } from '@/components/graph/GraphView.helpers'
+import { TemplatesView } from '@/components/templates/TemplatesView'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
-import { fetchGraphData } from '../components/GraphView.helpers'
-import { TemplatesView } from '../components/TemplatesView'
 import { useDuePanelData } from '../hooks/useDuePanelData'
 import { useSpaceStore } from '../stores/space'
 

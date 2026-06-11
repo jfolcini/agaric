@@ -1,0 +1,184 @@
+/**
+ * SortableBlockWrapper — per-block row wrapper for BlockListRenderer (MAINT-55).
+ *
+ * Extracted from BlockListRenderer's `visibleItems.map` body so the parent's
+ * cognitive complexity stays within the Biome threshold. This component owns
+ * the branching between the virtualized placeholder `<li>` and the full
+ * `<li>` that renders the drop indicator and `<SortableBlock>`. No new
+ * behaviour — pure render reorganisation.
+ *
+ * Per-block action callbacks and reference resolvers used to be drilled
+ * through this component verbatim. They now flow via
+ * `BlockActionsProvider` / `BlockResolversProvider` (MAINT-118), so this
+ * file no longer mentions them at all — SortableBlock reads them directly
+ * from context.
+ */
+
+import React from 'react'
+
+import { SortableBlock } from '@/components/editor/SortableBlock'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
+import type { FlatBlock, Projection } from '@/lib/tree-utils'
+import { cn } from '@/lib/utils'
+
+export interface SortableBlockWrapperProps {
+  /** The flat block to render at this row. */
+  block: FlatBlock
+  /** Currently focused block id (null if none). */
+  focusedBlockId: string | null
+  /** True if this block is part of the active multi-selection. */
+  isSelected: boolean
+
+  // ── DnD state ──────────────────────────────────────────────────────
+  projected: Projection | null
+  activeId: string | null
+  overId: string | null
+
+  // ── Viewport + editor ─────────────────────────────────────────────
+  viewport: ViewportObserver
+  rovingEditor: RovingEditorHandle
+
+  // ── Tree / collapse state ──────────────────────────────────────────
+  hasChildren: boolean
+  anyBlockHasChildren: boolean
+  isCollapsed: boolean
+  /** True when this row is a descendant of a just-expanded parent. */
+  isAnimating: boolean
+  /**
+   * Precomputed aria-setsize / aria-posinset for the sibling group.
+   *
+   * Split into two primitive props (rather than one `{setsize, posinset}`
+   * object) so `React.memo`'s shallow prop comparison short-circuits when
+   * the sibling layout is unchanged — even though `BlockListRenderer`
+   * rebuilds its `siblingAriaProps` map on every `visibleItems` identity
+   * change (i.e. every drag-drop / indent). Without this split, every
+   * row would memo-invalidate on every move.
+   */
+  siblingSetsize: number | undefined
+  siblingPosinset: number | undefined
+  /** Custom block properties to render as inline chips. */
+  properties: Array<{ key: string; value: string }> | undefined
+}
+
+function SortableBlockWrapperInner({
+  block,
+  focusedBlockId,
+  isSelected,
+  projected,
+  activeId,
+  overId,
+  viewport,
+  rovingEditor,
+  hasChildren,
+  anyBlockHasChildren,
+  isCollapsed,
+  isAnimating,
+  siblingSetsize,
+  siblingPosinset,
+  properties,
+}: SortableBlockWrapperProps): React.ReactElement {
+  const isFocused = focusedBlockId === block.id
+  const isActiveDragRow = activeId === block.id
+  // B3 (#217) — drag depth preview. While a drag is in progress the dragged
+  // source row used to keep its *original* depth, so only the drop indicator
+  // (which renders at `projected.depth`) hinted at where the block would land;
+  // the lifted row itself stayed put horizontally. Reflect the projected depth
+  // on the dragged row too so the indent the block will adopt is legible during
+  // the drag (it already rests at `opacity: 0.35` as a "lifted placeholder").
+  // The over-target row (`overId === block.id`) also previews projected depth
+  // so the row under the cursor shows the incoming indent.
+  const projectedDepth =
+    projected && activeId && (isActiveDragRow || overId === block.id)
+      ? projected.depth
+      : block.depth
+
+  // Per-id memoized ref callback — same function identity across
+  // renders for a given block.id, and unobserves the exact element
+  // on unmount (BUG-29).
+  const observeRef = viewport.createObserveRef(block.id)
+
+  // Focused block is never virtualized — always render fully
+  if (!isFocused && viewport.isOffscreen(block.id)) {
+    return (
+      <li
+        ref={observeRef}
+        data-block-id={block.id}
+        aria-level={block.depth + 1}
+        aria-setsize={siblingSetsize}
+        aria-posinset={siblingPosinset}
+        // The operable expand/collapse control with aria-expanded is the
+        // chevron <button> inside <SortableBlock> (BlockInlineControls). This
+        // row mirrors that state for assistive tech that walks the outline
+        // structure. listitem doesn't formally support aria-expanded, and we
+        // can't promote it to treeitem without making the parent <ul> a
+        // role="tree" (owned by BlockListRenderer, out of scope) — an isolated
+        // treeitem under a plain list is itself an a11y violation. axe accepts
+        // aria-expanded on listitem; only oxlint's static rule rejects it.
+        // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
+        aria-expanded={hasChildren ? !isCollapsed : undefined}
+        className="block-placeholder list-none m-0 p-0"
+        style={{ minHeight: viewport.getHeight(block.id) }}
+      />
+    )
+  }
+
+  return (
+    <li
+      ref={observeRef}
+      data-block-id={block.id}
+      aria-level={block.depth + 1}
+      aria-setsize={siblingSetsize}
+      aria-posinset={siblingPosinset}
+      // See the placeholder branch above: aria-expanded mirrors the chevron
+      // button's state for the outline structure; the canonical control is in
+      // BlockInlineControls.
+      // oxlint-disable-next-line jsx-a11y/role-supports-aria-props -- see note above; canonical control lives in BlockInlineControls
+      aria-expanded={hasChildren ? !isCollapsed : undefined}
+      className={cn('list-none m-0 p-0', isAnimating && 'block-children-enter')}
+    >
+      {/* Drop indicator: shows where the dragged block will land */}
+      {projected && overId === block.id && activeId !== block.id && (
+        <div
+          className="drop-indicator h-[5px] bg-primary rounded-full ring-2 ring-primary/20"
+          style={{ marginLeft: `calc(var(--indent-width) * ${projected.depth})` }}
+        />
+      )}
+      <SortableBlock
+        blockId={block.id}
+        content={block.content ?? ''}
+        isFocused={isFocused}
+        depth={projectedDepth}
+        rovingEditor={rovingEditor}
+        hasChildren={hasChildren}
+        anyBlockHasChildren={anyBlockHasChildren}
+        isCollapsed={isCollapsed}
+        todoState={block.todo_state ?? null}
+        priority={block.priority ?? null}
+        dueDate={block.due_date ?? null}
+        scheduledDate={block.scheduled_date ?? null}
+        properties={properties}
+        isSelected={isSelected}
+      />
+    </li>
+  )
+}
+
+/**
+ * Memoized to short-circuit per-row re-renders when the parent
+ * (`BlockListRenderer` → `BlockTree`) re-renders for reasons unrelated
+ * to this specific row. The downstream `SortableBlock` is also
+ * `React.memo`-wrapped — but that memo is only effective if this
+ * wrapper's props (notably `viewport` and `rovingEditor`, both
+ * hook-return objects) have stable identity across renders.
+ *
+ * Stability of those two props is enforced at their source:
+ *  - `useRovingEditor` memoizes its returned handle (deps: `editor`),
+ *    so identity only changes when the TipTap editor instance changes.
+ *  - `useViewportObserver` memoizes its return so identity is tied to
+ *    `offscreenIds` (the only state the consumers observe transitively).
+ *
+ * (design-system-perf-review-2026-05-09.md item 5.)
+ */
+export const SortableBlockWrapper = React.memo(SortableBlockWrapperInner)
+SortableBlockWrapper.displayName = 'SortableBlockWrapper'

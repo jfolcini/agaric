@@ -27,7 +27,7 @@ import type React from 'react'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { HighlightMatch } from '@/components/HighlightMatch'
+import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'

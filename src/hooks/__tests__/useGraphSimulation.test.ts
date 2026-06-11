@@ -15,7 +15,8 @@ import { zoom } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { GraphEdge, GraphNode } from '../../components/GraphView.helpers'
+import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
+
 import { useGraphSimulation } from '../useGraphSimulation'
 
 vi.mock('../../lib/logger', () => ({

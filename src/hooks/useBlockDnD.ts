@@ -21,9 +21,9 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 
+import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { logger } from '@/lib/logger'
 
-import { INDENT_WIDTH } from '../components/SortableBlock'
 import {
   computeDropIndex,
   type FlatBlock,

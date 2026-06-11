@@ -33,7 +33,7 @@ import { useTabsStore } from '../../stores/tabs'
 
 const crash = vi.hoisted(() => ({ tabBar: false, toaster: false }))
 
-vi.mock('../TabBar', () => ({
+vi.mock('@/components/layout/TabBar', () => ({
   TabBar: () => {
     if (crash.tabBar) throw new Error('TabBar exploded')
     return <div data-testid="tab-bar-ok" />

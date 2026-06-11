@@ -65,17 +65,17 @@ vi.mock('../../lib/logger', () => ({
 }))
 
 // Mock DeviceManagement to prevent its own IPC calls from interfering
-vi.mock('../DeviceManagement', () => ({
+vi.mock('@/components/peers/DeviceManagement', () => ({
   DeviceManagement: () => <div data-testid="device-management">Device ID: mock-device</div>,
 }))
 
 // Mock LinkedReferences to prevent list_backlinks_grouped IPC calls
-vi.mock('../LinkedReferences', () => ({
+vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: () => <div data-testid="linked-references" />,
 }))
 
 // Mock PagePropertyTable to prevent get_properties/list_property_defs IPC calls
-vi.mock('../PagePropertyTable', () => ({
+vi.mock('@/components/pages/PagePropertyTable', () => ({
   PagePropertyTable: () => <div data-testid="page-property-table" />,
 }))
 

@@ -21,12 +21,12 @@ import { Lock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
 import type { DiffSpan, HistoryEntry } from '../lib/tauri'
-import { DiffDisplay } from './DiffDisplay'
 import { HistoryItemCore } from './HistoryListItem/HistoryItemCore'
 
 export type {

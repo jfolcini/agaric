@@ -1,0 +1,242 @@
+/**
+ * PeerListItem — renders a single paired peer/device card.
+ *
+ * Extracted from DeviceManagement to reduce component size.
+ * Shows device name (or truncated ID), last-synced time, reset count badge,
+ * address info, and action buttons (rename, sync, unpair).
+ */
+
+import { Globe, Pencil, RefreshCw, Smartphone, Unplug } from 'lucide-react'
+import type React from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Spinner } from '@/components/ui/spinner'
+import { truncateId } from '@/lib/format'
+import { formatRelativeTime } from '@/lib/format-relative-time'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import type { PeerRefRow } from '@/lib/tauri'
+import { setPeerAddress } from '@/lib/tauri'
+
+export interface PeerListItemProps {
+  peer: PeerRefRow
+  syncingPeerId: string | null
+  syncingAll: boolean
+  renamingPeerId: string | null
+  onSyncNow: (peerId: string) => void
+  onUnpair: (peerId: string) => void
+  onRename: (peerId: string) => void
+  onAddressUpdated: () => void
+}
+
+export function PeerListItem({
+  peer,
+  syncingPeerId,
+  syncingAll,
+  renamingPeerId,
+  onSyncNow,
+  onUnpair,
+  onRename,
+  onAddressUpdated,
+}: PeerListItemProps): React.ReactElement {
+  const { t } = useTranslation()
+  const [addrOpen, setAddrOpen] = useState(false)
+  const [addrInput, setAddrInput] = useState('')
+
+  // UX-378: real-time format validation for the address popover.
+  // Empty input returns null so the freshly-opened popover stays quiet;
+  // 'format' / 'port' are markers translated at render time.
+  const addressError = useMemo<string | null>(() => {
+    const trimmed = addrInput.trim()
+    if (trimmed === '') return null
+    const match = /^[\w.-]+:\d{1,5}$/.exec(trimmed)
+    if (!match) return 'format'
+    const port = Number.parseInt(trimmed.split(':')[1] ?? '', 10)
+    if (Number.isNaN(port) || port < 1 || port > 65535) return 'port'
+    return null
+  }, [addrInput])
+
+  const handleSaveAddress = useCallback(() => {
+    const addr = addrInput.trim()
+    if (!addr) return
+    setPeerAddress(peer.peer_id, addr)
+      .then(() => {
+        notify.success(t('status.addressUpdated'))
+        onAddressUpdated()
+        setAddrOpen(false)
+      })
+      .catch((err) => {
+        logger.warn('PeerListItem', 'set_peer_address failed', { peer_id: peer.peer_id }, err)
+        // UX-12: include the expected format in the toast so the user
+        // doesn't have to reopen the popover hint to recover.
+        notify.error(t('status.addressInvalidWithFormat', { format: '192.168.1.100:5000' }))
+      })
+  }, [addrInput, peer.peer_id, t, onAddressUpdated])
+
+  // UX-12: explicit Cancel button for the address-edit popover. Outside-
+  // click already dismisses the popover, but Cancel makes the affordance
+  // observable for keyboard / screen-reader users.
+  const handleCancelAddress = useCallback(() => {
+    setAddrOpen(false)
+  }, [])
+
+  return (
+    <div
+      className="device-peer-item flex items-center justify-between rounded-lg
+        border bg-card p-4 transition-colors hover:bg-accent/50 active:bg-accent/70"
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        <Smartphone className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0">
+          <p className="device-peer-name text-sm font-medium truncate">
+            {peer.device_name || truncateId(peer.peer_id)}
+          </p>
+          {peer.device_name && (
+            <p
+              className="device-peer-id text-xs font-mono
+              text-muted-foreground truncate"
+            >
+              {truncateId(peer.peer_id)}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Last:{' '}
+            {peer.synced_at != null
+              ? formatRelativeTime(peer.synced_at, t)
+              : t('sidebar.lastSyncedNever')}
+          </p>
+          {peer.reset_count > 0 && (
+            <Badge tone="outline" className="mt-0.5 text-xs">
+              {peer.reset_count} reset{peer.reset_count !== 1 ? 's' : ''}
+            </Badge>
+          )}
+          <div className="peer-address flex items-center gap-1 mt-0.5">
+            <Globe className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground truncate">
+              {peer.last_address ?? t('device.noAddress')}
+            </span>
+            <Popover
+              open={addrOpen}
+              onOpenChange={(open) => {
+                setAddrOpen(open)
+                if (open) setAddrInput(peer.last_address ?? '')
+              }}
+            >
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="peer-address-edit"
+                  aria-label={t('device.editAddressLabel', {
+                    name: peer.device_name || truncateId(peer.peer_id),
+                  })}
+                >
+                  <Pencil />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-64 max-w-[calc(100vw-2rem)] p-3 space-y-2"
+                align="start"
+                aria-label={t('device.editAddressPopoverLabel')}
+              >
+                <p className="text-xs font-medium">{t('device.editAddressTitle')}</p>
+                <Input
+                  className="h-7 text-xs"
+                  placeholder="192.168.1.100:5000"
+                  value={addrInput}
+                  onChange={(e) => setAddrInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleSaveAddress()
+                    }
+                  }}
+                  aria-label={t('device.addressInputLabel')}
+                  aria-invalid={addressError != null}
+                  aria-describedby={addressError != null ? 'peer-address-error' : undefined}
+                />
+                {/* UX-378: inline format validation. Disables Save and
+                    surfaces the format / port error before the user
+                    has to round-trip through the toast path. */}
+                {addressError && (
+                  <p id="peer-address-error" className="text-xs text-destructive" role="alert">
+                    {t(
+                      addressError === 'port'
+                        ? 'device.addressPortInvalid'
+                        : 'device.addressFormatInvalid',
+                    )}
+                  </p>
+                )}
+                {/* UX-12: bumped from text-xs to text-xs (12px) so
+                    the format example is legible at default zoom. */}
+                <p className="text-xs text-muted-foreground">{t('device.addressHint')}</p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="peer-address-cancel flex-1"
+                    onClick={handleCancelAddress}
+                  >
+                    {t('device.cancelAddressButton')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleSaveAddress}
+                    disabled={!addrInput.trim() || addressError != null}
+                  >
+                    {t('device.saveAddressButton')}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0 flex-wrap">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="device-rename-btn touch-target"
+          onClick={() => onRename(peer.peer_id)}
+          disabled={renamingPeerId === peer.peer_id}
+          aria-label={t('device.renameDeviceLabel', {
+            name: peer.device_name || truncateId(peer.peer_id),
+          })}
+        >
+          {renamingPeerId === peer.peer_id ? <Spinner /> : <Pencil />}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="device-sync-btn touch-target"
+          onClick={() => onSyncNow(peer.peer_id)}
+          disabled={syncingPeerId === peer.peer_id || syncingAll}
+          aria-label={t('device.syncNowLabel', {
+            id: truncateId(peer.peer_id),
+          })}
+        >
+          {syncingPeerId === peer.peer_id ? <Spinner /> : <RefreshCw className="h-3.5 w-3.5" />}
+          {t('device.syncNowButton')}
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          className="device-unpair-btn touch-target"
+          onClick={() => onUnpair(peer.peer_id)}
+          aria-label={t('device.unpairDeviceLabel', {
+            id: truncateId(peer.peer_id),
+          })}
+        >
+          <Unplug className="h-3.5 w-3.5" />
+          {t('device.unpairButton')}
+        </Button>
+      </div>
+    </div>
+  )
+}
