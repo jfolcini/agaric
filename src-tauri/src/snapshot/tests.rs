@@ -38,22 +38,61 @@ fn sample_snapshot_data() -> SnapshotData {
         up_to_seqs,
         up_to_hash: "abc123".to_string(),
         tables: SnapshotTables {
-            blocks: vec![BlockSnapshot {
-                id: BlockId::test_id("BLOCK-1"),
-                block_type: "content".to_string(),
-                content: Some("hello world".to_string()),
-                parent_id: None,
-                position: Some(1),
-                deleted_at: None,
-                todo_state: None,
-                priority: None,
-                due_date: None,
-                scheduled_date: None,
-                space_id: None,
-            }],
+            // #795 — the fixture must be self-consistent: every satellite-table
+            // row's referenced block id has to exist in `blocks`, or a *real*
+            // `apply_snapshot` of it fails the deferred-FK commit. Migration
+            // 0061 makes BOTH `block_links.target_id` AND `block_tags.tag_id`
+            // (tags are themselves blocks) `REFERENCES blocks(id)`. So the
+            // fixture carries:
+            //   - BLOCK-2, the link edge's target (was dangling), and
+            //   - TAG-1, the tag block that `block_tags.tag_id` points at
+            //     (also dangling).
+            // With both present the fixture applies verbatim — no stripping of
+            // the satellite tables.
+            blocks: vec![
+                BlockSnapshot {
+                    id: BlockId::test_id("BLOCK-1"),
+                    block_type: "content".to_string(),
+                    content: Some("hello world".to_string()),
+                    parent_id: None,
+                    position: Some(1),
+                    deleted_at: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                    space_id: None,
+                },
+                BlockSnapshot {
+                    id: BlockId::test_id("BLOCK-2"),
+                    block_type: "content".to_string(),
+                    content: Some("link target".to_string()),
+                    parent_id: None,
+                    position: Some(2),
+                    deleted_at: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                    space_id: None,
+                },
+                BlockSnapshot {
+                    id: BlockId::test_id("TAG-1"),
+                    block_type: "tag".to_string(),
+                    content: Some("tag-one".to_string()),
+                    parent_id: None,
+                    position: Some(3),
+                    deleted_at: None,
+                    todo_state: None,
+                    priority: None,
+                    due_date: None,
+                    scheduled_date: None,
+                    space_id: None,
+                },
+            ],
             block_tags: vec![BlockTagSnapshot {
                 block_id: BlockId::test_id("BLOCK-1"),
-                tag_id: "tag-1".to_string(),
+                tag_id: BlockId::test_id("TAG-1").to_string(),
             }],
             block_properties: vec![BlockPropertySnapshot {
                 block_id: BlockId::test_id("BLOCK-1"),
@@ -185,12 +224,20 @@ fn encode_decode_round_trip() {
 
     assert_eq!(
         decoded.tables.blocks.len(),
-        1,
-        "blocks table should have exactly one entry"
+        3,
+        "blocks table should have BLOCK-1, the BLOCK-2 link target, and the TAG-1 tag block (#795)"
     );
     assert_eq!(
         decoded.tables.blocks[0].id, "BLOCK-1",
         "block id must survive round-trip"
+    );
+    assert_eq!(
+        decoded.tables.blocks[1].id, "BLOCK-2",
+        "the link-target block must survive round-trip"
+    );
+    assert_eq!(
+        decoded.tables.blocks[2].id, "TAG-1",
+        "the tag block must survive round-trip"
     );
     assert_eq!(
         decoded.tables.blocks[0].content.as_deref(),
@@ -204,7 +251,7 @@ fn encode_decode_round_trip() {
         "block_tags table should have exactly one entry"
     );
     assert_eq!(
-        decoded.tables.block_tags[0].tag_id, "tag-1",
+        decoded.tables.block_tags[0].tag_id, "TAG-1",
         "tag id must survive round-trip"
     );
 
@@ -618,78 +665,71 @@ async fn apply_snapshot_empty_db() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    // Create snapshot data with known content (encode without DB)
+    // #795 — apply the canonical fixture verbatim. It is now self-consistent
+    // (BLOCK-2, the `block_links` target, and TAG-1, the `block_tags` tag
+    // block, are both present in `blocks`), so the deferred-FK commit succeeds
+    // with the satellite tables intact. This test previously had to substitute
+    // a blocks-only `simple_data` to dodge the dangling-ref FK violation; that
+    // workaround is gone, which also makes this the regression proof that the
+    // fixture no longer FK-fails on apply.
     let data = sample_snapshot_data();
     let encoded = encode_snapshot(&data).unwrap();
 
-    // We need the referenced blocks to exist for FK constraints in block_tags etc.
-    // So we use a simpler snapshot with just blocks (no FK references).
-    let simple_data = SnapshotData {
-        schema_version: SCHEMA_VERSION,
-        snapshot_device_id: "dev-1".to_string(),
-        up_to_seqs: BTreeMap::new(),
-        up_to_hash: "hash".to_string(),
-        tables: SnapshotTables {
-            blocks: vec![BlockSnapshot {
-                id: BlockId::test_id("BLK-A"),
-                block_type: "content".to_string(),
-                content: Some("applied content".to_string()),
-                parent_id: None,
-                position: Some(1),
-                deleted_at: None,
-                todo_state: None,
-                priority: None,
-                due_date: None,
-                scheduled_date: None,
-                space_id: None,
-            }],
-            block_tags: vec![],
-            block_properties: vec![],
-            block_links: vec![],
-            attachments: vec![],
-            property_definitions: vec![],
-            page_aliases: vec![],
-        },
-    };
-    let simple_encoded = encode_snapshot(&simple_data).unwrap();
-
-    let restored = apply_snapshot(&pool, &mat, &simple_encoded[..])
-        .await
-        .unwrap();
+    let restored = apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     assert_eq!(
         restored.tables.blocks.len(),
-        1,
-        "restored snapshot should contain one block"
+        3,
+        "restored snapshot should contain BLOCK-1, the BLOCK-2 link target, and the TAG-1 tag block"
     );
     assert_eq!(
-        restored.tables.blocks[0].id, "BLK-A",
+        restored.tables.blocks[0].id, "BLOCK-1",
         "restored block id must match snapshot data"
     );
+    assert_eq!(
+        restored.tables.block_links.len(),
+        1,
+        "the link edge must restore now that its target block exists"
+    );
+    assert_eq!(
+        restored.tables.block_tags.len(),
+        1,
+        "the tag edge must restore now that its tag block exists"
+    );
 
-    // Verify DB state
+    // Verify DB state: all blocks landed, and the satellite tables applied
+    // (block_links / block_tags would have FK-failed the whole tx if their
+    // referenced blocks were missing — the #795 bug).
     let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM blocks")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(
-        count, 1,
-        "database should contain exactly one block after apply"
+        count, 3,
+        "database should contain all three blocks after apply"
     );
 
     let content: Option<String> =
-        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'BLK-A'")
+        sqlx::query_scalar!("SELECT content FROM blocks WHERE id = 'BLOCK-1'")
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(
         content.as_deref(),
-        Some("applied content"),
+        Some("hello world"),
         "block content in database must match snapshot data"
     );
 
-    // Suppress unused variable warning
-    let _ = encoded;
+    let link_count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM block_links WHERE source_id = 'BLOCK-1' AND target_id = 'BLOCK-2'"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        link_count, 1,
+        "the BLOCK-1 -> BLOCK-2 link must persist after apply"
+    );
 }
 
 // =======================================================================

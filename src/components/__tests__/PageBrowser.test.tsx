@@ -24,6 +24,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
 import { emptyPage, makePage } from '../../__tests__/fixtures'
@@ -51,36 +52,18 @@ const { scrollToOffsetMock } = vi.hoisted(() => ({
   scrollToOffsetMock: vi.fn(),
 }))
 
-// Mock @tanstack/react-virtual to render all items (jsdom has zero-height containers)
-vi.mock('@tanstack/react-virtual', () => {
-  const scrollToIndex = vi.fn()
-  const measureElement = () => {}
-  return {
-    useVirtualizer: (opts: { count: number; estimateSize: EstimateSizeFn }) => {
-      capturedEstimateSizes.push(opts.estimateSize)
-      const size = () => (opts.estimateSize as () => number)()
-      return {
-        getVirtualItems: () =>
-          Array.from({ length: opts.count }, (_, i) => ({
-            index: i,
-            key: i,
-            start: i * size(),
-            size: size(),
-            end: (i + 1) * size(),
-          })),
-        getTotalSize: () => opts.count * size(),
-        scrollToIndex,
-        // PageBrowser pagination UX (2026-05-14) — scroll restoration
-        // reads `sessionStorage[…]` and calls `scrollToOffset(...)`
-        // once the first batch has hydrated. The mock captures the
-        // call so the restore-on-remount test can assert it fired
-        // with the saved offset.
-        scrollToOffset: scrollToOffsetMock,
-        measureElement,
-      }
-    },
-  }
-})
+// Mock @tanstack/react-virtual via the shared helper
+// (src/__tests__/mocks/react-virtual.ts) to render all items (jsdom has
+// zero-height containers). `onEstimateSize` captures each estimator so the
+// size assertions can replay it; `scrollToOffset` uses the hoisted spy so the
+// scroll-restoration test can assert it fired with the saved offset
+// (PageBrowser pagination UX 2026-05-14).
+vi.mock('@tanstack/react-virtual', () =>
+  mockReactVirtual({
+    onEstimateSize: (estimateSize) => capturedEstimateSizes.push(estimateSize as EstimateSizeFn),
+    scrollToOffset: scrollToOffsetMock,
+  }),
+)
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).

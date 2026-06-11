@@ -157,26 +157,42 @@ vi.mock('@tiptap/react', () => ({
 }))
 ```
 
-### Radix Select
+### Virtualized lists (`@tanstack/react-virtual`)
 
-Radix UI Select doesn't render in jsdom (no layout engine). Mock with a native `<select>` so `userEvent.selectOptions()` works:
-
-```tsx
-vi.mock('@/components/ui/select', () => ({
-  Select: ({ children, onValueChange, value }: any) =>
-    React.createElement('div', { 'data-testid': 'select-root' },
-      React.createElement('select', { value, onChange: (e: any) => onValueChange?.(e.target.value) }, children)),
-  SelectTrigger: ({ children }: any) => React.createElement('span', null, children),
-  SelectValue: ({ placeholder }: any) => React.createElement('span', null, placeholder),
-  SelectContent: ({ children }: any) => children,
-  SelectItem: ({ value, children }: any) => React.createElement('option', { value }, children),
-}))
-```
-
-### Toast (sonner)
+The DOM environment gives the scroll container zero height, so the real
+`useVirtualizer` lays out zero rows and the list renders empty. Use the shared
+factory in [`src/__tests__/mocks/react-virtual.ts`](../../__tests__/mocks/react-virtual.ts)
+instead of re-pasting the mock (it was previously copy-pasted across the
+virtualized-list test files — #762):
 
 ```ts
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+
+// Default: render every row, honest summed total height.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
+
+// Windowed (only the first N rows mount — overflow/perf tests):
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 80 }))
+
+// Capture scroll / estimate calls (pass vi.hoisted spies so the factory stays
+// hoist-safe):
+const { scrollToOffset } = vi.hoisted(() => ({ scrollToOffset: vi.fn() }))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ scrollToOffset }))
+```
+
+A getter `windowSize: () => currentWindow` is supported for files that mutate
+the window between tests.
+
+### Toast (sonner) and Radix Select
+
+Both are mocked **globally** in `src/test-setup.ts` from the shared
+implementations in `src/__tests__/mocks/` (`sonner.ts`, `ui-select.tsx`), so a
+test that just needs them not to crash does nothing. To assert on toast calls,
+import `toast` from `sonner` directly and `vi.mocked(...)` it; a per-file
+`vi.mock('sonner', …)` / `vi.mock('@/components/ui/select', …)` still overrides
+the shared mock for that file when custom capture is needed:
+
+```ts
 const mockedToastError = vi.mocked(toast.error)
 expect(mockedToastError).toHaveBeenCalledWith(expect.stringContaining('Failed to load'))
 ```

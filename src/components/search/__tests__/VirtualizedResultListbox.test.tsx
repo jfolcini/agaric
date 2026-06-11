@@ -13,31 +13,15 @@ import type React from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import type { SearchBlockRow } from '@/lib/bindings'
 
 import { VirtualizedResultListbox } from '../VirtualizedResultListbox'
 
 // Deterministic virtualizer: yields every row (jsdom has no layout, so the
-// real windowing math would mount nothing). Mirrors the configurable mock
-// in SearchResultGroups.test.tsx, fixed to the "yield all" mode.
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    let start = 0
-    const items = Array.from({ length: opts.count }, (_, index) => {
-      const size = opts.estimateSize(index)
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => opts.count * 36,
-      scrollToIndex: vi.fn(),
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+// real windowing math would mount nothing). The shared mock's default mode
+// renders every row with an honest summed total height.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 afterEach(() => {
   vi.clearAllMocks()

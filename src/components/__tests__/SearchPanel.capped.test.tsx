@@ -16,6 +16,7 @@ import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
 import { useNavigationStore } from '../../stores/navigation'
@@ -26,24 +27,7 @@ import { SearchPanel } from '../SearchPanel'
 
 // PEND-58f FE-3 — mirror the main SearchPanel.test.tsx virtualizer mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual window.
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const sizes = Array.from({ length: opts.count }, (_, i) => opts.estimateSize(i))
-    let start = 0
-    const items = sizes.map((size, index) => {
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => start,
-      scrollToIndex: vi.fn(),
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // UX-153: Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.

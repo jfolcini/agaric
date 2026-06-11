@@ -3,39 +3,19 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { clearEmojiRecents, pushEmojiRecent } from '@/hooks/useEmojiRecents'
 
 import { EmojiPicker } from '../EmojiPicker'
 
 // jsdom/happy-dom collapse the zero-height scroll container to zero virtual
-// rows. Mirror the PageBrowser/AgendaResults mock, but render only a bounded
-// window of rows (like the real virtualizer) so the full ~1900-emoji set
-// doesn't mount 1900 buttons per render and grind the suite to a halt. The
-// window is wide enough to include the first few category headers; tests that
-// need a far-down emoji (e.g. rocket) search for it first.
-const MOCK_WINDOW = 80
-vi.mock('@tanstack/react-virtual', () => ({
-  useVirtualizer: (opts: { count: number; estimateSize: (i: number) => number }) => {
-    const visible = Math.min(opts.count, MOCK_WINDOW)
-    let start = 0
-    const items = Array.from({ length: visible }, (_, index) => {
-      const size = opts.estimateSize(index)
-      const item = { index, key: index, start, size, end: start + size }
-      start += size
-      return item
-    })
-    // Total size still reflects the full count so the spacer height is honest.
-    let total = 0
-    for (let i = 0; i < opts.count; i++) total += opts.estimateSize(i)
-    return {
-      getVirtualItems: () => items,
-      getTotalSize: () => total,
-      scrollToIndex: vi.fn(),
-      scrollToOffset: vi.fn(),
-      measureElement: vi.fn(),
-    }
-  },
-}))
+// rows. Use the shared virtualizer mock, but render only a bounded window of
+// rows (like the real virtualizer) so the full ~1900-emoji set doesn't mount
+// 1900 buttons per render and grind the suite to a halt. The window is wide
+// enough to include the first few category headers; tests that need a
+// far-down emoji (e.g. rocket) search for it first. `getTotalSize` still
+// reflects the full count so the spacer height stays honest.
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual({ windowSize: 80 }))
 
 beforeEach(() => {
   localStorage.clear()

@@ -7,13 +7,15 @@
 | Layer | Tool | Scope | Rules live in |
 |-------|------|-------|---|
 | Unit | Vitest | Pure functions, serializers, tree utils | this file (Quality Standards) |
-| Component | Vitest + RTL | React components in jsdom | [`src/components/__tests__/AGENTS.md`](../components/__tests__/AGENTS.md) |
+| Component | Vitest + RTL | React components (happy-dom; jsdom opt-in) | [`src/components/__tests__/AGENTS.md`](../components/__tests__/AGENTS.md) |
 | Store | Vitest | Zustand stores (global + per-page) | [`src/stores/__tests__/AGENTS.md`](../stores/__tests__/AGENTS.md) |
 | Accessibility | vitest-axe | axe-core audit on rendered components | see component AGENTS.md |
 | Property-based | fast-check | Generative fuzzing (markdown serializer, date utils) | this file |
 | E2E | Playwright | Full app in Chromium against Vite dev server | [`e2e/AGENTS.md`](../../e2e/AGENTS.md) |
 
-Vitest runs in **jsdom** environment. No vitest globals — all imports explicit (`import { describe, expect, it, vi } from 'vitest'`).
+**Test environment.** Vitest's default DOM environment is **happy-dom** (set as `test.environment` in [`vitest.config.ts`](../../vitest.config.ts); switched from jsdom on 2026-05-16 for speed). A minority of files opt back into **jsdom** with a top-of-file `// @vitest-environment jsdom` pragma — grep `@vitest-environment jsdom` to find the current set. Reach for the pragma only when a test depends on jsdom-specific behavior happy-dom doesn't match (the documented divergence is vitest-axe's `aria-hidden-focus` rule, which fires differently under happy-dom; the virtualizer-mock component tests pin jsdom for deterministic layout). Treat the environment as the single most behavior-sensitive choice in the suite — when a test passes under one and fails under the other, the environment is the first suspect.
+
+No vitest globals — all imports explicit (`import { describe, expect, it, vi } from 'vitest'`).
 
 ## Running tests
 
@@ -37,14 +39,15 @@ src/
 ├── __tests__/              # This file. Root-level smoke + shared fixtures.
 │   ├── smoke.test.ts
 │   ├── boot-store.test.ts
+│   ├── mocks/              # Shared vi.mock implementations (sonner, ui-select, react-virtual, …).
 │   └── fixtures/index.ts   # Shared factories: makeBlock, makePage, …
-├── components/__tests__/   # 147 files. See AGENTS.md in this folder.
-├── editor/__tests__/       # 21 files. Editor logic + extensions.
-├── stores/__tests__/       # 10 files. See AGENTS.md in this folder.
-├── hooks/__tests__/        # 92 files. Hook logic.
-└── lib/__tests__/          # 49 files. Utility + wrapper tests.
+├── components/__tests__/   # See AGENTS.md in this folder.
+├── editor/__tests__/       # Editor logic + extensions.
+├── stores/__tests__/       # See AGENTS.md in this folder.
+├── hooks/__tests__/        # Hook logic.
+└── lib/__tests__/          # Utility + wrapper tests.
 
-e2e/                        # 29 Playwright specs. See AGENTS.md in this folder.
+e2e/                        # Playwright specs. See AGENTS.md in this folder.
 ```
 
 **Naming:** Vitest = `.test.ts` / `.test.tsx`. Playwright = `.spec.ts`. Property-based = `.property.test.ts` (e.g. `markdown-serializer.property.test.ts`).
@@ -72,9 +75,9 @@ Property categories:
 
 `normalizeDoc()` merges adjacent text nodes with identical marks before comparison. The `hasStructuralAmbiguity()` filter skips delimiter-edge cases for structural equality checks; content preservation is still verified.
 
-## jsdom stubs
+## DOM environment stubs
 
-`src/test-setup.ts` polyfills APIs missing from jsdom that Radix / shadcn / TipTap need:
+`src/test-setup.ts` polyfills APIs that Radix / shadcn / TipTap need but neither happy-dom (default) nor jsdom (opt-in) implement:
 
 - `ResizeObserver` — no-op.
 - `IntersectionObserver` — no-op (hooks needing real IO provide their own mock; see `useViewportObserver.test.ts`).

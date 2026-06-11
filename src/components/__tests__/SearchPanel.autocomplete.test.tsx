@@ -10,7 +10,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -318,13 +318,29 @@ describe('SearchPanel autocomplete dynamic sources (PEND-60 Phase 2)', () => {
     render(<SearchPanel />)
     const input = getInput()
     input.focus()
-    typeFull(input, 'tag:#pro')
 
-    // Flush the 150 ms debounce inside `useAutocompleteSources`.
-    await vi.advanceTimersByTimeAsync(200)
+    // #775 — make the debounce wait deterministic under full-suite parallel
+    // load. The previous shape (`typeFull` outside `act` → advance fake timers
+    // → switch to real timers → `findByTestId`) had a race: `typeFull`
+    // dispatches the input event but the `useEffect` that ARMS the 150 ms
+    // debounce `setTimeout` commits asynchronously. Under worker contention
+    // that effect could run *after* `advanceTimersByTimeAsync`, so the timer
+    // was never armed, advancing was a no-op, and the subsequent real-clock
+    // `waitFor`/`findBy` timed out (the symptom in #775). Driving the whole
+    // sequence inside `act()` with fake timers throughout forces the arming
+    // effect, the debounce fire, and the resolved-promise state update to
+    // flush in order — no wall-clock wait, no real-vs-fake-timer handoff.
+    await act(async () => {
+      typeFull(input, 'tag:#pro')
+    })
+    // Now the debounce timer is armed; advance past it (150 ms) and let the
+    // resolved `listTagsByPrefix` promise flush its state update.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
     vi.useRealTimers()
 
-    await screen.findByTestId('autocomplete-popover')
+    expect(screen.getByTestId('autocomplete-popover')).toBeInTheDocument()
     expect(screen.getByTestId('autocomplete-item-project-x')).toBeInTheDocument()
     expect(screen.getByTestId('autocomplete-item-project-y')).toBeInTheDocument()
   })

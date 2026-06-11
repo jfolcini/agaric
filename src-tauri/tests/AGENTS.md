@@ -7,8 +7,9 @@
 | Layer | Where | What |
 |---|---|---|
 | Unit | `src/<module>.rs` → `#[cfg(test)] mod tests` (or `src/<module>/tests.rs`) | Single-module logic |
-| Integration | `src/integration_tests.rs`, `src/command_integration_tests/`, `src/sync_integration_tests.rs` | Cross-module pipelines + command API contracts + sync protocol |
-| Bench | `benches/*.rs` (24 files, `harness = false`) | Criterion microbenchmarks; manual only, never CI |
+| Integration | `src/integration_tests.rs`, `src/command_integration_tests/` (incl. `sync_integration.rs`) | Cross-module pipelines + command API contracts + sync peer-ref/protocol commands |
+| Sync (network) | `src/sync_net/tests.rs`, `src/sync_daemon/tests.rs`, `src/sync_daemon/snapshot_transfer.rs` | TLS/cert + wire protocol, mDNS discovery lifecycle + peer-sync flows, snapshot transfer round-trips |
+| Bench | `benches/*.rs` (`harness = false`) | Criterion microbenchmarks; manual only, never CI |
 
 Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
 
@@ -27,7 +28,7 @@ cargo nextest run -p agaric -E 'test(::op_log::)'          # by module
 
 cargo test -p agaric -- integration_tests
 cargo test -p agaric -- command_integration_tests
-cargo test -p agaric -- sync_integration_tests
+cargo nextest run -p agaric -E 'test(sync_net::) + test(sync_daemon::)'   # network sync
 
 cargo insta test          # snapshot tests; writes .snap.new for changed
 cargo insta review        # interactive accept/reject
@@ -122,11 +123,11 @@ assert!(err.to_string().contains("InvalidGlob:"));
 
 ## Writing integration tests
 
-Three integration test surfaces, all `#[cfg(test)] mod` includes in `lib.rs` (they compile as part of the lib crate's test binary, not separate binaries):
+Integration test surfaces, all `#[cfg(test)] mod` includes in `lib.rs` (they compile as part of the lib crate's test binary, not separate binaries):
 
 - **`src/integration_tests.rs`** — pipeline tests spanning 3+ modules. Op chains + hash, crash recovery, cascade delete/purge, pagination, position handling, materializer dispatch, edit sequences. Use `create_content()` shorthand + `settle_bg_tasks()` between materializer-triggering ops.
-- **`src/command_integration_tests/`** (11 files: block/page/tag/property/backlink/lifecycle/sync/trash/undo + `common.rs` + `mod.rs`) — every `*_inner` command's API contract. Happy path + error variants + edge cases (empty / unicode / large / concurrent) + op-log verification.
-- **`src/sync_integration_tests.rs`** — sync protocol message serialisation, peer flows, conflict resolution.
+- **`src/command_integration_tests/`** (`block`/`page`/`tag`/`property`/`backlink`/`lifecycle`/`sync`/`trash`/`undo` integration modules + `common.rs` + `mod.rs`) — every `*_inner` command's API contract. Happy path + error variants + edge cases (empty / unicode / large / concurrent) + op-log verification. The sync surface here is `sync_integration.rs` (peer-ref commands: `list_peer_refs` / `update_peer_name` / `delete_peer_ref`, scheduler wiring).
+- **Network sync** lives outside the `command_integration_tests/` tree: `src/sync_net/tests.rs` (TLS/cert generation, wire-message serialisation, mDNS service type), `src/sync_daemon/tests.rs` (mDNS discovery lifecycle — `process_discovery_event`, stale-peer eviction — plus `try_sync_with_peer_*` / `inmem_handle_incoming_sync_*` peer flows and backoff/conflict handling), and `src/sync_daemon/snapshot_transfer.rs` (snapshot transfer round-trips). The crate-level `src/sync_integration_tests.rs` (diffy-era E2E) was **deleted** when the Loro-native sync layer landed; a full TLS+WS socket round-trip remains deferred (#602). Do not cite `sync_integration_tests.rs` as a live layer.
 
 **Reverse-op tests (`reverse.rs`):** test the reverse of each op type. Non-reversible ops (`purge_block`, `delete_attachment`) must return `AppError::NonReversible`, not panic. Prior-state lookups use the op log exclusively (not the materialised `blocks` table), so tests verify op-log walking even when the materializer lags. Reverse ops are **appended** to the op log — never assert existing ops were mutated. Use `append_local_op_at` with `FIXED_TS` for deterministic timestamps.
 
@@ -161,7 +162,7 @@ for payload in all_test_payloads() {
 
 ## Benchmarks (Criterion)
 
-24 bench files cover the hot-path functions (create / edit / list / search / pagination / FTS / hash / agenda / properties / sync / undo etc.). Parameterised scales typically 100 / 1K / 10K / 100K where size matters.
+The `benches/*.rs` files cover the hot-path functions (create / edit / list / search / pagination / FTS / hash / agenda / properties / sync / undo etc.). Parameterised scales typically 100 / 1K / 10K / 100K where size matters.
 
 ### Pattern
 

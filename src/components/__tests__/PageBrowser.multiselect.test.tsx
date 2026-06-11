@@ -24,6 +24,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { t } from '@/lib/i18n'
 
 import { makePage } from '../../__tests__/fixtures'
@@ -31,29 +32,9 @@ import { usePageBrowserFiltersStore } from '../../stores/pageBrowserFilters'
 import { useSpaceStore } from '../../stores/space'
 import { PageBrowser } from '../PageBrowser'
 
-// Render-all virtualizer mock (jsdom has zero-height containers).
-vi.mock('@tanstack/react-virtual', () => {
-  const measureElement = () => {}
-  return {
-    useVirtualizer: (opts: { count: number; estimateSize: () => number }) => {
-      const size = () => opts.estimateSize()
-      return {
-        getVirtualItems: () =>
-          Array.from({ length: opts.count }, (_, i) => ({
-            index: i,
-            key: i,
-            start: i * size(),
-            size: size(),
-            end: (i + 1) * size(),
-          })),
-        getTotalSize: () => opts.count * size(),
-        scrollToIndex: vi.fn(),
-        scrollToOffset: vi.fn(),
-        measureElement,
-      }
-    },
-  }
-})
+// Render-all virtualizer mock (jsdom has zero-height containers). Shared
+// helper, default mode (see src/__tests__/mocks/react-virtual.ts).
+vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastSuccess = vi.mocked(toast.success)

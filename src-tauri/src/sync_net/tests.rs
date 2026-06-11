@@ -1,4 +1,11 @@
-//! mDNS lifecycle is not unit-tested here; see sync_integration_tests.rs for the full lifecycle test.
+//! mDNS lifecycle is not unit-tested here. The discovery event lifecycle
+//! (ServiceResolved/ServiceRemoved → peer add/evict, stale-peer eviction,
+//! IPv6/IPv4 ordering) is covered by `crate::sync_daemon::discovery`'s
+//! `process_discovery_event` and its tests in `sync_daemon/tests.rs`
+//! (`stale_mdns_peers_evicted` and the T-41 eviction edge cases). The
+//! crate-level `sync_integration_tests.rs` that previously held the diffy-era
+//! end-to-end lifecycle test was deleted when the Loro-native sync layer
+//! landed; do not cite it.
 
 use super::tls::{AllowAnyCert, PinningCertVerifier};
 use super::*;
@@ -395,11 +402,15 @@ fn discovered_peer_fields() {
 
 // -- 5. Server / client round-trip ------------------------------------
 
-// Integration test: requires running server — tested in sync_integration_tests.rs
+// Integration test: requires a running server.
 //
-// A full TLS+WS round-trip test is deferred because it needs the
-// tokio multi-thread runtime and careful shutdown sequencing that is
-// better exercised in a dedicated integration-test file.
+// A full TLS+WS socket round-trip test is still deferred (tracked by the sync
+// E2E gap, #602) because it needs the tokio multi-thread runtime and careful
+// shutdown sequencing. The peer-sync flow it would exercise is meanwhile
+// covered at the unit level by `sync_daemon/tests.rs`
+// (`try_sync_with_peer_*`, `inmem_handle_incoming_sync_*`) and the
+// snapshot-transfer round-trips in `sync_daemon/snapshot_transfer.rs`. The
+// deleted `sync_integration_tests.rs` (diffy-era) is NOT the covering layer.
 
 // -- 6. Additional coverage -------------------------------------------
 
