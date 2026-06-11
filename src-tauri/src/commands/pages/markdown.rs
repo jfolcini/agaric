@@ -610,16 +610,22 @@ pub async fn import_markdown_with_progress(
         // Set properties inside the same transaction. L-30: same
         // all-or-nothing contract as the block-create above.
         for (key, value) in &block.properties {
+            // #623 — build the correct typed `PropertyValue` shape per key:
+            // reserved date keys (`due_date`/`scheduled_date`) must hit the
+            // `value_date` field, or `validate_property_value` rejects the
+            // whole all-or-nothing import.
+            let (value_text, value_num, value_date, value_ref, value_bool) =
+                crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
                 device_id,
                 new_block.id.clone().into_string(),
                 key,
-                Some(value.clone()),
-                None,
-                None,
-                None,
-                None,
+                value_text,
+                value_num,
+                value_date,
+                value_ref,
+                value_bool,
             )
             .await?;
             properties_set += 1;

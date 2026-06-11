@@ -543,6 +543,16 @@ fn invalidations_for_op(
             // leaving page-cache state unwired for cross-page reparents.
             tasks.push(MaterializeTask::RebuildPageIds);
             tasks.push(MaterializeTask::RebuildPagesCache);
+            // #627: a cross-page move reparents the block's `page_id`, which
+            // is the source-page attribution `page_link_cache` rolls up by
+            // (`COALESCE(page_id, …)`, `cache/page_links.rs`). Without this
+            // rebuild, the OLD page's link rows stay over-counted and the
+            // NEW page's rows stay missing until an unrelated
+            // delete/restore/purge/sync triggers FULL_CACHE_REBUILD_TASKS.
+            // A targeted `ReindexBlockLinks` is insufficient — it keys on the
+            // block's *current* source page, so the old page's stale rows
+            // would survive; the full page-link roll-up is the correct fix.
+            tasks.push(MaterializeTask::RebuildPageLinkCache);
         }
         "add_attachment" | "delete_attachment" => {}
         other => {
@@ -1000,13 +1010,16 @@ mod tests {
         // E4: a cross-page move reparents `page_id`, so the page-id rebuild
         // and the page-cache rebuild are both enqueued — `RebuildPageIds`
         // strictly before `RebuildPagesCache` so the latter observes the
-        // corrected membership.
+        // corrected membership. #627: the page-link roll-up cache is keyed
+        // by source `page_id`, so a cross-page move must rebuild it too or
+        // link attribution goes stale on both the old and new pages.
         assert_eq!(
             labels(&tasks),
             vec![
                 "RebuildTagInheritanceCache",
                 "RebuildPageIds",
                 "RebuildPagesCache",
+                "RebuildPageLinkCache",
             ],
         );
     }

@@ -93,6 +93,43 @@ pub(crate) fn is_valid_iso_date(s: &str) -> bool {
     validate_date_format(s).is_ok()
 }
 
+/// The `(value_text, value_num, value_date, value_ref, value_bool)` tuple
+/// that positionally matches [`set_property_in_tx`]'s trailing args. Named
+/// so [`typed_property_args_for_string_value`] stays under the
+/// `clippy::type_complexity` threshold (CI runs `clippy -D warnings`).
+pub(crate) type TypedPropertyArgs = (
+    Option<String>,
+    Option<f64>,
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+);
+
+/// Typed field-shape for [`set_property_in_tx`] from a flat string-valued
+/// property entry (import / batch-create). (#623)
+///
+/// Callers that build properties from a parsed `key:: value` map (Logseq
+/// import, `create_blocks_batch`) only have a `String` value, but
+/// [`set_property_in_tx`]'s validator (`validate_property_value` step 3)
+/// requires the *right* typed field per reserved key. The date reserved
+/// keys (`due_date` / `scheduled_date`) must arrive as `value_date`, not
+/// `value_text`, or the whole all-or-nothing transaction aborts with a
+/// "requires value_date" Validation error.
+///
+/// Returns the `(value_text, value_num, value_date, value_ref, value_bool)`
+/// tuple positionally matching [`set_property_in_tx`]'s trailing args.
+/// Only the two date reserved keys are re-shaped to `value_date`; every
+/// other key (custom keys, `todo_state`, `priority`) keeps the `value_text`
+/// shape that already validates. Non-reserved date-typed *definitions* are
+/// out of scope here — import/batch don't carry a declared-type hint, and
+/// the column-routing only applies to reserved keys.
+pub(crate) fn typed_property_args_for_string_value(key: &str, value: String) -> TypedPropertyArgs {
+    match key {
+        "due_date" | "scheduled_date" => (None, None, Some(value), None, None),
+        _ => (Some(value), None, None, None, None),
+    }
+}
+
 /// Create a new block inside an existing transaction.
 ///
 /// This is the core implementation shared by [`create_block_inner`](crate::commands::create_block_inner) (which

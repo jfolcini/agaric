@@ -1578,6 +1578,53 @@ async fn import_markdown_handles_properties() {
     mat.shutdown();
 }
 
+/// #623 — a Logseq line `due_date:: 2026-01-01` must import as a date on
+/// `blocks.due_date`, not abort the whole all-or-nothing import. Before the
+/// fix the importer passed the value as `value_text`, which
+/// `validate_property_value` rejects for the date reserved keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_due_date_stores_as_date() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let content = "- Pay rent\n  due_date:: 2026-01-01\n  scheduled_date:: 2026-02-02";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        content.into(),
+        Some("Dated.md".into()),
+        TEST_SPACE_ID.into(),
+    )
+    .await
+    .expect("a due_date:: line must NOT abort the whole import (#623)");
+
+    assert_eq!(result.blocks_created, 1, "should create the dated block");
+    assert_eq!(result.properties_set, 2, "due_date + scheduled_date");
+
+    // The content block (not the page) carries the dates on its native
+    // columns. Match on content so we skip the page block.
+    let (due, scheduled): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT due_date, scheduled_date FROM blocks WHERE content = 'Pay rent'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        due,
+        Some("2026-01-01".into()),
+        "due_date must land on blocks.due_date as a date"
+    );
+    assert_eq!(
+        scheduled,
+        Some("2026-02-02".into()),
+        "scheduled_date must land on blocks.scheduled_date as a date"
+    );
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_strips_block_refs() {
     let (pool, _dir) = test_pool().await;
