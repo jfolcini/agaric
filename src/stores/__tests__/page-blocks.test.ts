@@ -45,9 +45,19 @@ const mockGlobalSetState = vi.fn()
 const mockSetFocused = vi.fn((blockId: string | null) => {
   mockGlobalBlockState = { focusedBlockId: blockId, selectedBlockIds: [] }
 })
+// #798 — load() prunes remotely-deleted ids from the global selection via the
+// store ACTION (setSelected). Mirror the real action so post-load assertions
+// can read the pruned selection back off the mock.
+const mockSetSelected = vi.fn((ids: string[]) => {
+  mockGlobalBlockState = { ...mockGlobalBlockState, selectedBlockIds: ids }
+})
 vi.mock('@/stores/blocks', () => ({
   useBlockStore: {
-    getState: () => ({ ...mockGlobalBlockState, setFocused: mockSetFocused }),
+    getState: () => ({
+      ...mockGlobalBlockState,
+      setFocused: mockSetFocused,
+      setSelected: mockSetSelected,
+    }),
     setState: (...args: unknown[]) => mockGlobalSetState(...args),
   },
 }))
@@ -387,6 +397,94 @@ describe('PageBlockStore', () => {
 
       expect(mockSetFocused).not.toHaveBeenCalled()
       expect(mockGlobalBlockState.focusedBlockId).toBe('STALE_FOCUS')
+    })
+
+    // ── #798 — prune remotely-deleted ids from the selection ────────────
+    it('#798 — drops a remotely-deleted block id from selectedBlockIds on reload', async () => {
+      // The store owns blocks A + B before the reload; both are selected.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
+
+      // Fresh backend snapshot lost B (a remote peer deleted it).
+      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      await store.getState().load()
+
+      // B is pruned; the surviving id A stays selected.
+      expect(mockSetSelected).toHaveBeenCalledWith(['A'])
+      expect(mockGlobalBlockState.selectedBlockIds).toEqual(['A'])
+    })
+
+    it('#798 — does not touch the selection when every selected id survives', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+          makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'B'] }
+
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1' }),
+      ])
+      await store.getState().load()
+
+      // No change → no setSelected call (avoids a needless selection churn).
+      expect(mockSetSelected).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.selectedBlockIds).toEqual(['A', 'B'])
+    })
+
+    it('#798 — preserves a selected id this store never owned (managed elsewhere)', async () => {
+      // A selected id belonging to another page (this store never held it):
+      // absent from the snapshot, but the load-START ownership guard means
+      // its absence proves nothing here — it must survive.
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'OTHER_PAGE_BLK'] }
+
+      mockedInvoke.mockResolvedValueOnce([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      await store.getState().load()
+
+      // A survives (still present); OTHER_PAGE_BLK survives (never owned).
+      expect(mockSetSelected).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.selectedBlockIds).toEqual(['A', 'OTHER_PAGE_BLK'])
+    })
+
+    it('#798 — does not prune a block created+selected while the load was in flight', async () => {
+      // Mirror of the #773 mid-flight guard for selection: a block spliced
+      // in (and selected) AFTER the load started is absent from the snapshot
+      // because the snapshot predates it, NOT because of a remote delete.
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: 'PAGE_1' })] })
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A'] }
+
+      let resolveLoad!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveLoad = resolve
+        }),
+      )
+      const loadPromise = store.getState().load()
+
+      // Mid-flight: optimistic create lands N and selects it.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', parent_id: 'PAGE_1' }),
+          makeBlock({ id: 'N', parent_id: 'PAGE_1' }),
+        ],
+      })
+      mockGlobalBlockState = { focusedBlockId: null, selectedBlockIds: ['A', 'N'] }
+
+      // Snapshot predates N.
+      resolveLoad([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])
+      await loadPromise
+
+      // N must NOT be pruned (load-START guard); A survives → no change.
+      expect(mockSetSelected).not.toHaveBeenCalled()
+      expect(mockGlobalBlockState.selectedBlockIds).toEqual(['A', 'N'])
     })
   })
 
@@ -998,6 +1096,91 @@ describe('PageBlockStore', () => {
       await store.getState().splitBlock('A', 'x\ny')
       expect(mockedInvoke).toHaveBeenCalledTimes(4)
     })
+
+    it('#730 — aborts (no duplicate creates) when the FIRST edit fails', async () => {
+      // Pasting multi-line content: if the first-line edit() fails, the old
+      // code STILL created every plan.rest line below the reverted original —
+      // duplicating the pasted content. The fix branches on edit()'s boolean.
+      const block = makeBlock({ id: 'A', position: 0, content: 'original' })
+      store.setState({ blocks: [block] })
+
+      // edit('A', 'line1') → editBlock IPC rejects (edit() resolves false and
+      // rolls its optimistic update back internally).
+      mockedInvoke.mockRejectedValueOnce(new Error('edit failed'))
+
+      await store.getState().splitBlock('A', 'line1\nline2\nline3')
+
+      // Only the failed edit_block IPC fired — NO create_block for line2/line3.
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      const blocks = store.getState().blocks
+      // No new blocks; original is restored by edit()'s rollback (not split).
+      expect(blocks).toHaveLength(1)
+      expect(blocks[0]?.content).toBe('original')
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #730 — pool_busy retry wiring on block mutations
+  // ---------------------------------------------------------------------------
+  describe('pool_busy retry (#730)', () => {
+    it('edit retries a transient pool_busy blip and commits without reverting', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+
+      // First editBlock attempt rejects with pool_busy; the shared
+      // retryOnPoolBusy helper retries and the second attempt succeeds.
+      mockedInvoke
+        .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
+        .mockResolvedValueOnce({
+          id: 'A',
+          block_type: 'text',
+          content: 'new',
+          parent_id: null,
+          position: 0,
+          deleted_at: null,
+        })
+
+      const ok = await store.getState().edit('A', 'new')
+
+      expect(ok).toBe(true)
+      // Two edit_block IPC attempts (the blip + the retry success).
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      // The optimistic edit survives — not reverted to 'old'.
+      expect(store.getState().blocks[0]?.content).toBe('new')
+      // No save-failed toast for a recovered blip.
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    })
+
+    it('moveUp retries a transient pool_busy blip before reporting failure', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke
+        .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
+        .mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
+
+      const ok = await store.getState().moveUp('B')
+
+      expect(ok).toBe(true)
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+    })
+
+    it('a non-pool_busy error is NOT retried (re-thrown immediately)', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', content: 'old' })] })
+
+      // A generic database error must bubble on the first attempt — the
+      // retry helper only retries pool_busy.
+      mockedInvoke.mockRejectedValueOnce({ kind: 'database', message: 'boom' })
+
+      const ok = await store.getState().edit('A', 'new')
+
+      expect(ok).toBe(false)
+      // Exactly one attempt — no retry for a non-pool_busy error.
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      // Rolled back to the previous content.
+      expect(store.getState().blocks[0]?.content).toBe('old')
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -1088,6 +1271,80 @@ describe('PageBlockStore', () => {
       expect(bIdx).toBeGreaterThan(blocks.findIndex((b) => b.id === 'A2'))
       expect(blocks[bIdx]?.parent_id).toBe('A')
       expect(blocks[bIdx]?.depth).toBe(1)
+    })
+
+    it('#774 — reloads when the backend echoes a parent other than the requested prevSibling', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      // indent('B') requests parent 'A', but the backend echoes a DIFFERENT
+      // parent ('UNEXPECTED'). Old indent ignored the echo entirely and
+      // trusted the requested parent → silent FE/BE divergence. The fix
+      // mirrors reorder/moveUp: fall back to a structural reload.
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'UNEXPECTED',
+        new_position: 0,
+      })
+      // The reload load_page_subtree returns the authoritative tree.
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 0 }),
+      ])
+
+      const ok = await store.getState().indent('B')
+
+      expect(ok).toBe(true)
+      // A second IPC (the reload) fired — the local "indent under A" splice
+      // was NOT trusted.
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(mockedInvoke).toHaveBeenLastCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+    })
+
+    it('#774 — serialized double moveDown lands two slots down (queued moves do not collapse)', async () => {
+      // A → B → C → D at root. Two rapid moveDown('A') presses fired before
+      // the first resolves must move A two slots (past B, then past C), not
+      // collapse into a single move. Serialization makes the 2nd press read
+      // the post-first-move state and request the correct next slot.
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'D', position: 3, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      // First moveDown: A swaps past B → slot 1.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
+      // Second moveDown (computed AFTER the first commits): A swaps past C → slot 2.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+
+      // Fire both without awaiting the first — the queue serializes them.
+      const p1 = store.getState().moveDown('A')
+      const p2 = store.getState().moveDown('A')
+      const [r1, r2] = await Promise.all([p1, p2])
+
+      expect(r1).toBe(true)
+      expect(r2).toBe(true)
+      // Two distinct backend moves — the second did NOT re-state the first's slot.
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'move_block', {
+        blockId: 'A',
+        newParentId: null,
+        newIndex: 1,
+      })
+      expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'move_block', {
+        blockId: 'A',
+        newParentId: null,
+        newIndex: 2,
+      })
+      // Final order: B, C, A, D.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'C', 'A', 'D'])
     })
   })
 
@@ -1371,8 +1628,10 @@ describe('PageBlockStore', () => {
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'NEW'])
 
-      // indent: A becomes child of B
-      mockedInvoke.mockResolvedValueOnce(undefined)
+      // indent: A becomes child of B. #774 — indent now checks the backend
+      // parent echo, so the mock must echo the requested parent ('B') to
+      // exercise the local-splice path (an unexpected/absent parent reloads).
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: 'B', new_position: 0 })
       await store.getState().indent('A')
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocksById.get('A')?.parent_id).toBe('B')
@@ -1753,6 +2012,37 @@ describe('PageBlockStore', () => {
       expect(cIdx).toBeGreaterThan(pIdx)
       expect(blocks[cIdx]?.depth).toBe(1)
       expect(blocks[cIdx]?.parent_id).toBe('GP')
+    })
+
+    it('#774 — reloads when the backend echoes a parent other than the requested grandparent', async () => {
+      // C under P under GP. dedent('C') requests grandparent GP, but the
+      // backend echoes a DIFFERENT parent. Old dedent checked the slot but
+      // never the parent echo against the REQUESTED parent — trusting the
+      // local "place after parent" splice. The fix reloads on disagreement.
+      const grandparent = makeBlock({ id: 'GP', parent_id: null, position: 0, depth: 0 })
+      const parent = makeBlock({ id: 'P', parent_id: 'GP', position: 0, depth: 1 })
+      const child = makeBlock({ id: 'C', parent_id: 'P', position: 0, depth: 2 })
+      store.setState({ blocks: [grandparent, parent, child] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: 'UNEXPECTED',
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'GP', parent_id: 'PAGE_1', depth: 0 }),
+        makeBlock({ id: 'P', parent_id: 'GP', depth: 1 }),
+        makeBlock({ id: 'C', parent_id: 'UNEXPECTED', depth: 1 }),
+      ])
+
+      const ok = await store.getState().dedent('C')
+
+      expect(ok).toBe(true)
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(mockedInvoke).toHaveBeenLastCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
     })
   })
 
@@ -2541,7 +2831,9 @@ describe('PageBlockStore', () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
-      mockedInvoke.mockResolvedValueOnce(undefined)
+      // #774 — indent checks the backend parent echo; echo the requested
+      // parent ('A') so the local-splice path runs (was a bare `undefined`).
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
 
       await store.getState().indent('B')
 
