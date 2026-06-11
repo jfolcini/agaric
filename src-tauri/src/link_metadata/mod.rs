@@ -116,9 +116,17 @@ pub async fn fetch_metadata(url: &str) -> Result<LinkMetadata, AppError> {
     //   * `not_found` (404/410): terminal "page is gone" presentation
     //   * neither flag, `title.is_none()`: transient (5xx / other) —
     //     the frontend infers "may retry later"
+    //
+    // #628: key the error-state row under the **requested** `url`, not
+    // `final_url` — the cache upsert keys on `meta.url` and every lookup
+    // (`get_cached(pool, &url)`) uses the requested url, so storing the
+    // post-redirect `final_url` here meant a redirected non-2xx (e.g.
+    // http→https→404) was cached under a key that is never queried and
+    // refetched on every render. `final_url` stays relevant only for
+    // `detect_auth_required` on the 2xx path below.
     if !response.status().is_success() {
         return Ok(LinkMetadata {
-            url: final_url,
+            url: url.to_string(),
             title: None,
             favicon_url: None,
             description: None,

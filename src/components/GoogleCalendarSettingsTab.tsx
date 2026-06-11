@@ -61,6 +61,7 @@ const DISCONNECTED_FALLBACK_STATUS: GcalStatus = {
   privacy_mode: 'full',
   last_push_at: null,
   last_error: null,
+  reauth_required: false,
   push_lease: { held_by_this_device: false, device_id: null, expires_at: null },
 }
 

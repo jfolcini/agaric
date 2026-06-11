@@ -77,6 +77,14 @@ pub struct GcalStatus {
     pub privacy_mode: String,
     pub last_push_at: Option<String>,
     pub last_error: Option<String>,
+    /// #630: `true` when the connector is paused waiting for the user
+    /// to re-authorize (`gcal_settings.reauth_required`).  Without this
+    /// field the pause was invisible after a restart: the one-shot
+    /// `gcal:reauth_required` event had already fired in a previous
+    /// session, `connected` stays `true` (the token is not cleared by
+    /// the terminal-401 path) and `last_error` is untouched — Settings
+    /// showed a healthy connection while push was permanently paused.
+    pub reauth_required: bool,
     pub push_lease: LeaseHolder,
 }
 
@@ -170,6 +178,11 @@ pub async fn get_gcal_status_inner(
         .map(|c| c.last_error)
         .unwrap_or_default();
 
+    // #630: surface the persisted pause flag so the Settings tab (and
+    // the app-shell reauth banner, which hydrates from this status on
+    // mount) can show the paused state across restarts.
+    let reauth_required = models::get_reauth_required(pool).await?;
+
     Ok(GcalStatus {
         connected,
         account_email: optionalize(account_email),
@@ -178,6 +191,7 @@ pub async fn get_gcal_status_inner(
         privacy_mode,
         last_push_at: last_push,
         last_error: optionalize(last_error),
+        reauth_required,
         push_lease: lease_state_to_holder(&push_lease, this_device),
     })
 }
@@ -426,6 +440,24 @@ where
 
     // 7. Persist the token to the keychain and the email to the DB.
     token_store.store(&token).await?;
+
+    // #630: clear the connector's pause flag UNCONDITIONALLY once the
+    // fresh token is stored.  The clear used to live only inside
+    // `persist_oauth_account_email`, which runs solely when Google
+    // returned an email claim — if the user unchecked the email grant
+    // (or the id_token was missing/unparseable), a fully successful
+    // re-auth left the connector paused forever.  A failure to clear is
+    // logged but does not fail the connect (matches the best-effort
+    // posture inside `persist_oauth_account_email`).
+    if let Err(e) = models::set_reauth_required(pool, false).await {
+        tracing::warn!(
+            target: "gcal",
+            error = %e,
+            "failed to clear reauth_required after successful token store; \
+             connector stays paused until the flag clears",
+        );
+    }
+
     if let Some(email_str) = email.as_deref() {
         persist_oauth_account_email(pool, email_str).await?;
     }
@@ -1502,6 +1534,129 @@ mod tests {
         }
         // No token landed.
         assert!(store.load().await.unwrap().is_none());
+    }
+
+    // ── #630 — reauth visibility + unconditional flag clear ────────
+
+    /// The persisted pause flag must surface on the status snapshot so
+    /// a restart cannot hide the paused connector behind a
+    /// healthy-looking "connected" state.
+    #[tokio::test]
+    async fn get_status_surfaces_reauth_required_flag_630() {
+        let (pool, _dir) = test_pool().await;
+        let store = store_with(Some(dummy_token())).await;
+
+        // Default: not paused.
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
+        assert!(
+            !status.reauth_required,
+            "fresh install must report reauth_required = false"
+        );
+
+        // After a terminal 401 the connector persists the flag — the
+        // status must reflect it even though `connected` stays true
+        // (the token is NOT cleared by the terminal-401 path).
+        models::set_reauth_required(&pool, true).await.unwrap();
+        let status = get_gcal_status_inner(&pool, &store, THIS_DEVICE)
+            .await
+            .unwrap();
+        assert!(
+            status.reauth_required,
+            "persisted pause flag must surface on GcalStatus (#630)"
+        );
+        assert!(
+            status.connected,
+            "sanity: the token is still present — exactly the state that made \
+             the pause invisible before #630"
+        );
+    }
+
+    /// A successful re-auth where Google omits the email claim (user
+    /// unchecked the email grant; missing/unparseable id_token) must
+    /// STILL clear the pause flag — the clear must not be coupled to
+    /// `persist_oauth_account_email`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_oauth_without_email_claim_still_clears_reauth_flag_630() {
+        let server = MockServer::start().await;
+        // Token response WITHOUT id_token → no email claim extracted.
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "ya29.access-abc",
+                "refresh_token": "1//refresh-xyz",
+                "expires_in": 3600,
+                "token_type": "Bearer",
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let (pool, _dir) = test_pool().await;
+        // Simulate the paused state left behind by a terminal 401.
+        models::set_reauth_required(&pool, true).await.unwrap();
+        let store = store_with(None).await;
+        let client = build_oauth_client(&server).await;
+
+        let (port_tx, port_rx) = tokio::sync::oneshot::channel::<(u16, String)>();
+        let driver = tokio::spawn(async move {
+            let (port, state) = port_rx.await.expect("authorize url forwarded");
+            drive_oauth_callback(port, "the-code", &state).await;
+        });
+
+        let port_tx_cell = std::sync::Mutex::new(Some(port_tx));
+        let outcome = begin_gcal_oauth_inner(&pool, client.as_ref(), &store, |url| {
+            let (port, state) = parse_authorize_url(&url);
+            if let Some(tx) = port_tx_cell.lock().unwrap().take() {
+                let _ = tx.send((port, state));
+            }
+            Ok(())
+        })
+        .await
+        .expect("re-auth without an email claim must still succeed");
+
+        driver.await.expect("driver task joined");
+
+        assert_eq!(
+            outcome.account_email, None,
+            "no id_token → no email in the outcome"
+        );
+        assert!(
+            store.load().await.unwrap().is_some(),
+            "token must be stored"
+        );
+        assert!(
+            !models::get_reauth_required(&pool).await.unwrap(),
+            "reauth_required must be cleared by a successful re-auth even \
+             without an email claim (#630)"
+        );
+    }
+
+    /// Error path: a failed OAuth attempt must NOT clear the pause flag
+    /// — the connector stays paused until a re-auth actually succeeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn begin_oauth_failure_leaves_reauth_flag_set_630() {
+        let server = MockServer::start().await;
+        let (pool, _dir) = test_pool().await;
+        models::set_reauth_required(&pool, true).await.unwrap();
+        let store = store_with(None).await;
+        let client = build_oauth_client(&server).await;
+
+        let result = begin_gcal_oauth_inner(&pool, client.as_ref(), &store, |_url| {
+            Err(AppError::Validation("oauth.open_browser_failed: x".into()))
+        })
+        .await;
+        assert!(result.is_err(), "open-browser failure must surface");
+
+        assert!(
+            models::get_reauth_required(&pool).await.unwrap(),
+            "a failed OAuth attempt must NOT clear the pause flag"
+        );
+        assert!(
+            store.load().await.unwrap().is_none(),
+            "no token may be stored on failure"
+        );
     }
 
     // ── force_gcal_resync_inner ────────────────────────────────────

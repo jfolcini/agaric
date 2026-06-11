@@ -58,14 +58,35 @@ vi.mock('@/lib/logger', () => ({
 
 const mockedInvoke = vi.mocked(invoke)
 
+/**
+ * Minimal `GcalStatus` shape for the #630 mount hydration — the banner
+ * only reads `reauth_required` and `account_email`.
+ */
+function makeStatus(reauthRequired: boolean, accountEmail: string | null = null) {
+  return {
+    connected: true,
+    account_email: accountEmail,
+    calendar_id: null,
+    window_days: 30,
+    privacy_mode: 'full',
+    last_push_at: null,
+    last_error: null,
+    reauth_required: reauthRequired,
+    push_lease: { held_by_this_device: false, device_id: null, expires_at: null },
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
   // Default: begin_gcal_oauth resolves successfully so the banner
-  // self-clears in the reconnect test path. Per-test overrides via
+  // self-clears in the reconnect test path, and get_gcal_status reports
+  // a healthy (non-paused) connection so the #630 mount hydration stays
+  // a no-op unless a test overrides it. Per-test overrides via
   // `mockedInvoke.mockImplementationOnce(...)` still work.
   mockedInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'begin_gcal_oauth') return null
+    if (cmd === 'get_gcal_status') return makeStatus(false)
     return undefined
   })
 })
@@ -138,6 +159,60 @@ describe('GcalReauthBanner — active without email', () => {
     expect(
       screen.getByText('Reconnect your Google Calendar account to resume sync.'),
     ).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #630 — persisted-pause hydration after a restart
+// ---------------------------------------------------------------------------
+
+describe('GcalReauthBanner — #630 status hydration', () => {
+  it('activates from the persisted reauth_required flag on mount (restart case)', async () => {
+    // After a restart no `gcal:reauth_required` event fires — the
+    // banner must hydrate from the status snapshot alone.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'begin_gcal_oauth') return null
+      if (cmd === 'get_gcal_status') return makeStatus(true, 'user@example.com')
+      return undefined
+    })
+
+    render(<GcalReauthBanner />)
+
+    const banner = await screen.findByTestId('gcal-reauth-banner')
+    expect(banner).toBeInTheDocument()
+    // The persisted account email is carried into the body.
+    expect(screen.getByText(/user@example\.com/)).toBeInTheDocument()
+  })
+
+  it('stays inactive when the status reports no pause (happy path)', async () => {
+    const { container } = render(<GcalReauthBanner />)
+
+    // Wait until the hydration fetch has settled.
+    await waitFor(() => {
+      const statusCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status')
+      expect(statusCalls.length).toBe(1)
+    })
+
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('gcal-reauth-banner')).not.toBeInTheDocument()
+  })
+
+  it('stays inactive when the status fetch rejects (error path)', async () => {
+    // AGENTS.md #198: every component calling invoke must have an
+    // error-path test. A failed hydration must not crash or render.
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_gcal_status') throw new Error('ipc down')
+      return undefined
+    })
+
+    const { container } = render(<GcalReauthBanner />)
+
+    await waitFor(() => {
+      const statusCalls = mockedInvoke.mock.calls.filter((c) => c[0] === 'get_gcal_status')
+      expect(statusCalls.length).toBe(1)
+    })
+
+    expect(container).toBeEmptyDOMElement()
   })
 })
 

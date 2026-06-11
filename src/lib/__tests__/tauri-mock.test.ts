@@ -2521,6 +2521,7 @@ describe('get_gcal_status', () => {
     expect(status['privacy_mode']).toBe('full')
     expect(status['last_push_at']).toBeNull()
     expect(status['last_error']).toBeNull()
+    expect(status['reauth_required']).toBe(false)
     const lease = status['push_lease'] as Record<string, unknown>
     expect(lease).toBeDefined()
     expect(lease['held_by_this_device']).toBe(false)

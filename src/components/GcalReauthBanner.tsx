@@ -18,6 +18,11 @@
  * Calendar tab uses).
  *
  * Lifecycle:
+ *   - Hydrates once at mount from `get_gcal_status.reauth_required`
+ *     (#630): the backend persists the pause flag in SQLite, so after
+ *     an app restart the one-shot event has long since fired — without
+ *     this read the pause was invisible (Settings showed a healthy
+ *     connection while push stayed permanently paused).
  *   - Activates on `gcal:reauth_required` (latest payload wins so a
  *     re-emit after a different account swaps the displayed email).
  *   - Clears when the user clicks Reconnect AND `begin_gcal_oauth`
@@ -46,6 +51,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import type { GcalStatus } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
@@ -101,6 +107,32 @@ export function GcalReauthBanner(): React.ReactElement | null {
           logger.warn('GcalReauthBanner', 'unlisten threw during cleanup', undefined, err)
         }
       }
+    }
+  }, [])
+
+  // #630: hydrate the persisted pause state once at mount. The
+  // `gcal:reauth_required` event is one-shot at failure time, so after
+  // a restart only this status read can resurface the banner. Never
+  // deactivates: a `reauth_required: false` status must not clear a
+  // banner raised by a live event racing this fetch.
+  useEffect(() => {
+    let cancelled = false
+    invoke<GcalStatus>('get_gcal_status')
+      .then((status) => {
+        if (cancelled || !status.reauth_required) return
+        setAccountEmail((prev) => prev ?? status.account_email)
+        setActive(true)
+      })
+      .catch((err) => {
+        logger.warn(
+          'GcalReauthBanner',
+          'failed to hydrate reauth state from get_gcal_status',
+          undefined,
+          err,
+        )
+      })
+    return () => {
+      cancelled = true
     }
   }, [])
 

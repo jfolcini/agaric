@@ -13,8 +13,12 @@
 //!   hash it, compare against `gcal_agenda_event_map.last_pushed_hash`,
 //!   and `insert` / `patch` / `delete` the remote event.
 //! * **Reconcile sweep** — every [`RECONCILE_INTERVAL`] re-add every
-//!   date in `[today, today + window_days]` to the dirty set so a
-//!   missed `DirtyEvent` or a crashed push catches up.
+//!   date in `[today, today + MAX_WINDOW_DAYS)` to the dirty set so a
+//!   missed `DirtyEvent` or a crashed push catches up.  The cycle
+//!   itself re-clamps to the user's configured `window_days` (#629):
+//!   only dates before `today + window_days` are pushed, and map rows
+//!   (plus their remote events) at/beyond that bound are pruned so a
+//!   shrunk window actually deletes its out-of-window events.
 //! * **Debounce** — coalesce bursts of `DirtyEvent`s into a single
 //!   cycle [`DEBOUNCE_WINDOW`] after the last event.
 //! * **Recovery from calendar deletion** — if any call returns
@@ -615,7 +619,43 @@ async fn run_cycle_attempt(
         settings.calendar_id.clone()
     };
 
-    // 4. Per-date iteration.  We intentionally do NOT short-circuit on
+    // 4. #629 — window partition.  The reconcile / force-resync paths
+    // prime the dirty set with the full MAX_WINDOW_DAYS window (the
+    // producers don't know the user's setting — see dirty_producer's
+    // "Window pre-filter" note); the cycle is the single place that
+    // re-clamps to the configured `window_days`:
+    //
+    //   * dates before `today + window_days` are pushed as usual
+    //     (including explicitly-dirty PAST dates — a drag-drop off
+    //     yesterday must still update/delete yesterday's event; the
+    //     reconcile fill never includes past dates so history events
+    //     are otherwise untouched);
+    //   * map rows at/beyond `today + window_days` are pruned (remote
+    //     event deleted + row dropped) so shrinking the setting
+    //     actually removes the out-of-window events instead of
+    //     maintaining all 90 forever.
+    let today = clock.today();
+    let window_end = today
+        .checked_add_days(Days::new(settings.window_days.max(0).cast_unsigned()))
+        .unwrap_or(NaiveDate::MAX);
+    let window_end_str = window_end.format("%Y-%m-%d").to_string();
+
+    // Prune targets: every event-map row at/beyond the window end.
+    // Lexicographic comparison is safe — the map stores canonical
+    // zero-padded `YYYY-MM-DD` strings.
+    let prune_dates: Vec<NaiveDate> = models::list_event_map_dates(pool)
+        .await?
+        .into_iter()
+        .filter(|d| d.as_str() >= window_end_str.as_str())
+        .filter_map(|d| NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
+        .collect();
+
+    enum DateAction {
+        Push,
+        Prune,
+    }
+
+    // Per-date iteration.  We intentionally do NOT short-circuit on
     // the first failure — a transient 5xx on one date should not block
     // a successful push to a sibling date.  Hard failures (401 / 403 /
     // CalendarGone) are returned to the caller for the whole cycle.
@@ -633,9 +673,26 @@ async fn run_cycle_attempt(
     // budget is spent, the next 429 aborts the cycle (`Err`) and the
     // retained dirty set re-arms on the next tick.
     let mut rate_limit_retried = false;
-    for date in dirty {
+    // #629 — the dirty set may carry dates that have fallen out of the
+    // configured window; partition into in-window pushes and at/beyond-
+    // window prunes.  Both kinds ride the SAME per-date machinery below
+    // (#849: bounded Retry-After retry, hard-failure terminalisation,
+    // skip tracking) so a 429 / 401 during a prune is honoured exactly
+    // like one during a push.
+    let actions = dirty
+        .iter()
+        .filter(|d| **d < window_end)
+        .map(|d| (*d, DateAction::Push))
+        .chain(prune_dates.into_iter().map(|d| (d, DateAction::Prune)));
+    for (date, action) in actions {
         loop {
-            match push_date(pool, api, token, &settings, &calendar_id, *date).await {
+            let outcome = match action {
+                DateAction::Push => {
+                    push_date(pool, api, token, &settings, &calendar_id, date).await
+                }
+                DateAction::Prune => prune_date(pool, api, token, &calendar_id, date).await,
+            };
+            match outcome {
                 Ok(()) => break,
                 Err(DateFailure::CalendarGone) => {
                     // Whole cycle has to abort — the calendar is gone.
@@ -876,21 +933,93 @@ async fn push_date(
             Ok(())
         }
         // Entries + no prior row → fresh insert.
+        //
+        // #631 — lookup-before-insert reconciliation: `insert_event` →
+        // `upsert_event_map` is non-atomic across the network boundary.
+        // A crash (or DB write failure) between the two leaves an
+        // untracked "Agaric Agenda" event; the next cycle would see
+        // `None` here and blindly insert a second one — the first copy
+        // would never be patched or deleted again.  Instead, list the
+        // day's events on the dedicated calendar first and ADOPT a
+        // matching digest orphan (patch it fresh + write the map row).
+        // The extra GET only happens on the (Create, None) path — i.e.
+        // once per date entering the window — never on the steady-state
+        // hash-compare path.
         (DigestResult::Create(event), None) => {
-            let response = api
-                .insert_event(token, calendar_id, &event)
+            let candidates = api
+                .list_events_for_day(token, calendar_id, date)
                 .await
                 .map_err(|e| classify_date_err(&e))?;
-            let entry = GcalAgendaEventMap {
-                date: date_str,
-                gcal_event_id: response.id,
-                last_pushed_hash: fresh_hash,
-                last_pushed_at: crate::now_rfc3339(),
-            };
-            upsert_event_map(pool, &entry)
-                .await
-                .map_err(DateFailure::Other)?;
-            Ok(())
+            // Only adopt events that are unambiguously ours: an all-day
+            // event starting on this exact date whose summary carries
+            // the digest prefix.  A user-created event on the dedicated
+            // calendar must never be hijacked/overwritten.
+            let mut orphans = candidates.into_iter().filter(|r| {
+                r.event.start.date == date_str
+                    && r.event.summary.starts_with(digest::SUMMARY_PREFIX)
+            });
+
+            if let Some(adopted) = orphans.next() {
+                // Surplus duplicates (several crashes piled up before
+                // this reconciliation existed) are deleted outright —
+                // the adopted copy is about to carry the fresh content.
+                for dup in orphans {
+                    match api.delete_event(token, calendar_id, &dup.id).await {
+                        Ok(()) | Err(AppError::Gcal(GcalErrorKind::EventGone)) => {}
+                        Err(e) => return Err(classify_date_err(&e)),
+                    }
+                }
+                tracing::info!(
+                    target: "gcal",
+                    date = %date,
+                    event_id = %adopted.id,
+                    "adopting untracked digest event instead of inserting a duplicate (#631)",
+                );
+                // Patch the adopted event to the fresh digest, then
+                // track it.  A crash anywhere in between is safe: the
+                // next cycle's lookup re-adopts the same event.
+                let patch = event_to_patch(event).map_err(|e| classify_date_err(&e))?;
+                match api
+                    .patch_event(token, calendar_id, &adopted.id, &patch)
+                    .await
+                {
+                    Ok(_resp) => {
+                        let entry = GcalAgendaEventMap {
+                            date: date_str,
+                            gcal_event_id: adopted.id,
+                            last_pushed_hash: fresh_hash,
+                            last_pushed_at: crate::now_rfc3339(),
+                        };
+                        upsert_event_map(pool, &entry)
+                            .await
+                            .map_err(DateFailure::Other)?;
+                        Ok(())
+                    }
+                    Err(AppError::Gcal(GcalErrorKind::EventGone)) => {
+                        // The orphan vanished between list and patch
+                        // (user deleted it in GCal's UI).  Nothing is
+                        // tracked yet; the next sweep re-evaluates and
+                        // takes the fresh-insert path.
+                        Err(DateFailure::Skipped("event_gone".to_owned()))
+                    }
+                    Err(e) => Err(classify_date_err(&e)),
+                }
+            } else {
+                let response = api
+                    .insert_event(token, calendar_id, &event)
+                    .await
+                    .map_err(|e| classify_date_err(&e))?;
+                let entry = GcalAgendaEventMap {
+                    date: date_str,
+                    gcal_event_id: response.id,
+                    last_pushed_hash: fresh_hash,
+                    last_pushed_at: crate::now_rfc3339(),
+                };
+                upsert_event_map(pool, &entry)
+                    .await
+                    .map_err(DateFailure::Other)?;
+                Ok(())
+            }
         }
         // Entries + prior row → compare hashes; patch on mismatch.
         (DigestResult::Create(event), Some(prior)) => {
@@ -944,6 +1073,45 @@ async fn push_date(
             }
         }
     }
+}
+
+/// #629 — delete the remote event + map row for a date at/beyond the
+/// configured window (the window shrank, or the row was written under
+/// a larger setting).  No digest computation: the date is out of the
+/// window regardless of content.  A missing map row is a no-op so the
+/// sweep can be re-run safely; `EventGone` on the remote delete is
+/// treated as success (the user already removed it in GCal's UI).
+#[tracing::instrument(skip(pool, api, token), fields(date = %date))]
+async fn prune_date(
+    pool: &SqlitePool,
+    api: &GcalApi,
+    token: &Token,
+    calendar_id: &str,
+    date: NaiveDate,
+) -> Result<(), DateFailure> {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let Some(prior) = get_event_map_for_date(pool, &date_str)
+        .await
+        .map_err(DateFailure::Other)?
+    else {
+        return Ok(());
+    };
+    match api
+        .delete_event(token, calendar_id, &prior.gcal_event_id)
+        .await
+    {
+        Ok(()) | Err(AppError::Gcal(GcalErrorKind::EventGone)) => {}
+        Err(e) => return Err(classify_date_err(&e)),
+    }
+    delete_event_map_by_date(pool, &date_str)
+        .await
+        .map_err(DateFailure::Other)?;
+    tracing::info!(
+        target: "gcal",
+        date = %date,
+        "pruned out-of-window event (window_days shrank or never applied) (#629)",
+    );
+    Ok(())
 }
 
 /// Map an [`AppError`] raised from a per-event client call onto the
@@ -1489,6 +1657,19 @@ mod tests {
             .await;
     }
 
+    /// Mount a `GET /calendars/{id}/events` mock that returns an empty
+    /// item list.  #631 made the fresh-insert path list the day's
+    /// events first (lookup-before-insert), so every test that
+    /// exercises `(Create, None)` mounts this alongside its insert
+    /// mock.
+    async fn mount_list_events_empty(server: &MockServer, calendar_id: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{calendar_id}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [] })))
+            .mount(server)
+            .await;
+    }
+
     /// Build the JSON body wiremock returns from `events.insert` /
     /// `events.patch` mocks.  GCal stores `end.date = start.date + 1`
     /// for an all-day event; this helper computes that shift so each
@@ -1748,6 +1929,7 @@ mod tests {
         let server = MockServer::start().await;
         let evt_id = "evt_TEST_1";
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(
@@ -1794,6 +1976,7 @@ mod tests {
         let server = MockServer::start().await;
         let evt_id = "evt_TEST_1";
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // `.expect(1)` is the assertion — a second POST would fail it.
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
@@ -1839,6 +2022,7 @@ mod tests {
         let server = MockServer::start().await;
         let evt_id = "evt_TEST_1";
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(
@@ -1891,6 +2075,7 @@ mod tests {
         let evt_a = "evt_DATE_A";
         let evt_b = "evt_DATE_B";
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // Date A's insert (request body contains start.date 2026-04-22).
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
@@ -1973,6 +2158,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(
@@ -2022,6 +2208,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // First cycle's insert succeeds; .up_to_n_times(1) so the next
         // POST falls through to the 404 mock below.
         Mock::given(method("POST"))
@@ -2298,6 +2485,7 @@ mod tests {
         // 200 on first-connect: reachable iff the pause gate lets
         // the cycle through.
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         let api = make_api(&server);
         let (emitter, _rec) = emitter_pair();
         let clock = FixedClock::new(t0());
@@ -2688,6 +2876,9 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        // #631 — the pre-insert adoption lookup runs first; an empty
+        // listing falls through to the insert path exercised here.
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // First insert attempt → 429 with Retry-After: 1; second → 200.
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
@@ -2760,6 +2951,9 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        // #631 — the pre-insert adoption lookup runs first; an empty
+        // listing falls through to the insert path exercised here.
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "1"))
@@ -2812,6 +3006,9 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        // #631 — the pre-insert adoption lookup runs first; an empty
+        // listing falls through to the insert path exercised here.
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "3600"))
@@ -2866,6 +3063,9 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        // #631 — the pre-insert adoption lookup runs first; an empty
+        // listing falls through to the insert path exercised here.
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(
@@ -2914,6 +3114,9 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        // #631 — the pre-insert adoption lookup runs first; an empty
+        // listing falls through to the insert path exercised here.
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // Date A's insert echoes a non-conforming body (id only, no
         // start/end at all).
         Mock::given(method("POST"))
@@ -2988,6 +3191,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // Date A's insert (the BTreeSet iterates in date order, A first)
         // returns 503.  The date is skipped; the cycle continues to B.
         Mock::given(method("POST"))
@@ -3067,6 +3271,7 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // Single dirty date — its insert returns 503, which classifies
         // as `DateFailure::Skipped("server_error: HTTP 503")`.
         Mock::given(method("POST"))
@@ -3124,6 +3329,7 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(ResponseTemplate::new(503))
@@ -3163,6 +3369,7 @@ mod tests {
         let (pool, _dir) = test_pool().await;
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // Only the first cycle's insert reaches the server.
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
@@ -3242,6 +3449,7 @@ mod tests {
         let server = MockServer::start().await;
         let evt_id = "evt_PATCHABLE";
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         // First-cycle insert.
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
@@ -3517,6 +3725,7 @@ mod tests {
 
         let server = MockServer::start().await;
         mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
         Mock::given(method("POST"))
             .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
             .respond_with(
@@ -3633,6 +3842,560 @@ mod tests {
         assert!(
             matches!(err, AppError::Validation(_)),
             "expected AppError::Validation, got {err:?}"
+        );
+    }
+
+    // ── #629 — window_days re-clamp + out-of-window prune ──────────
+
+    /// The reconcile/force-resync paths prime the FULL 90-day window;
+    /// the cycle must re-clamp to the configured `window_days`.  With
+    /// `window_days = 7`, content on `today` is pushed but content on
+    /// `today + 10` must produce neither an insert nor a map row.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn window_days_setting_clamps_pushes_to_configured_window_629() {
+        let (pool, _dir) = test_pool().await;
+        models::set_setting(&pool, GcalSettingKey::WindowDays, "7")
+            .await
+            .unwrap();
+
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        mount_list_events_empty(&server, TEST_CAL_ID).await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_IN_WINDOW", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        // Content on today (in window) AND on today + 10 (outside the
+        // 7-day window, but well inside the primed 90-day dirty set).
+        seed_block_due_on(&pool, "In window", "2026-04-22").await;
+        seed_block_due_on(&pool, "Out of window", "2026-05-02").await;
+
+        // Prime the dirty set exactly like the reconcile tick / force
+        // resync do — the full MAX window.
+        let mut dirty = DirtySet::new();
+        handle_force_resync(&mut dirty, clock.today());
+        assert!(
+            dirty.contains(&NaiveDate::from_ymd_opt(2026, 5, 2).unwrap()),
+            "sanity: the out-of-window date IS in the primed dirty set"
+        );
+
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            1,
+            "with window_days=7 only the in-window date may be pushed (#629)",
+        );
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-04-22")
+                .await
+                .unwrap()
+                .is_some(),
+            "in-window date must be tracked"
+        );
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-05-02")
+                .await
+                .unwrap()
+                .is_none(),
+            "out-of-window date must NOT be pushed or tracked (#629)"
+        );
+    }
+
+    /// Shrinking the window must DELETE the remote events (and map
+    /// rows) that fell outside it — while leaving past-date rows (the
+    /// already-pinned midnight-rollover history) untouched.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shrinking_window_prunes_out_of_window_events_629() {
+        let (pool, _dir) = test_pool().await;
+        models::set_setting(&pool, GcalSettingKey::WindowDays, "7")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::CalendarId, TEST_CAL_ID)
+            .await
+            .unwrap();
+
+        // Map rows as left behind by a 90-day-window era: one beyond
+        // the shrunk window (pruned) and one in the past (kept).
+        for (date, evt) in [("2026-05-02", "evt_OUT"), ("2026-04-21", "evt_PAST")] {
+            sqlx::query(
+                "INSERT INTO gcal_agenda_event_map \
+                 (date, gcal_event_id, last_pushed_hash, last_pushed_at) \
+                 VALUES (?, ?, 'stale-hash', '2026-04-20T10:00:00.000Z')",
+            )
+            .bind(date)
+            .bind(evt)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_OUT")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        // The prune sweep must run even on an event-driven cycle with
+        // an empty dirty set — it is not tied to the reconcile fill.
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-05-02")
+                .await
+                .unwrap()
+                .is_none(),
+            "row beyond the shrunk window must be pruned (#629)"
+        );
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-04-21")
+                .await
+                .unwrap()
+                .is_some(),
+            "past-date row must survive the prune (history is never retro-deleted)"
+        );
+        assert_eq!(
+            count_requests(
+                &server,
+                "DELETE",
+                &format!("/calendars/{TEST_CAL_ID}/events/")
+            )
+            .await,
+            1,
+            "exactly one remote delete — the out-of-window event only",
+        );
+    }
+
+    /// Transient failure on the prune delete must skip the date (kept
+    /// for the next sweep) without failing the cycle.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn prune_delete_transient_failure_keeps_row_for_retry_629() {
+        let (pool, _dir) = test_pool().await;
+        models::set_setting(&pool, GcalSettingKey::WindowDays, "7")
+            .await
+            .unwrap();
+        models::set_setting(&pool, GcalSettingKey::CalendarId, TEST_CAL_ID)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO gcal_agenda_event_map \
+             (date, gcal_event_id, last_pushed_hash, last_pushed_at) \
+             VALUES ('2026-05-02', 'evt_OUT', 'h', '2026-04-20T10:00:00.000Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_OUT")))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+
+        let outcome = run_cycle(
+            &pool,
+            &api,
+            &emitter,
+            DEV_A,
+            &clock,
+            &token,
+            &DirtySet::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "transient prune failure must not hard-fail the cycle"
+        );
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-05-02")
+                .await
+                .unwrap()
+                .is_some(),
+            "map row must be retained so the next sweep retries the prune"
+        );
+    }
+
+    // ── #631 — lookup-before-insert orphan reconciliation ──────────
+
+    /// Post-crash state: the remote event exists but the map row was
+    /// never written (crash between `insert_event` and
+    /// `upsert_event_map`).  The next cycle must ADOPT the orphan —
+    /// patch it fresh and track its id — instead of inserting a
+    /// duplicate.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn orphan_event_is_adopted_not_duplicated_631() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // The day's listing returns the untracked orphan left by the
+        // crash.  Its summary carries the digest prefix + the all-day
+        // start matches the date — unambiguously ours.
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [{
+                    "id": "evt_ORPHAN",
+                    "summary": "Agaric Agenda — Wed Apr 22",
+                    "description": "stale digest from the crashed push",
+                    "start": { "date": "2026-04-22" },
+                    "end":   { "date": "2026-04-23" },
+                    "transparency": "transparent",
+                }],
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_ORPHAN")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_ORPHAN", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        // Deliberately NO insert mock — a POST would 404 into
+        // CalendarGone recovery and fail the assertions below.
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(outcome, CycleOutcome::Ok);
+
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            0,
+            "no duplicate insert may be issued when an orphan exists (#631)",
+        );
+        let map = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("orphan must be adopted into the map");
+        assert_eq!(
+            map.gcal_event_id, "evt_ORPHAN",
+            "the map row must track the ADOPTED orphan's id"
+        );
+        assert!(!map.last_pushed_hash.is_empty());
+    }
+
+    /// Several pre-fix crashes can have piled up multiple duplicates:
+    /// the first matching orphan is adopted, the surplus copies are
+    /// deleted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn surplus_orphan_duplicates_are_deleted_on_adoption_631() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [
+                    {
+                        "id": "evt_FIRST",
+                        "summary": "Agaric Agenda — Wed Apr 22",
+                        "description": "dup 1",
+                        "start": { "date": "2026-04-22" },
+                        "end":   { "date": "2026-04-23" },
+                    },
+                    {
+                        "id": "evt_SECOND",
+                        "summary": "Agaric Agenda — Wed Apr 22",
+                        "description": "dup 2",
+                        "start": { "date": "2026-04-22" },
+                        "end":   { "date": "2026-04-23" },
+                    },
+                ],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_SECOND")))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_FIRST")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_FIRST", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+
+        let map = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("map row must exist after adoption");
+        assert_eq!(map.gcal_event_id, "evt_FIRST", "first orphan is adopted");
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            0,
+            "no insert with two orphans present",
+        );
+    }
+
+    /// A user-created event on the dedicated calendar (no digest
+    /// summary prefix) must never be hijacked — the connector inserts
+    /// its own event alongside it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn foreign_event_on_calendar_is_not_adopted_631() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [{
+                    "id": "evt_USERS_OWN",
+                    "summary": "Dentist appointment",
+                    "description": "user-created, not ours",
+                    "start": { "date": "2026-04-22" },
+                    "end":   { "date": "2026-04-23" },
+                }],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_FRESH", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+
+        let map = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("fresh insert must be tracked");
+        assert_eq!(
+            map.gcal_event_id, "evt_FRESH",
+            "the user's own event must NOT be adopted (#631)"
+        );
+        assert_eq!(
+            count_requests(
+                &server,
+                "DELETE",
+                &format!("/calendars/{TEST_CAL_ID}/events/")
+            )
+            .await,
+            0,
+            "the user's own event must NOT be deleted"
+        );
+    }
+
+    /// #631 wedge regression: a single user-created **timed** event
+    /// (`start.dateTime`, no `start.date`) sitting on the dedicated
+    /// calendar must NOT wedge the connector.  Before the tolerant
+    /// list decode, modelling list items as required all-day dates
+    /// failed the WHOLE `events.list` JSON decode → `decode_failed` →
+    /// `DateFailure::Other` → the cycle aborted FOREVER, so the digest
+    /// for this (and every chained) date never landed.  After the fix
+    /// the timed event is skipped, the all-day orphan is still adopted,
+    /// and the cycle runs to completion.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stray_timed_event_on_calendar_does_not_wedge_connector_631() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        // The listing carries a stray TIMED event (the wedge trigger)
+        // alongside the all-day digest orphan.  The timed event must be
+        // dropped without failing the decode; the orphan is adopted.
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "items": [
+                    {
+                        // User-created timed event — only `dateTime`.
+                        // Pre-fix, this one field shape wedged the cycle.
+                        "id": "evt_TIMED",
+                        "summary": "Stand-up",
+                        "start": { "dateTime": "2026-04-22T09:00:00+02:00" },
+                        "end":   { "dateTime": "2026-04-22T09:30:00+02:00" },
+                    },
+                    {
+                        // The all-day digest orphan left by a crash.
+                        "id": "evt_ORPHAN",
+                        "summary": "Agaric Agenda — Wed Apr 22",
+                        "description": "stale digest from the crashed push",
+                        "start": { "date": "2026-04-22" },
+                        "end":   { "date": "2026-04-23" },
+                    },
+                ],
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events/evt_ORPHAN")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(event_response_body("evt_ORPHAN", "2026-04-22")),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "a stray timed event must not wedge the cycle (#631)"
+        );
+
+        let map = models::get_event_map_for_date(&pool, "2026-04-22")
+            .await
+            .unwrap()
+            .expect("the all-day orphan must still be adopted past the timed event");
+        assert_eq!(
+            map.gcal_event_id, "evt_ORPHAN",
+            "the all-day orphan is adopted; the timed event is never matched"
+        );
+        // The timed event is neither adopted (mapped) nor deleted.
+        assert_eq!(
+            count_requests(
+                &server,
+                "DELETE",
+                &format!("/calendars/{TEST_CAL_ID}/events/evt_TIMED")
+            )
+            .await,
+            0,
+            "the user's timed event must NOT be deleted (#631)"
+        );
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            0,
+            "no blind insert — the orphan was adopted",
+        );
+    }
+
+    /// Transient failure on the pre-insert listing skips the date for
+    /// this cycle (no blind insert — that would reintroduce the
+    /// duplicate risk the lookup exists to prevent).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn list_failure_skips_date_without_blind_insert_631() {
+        let (pool, _dir) = test_pool().await;
+        let server = MockServer::start().await;
+        mount_create_calendar(&server, TEST_CAL_ID).await;
+        Mock::given(method("GET"))
+            .and(path(format!("/calendars/{TEST_CAL_ID}/events")))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let api = make_api(&server);
+        let (emitter, _) = emitter_pair();
+        let clock = FixedClock::new(t0());
+        let token = dummy_token();
+        seed_block_due_on(&pool, "Ship it", "2026-04-22").await;
+
+        let mut dirty = DirtySet::new();
+        dirty.insert(fixed_date());
+        let outcome = run_cycle(&pool, &api, &emitter, DEV_A, &clock, &token, &dirty)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CycleOutcome::Ok,
+            "transient list failure must skip the date, not fail the cycle"
+        );
+        assert_eq!(
+            count_requests(&server, "POST", &format!("/calendars/{TEST_CAL_ID}/events")).await,
+            0,
+            "no blind insert may happen when the lookup fails",
+        );
+        assert!(
+            models::get_event_map_for_date(&pool, "2026-04-22")
+                .await
+                .unwrap()
+                .is_none(),
+            "nothing is tracked — the next sweep retries from scratch"
         );
     }
 }

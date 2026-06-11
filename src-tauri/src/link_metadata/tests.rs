@@ -1152,3 +1152,88 @@ async fn upsert_and_get_cached_round_trip_preserves_not_found() {
     );
     assert!(!cached.auth_required);
 }
+
+// ======================================================================
+// #628 — redirected non-2xx must be cached under the REQUESTED url
+//
+// Regression: the non-2xx short-circuit in `fetch_metadata` stored
+// `url: final_url` (post-redirect), while both 2xx arms store the
+// requested url. The cache upsert keys on `meta.url` and `get_cached`
+// looks up by the requested url, so a redirected URL ending non-2xx
+// (http→https→404, expired shortener, auth wall) landed under a key
+// that was never queried — the error row could never cache-hit and the
+// network was re-hit on every render.
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_metadata_redirect_then_404_keys_result_under_requested_url() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    // /old → 301 → /new → 404. `final_url` is …/new; the requested url
+    // is …/old. The returned metadata must carry the requested url.
+    Mock::given(method("GET"))
+        .and(path("/old"))
+        .respond_with(ResponseTemplate::new(301).insert_header("location", "/new"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/new"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string("<html><head><title>Not here</title></head></html>"),
+        )
+        .mount(&server)
+        .await;
+
+    let requested = format!("{}/old", server.uri());
+    let meta = fetch_metadata(&requested)
+        .await
+        .expect("fetch_metadata must not error on redirect+404");
+
+    assert_eq!(
+        meta.url, requested,
+        "non-2xx result must be keyed under the REQUESTED url, not final_url (#628)"
+    );
+    assert!(meta.not_found, "redirected 404 must still set not_found");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn redirected_error_result_cache_hits_on_second_lookup() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let (pool, _dir) = test_pool().await;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/moved"))
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/login"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("sign in"))
+        .mount(&server)
+        .await;
+
+    let requested = format!("{}/moved", server.uri());
+
+    // Fetch + persist — exactly what `fetch_link_metadata_inner` does on
+    // a cache miss.
+    let meta = fetch_metadata(&requested).await.unwrap();
+    assert!(
+        meta.auth_required,
+        "redirect→401 must set auth_required so the sign-in card renders"
+    );
+    upsert(&pool, &meta).await.unwrap();
+
+    // The follow-up lookup by the REQUESTED url must hit — this is the
+    // MAINT-213 error-state caching #628 restores.
+    let cached = get_cached(&pool, &requested)
+        .await
+        .unwrap()
+        .expect("second lookup by requested url must be a cache hit (#628)");
+    assert!(cached.auth_required, "auth flag must be served from cache");
+    assert_eq!(cached.url, requested);
+}

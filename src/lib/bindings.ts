@@ -1332,6 +1332,16 @@ export type GcalStatus = {
 	privacy_mode: string,
 	last_push_at: string | null,
 	last_error: string | null,
+	/**
+	 *  #630: `true` when the connector is paused waiting for the user
+	 *  to re-authorize (`gcal_settings.reauth_required`).  Without this
+	 *  field the pause was invisible after a restart: the one-shot
+	 *  `gcal:reauth_required` event had already fired in a previous
+	 *  session, `connected` stays `true` (the token is not cleared by
+	 *  the terminal-401 path) and `last_error` is untouched — Settings
+	 *  showed a healthy connection while push was permanently paused.
+	 */
+	reauth_required: boolean,
 	push_lease: LeaseHolder,
 };
 

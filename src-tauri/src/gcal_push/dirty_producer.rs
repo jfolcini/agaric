@@ -39,7 +39,9 @@
 //! but that's a database round-trip per op.  Instead we clamp to
 //! [`super::connector::MAX_WINDOW_DAYS`] (90) — the maximum allowed
 //! setting.  The connector re-clamps to the actual value before
-//! pushing, so wasted dates here cost one extra entry in an
+//! pushing (`run_cycle`'s #629 window partition — dates at/beyond
+//! `today + window_days` are pruned rather than pushed), so wasted
+//! dates here cost one extra entry in an
 //! in-memory `BTreeSet` (and zero network requests).  A date outside
 //! `[today, today + 90]` can never be reached on any setting, so
 //! pre-filtering there saves wakeups for far-future or past dates.
