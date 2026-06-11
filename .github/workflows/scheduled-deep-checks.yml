@@ -118,7 +118,7 @@ jobs:
         run: cargo bench --bench interactive_slo
 
       - name: Install cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-nextest
 
@@ -186,7 +186,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-mutants,cargo-nextest
 
@@ -299,7 +299,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-fuzz via prebuilt binary
-        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2.81.8
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: cargo-fuzz
 
