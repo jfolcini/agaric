@@ -4014,7 +4014,12 @@ describe('SortableBlock mobile gutter hidden (UX-21)', () => {
     expect(deleteBtn.className).not.toContain('max-sm:pointer-events-auto')
   })
 
-  it('gutter container has touch-collapse classes', () => {
+  // #918: on a *fine-pointer* (desktop / mouse) device the narrow gutter still
+  // collapses to 0px below `md` and reveals its controls on hover — that
+  // behaviour is unchanged. The touch case (where the collapse is suppressed so
+  // the drag grip stays hittable) is covered in the dedicated touch describe
+  // block below.
+  it('gutter container has fine-pointer touch-collapse classes (desktop unchanged)', () => {
     render(
       <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
         <SortableBlock
@@ -4335,6 +4340,123 @@ describe('UX-230 responsive layout', () => {
     // at 640..767px viewports.
     expect(gutter.className).not.toContain('max-sm:w-0')
     expect(gutter.className).not.toContain('max-sm:overflow-hidden')
+  })
+})
+
+// ── #918 / #919: touch drag handle must be hittable on phones ────────────
+//
+// On a fine-pointer device the gutter collapses to 0px below `md` and reveals
+// its controls on hover. A touch device has no hover, and the gutter renders a
+// dedicated drag grip — so collapsing to `w-0` / `overflow-hidden` clipped that
+// grip to zero width, leaving nothing to grab. These tests force coarse-pointer
+// (via `matchMedia('(pointer: coarse)')`, which drives both SortableBlock's
+// `isTouchDevice` gate and `useIsTouch`) and assert the grip is a real,
+// hittable, drag-activating target.
+describe('SortableBlock touch drag handle hittability (#918/#919)', () => {
+  const originalMatchMedia = window.matchMedia
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSortable.mockReturnValue(makeSortable())
+    // Force coarse-pointer so `useIsTouch()` → true and SortableBlock's
+    // `isTouchDevice` gate suppresses the `w-0` collapse.
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(pointer: coarse)',
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }))
+  })
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia
+  })
+
+  it('renders the touch drag grip and keeps it out of any w-0 / overflow-hidden wrapper', () => {
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_TOUCH_GRIP"
+          content="touch grip"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle).toBeInTheDocument()
+
+    // Walk every ancestor up to the sortable root — none may clip the grip to
+    // zero width. This is the assertion that fails on the original bug, where
+    // the grip lived inside the `max-md:w-0 max-md:overflow-hidden` gutter.
+    // We check exact class *tokens* (not substrings) so the legitimate
+    // `min-w-0` flex-shrink utility doesn't trip a false positive.
+    const clippingTokens = ['w-0', 'max-md:w-0', 'overflow-hidden', 'max-md:overflow-hidden']
+    const root = screen.getByTestId('sortable-block')
+    let node: HTMLElement | null = dragHandle
+    while (node && node !== root) {
+      for (const token of clippingTokens) {
+        expect(node.classList.contains(token)).toBe(false)
+      }
+      node = node.parentElement
+    }
+  })
+
+  it('gives the touch grip a comfortable hit area (touch-target) and touch-action:none', () => {
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_TOUCH_HIT"
+          content="touch hit"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    // WCAG 2.5.5 minimum hit target (the `touch-target` utility expands to
+    // ≥44×44 under `(pointer: coarse)`).
+    expect(dragHandle.className).toContain('touch-target')
+    // `touch-none` → `touch-action: none`, so the browser yields the
+    // press-drag gesture to the dnd-kit activator instead of scrolling.
+    expect(dragHandle.className).toContain('touch-none')
+    // Calm at rest, not the hover-hidden desktop contract.
+    expect(dragHandle.className).not.toContain('opacity-0')
+    expect(dragHandle.className).not.toContain('pointer-events-none')
+  })
+
+  it('the touch grip is the dnd-kit activator (carries the drag listeners)', () => {
+    const onPointerDown = vi.fn()
+    // dnd-kit spreads `listeners`/`attributes` onto the activator element. We
+    // hand the touch grip a sentinel pointer-down listener + attribute and
+    // assert they land on it, proving it is the element that starts a drag.
+    mockUseSortable.mockReturnValue({
+      ...makeSortable(),
+      listeners: { onPointerDown },
+      attributes: { 'data-dnd-activator': 'touch-grip' } as never,
+    })
+
+    render(
+      <TestBlockActionsOverride actions={{ onDelete: vi.fn(), onShowHistory: vi.fn() }}>
+        <SortableBlock
+          blockId="BLOCK_TOUCH_ACT"
+          content="touch activator"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+        />
+      </TestBlockActionsOverride>,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    expect(dragHandle.getAttribute('data-dnd-activator')).toBe('touch-grip')
+    fireEvent.pointerDown(dragHandle)
+    expect(onPointerDown).toHaveBeenCalledTimes(1)
   })
 })
 

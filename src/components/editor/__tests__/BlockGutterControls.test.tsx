@@ -460,6 +460,33 @@ describe('BlockGutterControls (touch / pointer:coarse)', () => {
     expect(dragHandle).toHaveAttribute('aria-label', t('block.reorderTouchHint'))
   })
 
+  // ── #918: the touch grip must be a real, hittable, drag-activating target ──
+  it('touch drag grip is hittable at rest with touch-action:none and a comfortable hit area (#918)', () => {
+    const dragListeners = { onPointerDown: vi.fn() }
+    renderWithTooltip(
+      <BlockGutterControls
+        blockId="B1"
+        onDelete={vi.fn()}
+        onShowHistory={vi.fn()}
+        dragAttributes={{ 'data-dnd-activator': 'grip' } as never}
+        dragListeners={dragListeners}
+      />,
+    )
+
+    const dragHandle = screen.getByTestId('drag-handle')
+    // Visible & interactive at rest — NOT the hover-hidden desktop contract.
+    expect(dragHandle.className).not.toContain('opacity-0')
+    expect(dragHandle.className).not.toContain('pointer-events-none')
+    // ≥44×44 hit area (WCAG 2.5.5) + touch-action:none so the gesture starts a
+    // drag instead of a scroll.
+    expect(dragHandle.className).toContain('touch-target')
+    expect(dragHandle.className).toContain('touch-none')
+    // The grip is the dnd-kit activator: it carries the attributes + listeners.
+    expect(dragHandle).toHaveAttribute('data-dnd-activator', 'grip')
+    fireEvent.pointerDown(dragHandle)
+    expect(dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
+  })
+
   // ── UX-306: more-actions aria-label enumerates available actions ──
   it('more-actions aria-label enumerates History and Delete when both are provided (UX-306)', () => {
     renderWithTooltip(
