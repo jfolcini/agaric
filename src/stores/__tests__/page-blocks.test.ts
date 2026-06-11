@@ -3085,4 +3085,174 @@ describe('PageBlockStore', () => {
       expect(renderCount).toBe(beforeIdle)
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // moveBlocks (#914 — multi-select drag)
+  // ---------------------------------------------------------------------------
+  describe('moveBlocks', () => {
+    /** Extract the recorded `move_block` IPC payloads, in call order. */
+    function moveCalls() {
+      return mockedInvoke.mock.calls
+        .filter(([cmd]) => cmd === 'move_block')
+        .map(
+          ([, args]) => args as { blockId: string; newParentId: string | null; newIndex: number },
+        )
+    }
+
+    it('issues one move_block per id at consecutive slots, then reloads + notifies undo', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'D', position: 3, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      // Two moves echo their committed slot, then the reload returns the tree.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 3 })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'D', parent_id: 'PAGE_1', position: 1 }),
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 2 }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 3 }),
+      ])
+
+      await store.getState().moveBlocks(['A', 'B'], null, 2)
+
+      const moves = moveCalls()
+      expect(moves).toEqual([
+        { blockId: 'A', newParentId: null, newIndex: 2 },
+        { blockId: 'B', newParentId: null, newIndex: 3 },
+      ])
+      // Reload ran and the new flattened order is adopted.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'D', 'A', 'B'])
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    it('preserves DOCUMENT order even when ids are passed out of order', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 2 })
+      mockedInvoke.mockResolvedValueOnce([])
+
+      // Caller passes ['C', 'A'] — but A precedes C in the document, so A moves first.
+      await store.getState().moveBlocks(['C', 'A'], null, 1)
+
+      expect(moveCalls()).toEqual([
+        { blockId: 'A', newParentId: null, newIndex: 1 },
+        { blockId: 'C', newParentId: null, newIndex: 2 },
+      ])
+    })
+
+    it('moves the selection into a NEW parent at consecutive slots', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'A', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: 'P', new_position: 0 })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'P', new_position: 1 })
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'P', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'A', parent_id: 'P', position: 0 }),
+        makeBlock({ id: 'B', parent_id: 'P', position: 1 }),
+      ])
+
+      await store.getState().moveBlocks(['A', 'B'], 'P', 0)
+
+      expect(moveCalls()).toEqual([
+        { blockId: 'A', newParentId: 'P', newIndex: 0 },
+        { blockId: 'B', newParentId: 'P', newIndex: 1 },
+      ])
+      // A and B now nested under P.
+      const blocks = store.getState().blocks
+      expect(blocks.find((b) => b.id === 'A')?.parent_id).toBe('P')
+      expect(blocks.find((b) => b.id === 'B')?.parent_id).toBe('P')
+    })
+
+    it('honours a boundary slot of 0 (move to top)', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 0 })
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 1 })
+      mockedInvoke.mockResolvedValueOnce([])
+
+      await store.getState().moveBlocks(['B', 'C'], null, 0)
+
+      expect(moveCalls()).toEqual([
+        { blockId: 'B', newParentId: null, newIndex: 0 },
+        { blockId: 'C', newParentId: null, newIndex: 1 },
+      ])
+    })
+
+    it('is a no-op for an empty id list (no IPC, no undo)', async () => {
+      store.setState({ blocks: [makeBlock({ id: 'A', parent_id: null, depth: 0 })] })
+
+      await store.getState().moveBlocks([], null, 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('drops ids that are absent from the current tree before issuing moves', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
+      mockedInvoke.mockResolvedValueOnce([])
+
+      // 'GHOST' is not in the tree — only 'A' should move.
+      await store.getState().moveBlocks(['A', 'GHOST'], null, 1)
+
+      expect(moveCalls()).toEqual([{ blockId: 'A', newParentId: null, newIndex: 1 }])
+    })
+
+    it('reloads to reconcile and does not notify undo when a move fails', async () => {
+      store.setState({
+        blocks: [
+          makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+        ],
+      })
+
+      // First move succeeds, second rejects → catch reloads, no undo.
+      mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 1 })
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+      mockedInvoke.mockResolvedValueOnce([
+        makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+        makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
+      ])
+
+      await store.getState().moveBlocks(['A', 'B'], null, 1)
+
+      // A reconciling reload fired after the failure.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+  })
 })

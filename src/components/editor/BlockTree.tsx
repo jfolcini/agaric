@@ -146,6 +146,7 @@ export function BlockTree({
     dedent,
     reorder,
     moveToParent,
+    moveBlocks,
     moveUp,
     moveDown,
     createBelow,
@@ -467,10 +468,14 @@ export function BlockTree({
     collapsedVisible: zoomedVisible,
     rootParentId: zoomedBlockId ?? rootParentId,
     rovingEditor,
+    // #914 — feed the global multi-selection so dragging a selected block moves
+    // the whole selection (the hook collapses it to roots + branches on >1).
+    selectedBlockIds,
     handleFlush,
     setFocused,
     reorder,
     moveToParent,
+    moveBlocks,
     scrollContainerRef,
   })
 
@@ -710,10 +715,20 @@ export function BlockTree({
   // drag-move (`offsetLeft`/`overId` state in useBlockDnD), while `blocks`
   // and `activeId` are stable for the whole drag — without the memo the O(n)
   // subtree scan would re-run per pointer move on large pages.
-  const draggingCount = useMemo(
-    () => (dnd.activeId ? getDragDescendants(blocks, dnd.activeId).size + 1 : 1),
-    [blocks, dnd.activeId],
-  )
+  // #914 — when the drag is a multi-select move, the badge must reflect the
+  // number of blocks ACTUALLY moving: every selection root plus its subtree.
+  // (Roots are already de-nested, so their subtrees don't overlap.) Otherwise
+  // it's the single active block + its subtree, as before.
+  const draggingCount = useMemo(() => {
+    if (!dnd.activeId) return 1
+    if (dnd.isMultiDrag) {
+      return dnd.dragRoots.reduce(
+        (sum, rootId) => sum + getDragDescendants(blocks, rootId).size + 1,
+        0,
+      )
+    }
+    return getDragDescendants(blocks, dnd.activeId).size + 1
+  }, [blocks, dnd.activeId, dnd.isMultiDrag, dnd.dragRoots])
 
   // ── Action / resolver bags published via context (MAINT-118) ────────
   // Memoised so descendants only re-render when callbacks change.
