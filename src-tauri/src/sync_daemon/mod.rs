@@ -17,6 +17,10 @@ mod discovery;
 mod orchestrator;
 mod server;
 mod snapshot_transfer;
+// #611: transport-level SyncMessage encode/decode — splits large
+// LoroSync payloads onto the chunked binary path and reassembles them
+// on receive. Both session loops route every send/recv through it.
+mod wire;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
 // `mdns-sd` crate's UDP multicast sockets receive packets (BUG-39).

@@ -745,6 +745,58 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
     materializer.shutdown();
 }
 
+/// #611: `LoroSyncChunked` is a transport-internal encoding — the wire
+/// layer (`sync_daemon::wire::recv_sync_message`) reassembles the
+/// header + binary frames into a plain `LoroSync` before dispatch. One
+/// reaching `handle_message` means that interception has regressed;
+/// surface it as `AppError::InvalidOperation` (same contract as a
+/// stray `SnapshotOffer`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
+    use crate::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncChunkedHeader,
+    };
+
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
+
+    // Drive to ExchangingHeads so state-validation passes the message
+    // through and we hit the handler body (not the terminal-state reject).
+    let _start = orch.start().await.unwrap();
+    assert_eq!(orch.session().state, SyncState::ExchangingHeads);
+
+    let result = orch
+        .handle_message(SyncMessage::LoroSyncChunked {
+            header: LoroSyncChunkedHeader::Snapshot {
+                protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                size_bytes: 1024,
+            },
+            is_last: true,
+        })
+        .await;
+
+    let err = match result {
+        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        other => panic!(
+            "LoroSyncChunked routed through handle_message must return \
+             AppError::InvalidOperation — the wire layer is the only \
+             reachable path. got: {other:?}"
+        ),
+    };
+    assert!(
+        err.contains("LoroSyncChunked"),
+        "error message must name the offending variant, got: {err}"
+    );
+    assert!(
+        err.contains("wire"),
+        "error message must point callers at the wire layer, got: {err}"
+    );
+
+    materializer.shutdown();
+}
+
 /// I-Sync-1: `SnapshotAccept` and `SnapshotReject` belong to the
 /// `snapshot_transfer` sub-flow at the sync-daemon layer, not the
 /// orchestrator state machine. If either ever reaches `handle_message`,
@@ -1385,6 +1437,17 @@ fn json_shape_all_variants_have_type_tag() {
                     protocol_version: LORO_SYNC_PROTOCOL_VERSION,
                     space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
                     bytes: Vec::new(),
+                },
+                is_last: true,
+            },
+        ),
+        (
+            "LoroSyncChunked",
+            SyncMessage::LoroSyncChunked {
+                header: crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader::Snapshot {
+                    protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                    space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                    size_bytes: 0,
                 },
                 is_last: true,
             },

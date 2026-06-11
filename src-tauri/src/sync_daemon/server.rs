@@ -93,7 +93,13 @@ pub(crate) async fn handle_incoming_sync(
     // CN itself).
 
     // ── Receive the initiator's first message ─────────────────────────────
-    let first_msg: SyncMessage = conn.recv_json().await?;
+    // #611: all session-loop sends/recvs go through
+    // `wire::{send,recv}_sync_message` so over-threshold LoroSync payloads
+    // ride the chunked binary path instead of blowing the 10 MB JSON
+    // text-frame cap. (The first message is always a small HeadExchange in
+    // a well-behaved session; routing it through the helper just keeps the
+    // loop uniform.)
+    let first_msg: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
 
     // M-58: capture the initiator's advertised heads BEFORE the
     // orchestrator consumes `first_msg`. If the session later exits in
@@ -297,16 +303,16 @@ pub(crate) async fn handle_incoming_sync(
     // ── Process first message ─────────────────────────────────────────────
     let response = orch.handle_message(first_msg).await?;
     if let Some(resp) = response {
-        conn.send_json(&resp).await?;
+        super::wire::send_sync_message(&mut conn, &resp).await?;
         // Drain any pending op batches (B-3)
         while let Some(batch) = orch.next_message() {
-            conn.send_json(&batch).await?;
+            super::wire::send_sync_message(&mut conn, &batch).await?;
         }
     }
 
     // ── Message loop (same structure as initiator) ────────────────────────
     while !orch.is_terminal() {
-        let incoming: SyncMessage = conn.recv_json().await?;
+        let incoming: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
         let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, orch.handle_message(incoming))
             .await
             .map_err(|_| {
@@ -318,10 +324,10 @@ pub(crate) async fn handle_incoming_sync(
 
         match response {
             Some(resp) => {
-                conn.send_json(&resp).await?;
+                super::wire::send_sync_message(&mut conn, &resp).await?;
                 // Drain any pending op batches (B-3)
                 while let Some(batch) = orch.next_message() {
-                    conn.send_json(&batch).await?;
+                    super::wire::send_sync_message(&mut conn, &batch).await?;
                 }
             }
             None => {

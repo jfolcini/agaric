@@ -13,6 +13,23 @@ use super::sync_err;
 use super::tls::{PinningCertVerifier, SyncCert};
 use crate::error::AppError;
 
+/// Shared tungstenite configuration for every sync WebSocket (client
+/// connect, server accept, and the in-memory test pair).
+///
+/// #611: tungstenite's defaults allow 64 MiB messages / 16 MiB frames, so
+/// the documented `SyncConnection::MAX_MSG_SIZE` (10 MB) cap was only
+/// enforced *after* the transport had already buffered the whole payload.
+/// Aligning the transport limits with the app-level cap rejects over-cap
+/// traffic at the frame header, before any large allocation. Both checks
+/// are strict `>` comparisons in tungstenite, so an exactly-`MAX_MSG_SIZE`
+/// payload still passes — matching the app-level checks in
+/// `recv_json`/`recv_binary`.
+pub(crate) fn ws_config() -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(SyncConnection::MAX_MSG_SIZE))
+        .max_frame_size(Some(SyncConnection::MAX_MSG_SIZE))
+}
+
 // =========================================================================
 // 4. WebSocket Client
 // =========================================================================
@@ -72,10 +89,16 @@ pub async fn connect_to_peer(
     let connector = tokio_tungstenite::Connector::Rustls(Arc::new(client_config));
 
     let url = format!("wss://{addr}");
-    let (ws_stream, _response) =
-        tokio_tungstenite::connect_async_tls_with_config(&url, None, false, Some(connector))
-            .await
-            .map_err(|e| sync_err(format!("connect: {e}")))?;
+    // #611: pass the shared `ws_config()` so the transport-level message /
+    // frame caps match `MAX_MSG_SIZE` instead of tungstenite's 64 MiB default.
+    let (ws_stream, _response) = tokio_tungstenite::connect_async_tls_with_config(
+        &url,
+        Some(ws_config()),
+        false,
+        Some(connector),
+    )
+    .await
+    .map_err(|e| sync_err(format!("connect: {e}")))?;
 
     // M-57: read via `OnceLock::get` — no locking, no poisoning.
     let peer_hash = observed_hash.get().cloned();
@@ -460,7 +483,14 @@ impl SyncConnection {
     /// Maximum allowed WebSocket message size (10 MB).  Only paired devices
     /// on the user's own LAN can connect (TLS cert pinning + passphrase),
     /// so this is defense-in-depth against runaway payloads.
-    const MAX_MSG_SIZE: usize = 10_000_000;
+    ///
+    /// #611: enforced at two layers — tungstenite's [`ws_config`] rejects
+    /// over-cap messages/frames during the read (before buffering the whole
+    /// payload), and the `recv_json`/`recv_binary` checks above remain as a
+    /// belt-and-braces app-level guard. Payloads that legitimately exceed
+    /// this cap (large Loro snapshots) must ride the chunked binary path
+    /// (`sync_daemon::wire`), never a single message.
+    pub(crate) const MAX_MSG_SIZE: usize = 10_000_000;
 
     async fn send_message(&mut self, msg: Message) -> Result<(), AppError> {
         match &mut self.inner {
@@ -547,16 +577,18 @@ fn describe_message(msg: &Message) -> String {
 #[cfg(test)]
 pub async fn test_connection_pair() -> (SyncConnection, SyncConnection) {
     let (a, b) = tokio::io::duplex(64 * 1024);
+    // #611: the test pair runs under the same `ws_config()` transport
+    // limits as production so size-cap behaviour is exercised identically.
     let ws_a = WebSocketStream::from_raw_socket(
         a,
         tokio_tungstenite::tungstenite::protocol::Role::Server,
-        None,
+        Some(ws_config()),
     )
     .await;
     let ws_b = WebSocketStream::from_raw_socket(
         b,
         tokio_tungstenite::tungstenite::protocol::Role::Client,
-        None,
+        Some(ws_config()),
     )
     .await;
 
